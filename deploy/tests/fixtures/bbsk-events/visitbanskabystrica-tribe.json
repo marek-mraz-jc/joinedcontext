@@ -1,0 +1,190 @@
+{
+ "events": [
+  {
+   "id": 408546,
+   "global_id": "www.visitbanskabystrica.sk?id=408546",
+   "global_id_lineage": [
+    "www.visitbanskabystrica.sk?id=408546"
+   ],
+   "author": "2",
+   "status": "publish",
+   "date": "2026-10-13 11:32:49",
+   "date_utc": "2026-10-13 11:32:49",
+   "modified": "2026-10-13 11:38:07",
+   "modified_utc": "2026-10-13 11:38:07",
+   "url": "https://www.visitbanskabystrica.sk/event/richard-autner-band/",
+   "rest_url": "https://www.visitbanskabystrica.sk/wp-json/tribe/events/v1/events/408546",
+   "title": "Richard Autner &amp; band",
+   "description": "<p><a href=\"https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1.jpg\"><img loading=\"lazy\" decoding=\"async\" class=\"alignnone wp-image-408553 size-large\" src=\"https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-724x1024.jpg\" alt=\"\" width=\"724\" height=\"1024\" /></a></p>\n<p>Charizmatický spevák a skladateľ Richard Autner v rámci svojho jesenného turné vystúpi s kapelou v Banskej Bystrici. Nové pesničky pribúdajú, koncertný program sa postupne rozširuje a obmieňa, ale odznejú aj známe skladby z albumu Odpovede.</p>",
+   "excerpt": "",
+   "slug": "richard-autner-band",
+   "image": {
+    "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1.jpg",
+    "id": 408553,
+    "extension": "jpg",
+    "width": 1811,
+    "height": 2560,
+    "filesize": 566519,
+    "sizes": {
+     "medium": {
+      "width": 212,
+      "height": 300,
+      "mime-type": "image/jpeg",
+      "filesize": 13961,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-212x300.jpg"
+     },
+     "large": {
+      "width": 724,
+      "height": 1024,
+      "mime-type": "image/jpeg",
+      "filesize": 118026,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-724x1024.jpg"
+     },
+     "thumbnail": {
+      "width": 150,
+      "height": 150,
+      "mime-type": "image/jpeg",
+      "filesize": 6334,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-150x150.jpg"
+     },
+     "medium_large": {
+      "width": 768,
+      "height": 1086,
+      "mime-type": "image/jpeg",
+      "filesize": 131012,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-768x1086.jpg"
+     },
+     "wpsimplegallery_admin_thumb": {
+      "width": 109,
+      "height": 109,
+      "mime-type": "image/jpeg",
+      "filesize": 3888,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-109x109.jpg"
+     },
+     "wpsimplegallery_thumb": {
+      "width": 100,
+      "height": 100,
+      "mime-type": "image/jpeg",
+      "filesize": 3380,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-100x100.jpg"
+     },
+     "1536x1536": {
+      "width": 1087,
+      "height": 1536,
+      "mime-type": "image/jpeg",
+      "filesize": 240911,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-1087x1536.jpg"
+     },
+     "2048x2048": {
+      "width": 1449,
+      "height": 2048,
+      "mime-type": "image/jpeg",
+      "filesize": 381947,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-1449x2048.jpg"
+     },
+     "catalogue": {
+      "width": 400,
+      "height": 250,
+      "mime-type": "image/jpeg",
+      "filesize": 19131,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-400x250.jpg"
+     },
+     "mid-rectangle": {
+      "width": 600,
+      "height": 400,
+      "mime-type": "image/jpeg",
+      "filesize": 39512,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-600x400.jpg"
+     },
+     "grandtour-gallery-grid": {
+      "width": 700,
+      "height": 466,
+      "mime-type": "image/jpeg",
+      "filesize": 52721,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-700x466.jpg"
+     },
+     "grandtour-gallery-list": {
+      "width": 500,
+      "height": 500,
+      "mime-type": "image/jpeg",
+      "filesize": 44700,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-500x500.jpg"
+     },
+     "grandtour-blog": {
+      "width": 960,
+      "height": 636,
+      "mime-type": "image/jpeg",
+      "filesize": 90633,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-960x636.jpg"
+     },
+     "grandtour-album-grid": {
+      "width": 800,
+      "height": 940,
+      "mime-type": "image/jpeg",
+      "filesize": 119952,
+      "url": "https://www.visitbanskabystrica.sk/wp-content/uploads/2026/10/Richard-Autner-2026-scaled-1-800x940.jpg"
+     }
+    },
+    "_foreign_id": 118187
+   },
+   "all_day": false,
+   "start_date": "2026-11-14 19:00:00",
+   "start_date_details": {
+    "year": "2026",
+    "month": "11",
+    "day": "14",
+    "hour": "19",
+    "minutes": "00",
+    "seconds": "00"
+   },
+   "end_date": "2026-11-14 21:00:00",
+   "end_date_details": {
+    "year": "2026",
+    "month": "11",
+    "day": "14",
+    "hour": "21",
+    "minutes": "00",
+    "seconds": "00"
+   },
+   "utc_start_date": "2026-11-14 19:00:00",
+   "utc_start_date_details": {
+    "year": "2026",
+    "month": "11",
+    "day": "14",
+    "hour": "19",
+    "minutes": "00",
+    "seconds": "00"
+   },
+   "utc_end_date": "2026-11-14 21:00:00",
+   "utc_end_date_details": {
+    "year": "2026",
+    "month": "11",
+    "day": "14",
+    "hour": "21",
+    "minutes": "00",
+    "seconds": "00"
+   },
+   "timezone": "UTC+0",
+   "timezone_abbr": "UTC+0",
+   "cost": "",
+   "cost_details": {
+    "currency_symbol": "",
+    "currency_position": "prefix",
+    "values": []
+   },
+   "website": "https://www.robotnickydom.sk/podujatia/richard-autner-band-banska-bystrica/",
+   "show_map": false,
+   "show_map_link": false,
+   "hide_from_listings": false,
+   "sticky": false,
+   "featured": false,
+   "categories": [],
+   "tags": [],
+   "venue": [],
+   "organizer": []
+  }
+ ],
+ "rest_url": "https://www.visitbanskabystrica.sk/wp-json/tribe/events/v1/events/?page=1&per_page=50&start_date=2026-10-20 00:00:00&end_date=2028-10-20 23:59:59&status=publish",
+ "total": 1,
+ "total_pages": 1
+}

@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-vyvoj-strednej-dlzky-rokov-2000-2021-2
+  namespace: bratislava
+  title:
+    sk: 'Verejné čítanie: Vývoj strednej dĺžky života pri narodení mužov v BA a na SR v období rokov 2000 – 2021'
+    en: 'Public read: Life expectancy of men at birth in Bratislava and Slovakia, 2000-2021'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  # Read only, the rows of this one hub dataset (CC BY 4.0, nothing about a person); discovery
+  # beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:vyvoj-strednej-dlzky-rokov-2000-2021-2[.][a-z0-9.-]+$

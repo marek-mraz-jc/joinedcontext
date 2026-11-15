@@ -1,0 +1,17 @@
+# The static half of the same feed: name and position of every station, which change when a
+# station is built or removed rather than every minute.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-citybikes-gbfs-info
+  namespace: helsinki
+  title: { en: City bike station information (GBFS), fi: Kaupunkipyöräasemien tiedot (GBFS) }
+spec:
+  type: http
+  http:
+    url: https://gbfs.theta.fifteen.eu/gbfs/2.2/helsinki/en/station_information.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 15s
+    # One message per station (PL-114): the runner and the Portal sample split data.stations.
+    records: data.stations

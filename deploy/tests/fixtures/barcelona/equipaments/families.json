@@ -1,0 +1,281 @@
+{
+ "6409e71a-6c79-4d21-9c14-373dbd01f26d": {
+  "success": true,
+  "result": {
+   "records": [
+    {
+     "town": "Barcelona",
+     "kind": "",
+     "street": "Carrer del Doctor Trueta",
+     "name": "Colla Excursionista La Senyera",
+     "zip": "08005",
+     "lon": "2.202314910567326",
+     "modified": "2023-10-18T14:55:08",
+     "phone": "932 250 029",
+     "num": "195",
+     "inst": "",
+     "lat": "41.39786016772367",
+     "district": "Sant Martí",
+     "main": "True",
+     "id": "1029210328",
+     "kinds": [
+      ""
+     ]
+    },
+    {
+     "town": "Barcelona",
+     "kind": "Altres esports",
+     "street": "Carrer de la Diputació",
+     "name": "Piscina Coberta",
+     "zip": "08015",
+     "lon": "2.1509827380561313",
+     "modified": "2026-07-27T12:31:13",
+     "phone": "934234350",
+     "num": "15",
+     "inst": "Centre Esportiu Municipal Joan Miró",
+     "lat": "41.37845545369519",
+     "district": "Eixample",
+     "main": "True",
+     "id": "1057133310",
+     "kinds": [
+      "Instal·lacions esportives",
+      "Natació",
+      "Altres esports"
+     ]
+    },
+    {
+     "town": "BARCELONA",
+     "kind": "",
+     "street": "C Aragó",
+     "name": "Associació de Pesca Submarina Barcelona",
+     "zip": "08026",
+     "lon": "2.184779067406765",
+     "modified": "2023-10-16T17:48:32",
+     "phone": "640 614 248",
+     "num": "559",
+     "inst": "",
+     "lat": "41.407371351841434",
+     "district": "Sant Martí",
+     "main": "True",
+     "id": "1108125041",
+     "kinds": [
+      ""
+     ]
+    }
+   ]
+  }
+ },
+ "f3721b17-bf9e-4bdd-853c-cb6200e1b442": {
+  "success": true,
+  "result": {
+   "records": [
+    {
+     "town": "BARCELONA",
+     "kind": "Parcs i jardins",
+     "street": "Ferran Junoy",
+     "name": "Jardins de la Campana de La Maquinista",
+     "zip": "08030",
+     "lon": "2.1959361294253372",
+     "modified": "2026-02-20T08:04:53",
+     "phone": null,
+     "num": "12",
+     "inst": "",
+     "lat": "41.43809175061317",
+     "district": "Sant Andreu",
+     "main": "True",
+     "id": "1003125537",
+     "kinds": [
+      "Parcs i jardins"
+     ]
+    },
+    {
+     "town": "BARCELONA",
+     "kind": "Bars i pubs musicals",
+     "street": "Rocafort",
+     "name": "Cerveseria Antibiòtic",
+     "zip": "08029",
+     "lon": "2.1462705631276715",
+     "modified": "2017-10-13T11:51:55",
+     "phone": "933223266",
+     "num": "225",
+     "inst": "",
+     "lat": "41.38450415759101",
+     "district": "Eixample",
+     "main": "True",
+     "id": "1033142110",
+     "kinds": [
+      "Bars i pubs musicals"
+     ]
+    },
+    {
+     "town": "BARCELONA",
+     "kind": "Parcs i jardins",
+     "street": "C Mendel",
+     "name": "Jardí de Joan Llarch",
+     "zip": "08034",
+     "lon": "2.1199379356081067",
+     "modified": "2026-02-20T08:04:24",
+     "phone": null,
+     "num": "4",
+     "inst": "",
+     "lat": "41.397576792774",
+     "district": "Sarrià-Sant Gervasi",
+     "main": "True",
+     "id": "1080145330",
+     "kinds": [
+      "Parcs i jardins"
+     ]
+    },
+    {
+     "town": "Barcelona",
+     "kind": "Biblioteques",
+     "num": "8",
+     "name": "Biblioteca La Barceloneta -  La Fraternitat",
+     "zip": "08003",
+     "lon": "2.1888716402624535",
+     "modified": "2026-10-09T12:05:23",
+     "phone": "932253574",
+     "street": "Carrer de Felícia Fuster i Viladecans",
+     "lat": "41.379232628875926",
+     "kinds": [
+      "Biblioteques",
+      "Sales d'estudi",
+      "Biblioteques municipals"
+     ],
+     "district": "Ciutat Vella",
+     "main": "True",
+     "id": "1138134103"
+    }
+   ]
+  }
+ },
+ "796a7ba1-a8c9-4b98-832b-4723136b0e82": {
+  "success": true,
+  "result": {
+   "records": [
+    {
+     "town": "BARCELONA",
+     "kind": "",
+     "street": "",
+     "name": "Telèfon d'Informació del Tesoro Público",
+     "zip": null,
+     "lon": "-1.4894678076317491",
+     "modified": "2025-04-15T16:34:36",
+     "phone": "902155050",
+     "num": null,
+     "inst": "",
+     "lat": "-0.0010942582961042412",
+     "district": "",
+     "main": "True",
+     "id": "157123350",
+     "kinds": [
+      ""
+     ]
+    },
+    {
+     "town": "BARCELONA",
+     "kind": "",
+     "street": "",
+     "name": "Telèfon d'informació de las Fuerzas Armadas y Profesionales",
+     "zip": null,
+     "lon": "-1.4894678076317491",
+     "modified": "2025-04-15T16:34:36",
+     "phone": "902432100",
+     "num": null,
+     "inst": "Ministeri de Defensa",
+     "lat": "-0.0010942582961042412",
+     "district": "",
+     "main": "True",
+     "id": "157142119",
+     "kinds": [
+      ""
+     ]
+    },
+    {
+     "town": "BARCELONA",
+     "kind": "",
+     "street": "",
+     "name": "Telèfon d'informació per les PYME",
+     "zip": null,
+     "lon": "-1.4894678076317491",
+     "modified": "2015-02-09T13:16:49",
+     "phone": "900190092",
+     "num": null,
+     "inst": "Ministeri d'Indústria i Turisme",
+     "lat": "-0.0010942582961042412",
+     "district": "",
+     "main": "True",
+     "id": "207122733",
+     "kinds": [
+      ""
+     ]
+    }
+   ]
+  }
+ },
+ "29d9ff10-6892-4f16-9012-d5c4997857e7": {
+  "success": true,
+  "result": {
+   "records": [
+    {
+     "town": "BARCELONA",
+     "kind": "",
+     "street": "C València",
+     "name": "Centre d'Ensenyament Master-D",
+     "zip": "08015",
+     "lon": "2.1491637885123245",
+     "modified": "2019-10-10T14:25:17",
+     "phone": "900304030",
+     "num": "76",
+     "inst": "",
+     "lat": "41.381917074465356",
+     "district": "Eixample",
+     "main": "True",
+     "id": "1031123107",
+     "kinds": [
+      ""
+     ]
+    },
+    {
+     "town": "BARCELONA",
+     "kind": "Idiomes",
+     "street": "Padilla",
+     "name": "Tecniber-5",
+     "zip": "08025",
+     "lon": "2.1682314733291035",
+     "modified": "2012-03-15T12:13:18",
+     "phone": "934562887",
+     "num": "395",
+     "inst": "",
+     "lat": "41.41216981869672",
+     "district": "Horta-Guinardó",
+     "main": "True",
+     "id": "1047164651",
+     "kinds": [
+      "Informàtica",
+      "Idiomes"
+     ]
+    },
+    {
+     "town": "Barcelona",
+     "kind": "Universitats",
+     "street": "Gran Via de les Corts Catalanes",
+     "name": "Institut de Matemàtica",
+     "zip": "08007",
+     "lon": "2.164030568391206",
+     "modified": "2024-05-22T12:16:35",
+     "phone": "934021385",
+     "num": "585",
+     "inst": "",
+     "lat": "41.38657708352391",
+     "district": "Eixample",
+     "main": "True",
+     "id": "1066143504",
+     "kinds": [
+      "Universitats"
+     ]
+    }
+   ]
+  }
+ }
+}

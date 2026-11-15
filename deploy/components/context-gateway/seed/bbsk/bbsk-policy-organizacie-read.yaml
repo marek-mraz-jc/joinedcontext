@@ -1,0 +1,27 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: organizacie-read
+  namespace: bbsk
+  title: { sk: 'Verejné čítanie: organizácie kraja' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-registre }
+  assigner: did:web:bbsk.sk
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint bbsk-organizacie, and only
+  # its types: the space's other types stay with their own datasets (T-4344).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: PublicOrganization

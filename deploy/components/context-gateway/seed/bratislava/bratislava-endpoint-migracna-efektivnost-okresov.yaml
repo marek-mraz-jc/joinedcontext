@@ -1,0 +1,44 @@
+# Migration efficiency of Bratislava's districts: one public dataset of the hub (T-5274), item 4d53dbb2ae334f95a121343390dc0ad7, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-migracna-efektivnost-okresov
+  namespace: bratislava
+  title:
+    sk: Migračná efektívnosť okresov Bratislavy
+    en: Migration efficiency of Bratislava's districts
+  description:
+    sk: 'Ukazovatele tabuľky „Migračná efektívnosť okresov Bratislavy“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Migration efficiency of Bratislava's districts”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: txd677i6j33whikyzfb4tlbd3l6tijj5
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-migracna-efektivnost-okresov
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/4d53dbb2ae334f95a121343390dc0ad7
+        title:
+          sk: Migračná efektívnosť okresov Bratislavy
+          en: Migration efficiency of Bratislava's districts
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Migračná efektívnosť okresov Bratislavy. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Migration efficiency of Bratislava's districts. Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

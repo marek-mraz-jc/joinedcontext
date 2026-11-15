@@ -1,0 +1,68 @@
+# The mapping of the pid-fare-zones pipeline (T-5423, PL-03): one FareZone per PID fare zone of the IPR
+# layer Pražská integrovaná doprava - tarifní pásma (14 areas of 13 zones on 2026-10-24), read from its
+# FeatureServer with the outline simplified to about 5 m (0.5 MB instead of 2.8 MB).
+#
+# Ids: urn:ngsi-ld:FareZone:{org}:{space}:pid-zone-{id}, IPR's zone number: 0 is the inner area that
+# counts as zones P, 0 and B, 1 to 12 the rings around it. A zone IPR draws as two areas (12) is one
+# entity with both outlines. The Policy public-tarifni-pasma names them.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a GUID, with a zone number outside 0 to 12,
+# without an outline or with a vertex outside the PID area (Prague and Central Bohemia plus about 30 km)
+# is dropped, and so is a second record of one GUID; the log line counts each reason. An answer that is
+# not a feature list, an empty one, or one where fewer than half the areas survive fails the run, so
+# the zones already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes; more than 16 MiB is not the fare zone layer".format(content().length())) } else { this }
+        - mapping: |
+            let features = this.features.catch(null)
+            root = if this.exceededTransferLimit.catch(false) == true {
+              throw("IPR cut the fare zone layer at its record limit; the run would miss zones")
+            } else if $features.type() != "array" {
+              throw("IPR's fare zone layer did not answer a feature list")
+            } else if $features.length() == 0 {
+              throw("IPR's fare zone layer listed no zone; the layer is never empty, so the read failed")
+            } else {
+              $features.map_each(f -> {
+                "key": f.properties.globalid.catch("").string().re_replace_all("[{}]", "").lowercase(),
+                "zone": f.properties.id.catch(null),
+                "code": f.properties.popis.catch("").string().re_replace_all("\\s", ""),
+                "polygons": if f.geometry.type.catch("") == "Polygon" { [f.geometry.coordinates.catch([])] } else if f.geometry.type.catch("") == "MultiPolygon" { f.geometry.coordinates.catch([]) } else { [] }
+              })
+            }
+        - mapping: |
+            let rows = this
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))
+            let numbered = $usable.filter(r -> r.zone.type() == "number" && r.zone >= 0 && r.zone <= 12 && r.zone.floor() == r.zone && r.code.re_match("^[P0B,0-9]{1,10}$"))
+            let drawn = $numbered.filter(r -> r.polygons.length() > 0 && r.polygons.all(p -> p.type() == "array" && p.length() > 0 && p.all(ring -> ring.type() == "array" && ring.length() >= 4)))
+            let inside = $drawn.filter(r -> r.polygons.flatten().flatten().all(c -> c.type() == "array" && c.length() >= 2 && c.index(0).type() == "number" && c.index(1).type() == "number" && c.index(0) >= 12.0 && c.index(0) <= 16.6 && c.index(1) >= 48.8 && c.index(1) <= 51.3))
+            let unique = $inside.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta unnumbered = $usable.length() - $numbered.length()
+            meta undrawn = $numbered.length() - $drawn.length()
+            meta outside = $drawn.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("IPR's fare zone layer: only %v of %v areas have a GUID, a zone number and an outline in the PID area".format($unique.length(), $rows.length()))
+            } else { $unique }
+        - log:
+            level: INFO
+            message: 'pid-fare-zones: read ${! meta("read") }, dropped ${! meta("unusable") } without GUID, ${! meta("unnumbered") } with a zone number outside 0 to 12, ${! meta("undrawn") } without an outline, ${! meta("outside") } outside the PID area, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            let rows = this
+            root = $rows.map_each(r -> r.zone.int64()).unique().sort().map_each(z -> $rows.filter(r -> r.zone.int64() == z)).map_each(parts -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:pid-zone-%v".format("FareZone", env("JC_ORG_DOMAIN"), env("JC_SPACE"), parts.index(0).zone.int64()),
+              "type": "FareZone",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": if parts.index(0).code.contains(",") { "Tarifní pásma " + parts.index(0).code.replace_all(",", ", ") } else { "Tarifní pásmo " + parts.index(0).code } } },
+              "zoneCode": { "type": "Property", "value": parts.index(0).code },
+              "location": { "type": "GeoProperty", "value": { "type": "MultiPolygon", "coordinates": parts.map_each(r -> r.polygons).flatten().map_each(p -> p.map_each(ring -> ring.map_each(c -> c.slice(0, 2)))) } },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+              "source": { "type": "Property", "value": "https://geoportalpraha.cz/data-a-sluzby/6391e7e27ff042a690617195a457f5a8" }
+            })
+        # One zone per request to the endpoint: the outer rings are about 50 KB each.
+        - unarchive: { format: json_array }
+        - split: { size: 1 }
+        - archive: { format: json_array }

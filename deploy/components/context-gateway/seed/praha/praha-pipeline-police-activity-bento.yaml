@@ -1,0 +1,85 @@
+# The mapping of the police-activity pipeline (T-5428, PL-03): one KeyPerformanceIndicator per figure
+# per month of the municipal police's monthly activity reports (Městská policie hl. m. Prahy, CC0,
+# LKOD f57a3a32), 92 figures a month for the whole city: offences found by kind, fines and their sum,
+# tows, other activities and the 156 line.
+#
+# The file is one year (`mesicni_zpravy_za_rok_2025.json`): month keys MMYYYY, each a tree of the
+# report's headings whose leaves are the figures as text, a count with a space as the thousands
+# separator ("151 802") or a share with a decimal comma ("95,0"). A month not reported yet is {}.
+# Each year's file adds months to the same series `mp-cinnost`; the DataSource's URL moves to the
+# next year when the police publish it (ponytail: the year is in the file name, like the budget's).
+#
+# Ids: urn:ngsi-ld:KeyPerformanceIndicator:{org}:{space}:mp-cinnost-{YYYY-MM}-{12 hex}, the hex the
+# start of the SHA-256 of the headings, so one figure keeps its id from month to month without
+# putting Czech text into an id. The Policy public-cinnost-mestske-policie names them.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a figure that is not a number, a count below 0, a share
+# outside 0 to 100, a month after the current one, or a second figure of one id is dropped, and the
+# log line counts each reason. An answer that is not a month object, one without a reported month,
+# or one where fewer than half the figures survive (a format change) fails the run, so the figures
+# already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 4194304 { throw("the police answered %v bytes; more than 4 MiB is not a year of reports".format(content().length())) } else { this }
+        - mapping: |
+            let set = "mp-cinnost"
+            let byunit = false
+            let source = "https://mppraha.cz/opendata/cinnost/mesicni_zpravy_za_rok_2025.json"
+            map leaves {
+              root = if this.v.type() == "object" { this.v.key_values().sort_by(kv -> kv.key).map_each(kv -> { "p": this.p.append(kv.key.trim()), "v": kv.value }.apply("leaves")).flatten() } else { [this] }
+            }
+            let months = if this.type() == "object" { this.key_values().filter(kv -> kv.key.re_match("^(0[1-9]|1[0-2])[0-9]{4}$") && kv.value.type() == "object" && kv.value.length() > 0) } else { null }
+            let rows = if $months == null { null } else { $months.map_each(m -> (if $byunit { m.value.key_values().map_each(u -> { "u": u.key.trim(), "t": u.value }) } else { [{ "u": "", "t": m.value }] }).map_each(g -> { "p": [], "v": g.t }.apply("leaves").map_each(l -> l.assign({ "u": g.u, "period": m.key.slice(2, 6) + "-" + m.key.slice(0, 2) }))).flatten()).flatten() }
+            root = if $months == null {
+              throw("the police file %v is not an object of months".format($source))
+            } else if $rows.length() == 0 {
+              throw("the police file %v holds no reported month; it is never empty after January, so the download failed".format($source))
+            } else {
+              { "set": $set, "source": $source, "byunit": $byunit, "rows": $rows }
+            }
+        - mapping: |
+            let now = now().ts_format("2006-01", "Europe/Prague")
+            let rows = this.rows.map_each(r -> r.assign({
+              "n": if r.v.type() == "string" { r.v.re_replace_all("[\\s\\x{00a0}]", "").replace_all(",", ".") } else { "" },
+              "share": r.p.index(0).has_prefix("Procentické"),
+              "key": "%v-%v".format(r.period, ([r.u].filter(u -> u != "").concat(r.p).join("/")).hash("sha256").encode("hex").slice(0, 12))
+            }))
+            let numeric = $rows.filter(r -> r.n.re_match("^-?[0-9]+(\\.[0-9]+)?$")).map_each(r -> r.assign({ "x": r.n.number() }))
+            let plausible = $numeric.filter(r -> r.x >= 0 && (!r.share || r.x <= 100))
+            let current = $plausible.filter(r -> r.period <= $now)
+            let unique = $current.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $numeric.length()
+            meta range = $numeric.length() - $plausible.length()
+            meta future = $plausible.length() - $current.length()
+            meta duplicate = $current.length() - $unique.length()
+            meta set = this.set
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("police file %v: only %v of %v figures are plausible numbers of a past month".format(this.source, $unique.length(), $rows.length()))
+            } else { this.assign({ "rows": $unique }) }
+        - log:
+            level: INFO
+            message: '${! meta("set") }: read ${! meta("read") }, dropped ${! meta("unusable") } not a number, ${! meta("range") } out of range, ${! meta("future") } of a future month, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            let set = this.set
+            let source = this.source
+            root = this.rows.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:%v-%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $set, r.key),
+              "type": "KeyPerformanceIndicator",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": "%v%v (%v)".format(if r.u == "" { "" } else { r.u + ": " }, r.p.join(" / "), r.period) } },
+              "dataSet": { "type": "Property", "value": $set },
+              "indicator": { "type": "Property", "value": r.p.join(" / ") },
+              "refArea": { "type": "Property", "value": "CZ010" },
+              "refPeriod": { "type": "Property", "value": r.period },
+              "dimensionKey": if r.u == "" { null } else { { "type": "Property", "value": r.u } },
+              "kpiValue": if r.share { { "type": "Property", "value": r.x, "unitCode": "P1" } } else if r.p.index(0).contains("v Kč") { { "type": "Property", "value": r.x } } else { { "type": "Property", "value": r.x, "unitCode": "C62" } },
+              "unitText": { "type": "Property", "value": if r.share { "%" } else if r.p.index(0).contains("v Kč") { "Kč" } else { "počet" } },
+              "dataProvider": { "type": "Property", "value": "Městská policie hl. m. Prahy (CC0)" },
+              "source": { "type": "Property", "value": $source }
+            }.filter(kv -> kv.value != null))
+        # 500 records per request to the endpoint, about 0.5 MB, far under the broker's 4 MiB body limit.
+        - unarchive: { format: json_array }
+        - split: { size: 500 }
+        - archive: { format: json_array }

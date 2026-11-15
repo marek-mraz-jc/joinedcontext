@@ -1,0 +1,21 @@
+{{- /* Branch previews (ADR-N-062, T-5548): the pods of a namespace labelled
+       sandbox.joinedcontext.com/lifecycle=preview reach this component for its own database pv_{slug}; pg_hba refuses its role on every other one.
+       The other half is the preview's own egress rule (components/preview). Rendered only
+       where global.branchPreviews.enabled, which the production guard refuses. */}}
+{{- if (dig "branchPreviews" "enabled" false $.Values.global) }}
+postgres-from-branch-previews:
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              sandbox.joinedcontext.com/lifecycle: preview
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 4143
+{{- end }}

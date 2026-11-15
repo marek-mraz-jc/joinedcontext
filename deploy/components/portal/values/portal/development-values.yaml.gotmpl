@@ -1,0 +1,44 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Minimal Resources
+# - [x] Minimal storage -> database-backed portal
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    # T-5282: 276Mi an hour after a start on dev, 318Mi 15 min later, 474Mi before the
+    # 19:41Z restart (2026-10-22): glibc keeps freed memory (T-5283), + 20 %.
+    memory: 576Mi
+  limits:
+    cpu: '1'
+    # 1Gi: at 512Mi the kernel killed the Portal five times on 2026-09-25 (14:09 to 15:20Z)
+    # under the seeded pipelines and the App lanes, and each kill was a 504 for a signed-in
+    # person until the replica was ready again (T-2927). Resident is 250 to 350Mi between peaks.
+    # At 1Gi it was killed again at 17:17Z the same day: 1536Mi while T-2968 finds the peak.
+    memory: 1536Mi
+
+env:
+  # glibc keeps up to 8 malloc arenas per core, and a tokio service holds freed memory in them;
+  # two arenas trade a little allocation contention for that memory (T-4351, measured on dev).
+  MALLOC_ARENA_MAX: "2"
+  # Batch-lane pipeline runs the runner holds at once (PL-78). The seed asks about 5,400 batch
+  # runs a day of about 670 pipelines; one lane at a time left slovensko's 350 queued last
+  # by name, and none ran on dev or prod for a day (T-5778). Three fit the runner's 3Gi limit:
+  # events and statistics runs ask 128-512 MB each, beside the resident streams.
+  JC_PORTAL_PIPELINES_BATCH_CONCURRENCY: "3"
+{{- if and (has "keycloak" .Values.components) (eq $global.profile "development") }}
+  # The live journeys sign in as the demo people and mark the assistant runs they start as
+  # test runs (AG-93, T-2816). The Portal accepts the mark only from the users named here and
+  # refuses it with 403 for anyone else; production names nobody. The realm stores each demo
+  # person as `{name}@{orgDomain}` (registrationEmailAsUsername), and that is the username the
+  # Portal compares; the bare key refused every journey's header.
+  {{- $journeyUsers := list }}
+  {{- range $name, $_ := readFile "../../../keycloak/demo-users.yaml" | fromYaml }}
+  {{- $journeyUsers = append $journeyUsers (printf "%s@%s" $name $global.orgDomain) }}
+  {{- end }}
+  JC_PORTAL_JOURNEY_USERS: {{ $journeyUsers | sortAlpha | join "," | quote }}
+{{- end }}

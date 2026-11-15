@@ -1,0 +1,333 @@
+{
+ "4667": [
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "km/h",
+   "aggregatedValue": 400.0
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 34.15444015444015
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "km/h",
+   "aggregatedValue": 42.29978586723769
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 35.02290076335878
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "km/h",
+   "aggregatedValue": 39.79318181818182
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 33.69785575048733
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "km/h",
+   "aggregatedValue": 46.60129310344828
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 33.86585365853659
+  }
+ ],
+ "4668": [
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  }
+ ],
+ "5595": [
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-17T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-16T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-15T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-14T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  }
+ ],
+ "4705": [
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-29T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-28T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-27T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-26T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-25T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-24T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-23T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-22T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "km/h",
+   "aggregatedValue": 0.0
+  }
+ ],
+ "4702": [],
+ "4703": [
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Itään",
+   "unit": "km/h",
+   "aggregatedValue": 55.060810810810814
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Länteen",
+   "unit": "km/h",
+   "aggregatedValue": 54.06053811659193
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Itään",
+   "unit": "km/h",
+   "aggregatedValue": 51.422273781902554
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Länteen",
+   "unit": "km/h",
+   "aggregatedValue": 50.78
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Itään",
+   "unit": "km/h",
+   "aggregatedValue": 54.593258426966294
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Länteen",
+   "unit": "km/h",
+   "aggregatedValue": 54.480898876404495
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Itään",
+   "unit": "km/h",
+   "aggregatedValue": 55.62227602905569
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Länteen",
+   "unit": "km/h",
+   "aggregatedValue": 56.33574879227053
+  }
+ ]
+}

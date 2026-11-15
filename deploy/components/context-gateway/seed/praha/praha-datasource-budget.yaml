@@ -1,0 +1,15 @@
+# The approved and the adjusted budget of the City of Prague for 2026, 1612 lines, updated monthly (LKOD dataset 1a7e50c8).
+# No key. The catalogue declares the data free of any rights (no licence needed), and the file itself names no unit.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mhmp-budget
+  namespace: praha
+  title: { en: City budget 2026 (MHMP), cs: Rozpočet hl. m. Prahy 2026 (MHMP) }
+spec:
+  type: http
+  http:
+    url: https://opendata-storage.praha.eu/ROZ_rozpocet_finance/rozpocet/Zdroje/2026/Rozpocet_MHMP_2026.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

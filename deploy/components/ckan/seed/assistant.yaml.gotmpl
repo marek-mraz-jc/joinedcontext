@@ -1,0 +1,81 @@
+{{- /*
+The AssistantDeployment of one catalogue instance (T-4636): every catalogue page frames it. What is
+the instance's own (its project, words, sources, Endpoints and the projects it may read) comes from
+`ckan.<instance>.assistantSeed` and `ckan.<instance>.site`; what every instance shares (the channel,
+the read-only tools, the limits and the model) is written here once.
+Takes (dict "name" <instance> "instance" <ckan.<instance>> "domain" <global.domain>).
+*/ -}}
+{{- $i := .instance }}
+{{- $a := $i.assistantSeed }}
+{{- $langs := $a.languages }}
+{{- $title := index $a "title" | default dict }}
+{{- if not $title }}
+{{- range $l := $langs }}{{ with index (index (index $i "site" | default dict) "title" | default dict) $l }}{{ $_ := set $title $l . }}{{ end }}{{ end }}
+{{- end -}}
+apiVersion: joinedcontext.com/v1alpha1
+kind: AssistantDeployment
+metadata:
+  name: {{ $i.assistant }}
+  namespace: {{ $a.project }}
+spec:
+  # The catalogue's one general assistant (T-4342, T-4636): every page of the instance's catalogue
+  # frames /d/{{ $i.assistant }}/widget. It finds datasets in the catalogue's records and the bodies'
+  # Endpoint descriptions (`sources`) and reads the numbers through their public Endpoints
+  # (`connectors`); a deployment belongs to one project, the others are in `scope.projects`, and
+  # only their public Endpoints and sources are reachable (MF-52).
+  publicId: {{ $i.assistant }}
+  channel: public
+  # Nothing here may hurt if it leaks (T-4149 item 4); the guide stays in the cached prefix (AG-108).
+  systemPrompt: |-
+{{ $a.systemPrompt | trim | indent 4 }}
+  sources: [{{ join ", " $a.sources }}]
+  # Read-only tools on the bodies' public open-data Endpoints (T-4256, T-4281).
+  connectors:
+{{- range $e := $a.connectors }}
+    - { endpoint: {{ $e }}, tools: [list_types, get_type, list_attributes, describe_schema, query_entities, summarize, get_entity, query_temporal], timeoutSeconds: 20 }
+{{- end }}
+  scope: { projects: [{{ join ", " $a.scope }}] }
+  allowedOrigins: [https://{{ $i.subDomain }}.{{ .domain }}]
+  # The city assistants' limits (T-4149 item 1, T-4286: 300 questions per visitor a month by
+  # default); $1 a day. One data question over five publishers measured 33,744 tokens on dev
+  # (2026-10-16, 5 model calls). T-4660: the owner's third question used up 80,000 (117,171
+  # tokens in 3 questions), so a conversation gets 300,000 and each question's loop answers by
+  # 60,000 (the platform's QUESTION_TOKENS); the day's cost cap still binds first. T-4737: data
+  # answers measured 194,597 tokens mean and 296,985 p90 (dev turns, 2026-10-19), so 300,000 refused
+  # the owner's second question on prod; 3,000,000 holds 10 answers at the p90 and the day's cost
+  # cap binds before it.
+  rateLimit: { requestsPerMinute: 30, perClientPerMinute: 10, perClientPerHour: 60, perClientPerDay: 200, streamsPerClient: 2 }
+  budget:
+    tokensPerDay: 5000000
+    tokensPerConversation: 3000000
+    costPerDayUsd: 1
+    costPerConversationUsd: 0.15
+    outputTokensPerAnswer: 700
+    messagesPerConversation: 30
+    questionChars: 1000
+    # T-5928: the region office trying it shares one address; the rate above paces it.
+    visitorSharePercent: 100
+  model: { router: google/gemini-3.8-flash, answer: google/gemini-3.8-flash }
+  # Title and greeting per language (T-4365); the title is the catalogue's own name unless the
+  # assistant sets one, and the widget writes "Asistent"/"Assistant" beside it.
+  theme:
+    title:
+{{- range $l := $langs }}{{ with index $title $l }}
+      {{ $l }}: {{ . | quote }}
+{{- end }}{{ end }}
+    greeting:
+{{- range $l := $langs }}{{ with index $a.greeting $l }}
+      {{ $l }}: {{ . | quote }}
+{{- end }}{{ end }}
+  suggestions:
+{{- range $l := $langs }}{{ with index $a.suggestions $l }}
+    {{ $l }}:
+{{- range $s := . }}
+      - {{ $s | quote }}
+{{- end }}
+{{- end }}{{ end }}
+  disclaimer:
+{{- range $l := $langs }}{{ with index $a.disclaimer $l }}
+    {{ $l }}: {{ . | quote }}
+{{- end }}{{ end }}
+  languages: [{{ join ", " $langs }}]

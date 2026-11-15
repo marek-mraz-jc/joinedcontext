@@ -1,0 +1,12 @@
+# Who may propose an App in sharing (T-4911): its author. demo.author owns sharing-private by its
+# owner annotation (T-4910); proposing alone opens no private App. A proposal still needs an approver.
+apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: sharing-authors
+  namespace: org
+spec:
+  subjects:
+    - user: de300000-0000-4000-8000-00000000000d # demo.author
+  role: app-editor
+  scope: { project: sharing }

@@ -1,0 +1,164 @@
+# Helsinki area statistics, population (T-5258): the KeyPerformanceIndicator entities of the
+# statistics pipeline whose id carries the theme `population`, one per indicator and area, the newest
+# period as the value and every period since the first run in the history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-statistics-population
+  namespace: helsinki
+  title:
+    fi: Väestö — Helsingin aluesarjat
+    sv: Befolkning — Helsingfors områdesserier
+    en: Population — Helsinki area statistics
+  description:
+    fi: 'Helsingin aluesarjojen tilastot: syntyneet, kuolleet, perheet ja väestö äidinkielen mukaan; kaupungin, suurpiirien, peruspiirien ja osa-alueiden tasolla. Yksi Smart Data Models KeyPerformanceIndicator kutakin tunnuslukua ja aluetta kohden. Lähde: Helsingin kaupunki, kaupunkitutkimus ja -tilastot (Aluesarjat), CC BY 4.0.'
+    sv: 'Helsingfors områdesserier: födda, döda, familjer och befolkningen efter modersmål; för staden, stordistrikten, distrikten och delområdena. En Smart Data Models KeyPerformanceIndicator per nyckeltal och område. Källa: Helsingfors stad, stadsforskning och statistik (Aluesarjat), CC BY 4.0.'
+    en: 'Helsinki area statistics: births, deaths, families and the population by native language; for the city, its major districts, basic districts and sub-districts. One Smart Data Models KeyPerformanceIndicator per indicator and area, the newest period as kpiValue and the earlier periods in its history. Properties beyond the model: districtCode (the code of the area in the statistics of the city), divisionLevel (city, majorDistrict, basicDistrict, subDistrict or cityPart), refArea (the AdministrativeArea of the sub-district), statisticsTable and dimensionKey (the source table and cell). Source: City of Helsinki, Urban Research and Statistics (Aluesarjat), CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: hb4cgyuttzzhtgxangivybcsvjx747ui
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-population
+  # The NGSI-LD door also answers the temporal API, the series per indicator. An indicator has
+  # no geometry of its own: OGC API Features serves it as a feature without one.
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, kaupunkitutkimus ja -tilastot (Aluesarjat), CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, stadsforskning och statistik (Aluesarjat), CC BY 4.0'
+      en: 'Source: City of Helsinki, Urban Research and Statistics (Aluesarjat), CC BY 4.0'
+    themes: [SOCI, REGI]
+    keywords:
+      fi: [väestö, syntyneet, kuolleet, aluesarjat]
+      sv: [befolkning, födda, döda, områdesserier]
+      en: [population, births, deaths, area statistics]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: ANNUAL
+    source:
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vaerak/alu_vaerak_004r.px/
+        title: { fi: Aluesarjat alu_vaerak_004r, en: Area statistics table alu_vaerak_004r }
+        description:
+          fi: Pääkaupunkiseudun väestö
+          en: Population of Helsinki, Espoo, Vantaa and Kauniainen by age groups 31.12.1961-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vaerak/alu_vaerak_004p.px/
+        title: { fi: Aluesarjat alu_vaerak_004p, en: Area statistics table alu_vaerak_004p }
+        description:
+          fi: Pääkaupunkiseudun väestö
+          en: Population of Helsinki, Espoo, Vantaa and Kauniainen by native language and age group 31.12.1998-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010h.px/
+        title: { fi: Aluesarjat alu_vamuu_010h, en: Area statistics table alu_vamuu_010h }
+        description:
+          fi: Pääkaupunkiseudun syntyneet
+          en: Births by area in Helsinki, Espoo, Vantaa and Kauniainen beginning from 1998
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010o.px/
+        title: { fi: Aluesarjat alu_vamuu_010o, en: Area statistics table alu_vamuu_010o }
+        description:
+          fi: Pääkaupunkiseudun kuolleet
+          en: Deaths in Helsinki, Espoo, Vantaa and Kauniainen 1998-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__perh/alu_perh_006t.px/
+        title: { fi: Aluesarjat alu_perh_006t, en: Area statistics table alu_perh_006t }
+        description:
+          fi: Pääkaupunkiseudun perheväestö
+          en: Families in Helsinki, Espoo, Vantaa and Kauniainen starting 31.12.1998
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__ennak/alu_ennak_006r.px/
+        title: { fi: Aluesarjat alu_ennak_006r, en: Area statistics table alu_ennak_006r }
+        description:
+          fi: Väestönmuutosten ennakkotiedot
+          en: Preliminary vital statistics of the Helsinki region
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__ennak/alu_ennak_006u.px/
+        title: { fi: Aluesarjat alu_ennak_006u, en: Area statistics table alu_ennak_006u }
+        description:
+          fi: Kuntien välisen ja ulkomaisen muuttoliikkeen ennakkotiedot neljännesvuosittain
+          en: Preliminary migration between municipalities and countries in the Helsinki region 2010-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__mutau/alu_mutau_009o.px/
+        title: { fi: Aluesarjat alu_mutau_009o, en: Area statistics table alu_mutau_009o }
+        description:
+          fi: Tulomuuttajat
+          en: Migration in the Helsinki region by educational level and gender
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__mutau/alu_mutau_009p.px/
+        title: { fi: Aluesarjat alu_mutau_009p, en: Area statistics table alu_mutau_009p }
+        description:
+          fi: Lähtömuuttajat
+          en: Emigrants of the Helsinki region by educational level and gender
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__perh/alu_perh_005y.px/
+        title: { fi: Aluesarjat alu_perh_005y, en: Area statistics table alu_perh_005y }
+        description:
+          fi: Pääkaupunkiseudun perheet
+          en: Families in Helsinki, Espoo, Vantaa and Kauniainen by family type starting 31.12.1998
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__perh/alu_perh_007h.px/
+        title: { fi: Aluesarjat alu_perh_007h, en: Area statistics table alu_perh_007h }
+        description:
+          fi: Pääkaupunkiseudun lapsiperheet
+          en: Families with children in Helsinki, Espoo, Vantaa and Kauniainen by number of children (un
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__perh/alu_perh_009k.px/
+        title: { fi: Aluesarjat alu_perh_009k, en: Area statistics table alu_perh_009k }
+        description:
+          fi: Pääkaupunkiseudun lapsiperheet
+          en: Families with children in Helsinki, Espoo, Vantaa and Kauniainen by number 1998-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__perh/alu_perh_009x.px/
+        title: { fi: Aluesarjat alu_perh_009x, en: Area statistics table alu_perh_009x }
+        description:
+          fi: Helsingin seudun perheet
+          en: Families in the Helsinki region by family type
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__perh/alu_perh_009z.px/
+        title: { fi: Aluesarjat alu_perh_009z, en: Area statistics table alu_perh_009z }
+        description:
+          fi: Helsingin seudun lapset (0-17-vuotiaat)
+          en: Children in the Helsinki region by age group and family type
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__perh/alu_perh_010a.px/
+        title: { fi: Aluesarjat alu_perh_010a, en: Area statistics table alu_perh_010a }
+        description:
+          fi: Helsingin perheväestö
+          en: Families in Helsinki region by age of children
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vaerak/alu_vaerak_004q.px/
+        title: { fi: Aluesarjat alu_vaerak_004q, en: Area statistics table alu_vaerak_004q }
+        description:
+          fi: Pääkaupunkiseudun väestö
+          en: Population of Helsinki, Espoo, Vantaa and Kauniainen by gender, age and language (Swedish)
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vaerak/alu_vaerak_004s.px/
+        title: { fi: Aluesarjat alu_vaerak_004s, en: Area statistics table alu_vaerak_004s }
+        description:
+          fi: Uudenmaan väestö
+          en: Population of Uusimaa by native language, gender and age 31.12.1994-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vaerak/alu_vaerak_004t.px/
+        title: { fi: Aluesarjat alu_vaerak_004t, en: Area statistics table alu_vaerak_004t }
+        description: { fi: Uudenmaan väestö, en: Population of Uusimaa by age 31.12.1961- }
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010g.px/
+        title: { fi: Aluesarjat alu_vamuu_010g, en: Area statistics table alu_vamuu_010g }
+        description:
+          fi: Helsingin, Espoon ja Vantaan muuttaneet
+          en: Internal migration by area and age group in Helsinki, Espoo and Vantaa 1998-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010r.px/
+        title: { fi: Aluesarjat alu_vamuu_010r, en: Area statistics table alu_vamuu_010r }
+        description:
+          fi: Muuttoliike
+          en: 'Uusimaa: Migration by region of origin or destination, native language and age'
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010t.px/
+        title: { fi: Aluesarjat alu_vamuu_010t, en: Area statistics table alu_vamuu_010t }
+        description: { fi: Uudenmaan syntyneet, en: "Uusimaa: Born according to mother's age" }
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010u.px/
+        title: { fi: Aluesarjat alu_vamuu_010u, en: Area statistics table alu_vamuu_010u }
+        description: { fi: Uudenmaan kuolleet, en: 'Uusimaa: Deaths by age and gender' }
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010v.px/
+        title: { fi: Aluesarjat alu_vamuu_010v, en: Area statistics table alu_vamuu_010v }
+        description: { fi: Väestönmuutokset, en: Vital statistics of the Helsinki region }
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010w.px/
+        title: { fi: Aluesarjat alu_vamuu_010w, en: Area statistics table alu_vamuu_010w }
+        description: { fi: Muuttoliike, en: Migration in the Helsinki region }
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010x.px/
+        title: { fi: Aluesarjat alu_vamuu_010x, en: Area statistics table alu_vamuu_010x }
+        description: { fi: Muuttoliike, en: Migration in the Helsinki region by age group }
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__vrm__vamuu/alu_vamuu_010z.px/
+        title: { fi: Aluesarjat alu_vamuu_010z, en: Area statistics table alu_vamuu_010z }
+        description: { fi: Kuolleet, en: Deaths in the Helsinki region by age and gender }
+    pipelineRef: { kind: Pipeline, name: statistics }

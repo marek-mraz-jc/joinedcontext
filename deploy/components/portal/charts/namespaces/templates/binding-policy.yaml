@@ -1,0 +1,41 @@
+{{- $release := .Values.release }}
+{{- $sa := .Values.serviceAccount }}
+{{- /*
+  The namespace a RoleBinding of the Portal's lands in must be one the Portal made (T-4775):
+  policy.yaml checks the name only, so a `{release}-{anything}-apps` namespace someone else
+  created would take the Portal's binding and hand it that namespace's Secrets and Deployments.
+  A policy of its own because it reads namespaceObject, which the kyverno CLI cannot supply
+  offline; tests/rbac-redteam.sh judges it on a live API server.
+*/}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $release }}-portal-apps-bindings
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        resources: ["rolebindings"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+  matchConditions:
+    - name: the-portal
+      expression: request.userInfo.username == "system:serviceaccount:{{ $sa.namespace }}:{{ $sa.name }}"
+  validations:
+    - expression: >-
+        namespaceObject != null && has(namespaceObject.metadata.labels)
+        && "joinedcontext.com/managed-by" in namespaceObject.metadata.labels
+        && namespaceObject.metadata.labels["joinedcontext.com/managed-by"] == "joinedcontext-portal"
+        && "joinedcontext.com/project" in namespaceObject.metadata.labels
+        && namespaceObject.metadata.name == "{{ $release }}-" + namespaceObject.metadata.labels["joinedcontext.com/project"] + "-apps"
+      messageExpression: >-
+        "The Portal may only bind in a namespace it created, labelled joinedcontext.com/managed-by=joinedcontext-portal, not in " + request.namespace + " (AP-117)."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $release }}-portal-apps-bindings
+spec:
+  policyName: {{ $release }}-portal-apps-bindings
+  validationActions: [Deny]

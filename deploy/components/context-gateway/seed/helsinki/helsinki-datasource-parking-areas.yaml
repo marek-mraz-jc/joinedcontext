@@ -1,0 +1,16 @@
+# The city's parking guide (Parkkiopas), every parking area and its estimated capacity in one page, 1830 areas on
+# 2026-09-25. No key. CC-BY-4.0, read from the HRI catalogue (package rajapinta-helsingin-pysakointipaikkojen-kaytosta).
+# The live count per area is a request per area, 1830 of them a poll, and is not read.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: parkkiopas-parking-areas
+  namespace: helsinki
+  title: { en: Parking areas (Parkkiopas), fi: Pysäköintialueet (Parkkiopas) }
+spec:
+  type: http
+  http:
+    url: https://pubapi.parkkiopas.fi/public/v1/parking_area/?page_size=2000
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

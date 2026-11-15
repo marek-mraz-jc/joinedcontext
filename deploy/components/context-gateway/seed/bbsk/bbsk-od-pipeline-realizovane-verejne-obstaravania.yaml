@@ -1,0 +1,24 @@
+# One PublicProcurement per row of "Realizované verejné obstarávania" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-realizovane-verejne-obstaravania
+  namespace: bbsk
+  title:
+    sk: Realizované verejné obstarávania
+    en: Realizované verejné obstarávania
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 28 3 * * 1
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-realizovane-verejne-obstaravania
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: PublicProcurement
+    mode: replace
+  quotas:
+    maxMemoryMb: 256
+    cpuMillicores: 100

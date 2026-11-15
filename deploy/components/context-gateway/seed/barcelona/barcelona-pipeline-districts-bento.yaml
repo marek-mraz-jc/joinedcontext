@@ -1,0 +1,53 @@
+# The mapping of the districts pipeline (PL-03, T-5264): one AdministrativeArea per district of
+# Barcelona, its outline and its code, from Open Data BCN's BarcelonaCiutat_Districtes.csv
+# (dataset 20170706-districtes-barris): columns Codi_Districte, nom_districte, geometria_etrs89 and
+# geometria_wgs84, the outline as WKT. Only the WGS84 column is read; its WKT becomes GeoJSON by
+# turning each "x y" pair into [x,y] and each bracket into a JSON one, which serves POLYGON and
+# MULTIPOLYGON alike.
+#
+# Plausibility (owner 2026-10-22): a row whose code is not two digits, whose outline is no polygon
+# or has a vertex outside the municipality's 1 km margin (the space's in-area bbox), and a second
+# row of one code are each dropped and counted by reason in `dropped`, which the next step logs.
+# A file with no district at all fails the run, so the areas stand instead of going stale.
+
+pipeline:
+  processors:
+    - mapping: |
+        let text = if content().length() > 4194304 { throw("the districts file is %d bytes, more than the 4 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿") }
+        let bbox = [2.04, 41.3, 2.24, 41.48]
+        let rows = $text.parse_csv(true, ",").map_each(r -> {
+          "code": r.Codi_Districte.or("").trim(),
+          "name": r.nom_districte.or("").trim(),
+          "wkt": r.geometria_wgs84.or("").trim()
+        })
+        let coded = $rows.filter(r -> r.code.re_match("^[0-9]{2}$") && r.name != "")
+        let shaped = $coded.map_each(r -> r.assign({
+          "type": if r.wkt.has_prefix("MULTIPOLYGON") { "MultiPolygon" } else if r.wkt.has_prefix("POLYGON") { "Polygon" } else { null },
+          "coordinates": r.wkt.re_replace_all("^[A-Z]+ *", "").re_replace_all("(-?[0-9.]+) (-?[0-9.]+)", "[$1,$2]").replace_all("(", "[").replace_all(")", "]").parse_json().catch(null)
+        })).filter(r -> r.type != null && r.coordinates != null).map_each(r -> r.assign({
+          "points": if r.type == "MultiPolygon" { r.coordinates.flatten().flatten() } else { r.coordinates.flatten() }
+        }))
+        let inside = $shaped.filter(r -> r.points.all(p -> p.index(0) >= $bbox.index(0) && p.index(0) <= $bbox.index(2) && p.index(1) >= $bbox.index(1) && p.index(1) <= $bbox.index(3)))
+        # One area per code: the first row of a code stands, a later one is a duplicate.
+        let first = $inside.enumerated().fold({}, item -> if item.tally.exists(item.value.value.code) { item.tally } else { item.tally.assign({ item.value.value.code: item.value.index }) })
+        let unique = $inside.enumerated().filter(e -> $first.get(e.value.code) == e.index).map_each(e -> e.value)
+        root.dropped = {
+          "noCodeOrName": $rows.length() - $coded.length(),
+          "noPolygon": $coded.length() - $shaped.length(),
+          "outsideTheCity": $shaped.length() - $inside.length(),
+          "duplicateCode": $inside.length() - $unique.length()
+        }
+        root.entities = if $unique.length() == 0 { throw("the districts file holds no district") } else { $unique.map_each(r -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:district-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.code),
+          "type": "AdministrativeArea",
+          "name": { "type": "Property", "value": r.name },
+          "districtCode": { "type": "Property", "value": r.code },
+          "divisionLevel": { "type": "Property", "value": "district" },
+          "location": { "type": "GeoProperty", "value": { "type": r.type, "coordinates": r.coordinates } },
+          "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/20170706-districtes-barris" }
+        }) }
+    - log:
+        level: INFO
+        message: 'districts: ${! json("entities").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.entities

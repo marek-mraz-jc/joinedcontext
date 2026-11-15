@@ -1,0 +1,15 @@
+---
+gitea:
+  forge:
+    # The chart builds the reference as `<registry>/<repository>:<tag>-rootless@<digest>`,
+    # so this digest is the one of docker.gitea.com/gitea:1.27.3-rootless, not of the
+    # root-based tag. Re-pin both together:
+    #   curl -sI -H 'Accept: application/vnd.oci.image.index.v1+json' \
+    #     https://docker.gitea.com/v2/gitea/manifests/<tag>-rootless | grep -i docker-content-digest
+    registry: 'docker.gitea.com'
+    repository: 'gitea'
+    # 1.27.1 fixes CVE-2026-60004 (git-hook RCE, CISA KEV), owner decision 2026-10-07 (T-3231).
+    # 1.27.3, the newest patch, still ships the two fixable CRITICALs of 1.27.1 (openssh-keygen,
+    # the bundled runner), excused in ci/pinned-images-ignore.yaml until a release carries them (T-3297).
+    tag: '1.27.3'
+    digest: 'sha256:1c17ecaead42eb3b5391553d8708103a4beb0e86edf5b9ebc1eb269c318845f2'

@@ -1,0 +1,13 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: sharing-bikes
+  namespace: sharing
+  title: { en: Sharing probe }
+  description:
+    en: "The App sharing matrix's space (T-4911): no data of its own, it reads the city-bike stations the helsinki project shares"
+spec:
+  urnSegment: sharing-bikes
+  isSandbox: false
+  dataModelRef: { kind: DataModel, name: sharing-bikes }
+  defaultLocale: en

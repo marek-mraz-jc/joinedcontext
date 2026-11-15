@@ -1,0 +1,69 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "EmissionSource": {
+      "@id": "jc:EmissionSource"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "coEmission": {
+      "@id": "jc:coEmission",
+      "@type": "xsd:float"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "fuelType": {
+      "@id": "jc:fuelType"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "noxEmission": {
+      "@id": "jc:noxEmission",
+      "@type": "xsd:float"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "pm10Emission": {
+      "@id": "jc:pm10Emission",
+      "@type": "xsd:float"
+    },
+    "pm25Emission": {
+      "@id": "jc:pm25Emission",
+      "@type": "xsd:float"
+    },
+    "registerCategory": {
+      "@id": "jc:registerCategory"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "so2Emission": {
+      "@id": "jc:so2Emission",
+      "@type": "xsd:float"
+    },
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "type": "@type",
+    "vocEmission": {
+      "@id": "jc:vocEmission",
+      "@type": "xsd:float"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.12.0"
+}

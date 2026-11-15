@@ -1,0 +1,34 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  name: barcelona
+  namespace: org
+  title: { ca: Ajuntament de Barcelona, es: Ayuntamiento de Barcelona, en: Barcelona City Council }
+  description:
+    ca: Les dades obertes de l'Ajuntament de Barcelona (Open Data BCN) com a dades NGSI-LD dels Smart Data Models.
+    es: Los datos abiertos del Ayuntamiento de Barcelona (Open Data BCN) como datos NGSI-LD de los Smart Data Models.
+    en: The open data of Barcelona City Council (Open Data BCN) as NGSI-LD data of the Smart Data Models.
+spec:
+  # The Ajuntament's own Organization (ADR-N-058, T-5260): Helsinki's administrators hold nothing here.
+  organizationRef: barcelona
+  # Who publishes this data, the did:web assigner of its Apps' Policies (PF-108); describes, grants nothing.
+  domain: barcelona.cat
+  # The body that publishes the project's catalogue /catalog/barcelona.jsonld (EP-127, API/08 section 6).
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    contactPoint: { name: joinedcontext platform, email: hello@joinedcontext.com }
+  # The same quotas as every demo project (T-2873, PF-73): the mechanism stays, nobody reaches it.
+  quotas:
+    contextSpaces: 100
+    residentPipelines: 100
+    publicEndpoints: 100
+    apps: 100
+    ingestEventsPerSecond: 500
+    agentRunsPerDay: 2000
+    entitiesPerSpace: 1000000
+    requestsPerMinute: 6000

@@ -1,0 +1,6 @@
+---
+viz:
+  renderer:
+    # Rendered where the environment lists the component (dev, T-4641).
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "viz") }}

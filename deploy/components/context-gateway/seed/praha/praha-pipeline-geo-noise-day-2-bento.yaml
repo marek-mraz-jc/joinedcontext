@@ -1,0 +1,148 @@
+# The mapping of the geo-noise-day-2 pipeline (T-5683, PL-03): one NoiseZone per polygon of the bands from 45 dB of the IPR layer
+# Hluková mapa – den (26,005 polygons, 41 MB written, on 2026-10-25). A run holds every entity it
+# wrote until it ends (41 MB peaked at 384 MiB under docker run --memory 384m on 2026-10-25; the whole day map,
+# 89 MB, needed more than 512 MiB), so each map is read by three pipelines, a group of bands each.
+# The paged IPR area pipelines of the space (geo-noise-day-0 to -2, geo-noise-night-0 to -2 and
+# geo-flood-small-streams) share this mapping; only the lets of the first step differ.
+#
+# Read in pages (T-5683): the DataSource reads the layer's description, which must list the layer's
+# fields; a count query over `where` sizes the run and each page of `page` records is one request to
+# the layer's FeatureServer. A noise band is one MultiPolygon over the whole city
+# (up to 13 MB), so the noise layers read one band per page, simplified by IPR's server to `offset`
+# degrees (0.00002, about 2 m: the largest band falls from 13 MB to 6.8 MB) and split (`explode`) into
+# one entity per polygon, 72,476 for the day map and 67,228 for the night map. Every request goes to
+# mp.iprpraha.cz; the path comes from the lets below.
+#
+# Ids: urn:ngsi-ld:{class}:{org}:{space}:geo-{set}-{h}, h the SHA-1 of the polygon and the record's
+# coded and numbered values in the shape of a UUID: a polygon carries no GUID of its own once a band is
+# split. The Policy of its class (public-hluk, public-zaplavova-uzemi) names them.
+#
+# Read: the outline (a third, height coordinate dropped), the coded fields (`coded`: the record's field,
+# the attribute it fills and, per code, the model's value, the Czech words of the name and, when the code
+# fills another attribute, that attribute) and the
+# numbered fields (`numbers`: the record's field, the attribute and its lowest and highest plausible
+# value and its UN/CEFACT unit). Nothing else of the layer is read: id_poskyt, poskyt and the shape lengths and areas are IPR's
+# bookkeeping.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a polygon without an outline, with a code outside its list,
+# with a number outside its range or with its first vertex outside Prague's box (the city plus about
+# 1 km) is dropped, and so is a second polygon of one hash in the page; the log line counts each reason
+# per page. A layer that answers no field list, a count of none or over the cap, a page that is not a
+# feature list, or a page where fewer than half the polygons survive (a projection or schema change)
+# fails the run, so the areas already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let set = "noise-day"
+            let type = "NoiseZone"
+            let title = "Hluková mapa povrchové dopravy – den"
+            let item = "934bce6998c84d5ca9a31c4a2d654a2f"
+            let service = "HM_CUR_HM_EKOLA_DEN_P"
+            let where = "db_lo%3E%3D45"
+            let fields = "db_lo,db_hi"
+            let page = 1
+            let offset = "0.00002"
+            let explode = true
+            let cap = 12
+            let chunk = 100
+            let fixed = {"assessmentPeriod": "day"}
+            let coded = []
+            let numbers = [{"field": "db_lo", "attr": "noiseLevelLow", "min": 0, "max": 120, "unit": "2N"}, {"field": "db_hi", "attr": "noiseLevelHigh", "min": 5, "max": 125, "unit": "2N"}]
+            let named = "%v–%v dB"
+            let described = this.fields.catch(null)
+            root = if content().length() > 1048576 || $described.type() != "array" {
+              throw("IPR layer %v did not answer its field list".format($service))
+            } else {
+              { "set": $set, "type": $type, "title": $title, "item": $item, "service": $service, "where": $where, "fields": $fields, "page": $page, "offset": $offset,
+                "explode": $explode, "cap": $cap, "chunk": $chunk, "fixed": $fixed, "coded": $coded, "numbers": $numbers, "named": $named }
+            }
+        - mapping: |
+            meta layer = this.string()
+            meta path = "%v/FeatureServer/0/query?where=%v&returnCountOnly=true&f=json".format(this.service, this.where)
+            root = ""
+        - http:
+            url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/${! @path }
+            verb: GET
+            headers: { Accept: application/json }
+            timeout: 60s
+            retries: 2
+            rate_limit: pipeline_egress
+        - mapping: |
+            let layer = @layer.parse_json()
+            let count = this.count.catch(null)
+            root = if $count.type() != "number" || $count < 1 {
+              throw("IPR layer %v counted no record; the layer is never empty, so the query failed".format($layer.service))
+            } else if $count > $layer.cap {
+              throw("IPR layer %v counted %v records, more than the %v this pipeline reads".format($layer.service, $count, $layer.cap))
+            } else {
+              range(0, ($count / $layer.page).ceil().int64()).map_each(i -> { "offset": i * $layer.page })
+            }
+        - unarchive: { format: json_array }
+    # One page at a time, so a run holds one page in memory, not the layer.
+    - split: { size: 1 }
+    - try:
+        - mapping: |
+            let layer = @layer.parse_json()
+            meta path = "%v/FeatureServer/0/query?where=%v&outFields=%v&orderByFields=objectid&resultOffset=%v&resultRecordCount=%v&outSR=4326&geometryPrecision=6%v&f=geojson".format($layer.service, $layer.where, $layer.fields, this.offset, $layer.page, if $layer.offset != "" { "&maxAllowableOffset=" + $layer.offset } else { "" })
+            root = ""
+        - http:
+            url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/${! @path }
+            verb: GET
+            headers: { Accept: application/geo+json }
+            timeout: 120s
+            retries: 2
+            rate_limit: pipeline_egress
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes for one page; more than 16 MiB is not a page of this layer".format(content().length())) } else { this }
+        - mapping: |
+            let layer = @layer.parse_json()
+            map flat2 {
+              root = if this.type() == "array" && this.length() > 0 && this.index(0).type() == "number" { this.slice(0, 2) } else if this.type() == "array" { this.map_each(c -> c.apply("flat2")) } else { null }
+            }
+            let features = this.features.catch(null)
+            let records = if $features.type() != "array" {
+              throw("IPR layer %v did not answer a feature list at %v".format($layer.service, @path))
+            } else { $features }
+            let parts = $records.map_each(f -> {
+              "p": f.properties.catch({}),
+              "polygons": if f.geometry.type.catch("") == "Polygon" { [f.geometry.coordinates] } else if f.geometry.type.catch("") == "MultiPolygon" { f.geometry.coordinates } else { [null] }
+            }).map_each(f -> if $layer.explode {
+              f.polygons.map_each(c -> { "p": f.p, "g": if c.type() == "array" { { "type": "Polygon", "coordinates": c.apply("flat2") } } else { null } })
+            } else {
+              [{ "p": f.p, "g": if f.polygons.index(0) == null { null } else if f.polygons.length() == 1 { { "type": "Polygon", "coordinates": f.polygons.index(0).apply("flat2") } } else { { "type": "MultiPolygon", "coordinates": f.polygons.apply("flat2") } } }]
+            }).flatten()
+            let rows = $parts.map_each(r -> r.merge({
+              "codes": $layer.coded.map_each(c -> { "attr": c.attr, "hit": c.codes.get(r.p.get(c.field).catch(null).string().re_replace_all("\\.0$", "")).catch(null) }),
+              "values": $layer.numbers.map_each(n -> { "attr": n.attr, "unit": n.unit, "v": r.p.get(n.field).catch(null), "ok": r.p.get(n.field).catch(null).type() == "number" && r.p.get(n.field) >= n.min && r.p.get(n.field) <= n.max }),
+              "v": if r.g == null { null } else { r.g.coordinates.index(0).index(0).catch(null) }
+            }))
+            let usable = $rows.filter(r -> r.g != null && r.codes.filter(c -> c.hit == null).length() == 0 && r.values.filter(n -> !n.ok).length() == 0)
+            let inside = $usable.filter(r -> r.v.type() == "array" && r.v.length() == 2 && r.v.index(0).type() == "number" && r.v.index(1).type() == "number" && r.v.index(0) >= 14.2 && r.v.index(0) <= 14.75 && r.v.index(1) >= 49.9 && r.v.index(1) <= 50.2)
+            let unique = $inside.map_each(r -> r.merge({ "h": [r.g, r.codes.map_each(c -> c.hit.index(0)), r.values.map_each(n -> n.v)].format_json(no_indent: true).hash("sha1").encode("hex") })).unique(r -> r.h)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta set = $layer.set
+            root = if $inside.length() * 2 < $rows.length() {
+              throw("IPR layer %v: only %v of %v polygons at %v have an outline, known codes and values in range in Prague".format($layer.service, $inside.length(), $rows.length(), @path))
+            } else { { "layer": $layer, "rows": $unique } }
+        - log:
+            level: INFO
+            message: 'geo-${! meta("set") }: read ${! meta("read") } polygons, dropped ${! meta("unusable") } without an outline or with an unknown code or a value out of range, ${! meta("outside") } outside Prague, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            let layer = this.layer
+            let source = "https://geoportalpraha.cz/data-a-sluzby/" + $layer.item
+            let entities = this.rows.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:geo-%v-%v".format($layer.type, env("JC_ORG_DOMAIN"), env("JC_SPACE"), $layer.set, "%v-%v-%v-%v-%v".format(r.h.slice(0, 8), r.h.slice(8, 12), r.h.slice(12, 16), r.h.slice(16, 20), r.h.slice(20, 32))),
+              "type": $layer.type,
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": [$layer.title].concat(r.codes.map_each(c -> c.hit.index(1))).concat(if $layer.named != "" { [$layer.named.format(r.values.index(0).v, r.values.index(1).v)] } else { [] }).filter(w -> w != "").slice(0, 2).join(": ") } },
+              "location": { "type": "GeoProperty", "value": r.g },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+              "source": { "type": "Property", "value": $source }
+            }.merge($layer.fixed.map_each(kv -> { "type": "Property", "value": kv.value })).merge(r.codes.map_each(c -> [c.hit.index(2).catch(c.attr), { "type": "Property", "value": c.hit.index(0) }]).concat(r.values.map_each(n -> [n.attr, { "type": "Property", "value": n.v, "unitCode": n.unit }])).fold({}, a -> a.tally.merge({ a.value.index(0): a.value.index(1) }))))
+            root = range(0, ($entities.length() / $layer.chunk).ceil().int64()).map_each(i -> $entities.slice(i * $layer.chunk, [(i + 1) * $layer.chunk, $entities.length()].min()))
+        # `chunk` polygons per request to the endpoint, so one write stays under the broker's 4 MiB body
+        # limit (the largest of 100 noise polygons was 2.4 MB on 2026-10-25).
+        - unarchive: { format: json_array }

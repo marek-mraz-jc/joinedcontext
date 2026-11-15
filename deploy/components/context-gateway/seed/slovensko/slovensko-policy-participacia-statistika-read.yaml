@@ -1,0 +1,28 @@
+# Anyone reads the counts of slovensko-participacia-statistika (T-6505): the one type of that dataset.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: participacia-statistika-read
+  namespace: slovensko
+  title:
+    sk: 'Verejné čítanie: návrhy podľa procesu a stavu'
+    en: 'Public read: proposals by process and state'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: slovensko-participacia }
+  assigner: did:web:joinedcontext.com
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: ProposalStatistic

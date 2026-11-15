@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-pocet-deti-a-materskych-skol-podla-typu
+  namespace: bratislava
+  title:
+    sk: 'Verejné čítanie: Počet detí a materských škôl podľa typu zriaďovateľa v Bratislave v roku 2021'
+    en: 'Public read: Children and kindergartens by type of founder in Bratislava, 2021'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  # Read only, the rows of this one hub dataset (CC BY 4.0, nothing about a person); discovery
+  # beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:pocet-deti-a-materskych-skol-podla-typu[.][a-z0-9.-]+$

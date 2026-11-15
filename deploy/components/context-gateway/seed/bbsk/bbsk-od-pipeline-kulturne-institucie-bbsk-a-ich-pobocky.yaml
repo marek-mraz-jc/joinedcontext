@@ -1,0 +1,24 @@
+# One PointOfInterest per row of "Kultúrne inštitúcie BBSK a ich pobočky" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-kulturne-institucie-bbsk-a-ich-pobocky
+  namespace: bbsk
+  title:
+    sk: Kultúrne inštitúcie BBSK a ich pobočky
+    en: Kultúrne inštitúcie BBSK a ich pobočky
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 20 3 * * *
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-kulturne-institucie-bbsk-a-ich-pobocky
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: PointOfInterest
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

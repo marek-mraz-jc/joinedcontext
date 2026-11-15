@@ -1,0 +1,8 @@
+# The values `helm lint` and tests/test_values_schemas.py render the bare chart with (T-4956):
+# the images every deployment sets from components/ckan/images.yaml. Not a deployment's values.
+ckan:
+  image: { repository: example.invalid/ckan, tag: lint, digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+solr:
+  image: { repository: example.invalid/solr, tag: lint, digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+redis:
+  image: { repository: example.invalid/redis, tag: lint, digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }

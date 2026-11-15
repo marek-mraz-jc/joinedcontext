@@ -1,0 +1,44 @@
+# Young unemployed people by age and sex: one public dataset of the hub (T-5274), item 0e2e825e79d948e6a712c2bbd2876ca7, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-mladych-nezamestnanych-podla-veku
+  namespace: bratislava
+  title:
+    sk: Počet mladých nezamestnaných podľa veku a pohlavia
+    en: Young unemployed people by age and sex
+  description:
+    sk: 'Ukazovatele tabuľky „Počet mladých nezamestnaných podľa veku a pohlavia“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Young unemployed people by age and sex”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: fgyko2ijspcv5nxllb3g6sqpi63g3eck
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-mladych-nezamestnanych-podla-veku
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/0e2e825e79d948e6a712c2bbd2876ca7
+        title:
+          sk: Počet mladých nezamestnaných podľa veku a pohlavia
+          en: Young unemployed people by age and sex
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet mladých nezamestnaných podľa veku a pohlavia. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Young unemployed people by age and sex. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

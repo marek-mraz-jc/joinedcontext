@@ -1,0 +1,42 @@
+# Roles as code (PF-49, PF-56): the approver reviews what others propose and approves the
+# yellow lane, and proposes nothing. The demonstration needs one (CC-34): the Portal refuses an
+# approval of one's own proposal, so the steward proposes and the approver approves on camera.
+# A binding under users/assignments/ hands it to a person (PF-50).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: approver
+  namespace: org
+spec:
+  rules:
+    - kinds:
+        - ContextSpace
+        - DataModel
+        - Mapping
+        - Policy
+        - ScopeDefinition
+        - Endpoint
+        # An endpoint that names a projection carries one, and the Portal proposes the two
+        # as one import: a role that may act on the endpoint and not on its projection cannot
+        # check its own proposal (MP-01, T-1222).
+        - ModelProjection
+        - SharedSpaceReference
+        - ContextSourceRegistration
+        - ServiceAccount
+        - Pipeline
+        - DataSource
+        - App
+        # No CkanInstance: an instance is the administrator's, handed out per instance by its
+        # ckan-admin-{project}-{name} role (PF-107).
+        - Blueprint
+        - DataSpaceParticipant
+        - DataOffer
+        - DataAgreement
+        - SyncSource
+        - Bundle
+        - UiSchema
+        - Subscription
+        - Entity
+        - Dashboard
+        - Layer
+      verbs: [approve]

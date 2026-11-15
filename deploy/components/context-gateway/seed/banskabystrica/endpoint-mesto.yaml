@@ -1,0 +1,54 @@
+# The one door of the city's raw space. Not public, for the same reason the region's is not:
+# these rows are somebody else's published data, mirrored here for the pipelines that read them.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: banskabystrica-mesto
+  namespace: banskabystrica
+  title:
+    sk: Banská Bystrica — zdrojové údaje
+    en: Banská Bystrica, raw data
+spec:
+  contextSpaceRef: banskabystrica-mesto
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-mesto:mesto-pipelines-write
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-mesto:mesto-steward-note
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-mesto:mesto-steward-read
+  slug: ovr4ttzywhad2oiogf67n7zyn2g2elfc
+  audience: organization
+  enabledRepresentations: [ngsi-ld, mcp, csv, websocket, ogc-features, odata]
+  # CC BY-SA 4.0: the water cube is read from data.statistics.sk, whose distribution the national
+  # catalogue licenses CC BY-SA 4.0 (legislation:termsOfUse); the inhabitants register is CC BY 4.0.
+  # Held together, the share-alike licence governs. Water from 1996, the register is today's.
+  catalog:
+    publisher:
+      name: { sk: Mesto Banská Bystrica, en: City of Banská Bystrica }
+      uri: https://www.banskabystrica.sk/
+    license: CC_BYSA_4_0
+    attribution:
+      sk: 'Zdroj: Štatistický úrad SR (DATAcube vh5003rr, údaje VÚVH), CC BY-SA 4.0; Mesto Banská Bystrica, CC BY 4.0'
+      en: 'Source: Statistical Office of the SR (DATAcube vh5003rr, data of the Water Research Institute), CC BY-SA 4.0; City of Banská Bystrica, CC BY 4.0'
+    themes: [SOCI, ENVI]
+    keywords:
+      sk: [obyvatelia, vek, pitná voda, spotreba vody, Banská Bystrica]
+      en: [inhabitants, age, drinking water, water consumption, Banská Bystrica]
+    spatial:
+      - SK032
+      - https://data.gov.sk/id/lau2/SK0321508438
+    temporal: { start: '1996-01-01' }
+    frequency: DAILY
+    source:
+      - url: https://data.slovensko.sk/datasety/c142961e-0503-41e4-9b09-911c39769d73
+        title:
+          sk: Spotreba pitnej vody (ŠÚ SR, vh5003rr)
+          en: Drinking water consumption (Statistical Office of the SR, vh5003rr)
+        description:
+          sk: Fakturovaná pitná voda podľa obcí, ročne; údaje Výskumného ústavu vodného hospodárstva, distribúcia data.statistics.sk pod CC BY-SA 4.0.
+          en: Invoiced drinking water by municipality, yearly; data of the Water Research Institute, the data.statistics.sk distribution under CC BY-SA 4.0.
+      - url: https://data.slovensko.sk/datasety/8196e8cd-75fe-47a2-b36c-cfcd86dc080f
+        title: { sk: Počet občanov podľa veku, en: Inhabitants by age }
+        description:
+          sk: Register obyvateľov mesta Banská Bystrica podľa roku veku, CC BY 4.0.
+          en: The city of Banská Bystrica's register of inhabitants by year of age, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: obyvatelia }

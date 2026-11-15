@@ -1,0 +1,34 @@
+---
+# Browser login for Argo CD (ADR-N-056 §2.8): a public client with PKCE, so no secret exists to
+# leak. Argo CD's RBAC reads the realm roles from a top-level `roles` claim: `platform-admin`
+# administers, as it does in Grafana, and every other login reads.
+argocd:
+  name: Argo CD
+  description: Public PKCE client of the Argo CD UI and CLI for operator login
+  subdomain: argocd
+  redirectPath: /auth/callback
+  # The UI's PKCE callback.
+  additionalRedirectPaths:
+    - /pkce/verify
+  componentNamespaces:
+    - gitops
+  rawValues:
+    publicClient: true
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    attributes:
+      pkce.code.challenge.method: S256
+    protocolMappers:
+      - name: realm-roles
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-realm-role-mapper
+        consentRequired: false
+        config:
+          claim.name: roles
+          multivalued: "true"
+          jsonType.label: String
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"

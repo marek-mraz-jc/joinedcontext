@@ -1,0 +1,13 @@
+# The open-data catalogue the project's cleared Endpoints publish to (EP-62, EP-67). jcctl opens
+# the CKAN organisation `barcelona` with the first Endpoint that publishes, titled in the space's
+# language (ca) and kept in step on every run (ADR-N-058 2.6). The API token is a reference.
+apiVersion: joinedcontext.com/v1alpha1
+kind: CkanInstance
+metadata:
+  name: barcelona
+  namespace: barcelona
+  title: { ca: Ajuntament de Barcelona, es: Ayuntamiento de Barcelona, en: Barcelona City Council }
+spec:
+  url: https://opendata.dev.joinedcontext.com
+  organizationDefault: barcelona
+  apiTokenRef: { name: ckan-api-token, key: token, envVar: CKAN_API_TOKEN }

@@ -1,0 +1,51 @@
+# One catalogue dataset per file family (T-4344, T-5428): KeyPerformanceIndicator of the space praha-mesto whose ids
+# the Policy public-cinnost-mestske-policie-utvary names, so each city table is its own dataset.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-cinnost-mestske-policie-utvary
+  namespace: praha
+  title:
+    cs: Činnost městské policie podle útvarů — Praha
+    en: Municipal police activity by unit — Prague
+  description:
+    cs: 'Měsíční zprávy o činnosti Městské policie hl. m. Prahy podle útvarů: obvodní ředitelství OŘ1 až OŘ15 a hlídkový útvar, přestupky, pokuty, odtahy a další činnost, jedno číslo za měsíc a útvar. Zdroj: Městská policie hl. m. Prahy, CC0.'
+    en: 'The monthly activity reports of the municipal police of Prague per unit: district directorates OŘ1 to OŘ15 and the patrol unit, offences, fines, tows and other activities, one figure a month per unit. Source: Městská policie hl. m. Prahy, CC0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: u4mh3rypiphtfnvznqs2wfxw24ntpzc7
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-cinnost-mestske-policie-utvary
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-zero
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Figures and works of public bodies: the pipeline leaves out every field that names a person.
+    personalData: does-not-contain
+    # Open data under the Czech act on free access to information (DCAT-AP-CZ, API/08 section 3).
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC0
+    attribution:
+      cs: 'Zdroj: Městská policie hl. m. Prahy'
+      en: 'Source: Prague municipal police'
+    themes: [JUST, GOVE]
+    keywords:
+      cs: [Praha, městská policie, přestupky, obvodní ředitelství]
+      en: [Prague, municipal police, offences, police units]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: ANNUAL
+    source:
+      - url: https://mppraha.cz/opendata/cinnost/mesicni_zpravy_za_rok_podle_utvaru_2025.json
+        title:
+          cs: Měsíční zprávy o činnosti Městské policie hl. m. Prahy za rok 2025 podle útvarů
+          en: Monthly activity reports of the Prague municipal police for 2025 by unit
+        description:
+          cs: Měsíční zprávy o činnosti Městské policie hl. m. Prahy podle útvarů, CC0.
+          en: The municipal police of Prague's monthly activity reports per unit, CC0.
+    pipelineRef: { kind: Pipeline, name: police-units }

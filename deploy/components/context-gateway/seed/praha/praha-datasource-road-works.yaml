@@ -1,0 +1,15 @@
+# The works and events on Prague's streets that the city's opravujeme.to service lists for drivers, 1439 on 2026-10-25,
+# updated daily (LKOD 81de503f; the catalogue's URL, whose limit the service ignores). No key; no rights reserved.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: opravujeme-works
+  namespace: praha
+  title: { en: Road works and closures (opravujeme.to), cs: Opravy a uzavírky (opravujeme.to) }
+spec:
+  type: http
+  http:
+    url: https://opravujeme.to/api/action?limit=101
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

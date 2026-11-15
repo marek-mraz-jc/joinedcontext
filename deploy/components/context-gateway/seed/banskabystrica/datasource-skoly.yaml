@@ -1,0 +1,16 @@
+# The national school map (Digitálna mapa škôl) of the Ministry of Education (publisher 00164381): one CSV, `;`-separated with a byte-order mark, 16 553 schools and facilities nationally, 210 of them in Banská Bystrica, 4.6 MB. The service takes no filter, so the mapping keeps the city's rows. No key. CC BY 4.0, read from the dataset's NKOD record.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: minedu-mapa-skol
+  namespace: banskabystrica
+  title:
+    sk: Digitálna mapa škôl (MŠVVaM SR)
+    en: Organization map (Slovak Ministry of Education)
+spec:
+  type: http
+  http:
+    url: https://mapaskol.iedu.sk/data-set.aspx
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 60s

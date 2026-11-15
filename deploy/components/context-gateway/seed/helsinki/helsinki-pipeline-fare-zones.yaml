@@ -1,0 +1,17 @@
+# One AdministrativeArea per HSL fare zone (A to D) of `hsl-fare-zones`, written into the city space (T-5254).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: fare-zones
+  namespace: helsinki
+  title: { en: HSL fare zones }
+spec:
+  class: auto
+  # HSL redraws its zones once in years; a daily read costs four polygons.
+  period: 24h
+  schedule: '30 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hsl-fare-zones }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: AdministrativeArea, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

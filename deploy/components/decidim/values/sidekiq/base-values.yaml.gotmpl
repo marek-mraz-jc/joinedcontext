@@ -1,0 +1,78 @@
+---
+{{- $global := .Values.global }}
+{{- $web := .Values.decidim.web }}
+{{- $images := index .Values.images "decidim" "sidekiq" }}
+{{- $pg := printf "postgres-cluster-rw.%s.svc.cluster.local" .Values.postgres.cluster.namespace }}
+{{- $host := printf "%s.%s" $web.subDomain $global.domain }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem` (the image runs as 10001)
+# - [x] Health -> no port, so readiness reads the process title Sidekiq sets once it runs (below); a dead process restarts the container
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> none
+# - [x] Secrets by reference only, the web's environment (values/env.yaml.tpl)
+
+fullnameOverride: decidim-sidekiq
+nameOverride: decidim-sidekiq
+
+serviceAccount:
+  create: false
+  automountServiceAccountToken: false
+
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+command: ["sh", "-c", "mkdir -m 700 -p \"$TMPDIR\" && exec bundle exec sidekiq -C config/sidekiq.yml"]
+
+service:
+  enabled: false
+
+# Sidekiq titles its process `sidekiq 8.1.7 code [0 of 3 busy]` from its heartbeat on, so the
+# title says the Rails boot finished. No liveness: a restart would only drop the jobs in hand.
+probes:
+  enabled: false
+  readinessExec: ["grep", "-qF", "busy]", "/proc/1/cmdline"]
+
+# Sidekiq finishes the job in hand on TERM within its own 25 s timeout.
+terminationGracePeriodSeconds: 35
+preStopSleepSeconds: 0
+
+{{- $ctx := dict "global" $global "web" $web "pg" $pg "host" $host }}
+{{- $env := (tpl (readFile "../env.yaml.tpl") $ctx | fromYaml).env }}
+env:
+  {{- range $env }}{{ if hasKey . "value" }}
+  {{ .name }}: {{ .value | quote }}
+  {{- end }}{{ end }}
+  SIDEKIQ_CONCURRENCY: "3"
+  JOINEDCONTEXT_TOKEN_URL: {{ printf "https://idm.%s/realms/%s/protocol/openid-connect/token" $global.domain $global.instanceSlug | quote }}
+  JOINEDCONTEXT_CLIENT_ID: slovensko-decidim-publish
+envSecret:
+  {{- range $env }}{{ if hasKey . "valueFrom" }}
+  {{ .name }}: { secret: {{ .valueFrom.secretKeyRef.name }}, key: {{ .valueFrom.secretKeyRef.key }} }
+  {{- end }}{{ end }}
+  JOINEDCONTEXT_CLIENT_SECRET: { secret: keycloak-client-slovensko-decidim-publish, key: client-secret }
+
+# The web's attachments claim: exports and image variants are written where the web serves them.
+extraVolumes:
+  - name: storage
+    persistentVolumeClaim:
+      claimName: decidim-web-files
+  - name: rails-tmp
+    emptyDir: { sizeLimit: 512Mi }
+  - name: rails-log
+    emptyDir: { sizeLimit: 64Mi }
+extraVolumeMounts:
+  - { name: storage, mountPath: /code/storage }
+  - { name: rails-tmp, mountPath: /code/tmp }
+  - { name: rails-log, mountPath: /code/log }
+
+podSecurityContext:
+  {{ merge (dict "runAsUser" 10001 "runAsGroup" 10001 "fsGroup" 10001 "seLinuxOptions" (dict "level" "s0:c311,c742")) .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

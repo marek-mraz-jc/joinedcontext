@@ -1,0 +1,6 @@
+---
+audit-logging:
+  collector:
+    repository: https://helm.vector.dev
+    chart: vector/vector
+    version: '0.58.0'

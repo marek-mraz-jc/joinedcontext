@@ -1,0 +1,24 @@
+# One Address per row of "DTM_BB-Register-adries" (T-4255); the city's address points (DTM_BB), reprojected from S-JTSK.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-dtm-bb-register-adries
+  namespace: banskabystrica
+  title:
+    sk: DTM_BB-Register-adries
+    en: DTM_BB-Register-adries
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 21 1 * * 3
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-dtm-bb-register-adries
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-otvorene-data:banskabystrica-otvorene-data
+  output:
+    type: Address
+    mode: replace
+  quotas:
+    maxMemoryMb: 256
+    cpuMillicores: 100

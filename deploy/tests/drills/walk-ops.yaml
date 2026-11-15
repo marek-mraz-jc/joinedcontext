@@ -1,0 +1,116 @@
+# Throwaway resources of the three operations drills (T-5542). tests/drills/walk_ops.sh fills in
+# @ORG@ (the organization's domain), @OWNER@ (the operator), @SOURCE_URL@ (drill A swaps it for a path that answers 404)
+# @READ_SLUG@ and @WRITE_SLUG@ (26 random characters per run, EP-03) and @RPM@ (runbook 3
+# tightens it), proposes the file with `jcctl apply -f` and deletes it again
+# with `jcctl delete -f`. Nothing here is shared with another project.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: walk
+  namespace: walk-ops
+  title: { en: Operations drill }
+spec:
+  urnSegment: walk
+  # A sandbox expires by itself: a drill that dies half-way leaves nothing behind for long.
+  isSandbox: true
+  ttlDays: 1
+---
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: walk-source
+  namespace: walk-ops
+  title: { en: Drill source }
+spec:
+  type: http
+  http:
+    url: "@SOURCE_URL@"
+    verb: GET
+    headers:
+      Accept: application/json
+    timeout: 10s
+---
+apiVersion: joinedcontext.com/v1alpha2
+kind: Pipeline
+metadata:
+  name: walk-fetch
+  namespace: walk-ops
+  title: { en: Drill pipeline }
+spec:
+  class: auto
+  period: 60s
+  sources:
+    - dataSourceRef: { kind: DataSource, name: walk-source }
+  steps:
+    - processor:
+        mapping: |
+          root = {
+            "id": "urn:ngsi-ld:WalkProbe:walk",
+            "type": "WalkProbe",
+            "status": { "type": "Property", "value": this.status.or("unknown").string() }
+          }
+  outputs:
+    - targetEndpoint: urn:ngsi-ld:Endpoint:@ORG@:walk:walk-write
+      type: WalkProbe
+      mode: upsert
+  quotas:
+    maxMemoryMb: 32
+    cpuMillicores: 50
+---
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: walk-write
+  namespace: walk-ops
+  title: { en: Drill pipeline writes }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: walk }
+  slug: "@WRITE_SLUG@"
+  audience: organization
+  enabledRepresentations: [ngsi-ld]
+---
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: walk-read
+  namespace: walk-ops
+  title: { en: Drill reads }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: walk }
+  slug: "@READ_SLUG@"
+  audience: organization
+  enabledRepresentations: [ngsi-ld]
+  # Drill B sends 20 requests a second for 25 s: 500 calls, under the edge's 600 a minute per
+  # token and address. The bucket (@RPM@/min = 10/s, burst 60) is empty after about 6 s, so
+  # the gateway answers 429 long before the edge would.
+  rateLimits:
+    requestsPerMinute: @RPM@
+    burst: 60
+---
+apiVersion: joinedcontext.com/v1alpha1
+kind: ServiceAccount
+metadata:
+  name: walk-caller
+  namespace: walk-ops
+  title: { en: Drill caller }
+spec:
+  owner: { user: "@OWNER@" }
+  purpose: Calls the drill Endpoint in drills B and C of T-5542, then is deleted
+  roles:
+    - role: space-reader
+      scope: { contextSpace: walk }
+  credentials:
+    - kind: oauth-client
+      name: main
+---
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: walk-caller-read
+  namespace: walk-ops
+  title: { en: The drill caller reads the drill space }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: walk }
+  assigner: did:web:@ORG@
+  assignee: { kind: serviceAccount, id: walk-caller }
+  operations: [retrieveOps]

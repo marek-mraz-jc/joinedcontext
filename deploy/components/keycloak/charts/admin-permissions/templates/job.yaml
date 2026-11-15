@@ -1,0 +1,133 @@
+{{- define "admin-permissions.pod" -}}
+metadata:
+  labels:
+    app.kubernetes.io/name: keycloak-admin-permissions
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    # In a meshed namespace the proxy runs as a native sidecar, so it starts before the
+    # script and stops after it, and the Job completes.
+    config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+spec:
+  restartPolicy: OnFailure
+  # It talks to Keycloak over HTTP and never to the API server: no token (TS-19, CC-12).
+  serviceAccountName: {{ .Values.serviceAccount }}
+  automountServiceAccountToken: false
+  securityContext:
+    {{- toYaml .Values.securityDefaults.podSecurityContext | nindent 8 }}
+  volumes:
+    - name: script
+      configMap:
+        name: keycloak-admin-permissions
+    # kcadm.sh keeps its session in a file and the JVM its scratch: neither on the image.
+    - name: tmp
+      emptyDir: {}
+  containers:
+    - name: sync
+      image: {{ .Values.image }}
+      command: ["/bin/bash", "/script/sync-admin-permissions.sh"]
+      securityContext:
+        {{- toYaml .Values.securityDefaults.securityContext | nindent 12 }}
+      volumeMounts:
+        - name: script
+          mountPath: /script
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+        # kcadm.sh hands KC_OPTS to its JVM: a small heap and its scratch on the volume.
+        - name: KC_OPTS
+          value: "-Xmx96m -Djava.io.tmpdir=/tmp"
+        - name: KEYCLOAK_URL
+          value: {{ required "keycloakUrl" .Values.keycloakUrl | quote }}
+        - name: KEYCLOAK_USER
+          value: {{ required "admin.username" .Values.admin.username | quote }}
+        - name: KEYCLOAK_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.admin.existingSecret }}
+              key: {{ .Values.admin.existingSecretKey }}
+        - name: REALM
+          value: {{ required "realm" .Values.realm | quote }}
+        - name: PRINCIPAL
+          value: {{ .Values.principal | quote }}
+      resources:
+        requests:
+          cpu: 50m
+          memory: 192Mi
+        limits:
+          cpu: 500m
+          memory: 384Mi
+{{- end }}
+{{/*
+  The Portal's client administration, narrowed to its own clients (T-2725, AP-27, AP-111):
+  after every realm import, `sync-admin-permissions.sh` grants `portal-api` the write scopes on
+  the realm's clients and denies them on every client without `managed-by: joinedcontext`,
+  then links every marked `endpoint:` client scope to `mcp-hub` (T-3324).
+  The hook Job runs it after each sync; the CronJob runs it again every few minutes, so a new
+  Endpoint's scope is linked minutes after the Portal creates it, not at the next sync (T-6388).
+  It runs `kcadm.sh` from the Keycloak image itself, so the Job adds no image to pin.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-admin-permissions
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: keycloak-admin-permissions
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  sync-admin-permissions.sh: |
+{{ .Files.Get "files/sync-admin-permissions.sh" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-admin-permissions
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: keycloak-admin-permissions
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    {{- include "admin-permissions.pod" . | nindent 4 }}
+---
+# The same run on a clock (T-6388): the Portal creates an Endpoint's `endpoint:{slug}` scope at
+# once, and the deny keeps it from linking the scope itself, so without this a connector waited
+# for the next deployment sync. It mounts the hook's ConfigMap, which stays between syncs.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: keycloak-admin-permissions-sync
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: keycloak-admin-permissions
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  timeZone: UTC
+  # A run that could not start in time is skipped, never queued: the next one links them all.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      ttlSecondsAfterFinished: 600
+      template:
+        {{- include "admin-permissions.pod" . | nindent 8 }}

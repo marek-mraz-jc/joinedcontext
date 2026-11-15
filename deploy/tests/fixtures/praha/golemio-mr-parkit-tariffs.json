@@ -1,0 +1,1377 @@
+[
+ {
+  "id": "a1a376da-9369-49ba-9bb2-207d3165e249",
+  "charge_bands": [
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "a1a376da-9369-49ba-9bb2-207d3165e249",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "a1a376da-9369-49ba-9bb2-207d3165e249",
+      "charge": "24.9",
+      "charge_type": "other",
+      "charge_order_index": 0,
+      "charge_interval": 3600,
+      "max_iterations_of_charge": 24,
+      "min_iterations_of_charge": 12,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "a1a376da-9369-49ba-9bb2-207d3165e249",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "a1a376da-9369-49ba-9bb2-207d3165e249",
+      "charge": "299",
+      "charge_type": "other",
+      "charge_order_index": 1,
+      "charge_interval": 86400,
+      "max_iterations_of_charge": 30,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "a1a376da-9369-49ba-9bb2-207d3165e249",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "a1a376da-9369-49ba-9bb2-207d3165e249",
+      "charge": "598",
+      "charge_type": "other",
+      "charge_order_index": 2,
+      "charge_interval": 172800,
+      "max_iterations_of_charge": 1,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "b7e3c3ea-1567-4850-b161-268d3c170975",
+  "charge_bands": [
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "b7e3c3ea-1567-4850-b161-268d3c170975",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "b7e3c3ea-1567-4850-b161-268d3c170975",
+      "charge": "47.2",
+      "charge_type": "other",
+      "charge_order_index": 0,
+      "charge_interval": 3600,
+      "max_iterations_of_charge": 24,
+      "min_iterations_of_charge": 12,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "b7e3c3ea-1567-4850-b161-268d3c170975",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "b7e3c3ea-1567-4850-b161-268d3c170975",
+      "charge": "899",
+      "charge_type": "other",
+      "charge_order_index": 1,
+      "charge_interval": 86400,
+      "max_iterations_of_charge": 30,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "b7e3c3ea-1567-4850-b161-268d3c170975",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "b7e3c3ea-1567-4850-b161-268d3c170975",
+      "charge": "1798",
+      "charge_type": "other",
+      "charge_order_index": 2,
+      "charge_interval": 172800,
+      "max_iterations_of_charge": 1,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "ac497b54-7c11-48a0-b48a-0c96efff5599",
+  "charge_bands": [
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "ac497b54-7c11-48a0-b48a-0c96efff5599",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "ac497b54-7c11-48a0-b48a-0c96efff5599",
+      "charge": "10.8",
+      "charge_type": "other",
+      "charge_order_index": 0,
+      "charge_interval": 3600,
+      "max_iterations_of_charge": 24,
+      "min_iterations_of_charge": 12,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "ac497b54-7c11-48a0-b48a-0c96efff5599",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "ac497b54-7c11-48a0-b48a-0c96efff5599",
+      "charge": "249",
+      "charge_type": "other",
+      "charge_order_index": 1,
+      "charge_interval": 86400,
+      "max_iterations_of_charge": 30,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "ac497b54-7c11-48a0-b48a-0c96efff5599",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "ac497b54-7c11-48a0-b48a-0c96efff5599",
+      "charge": "498",
+      "charge_type": "other",
+      "charge_order_index": 2,
+      "charge_interval": 172800,
+      "max_iterations_of_charge": 1,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "ad87218b-ecf1-4609-be04-5f2d09443713",
+  "charge_bands": [
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "ad87218b-ecf1-4609-be04-5f2d09443713",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "ad87218b-ecf1-4609-be04-5f2d09443713",
+      "charge": "45.8",
+      "charge_type": "other",
+      "charge_order_index": 0,
+      "charge_interval": 3600,
+      "max_iterations_of_charge": 24,
+      "min_iterations_of_charge": 12,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "ad87218b-ecf1-4609-be04-5f2d09443713",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "ad87218b-ecf1-4609-be04-5f2d09443713",
+      "charge": "899",
+      "charge_type": "other",
+      "charge_order_index": 1,
+      "charge_interval": 86400,
+      "max_iterations_of_charge": 30,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "ad87218b-ecf1-4609-be04-5f2d09443713",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "ad87218b-ecf1-4609-be04-5f2d09443713",
+      "charge": "1798",
+      "charge_type": "other",
+      "charge_order_index": 2,
+      "charge_interval": 172800,
+      "max_iterations_of_charge": 1,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "e7ecc064-2e77-4881-b823-036ab5ebfadd",
+  "charge_bands": [
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "e7ecc064-2e77-4881-b823-036ab5ebfadd",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "e7ecc064-2e77-4881-b823-036ab5ebfadd",
+      "charge": "8.3",
+      "charge_type": "other",
+      "charge_order_index": 0,
+      "charge_interval": 3600,
+      "max_iterations_of_charge": 24,
+      "min_iterations_of_charge": 6,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "e7ecc064-2e77-4881-b823-036ab5ebfadd",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "e7ecc064-2e77-4881-b823-036ab5ebfadd",
+      "charge": "199",
+      "charge_type": "other",
+      "charge_order_index": 1,
+      "charge_interval": 86400,
+      "max_iterations_of_charge": 30,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Mo"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Tu"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "We"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Th"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Fr"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "primary_source": "mr_parkit",
+    "primary_source_id": "e7ecc064-2e77-4881-b823-036ab5ebfadd",
+    "maximum_duration": null,
+    "valid_from": "2026-10-25T15:15:00.069Z",
+    "valid_to": null,
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "payment_mode": "pre_paid",
+    "url": null,
+    "free_of_charge": false,
+    "payment_methods": [],
+    "charges": [
+     {
+      "id": "e7ecc064-2e77-4881-b823-036ab5ebfadd",
+      "charge": "477",
+      "charge_type": "other",
+      "charge_order_index": 2,
+      "charge_interval": 172800,
+      "max_iterations_of_charge": 1,
+      "min_iterations_of_charge": 0,
+      "valid_from": "2026-10-25T15:15:00.069Z",
+      "periods_of_time": [
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Sa"
+       },
+       {
+        "ph": "ph_off",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       },
+       {
+        "ph": "ph_only",
+        "end": "23:59",
+        "start": "00:00",
+        "day_in_week": "Su"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]

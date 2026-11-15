@@ -1,0 +1,111 @@
+# The mapping of the traffic-counters pipeline (PL-03, T-5374): one TrafficFlowObserved per traffic
+# or bicycle counter of Open Data BCN (aforaments-descriptiu, 881 counters in 2025: 452 of motor
+# traffic, 62 on the ring roads, 412 of bicycles) with its mean working-day intensity (IMD,
+# `laborables`) of the newest month the city published (aforaments-detall, one CSV a year, months
+# 1..12, the year's file a few months after it ends).
+#
+# The DataSource's answer is the CKAN record of aforaments-detall; the newest year's DataStore
+# resource is taken from it, the counter register's resource of that year (or the newest before
+# it) from the record of aforaments-descriptiu, and both are read with one DataStore SQL query
+# that joins a counter's reading to its place. Only resource ids of the UUID form reach the SQL,
+# so no other text of the portal's answers becomes part of the query. A newest year more than two
+# years old fails the run, so a dataset the city renamed does not go quiet.
+#
+# Plausibility (owner 2026-10-22): a row without a counter id (digits, or a ring-road code such as
+# 10-SMD-1), a reading the city marks
+# `Mesura no disponible`, a counter the register does not place (no numeric point), a point outside
+# the municipality's 1 km margin (the space's in-area bbox), an intensity above 200,000 a day (the
+# busiest counter read 96,694 in 2025) and a second row of one counter are dropped, each counted by
+# reason in the run's log line. An answer with no counter at all fails the run, which writes
+# nothing.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let uuid = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            let record = if content().length() > 1048576 { throw("the counter readings record is %d bytes, more than the 1 MiB read".format(content().length())) } else { content().string().parse_json().catch({}) }
+            let files = $record.result.resources.or([]).filter(r -> r.datastore_active.or(false) == true && r.id.or("").re_match($uuid) && r.name.or("").lowercase().re_match("^[0-9]{4}_aforaments?_detall(_valor)?\\.csv$")).sort_by(r -> r.name.slice(0, 4))
+            let newest = if $files.length() == 0 { throw("the counter readings record names no YYYY_aforament_detall_valor.csv in the DataStore") } else { $files.index(-1) }
+            meta counters_year = $newest.name.slice(0, 4)
+            meta counters_readings = if $newest.name.slice(0, 4).number() < now().ts_format("2006", "UTC").number() - 2 { throw("the newest counter readings are of %v, more than two years old".format($newest.name.slice(0, 4))) } else { $newest.id }
+            root = ""
+        - http:
+            url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/package_show?id=aforaments-descriptiu
+            verb: GET
+            headers:
+              Accept: application/json
+              User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+            timeout: 30s
+            retries: 1
+            rate_limit: barcelona_opendata
+        - mapping: |
+            let uuid = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            let record = if content().length() > 1048576 { throw("the counter register record is %d bytes, more than the 1 MiB read".format(content().length())) } else { content().string().parse_json().catch({}) }
+            let files = $record.result.resources.or([]).filter(r -> r.datastore_active.or(false) == true && r.id.or("").re_match($uuid) && r.name.or("").lowercase().re_match("^[0-9]{4}_aforaments?_descripcio\\.csv$") && r.name.slice(0, 4) <= @counters_year).sort_by(r -> r.name.slice(0, 4))
+            let register = if $files.length() == 0 { throw("the counter register record names no YYYY_aforament_descripcio.csv of %v or before in the DataStore".format(@counters_year)) } else { $files.index(-1).id }
+            let readings = @counters_readings
+            meta sql = ("SELECT v.\"Id_aforament\" AS id, v.\"Any\"::int::text AS year, v.\"Mes\"::int::text AS month, v.\"Valor_IMD\" AS imd, d.\"Desc_aforament\" AS name, d.\"Desc_tipus_aforament\" AS kind, d.\"Longitud\" AS lon, d.\"Latitud\" AS lat FROM \"" + $readings + "\" v LEFT JOIN \"" + $register + "\" d ON d.\"Id_aforament\" = v.\"Id_aforament\" WHERE v.\"Codi_tipus_dia\" = 2 AND v.\"Mes\" = (SELECT max(\"Mes\") FROM \"" + $readings + "\") ORDER BY v.\"Id_aforament\" LIMIT 5000").escape_url_query()
+            root = ""
+        - http:
+            url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/datastore_search_sql?sql=${! @sql }
+            verb: GET
+            headers:
+              Accept: application/json
+              User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+            timeout: 60s
+            retries: 1
+            rate_limit: barcelona_opendata
+        - mapping: |
+            let answer = if content().length() > 4194304 { throw("the counter readings answer is %d bytes, more than the 4 MiB read".format(content().length())) } else { content().string().parse_json().catch({}) }
+            let rows = if $answer.success.or(false) != true { throw("Open Data BCN refused the counter readings query: %s".format($answer.error.format_json(no_indent: true).or("no reason given"))) } else if $answer.result.records.or([]).length() >= 5000 { throw("the counter readings answered %d rows, the LIMIT 5000 of its query: raise it, or the rows past it are dropped".format($answer.result.records.length())) } else { $answer.result.records.or([]) }
+            let bbox = [2.04, 41.3, 2.24, 41.48]
+            let numbered = $rows.filter(r -> r.id.or("").string().trim().re_match("^[0-9A-Za-z][0-9A-Za-z-]{0,19}$"))
+            let measured = $numbered.filter(r -> r.imd.or("").string().trim().re_match("^[0-9]{1,9}$"))
+            let placed = $measured.map_each(r -> {
+              "id": r.id.string().trim(),
+              "year": r.year.or("").string().number().int64().catch(0),
+              "month": r.month.or("").string().number().int64().catch(0),
+              "imd": r.imd.string().trim().number().int64(),
+              "name": r.name.or("").string().trim(),
+              "bicycle": r.kind.or("").string().trim() == "Bicis",
+              "lon": r.lon.or("").string().trim().number().catch(null),
+              "lat": r.lat.or("").string().trim().number().catch(null)
+            }).filter(c -> c.lon != null && c.lat != null && c.year >= 2000 && c.month >= 1 && c.month <= 12)
+            let inside = $placed.filter(c -> c.lon >= $bbox.index(0) && c.lon <= $bbox.index(2) && c.lat >= $bbox.index(1) && c.lat <= $bbox.index(3))
+            let ranged = $inside.filter(c -> c.imd <= 200000)
+            let first = $ranged.fold({ "seen": {}, "kept": [] }, t -> if t.tally.seen.exists(t.value.id) { t.tally } else { { "seen": t.tally.seen.merge({ t.value.id: true }), "kept": t.tally.kept.append(t.value) } }).kept
+            root.dropped = {
+              "noCounterId": $rows.length() - $numbered.length(),
+              "noMeasurement": $numbered.length() - $measured.length(),
+              "noPlace": $measured.length() - $placed.length(),
+              "outsideTheCity": $placed.length() - $inside.length(),
+              "intensityOutOfRange": $inside.length() - $ranged.length(),
+              "duplicateCounter": $ranged.length() - $first.length()
+            }
+            root.counters = if $first.length() == 0 { throw("the counter readings of %v hold no counter".format(@counters_year)) } else { $first }
+        - log:
+            level: INFO
+            message: 'traffic counters ${! @counters_year }: ${! json("counters").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.counters
+        - unarchive: { format: json_array }
+        - mapping: |
+            # The month runs from its first midnight in Barcelona to the next month's, both in UTC.
+            map utc {
+              let local = "%04d-%02d-01T00:00:00".format(this.index(0), this.index(1))
+              root = ($local + ($local + "Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_format("-07:00", "Europe/Madrid")).ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            let from = [this.year, this.month].apply("utc")
+            let to = (if this.month == 12 { [this.year + 1, 1] } else { [this.year, this.month + 1] }).apply("utc")
+            root = {
+              "id": "urn:ngsi-ld:%v:%v:%v:aforament-%v".format("TrafficFlowObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id.lowercase()),
+              "type": "TrafficFlowObserved",
+              "name": if this.name == "" { null } else { { "type": "Property", "value": this.name } },
+              "dateObserved": { "type": "Property", "value": $to },
+              "dateObservedFrom": { "type": "Property", "value": $from },
+              "dateObservedTo": { "type": "Property", "value": $to },
+              "intensity": { "type": "Property", "value": this.imd },
+              "vehicleType": if this.bicycle { { "type": "Property", "value": "bicycle" } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [this.lon, this.lat] } },
+              "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/aforaments-detall" }
+            }.filter(entry -> entry.value != null)

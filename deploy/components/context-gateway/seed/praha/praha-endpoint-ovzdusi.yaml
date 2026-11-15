@@ -1,0 +1,50 @@
+# One Smart Data Model type per catalogue dataset (T-4344): AirQualityObserved of the space
+# praha-mesto, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-ovzdusi
+  namespace: praha
+  title: { cs: Kvalita ovzduší — Praha, en: Air quality — Prague }
+  description:
+    cs: 'Hodinové průměry znečišťujících látek na 14 pražských stanicích ČHMÚ. Zdroj: Český hydrometeorologický ústav, CC BY 4.0.'
+    en: "Hourly pollutant means at ČHMÚ's 14 Prague stations. Source: the Czech Hydrometeorological Institute, CC BY 4.0."
+spec:
+  contextSpaceRef: praha-mesto
+  slug: muwmdpwigo7paq3gpy7hrwe7ou35lmaa
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-ovzdusi
+  # SensorThings too: the pollutant slots declare their UCUM unit, which a Datastream needs (EP-125, T-5270).
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp, sta]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    # Open data under the Czech act on free access to information (DCAT-AP-CZ, API/08 section 3).
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: Český hydrometeorologický ústav (CC BY 4.0)'
+      en: 'Source: Czech Hydrometeorological Institute (CC BY 4.0)'
+    themes: [ENVI, HEAL]
+    keywords:
+      cs: [Praha, kvalita ovzduší, PM10, PM2.5, NO2]
+      en: [Prague, air quality, PM10, PM2.5, NO2]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: HOURLY
+    source:
+      - url: https://opendata.chmi.cz/air_quality/now/data/airquality_1h_avg_CZ.csv
+        title:
+          cs: Kvalita ovzduší – aktuální hodinové údaje (ČHMÚ)
+          en: Air quality, current hourly data (ČHMÚ)
+        description:
+          cs: Hodinové průměry všech stanic ČHMÚ, z nichž prostor drží 14 pražských, CC BY 4.0.
+          en: Hourly means of every ČHMÚ station, of which the space keeps Prague's 14, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: air-quality }

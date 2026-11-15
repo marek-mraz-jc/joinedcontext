@@ -1,0 +1,14 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: road-weather
+  namespace: helsinki
+  title: { en: Road weather around Helsinki from Digitraffic }
+spec:
+  class: auto
+  period: 10m
+  schedule: '*/10 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: digitraffic-road-weather }
+  targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

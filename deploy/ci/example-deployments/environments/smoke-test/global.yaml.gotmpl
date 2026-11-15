@@ -1,0 +1,33 @@
+---
+global:
+  # The DNS domain for all services
+  # e.g. this would build the keycloak domain: idm.joinedcontext.test
+  #
+  # PIPELINE_SLUG is injected by the GitLab job:
+  #   * Branch pipelines: $CI_COMMIT_REF_SLUG
+  #   * MR pipelines:     mr-$CI_MERGE_REQUEST_IID
+  domain: {{ requiredEnv "PIPELINE_SLUG" }}.dev.example.org
+
+  # Unique identifier for this deployment instance (used as namespace and keycloak realm)
+  instanceSlug: jc
+
+  # Email of the initial user with admin rights
+  initialUserEmail: {{ env "GITLAB_USER_EMAIL" | default "admin@joinedcontext.test" }}
+
+  # Deployment profile: "development" or "production"
+  # Controls resource limits, replica counts, scaling
+  profile: development
+
+  serviceMesh:
+    # The smoke-test vcluster's Ingress objects are synced to the HOST cluster
+    # (sync.toHost.ingresses), so the ingress controller fronting APISIX
+    # runs outside this vcluster's Linkerd mesh and has no mesh identity. Keep
+    # the APISIX data-plane edge `all-unauthenticated` so that unmeshed,
+    # plaintext ingress traffic is accepted. (The global default is false.)
+    allowUnauthenticatedIngress: true
+
+  ingress:
+    enabled: true
+    # Use your available cluster issuer for production, e.g. 'letsencrypt-prod'
+    clusterIssuer: 'letsencrypt-prod'
+    ingressClass: 'nginx'

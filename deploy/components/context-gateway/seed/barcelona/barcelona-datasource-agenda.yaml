@@ -1,0 +1,28 @@
+# The Ajuntament de Barcelona's three activity agendas (Open Data BCN, CC BY 4.0, updated daily):
+# agenda-diaria, agenda-cultural and agenda-activitats-esportives. Their downloadable files are
+# UTF-16 and up to 200 MB; the portal's DataStore answers one SQL query over all three in UTF-8,
+# one row per activity (its main address first, the sports agenda's row first), only those not
+# ended before yesterday: about 7,700 rows, 2.9 MB, 1.3 s on 2026-10-22. No credential. T-5265.
+# The query, decoded:
+#   SELECT DISTINCT ON (id) ... FROM (<the same columns of each resource> UNION ALL ...) t
+#   WHERE end_date IS NULL OR end_date >= now() - interval '1 day'
+#   ORDER BY id, main = 'True' DESC, src = 'agenda-activitats-esportives' DESC, phone IS NULL
+# Resources: agenda-diaria 877ccf66-9106-4ae2-be51-95a9f6469e4c, agenda-cultural
+# 3abb2414-1ee0-446e-9c25-380e938adb73, agenda-activitats-esportives
+# ab2d47b7-8493-4ed5-9f63-49ed116135f9.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-agenda
+  namespace: barcelona
+  title:
+    ca: Agendes d'activitats de Barcelona (Open Data BCN)
+    es: Agendas de actividades de Barcelona (Open Data BCN)
+    en: Barcelona activity agendas (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/datastore_search_sql?sql=SELECT%20DISTINCT%20ON%20%28id%29%20id%2C%20name%2C%20modified%2C%20street%2C%20num%2C%20zip%2C%20town%2C%20district%2C%20lat%2C%20lon%2C%20starts%2C%20ends%2C%20phone%2C%20src%20FROM%20%28SELECT%20replace%28register_id%2C%20U%26%27%5CFEFF%27%2C%20%27%27%29%20AS%20id%2C%20name%2C%20to_char%28modified%2C%20%27YYYY-MM-DD%22T%22HH24%3AMI%3ASS%27%29%20AS%20modified%2C%20addresses_road_name%20AS%20street%2C%20addresses_start_street_number%3A%3Atext%20AS%20num%2C%20to_char%28addresses_zip_code%2C%20%27FM00000%27%29%20AS%20zip%2C%20addresses_town%20AS%20town%2C%20addresses_district_name%20AS%20district%2C%20addresses_main_address%20AS%20main%2C%20geo_epgs_4326_lat%3A%3Atext%20AS%20lat%2C%20geo_epgs_4326_lon%3A%3Atext%20AS%20lon%2C%20to_char%28start_date%2C%20%27YYYY-MM-DD%27%29%20AS%20starts%2C%20to_char%28end_date%2C%20%27YYYY-MM-DD%27%29%20AS%20ends%2C%20end_date%2C%20CASE%20WHEN%20values_category%20%3D%20%27Tel%C3%A8fons%27%20THEN%20values_value%20END%20AS%20phone%2C%20%27agenda-diaria%27%20AS%20src%20FROM%20%22877ccf66-9106-4ae2-be51-95a9f6469e4c%22%20UNION%20ALL%20SELECT%20replace%28register_id%2C%20U%26%27%5CFEFF%27%2C%20%27%27%29%20AS%20id%2C%20name%2C%20to_char%28modified%2C%20%27YYYY-MM-DD%22T%22HH24%3AMI%3ASS%27%29%20AS%20modified%2C%20addresses_road_name%20AS%20street%2C%20addresses_start_street_number%3A%3Atext%20AS%20num%2C%20to_char%28addresses_zip_code%2C%20%27FM00000%27%29%20AS%20zip%2C%20addresses_town%20AS%20town%2C%20addresses_district_name%20AS%20district%2C%20addresses_main_address%20AS%20main%2C%20geo_epgs_4326_lat%3A%3Atext%20AS%20lat%2C%20geo_epgs_4326_lon%3A%3Atext%20AS%20lon%2C%20to_char%28start_date%2C%20%27YYYY-MM-DD%27%29%20AS%20starts%2C%20to_char%28end_date%2C%20%27YYYY-MM-DD%27%29%20AS%20ends%2C%20end_date%2C%20CASE%20WHEN%20values_category%20%3D%20%27Tel%C3%A8fons%27%20THEN%20values_value%20END%20AS%20phone%2C%20%27agenda-cultural%27%20AS%20src%20FROM%20%223abb2414-1ee0-446e-9c25-380e938adb73%22%20UNION%20ALL%20SELECT%20replace%28register_id%2C%20U%26%27%5CFEFF%27%2C%20%27%27%29%20AS%20id%2C%20name%2C%20to_char%28modified%2C%20%27YYYY-MM-DD%22T%22HH24%3AMI%3ASS%27%29%20AS%20modified%2C%20addresses_road_name%20AS%20street%2C%20addresses_start_street_number%3A%3Atext%20AS%20num%2C%20to_char%28addresses_zip_code%2C%20%27FM00000%27%29%20AS%20zip%2C%20addresses_town%20AS%20town%2C%20addresses_district_name%20AS%20district%2C%20addresses_main_address%20AS%20main%2C%20geo_epgs_4326_lat%3A%3Atext%20AS%20lat%2C%20geo_epgs_4326_lon%3A%3Atext%20AS%20lon%2C%20to_char%28start_date%2C%20%27YYYY-MM-DD%27%29%20AS%20starts%2C%20to_char%28end_date%2C%20%27YYYY-MM-DD%27%29%20AS%20ends%2C%20end_date%2C%20CASE%20WHEN%20values_category%20%3D%20%27Tel%C3%A8fons%27%20THEN%20values_value%20END%20AS%20phone%2C%20%27agenda-activitats-esportives%27%20AS%20src%20FROM%20%22ab2d47b7-8493-4ed5-9f63-49ed116135f9%22%29%20t%20WHERE%20end_date%20IS%20NULL%20OR%20end_date%20%3E%3D%20now%28%29%20-%20interval%20%271%20day%27%20ORDER%20BY%20id%2C%20main%20%3D%20%27True%27%20DESC%2C%20src%20%3D%20%27agenda-activitats-esportives%27%20DESC%2C%20phone%20IS%20NULL%20LIMIT%2020000
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

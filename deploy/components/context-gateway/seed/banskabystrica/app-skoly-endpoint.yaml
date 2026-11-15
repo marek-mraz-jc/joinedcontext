@@ -1,0 +1,18 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-banskabystrica-skoly
+  namespace: banskabystrica
+  title: { en: Schools of Banská Bystrica, sk: Školy mesta Banská Bystrica }
+  annotations: { joinedcontext.com/generated-by: portal/app-reconciler }
+spec:
+  allowedProjects: [banskabystrica]
+  audience: project-list
+  callerRole: true
+  contextSpaceRef: { kind: ContextSpace, name: banskabystrica-verejne }
+  enabledRepresentations: [ngsi-ld, mcp, ogc-features, odata]
+  roles:
+    - name: viewer
+      subjects:
+        - group: banskabystrica-skoly-viewer
+  slug: hm6ypd3qzv2xcnr7wtb4kaf5je

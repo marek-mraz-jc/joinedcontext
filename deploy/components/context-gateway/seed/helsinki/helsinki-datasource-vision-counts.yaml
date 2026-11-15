@@ -1,0 +1,18 @@
+# Forum Virium Helsinki's machine vision counting pilot at Ratapihantie (Wapice Oy, spring 2023): 8
+# lanes' hourly counts per class in one static JSON file of 2.8 MB. No key. CC BY 4.0, read from the
+# HRI catalogue (package datankeruukokeilu-helsingissa-liikennelaskenta-konenaon-avulla, T-5669).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: fvh-vision-counts
+  namespace: helsinki
+  title:
+    en: Machine vision traffic counts, Ratapihantie 2023 (Forum Virium Helsinki)
+    fi: Konenäön liikennelaskennat, Ratapihantie 2023 (Forum Virium Helsinki)
+spec:
+  type: http
+  http:
+    url: https://dl.fvh.fi/sbox_public/liidi2/Wapice_traffic_counts/wapice_traffic_counts.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

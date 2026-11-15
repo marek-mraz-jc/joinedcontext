@@ -1,0 +1,59 @@
+{#
+  "Connect an AI assistant" (T-4114, EP-113, T-4284): the installation's MCP hub, the one address an
+  assistant needs for the whole catalogue, with the steps per client, Claude first. Each block's
+  copy button sits in the block's own header, so the code keeps the card's full width; a URL breaks
+  only before a slash and code scrolls sideways instead of breaking a word. The copy buttons are
+  jc-copy.js's (base.html), the command and the JSON copied as one line and plain JSON (T-4762); without script each block is selected by hand. The status line is the live box's
+  when the dataset page shows one, so the page keeps one id. On /assistants (`editors_only`) the
+  Claude steps are left to the Claude card and the block is the "Any MCP client" one (T-4585),
+  inside the page's developers' fold (T-4628).
+#}
+{% macro copy(target, label, text=none) -%}
+  <button type="button" class="jc-code-copy" data-jc-copy="{{ target }}"{% if text %} data-jc-text="{{ text }}"{% endif %} data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}" aria-label="{{ h.jc_t('copy') }}: {{ label }}">
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M5 1.5A1.5 1.5 0 0 1 6.5 0h7A1.5 1.5 0 0 1 15 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 5 10.5zm1.5 0v9h7v-9zM1 5.5A1.5 1.5 0 0 1 2.5 4H4v1.5H2.5v9h7V13H11v1.5A1.5 1.5 0 0 1 9.5 16h-7A1.5 1.5 0 0 1 1 14.5z"/></svg>
+    <span class="jc-code-copy-label" aria-hidden="true">{{ h.jc_t('copy') }}</span>
+  </button>
+{%- endmacro %}
+{% set mcp = h.jc_mcp_install() %}
+{% if mcp %}
+  <section class="jc-live jc-mcp" aria-labelledby="jc-mcp-title">
+    <h2 id="jc-mcp-title">{{ h.jc_t('any_client') if editors_only else h.jc_t('mcp') }}</h2>
+    {% if not editors_only %}<p>{{ h.jc_t('mcp_lead') }}</p>{% endif %}
+
+    <div class="jc-mcp-body">
+    {% if not editors_only %}
+    <div>
+    <h3 class="jc-mcp-client">{{ h.jc_t('mcp_claude_ai') }}</h3>
+    <ol class="jc-mcp-steps">
+      <li>{{ h.jc_t('mcp_claude_ai_1') }}</li>
+      <li>{{ h.jc_t('mcp_claude_ai_2') }}
+        <div class="jc-code">
+          <div class="jc-code-head"><span id="jc-mcp-url-label">{{ h.jc_t('mcp_url') }}</span>{{ copy('jc-mcp-url', h.jc_t('mcp_url')) }}</div>
+          <p id="jc-mcp-url" class="jc-code-url" aria-labelledby="jc-mcp-url-label">{{ mcp.url_parts | join('<wbr>' | safe) }}</p>
+        </div>
+      </li>
+      <li>{{ h.jc_t('mcp_claude_ai_3') }}</li>
+    </ol>
+
+    </div>
+    {% endif %}
+    <div>
+    <h3 class="jc-mcp-client">{{ h.jc_t('mcp_editors') }}</h3>
+    <p class="jc-mcp-links">
+      <a class="btn btn-default" href="{{ mcp.vscode }}">{{ h.jc_t('mcp_vscode') }}</a>
+      <a class="btn btn-default" href="{{ mcp.cursor }}">{{ h.jc_t('mcp_cursor') }}</a>
+    </p>
+
+    <div class="jc-code">
+      <div class="jc-code-head"><span id="jc-mcp-claude-label">{{ h.jc_t('mcp_claude') }}</span>{{ copy('jc-mcp-claude', h.jc_t('mcp_claude'), mcp.claude_copy) }}</div>
+      <pre id="jc-mcp-claude" aria-labelledby="jc-mcp-claude-label" tabindex="0"><code>{% snippet 'snippets/jc_breakable.html', text=mcp.claude %}</code></pre>
+    </div>
+    <div class="jc-code">
+      <div class="jc-code-head"><span id="jc-mcp-json-label">{{ h.jc_t('mcp_json') }}</span>{{ copy('jc-mcp-json', h.jc_t('mcp_json'), mcp.json_copy) }}</div>
+      <pre id="jc-mcp-json" aria-labelledby="jc-mcp-json-label" tabindex="0"><code>{% snippet 'snippets/jc_breakable.html', text=mcp.json %}</code></pre>
+    </div>
+    </div>
+    </div>
+    {% if not live %}<p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>{% endif %}
+  </section>
+{% endif %}

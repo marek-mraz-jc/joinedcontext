@@ -1,0 +1,19 @@
+# The places of health care of the national register of health care providers (NRPZS), ÚZIS ČR, as
+# the national open data catalogue lists it (dataset 00024341/aa4c99d9f1480cca59807389cf88d4dc): one
+# UTF-8 CSV of the whole country, 28 MB and 41,020 rows on 2026-10-01, renewed monthly. No key.
+# CC BY 4.0 (T-5691).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: nrpzs-health-care
+  namespace: praha
+  title:
+    en: Places of health care (NRPZS, ÚZIS ČR)
+    cs: Místa poskytování zdravotních služeb (NRPZS, ÚZIS ČR)
+spec:
+  type: http
+  http:
+    url: https://datanzis.uzis.gov.cz/data/NR-01-NRPZS/NR-01-06/Otevrena-data-NR-01-06-nrpzs-mista-poskytovani-zdravotnich-sluzeb.csv
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 120s

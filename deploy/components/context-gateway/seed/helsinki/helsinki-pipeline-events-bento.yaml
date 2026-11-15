@@ -1,0 +1,206 @@
+# The mapping of the linked-events pipeline (PL-03): every upcoming event of the City of Helsinki
+# from the Linked Events register (T-5257; before it, today's page only). The reconciler renders
+# the poll of the hel-linked-events DataSource in front and the endpoint upsert after (PL-39,
+# PL-16). The DataSource answers the first page of the whole upcoming list; the run at 02:00 UTC
+# reads every page of it (about 14 000 events, 141 pages on 2026-10-22), every other half hour
+# reads only what the register changed in the last 45 minutes (`last_modified_since`, about 450
+# events an hour), so a change shows within 30 minutes and the nightly sweep heals a missed run.
+# Past events stay in the space as history; nothing here deletes.
+
+pipeline:
+  processors:
+    # An answer over 16 MiB is not a page of 100 events; an empty upcoming list is a broken
+    # register, not a quiet city, and fails the run visibly instead of writing nothing.
+    - mapping: |
+        root = if content().length() > 16777216 {
+          throw("the Linked Events page is %d bytes, more than the 16 MiB read".format(content().length()))
+        } else if this.meta.count.or(0) == 0 {
+          throw("Linked Events lists no upcoming event: nothing is written")
+        } else { this }
+
+    - mapping: |
+        let query = "include=location,keywords&start=today&page_size=100&sort=start_time"
+        let full = now().ts_format("15", "UTC") == "02" && now().ts_format("04", "UTC").number() < 30
+        let since = (now().ts_unix() - 2700).ts_format("2006-01-02T15:04:05Z", "UTC")
+        root = if $full { { "query": $query, "first": this } } else {
+          { "query": $query + "&last_modified_since=" + $since, "first": null }
+        }
+
+    # The incremental run's own first page, which also says how many pages follow.
+    - branch:
+        request_map: |
+          meta query = this.query + "&page=1"
+          root = if this.first != null { deleted() } else { "" }
+        processors:
+          - http:
+              url: https://api.hel.fi/linkedevents/v1/event/?${! @query }
+              verb: GET
+              headers:
+                Accept: application/json
+                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public events)
+              timeout: 60s
+              retries: 2
+        result_map: |
+          root.first = if content().length() > 16777216 { throw("a Linked Events page over 16 MiB") } else { this }
+
+    # One message per page: the first carries its rows, the others the query that reads them.
+    # 300 pages (30 000 events) is twice today's register and the most one run reads.
+    - mapping: |
+        let total = this.first.meta.count.or(0)
+        let pages = [(($total + 99) / 100).floor().int64(), 300].min()
+        let query = this.query
+        let rest = if $pages > 1 { range(2, $pages + 1).map_each(p -> { "query": $query + "&page=" + p.string() }) } else { [] }
+        root = [{ "data": this.first.data.or([]) }].concat($rest)
+    - unarchive: { format: json_array }
+    # A page at a time to the endpoint: one run never holds the whole register.
+    - split: { size: 1 }
+    - branch:
+        request_map: |
+          meta query = this.query.or("")
+          root = if this.query.or(null) == null { deleted() } else { "" }
+        processors:
+          - sleep: { duration: '200ms' }
+          - http:
+              url: https://api.hel.fi/linkedevents/v1/event/?${! @query }
+              verb: GET
+              headers:
+                Accept: application/json
+                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public events)
+              timeout: 60s
+              retries: 2
+        result_map: |
+          root.data = if content().length() > 16777216 { throw("a Linked Events page over 16 MiB") } else { this.data.or([]) }
+
+    # Plausibility (owner 2026-10-22T18:10Z): a row the register really contains and a map or a
+    # time query cannot use is dropped and counted by reason, never guessed at: no position, a
+    # point outside Helsinki and 1 km around it (also a 0,0 or a swapped longitude and latitude),
+    # a start year mistyped as "0026", and the same event twice in one page.
+    - mapping: |
+        map reason {
+          let c = this.location.position.coordinates.or([])
+          let year = this.start_time.or("").slice(0, 4).number().catch(0)
+          root = if $c.length() != 2 || $c.index(0).type() != "number" || $c.index(1).type() != "number" { "no position" }
+            else if $c.index(0) < 24.76 || $c.index(0) > 25.29 || $c.index(1) < 59.91 || $c.index(1) > 60.31 { "outside Helsinki" }
+            else if $year < 2000 || $year > 2100 { "start year out of range" }
+            else if this.id.or("").type() != "string" || this.id.or("") == "" { "no id" }
+            else { null }
+        }
+        let rows = this.data.map_each(e -> e.assign({ "_drop": e.apply("reason") }))
+        let usable = $rows.filter(e -> e._drop == null)
+        let kept = $usable.unique(e -> e.id)
+        let tally = $rows.filter(e -> e._drop != null).fold({}, item -> item.tally.assign({ item.value._drop: item.tally.get(item.value._drop).or(0) + 1 }))
+        let dups = $usable.length() - $kept.length()
+        meta dropped = (if $dups > 0 { $tally.assign({ "duplicate": $dups }) } else { $tally }).format_json(no_indent: true)
+        meta kept = $kept.length().string()
+        root = $kept.map_each(e -> e.without("_drop"))
+    - log:
+        level: INFO
+        message: 'linked-events: ${! @kept } events kept, dropped by reason ${! @dropped }'
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44). A Linked Events
+        # id is `helsinki:agpg4hzprq`; the colon would open a segment inside the URN's own
+        # separator, so it becomes a hyphen.
+        let urn = "urn:ngsi-ld:%v:%v:%v:%v"
+        let domain = env("JC_ORG_DOMAIN")
+        let space = env("JC_SPACE")
+        let id = $urn.format("Event", $domain, $space, this.id.replace_all(":", "-"))
+        let names = this.name.or({}).filter(entry -> entry.value.type() == "string" && entry.value != "")
+        let summaries = this.short_description.or({}).filter(entry -> entry.value.type() == "string" && entry.value != "")
+        let street = this.location.street_address.or({}).fi.or(null)
+        let contact = this.provider_contact_info.or(null)
+        # The register's keywords (YSO terms) in English where it has them, else in Finnish: SDM
+        # Event's `thematic`, a list of keywords.
+        let thematic = this.keywords.or([]).map_each(k -> k.name.en.or(k.name.fi).or(null)).filter(k -> k != null && k.type() == "string" && k.trim() != "").unique()
+        let free = this.offers.or([]).map_each(o -> o.is_free.or(null)).filter(f -> f.type() == "bool")
+        let site = [this.info_url.fi.or(null), this.info_url.en.or(null), this.info_url.sv.or(null)].filter(u -> u != null && u.type() == "string" && u.re_match("^https?://[^\\s/@]+(/\\S*)?$") && u.length() <= 2000).index(0).or(null)
+        let parent = this.super_event."@id".or("").re_find_all_submatch("/event/([A-Za-z0-9_:.-]{1,200})/?$").index(0).index(1).or(null)
+        let place = this.location.id.or("").re_find_all_submatch("^tprek:([0-9]{1,12})$").index(0).index(1).or(null)
+        # The register's publisher (an organization id such as `ahjo:u480400`): one source of the
+        # city's events inventory, so each publisher's count can be read back (T-5666).
+        let publisher = this.publisher.or("").re_find_all("^[A-Za-z0-9_:.-]{1,100}$").index(0).or(null)
+        root = {
+          "id": $id,
+          "type": "Event",
+          "name": if $names.length() > 0 {
+            { "type": "LanguageProperty", "languageMap": $names }
+          } else { null },
+          "description": if $summaries.length() > 0 {
+            { "type": "LanguageProperty", "languageMap": $summaries }
+          } else { null },
+          "startDate": { "type": "Property", "value": this.start_time },
+          "endDate": if this.end_time.or(null) == null { null } else {
+            { "type": "Property", "value": this.end_time }
+          },
+          "eventStatus": { "type": "Property", "value": this.event_status },
+          "location": { "type": "GeoProperty", "value": this.location.position },
+          "address": if $street == null { null } else {
+            { "type": "Property", "value": {
+              "streetAddress": $street,
+              "postalCode": this.location.postal_code.or(null),
+              "addressLocality": this.location.address_locality.or({}).fi.or(null),
+              "addressCountry": "FI"
+            }.filter(entry -> entry.value != null && entry.value != "") }
+          },
+          "thematic": if $thematic.length() == 0 { null } else {
+            { "type": "Property", "value": $thematic.slice(0, [$thematic.length(), 30].min()) }
+          },
+          "isAccessibleForFree": if $free.length() == 0 { null } else {
+            { "type": "Property", "value": $free.all(f -> f) }
+          },
+          "webSite": if $site == null { null } else { { "type": "Property", "value": $site } },
+          "superEvent": if $parent == null { null } else {
+            { "type": "Relationship", "object": $urn.format("Event", $domain, $space, $parent.replace_all(":", "-")) }
+          },
+          # The venue as the city's service register knows it: a `tprek:` place is a Service Map
+          # unit, which the services pipeline writes as a PointOfInterest of the same number.
+          "refPointOfInterest": if $place == null { null } else {
+            { "type": "Relationship", "object": $urn.format("PointOfInterest", $domain, $space, "servicemap-" + $place) }
+          },
+          "contactPoint": if $contact == null || $contact == "" { null } else {
+            { "type": "Property", "value": $contact }
+          },
+          "dataProvider": if $publisher == null { null } else { { "type": "Property", "value": $publisher } },
+          "source": { "type": "Property", "value": "https://api.hel.fi/linkedevents/v1/" }
+        }
+        # The register writes a field it does not have as null or as an empty string in every
+        # language. Copying either through would publish an attribute with nothing in it.
+        root = root.filter(entry -> entry.value != null)
+
+    # One request per page rather than one per event.
+    - archive: { format: json_array }
+
+    # The gateway refuses a whole Event whose link names an entity the space does not hold (DM-70):
+    # a parent event that is already over is not in the upcoming list, and a venue outside
+    # Helsinki or without a name is no unit the services pipeline writes. On 2026-10-31, 43 of 266
+    # sampled events were missing on dev so (F-R2BNT3-004). The page asks the space which of its
+    # targets it holds and keeps only those links; a failed ask writes the page without them, and
+    # the nightly full sweep puts them back.
+    - branch:
+        request_map: |
+          let targets = this.map_each(e -> [e.superEvent.object.or(null), e.refPointOfInterest.object.or(null)]).flatten().filter(t -> t != null).unique()
+          root = if $targets.length() == 0 { deleted() } else { {
+            "type": "Query",
+            "entities": $targets.map_each(id -> { "id": id, "type": id.split(":").index(2) })
+          } }
+        processors:
+          - try:
+              - http:
+                  url: ${JC_GATEWAY_URL}/api/endpoint/si6epqkx364lprho5uaigutk274r5grb/ngsi-ld/v1/entityOperations/query?limit=1000&options=keyValues
+                  verb: POST
+                  headers: { Content-Type: application/json }
+                  oauth2:
+                    enabled: true
+                    client_key: ${JC_CLIENT_ID}
+                    client_secret: ${JC_CLIENT_SECRET}
+                    token_url: ${JC_TOKEN_URL}
+                  timeout: 20s
+                  rate_limit: pipeline_egress
+              - mapping: 'root = { "held": this.map_each(e -> e.id) }'
+          - catch:
+              - mapping: 'root = { "held": [] }'
+        result_map: meta held = this.held.join(" ")
+    - mapping: |
+        let held = @held.or("").split(" ")
+        root = this.map_each(e -> e.filter(kv -> !["superEvent", "refPointOfInterest"].contains(kv.key) || $held.contains(kv.value.object)))

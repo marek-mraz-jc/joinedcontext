@@ -1,0 +1,163 @@
+# The mapping of the osm pipeline (T-4514): the pharmacies, hospitals, clinics, public
+# defibrillators and charging stations OpenStreetMap maps in the district of Banská Bystrica,
+# one PointOfInterest or EVChargingStation per OSM object, once a week.
+#
+# Source: the Overpass API, inside the district's own boundary (OSM relation 388240, okres
+# Banská Bystrica, ref SK0321; Overpass area 3600388240). overpass-api.de first; when that call
+# fails, the kumi.systems mirror. Licence ODbL 1.0: every entity carries "© OpenStreetMap
+# contributors, ODbL 1.0" and the link to its OSM object, and both datasets publish under ODbL.
+#
+# Ids: urn:ngsi-ld:{Type}:banskabystrica.sk:{space}:osm-{node|way|relation}-{osm id}. The OSM id
+# is the object's own, so an object keeps its entity from week to week.
+#
+# Removal: after the map is read, the pipeline asks the space for the osm- entities it holds
+# and deletes, in one batch, those the new answer no longer lists (deleteBatch on only these two
+# types: verejne-osm-delete for the shared pipelines account, verejne-osm-account for pl-osm where
+# each Pipeline runs as its own account). An answer Overpass cut short (its `remark`
+# says so) or one with fewer than 20 objects fails the run before anything is written or
+# deleted, so an outage never empties the dataset. The space holding 1000 or more osm-
+# entities skips the removal rather than judge from one page.
+#
+# Tag values are data: copied into string attributes, never read as instructions or markup.
+
+pipeline:
+  processors:
+    - mapping: |
+        meta overpass = "data=" + "[out:json][timeout:60];area(id:3600388240)->.d;(nwr(area.d)[\"amenity\"~\"^(pharmacy|hospital|clinic|charging_station)$\"];nwr(area.d)[\"emergency\"=\"defibrillator\"];);out center tags;".escape_url_query()
+        root = {}
+
+    - branch:
+        request_map: root = @overpass
+        processors:
+          - http:
+              url: https://overpass-api.de/api/interpreter
+              verb: POST
+              headers:
+                Content-Type: application/x-www-form-urlencoded
+                User-Agent: joinedcontext-banskabystrica/1.0 (+https://dev.joinedcontext.com)
+              timeout: 90s
+              retries: 1
+              rate_limit: pipeline_egress
+        result_map: root.osm = this
+    # A failed first call is the mirror's turn, not a failed run.
+    - catch:
+        - mapping: root = this
+    - branch:
+        request_map: root = if this.osm != null { deleted() } else { @overpass }
+        processors:
+          - http:
+              url: https://overpass.kumi.systems/api/interpreter
+              verb: POST
+              headers:
+                Content-Type: application/x-www-form-urlencoded
+                User-Agent: joinedcontext-banskabystrica/1.0 (+https://dev.joinedcontext.com)
+              timeout: 90s
+              retries: 1
+              rate_limit: pipeline_egress
+        result_map: root.osm = this
+
+    - mapping: |
+        let osm = this.osm.or({})
+        let count = $osm.elements.or([]).length()
+        root = if $osm.remark.or("") != "" {
+          throw("Overpass cut its answer short: " + $osm.remark.string())
+        } else if $count < 20 {
+          throw("Overpass answered %v objects for the district; fewer than 20 is an outage, not the map".format($count))
+        } else { $osm.elements }
+
+    - mapping: |
+        let space = env("JC_SPACE")
+        let attribution = "© OpenStreetMap contributors, ODbL 1.0"
+        let unnamed = {
+          "pharmacy": { "sk": "Lekáreň", "en": "Pharmacy" },
+          "hospital": { "sk": "Nemocnica", "en": "Hospital" },
+          "clinic": { "sk": "Zdravotné stredisko", "en": "Clinic" },
+          "defibrillator": { "sk": "Defibrilátor (AED)", "en": "Defibrillator (AED)" },
+          "charging_station": { "sk": "Nabíjacia stanica", "en": "Charging station" }
+        }
+        let sockets = { "type2": "Type2", "type2_combo": "CCS/SAE", "chademo": "CHAdeMO", "schuko": "Wall_Euro", "type1": "J-1772", "tesla_supercharger": "Tesla" }
+        let vehicles = { "bicycle": "bicycle", "bus": "bus", "hgv": "truck", "motorcar": "car", "motorcycle": "motorcycle" }
+        map text {
+          root = if this.type() == "string" && this.trim() != "" { this.trim() } else { null }
+        }
+        root = this.filter(e -> e.tags.type() == "object" && (e.lon.type() == "number" || e.center.lon.type() == "number")).map_each(e -> {
+          "t": e.tags,
+          "kind": if e.tags.amenity.or("") == "charging_station" { "EVChargingStation" } else { "PointOfInterest" },
+          "local": "osm-%v-%v".format(e.type, e.id),
+          "url": "https://www.openstreetmap.org/%v/%v".format(e.type, e.id),
+          "at": if e.lon.type() == "number" { [e.lon, e.lat] } else { [e.center.lon, e.center.lat] },
+          "cats": (if ["pharmacy", "hospital", "clinic"].contains(e.tags.amenity.or("")) { [e.tags.amenity] } else { [] }).merge(if e.tags.emergency.or("") == "defibrillator" { ["defibrillator"] } else { [] }),
+          # `socket:<kind>` = how many; `yes` counts as one, `no` or 0 as none.
+          "sockets": e.tags.keys().filter(k -> k.re_match("^socket:[a-z0-9_]+$")).map_each(k -> {
+            "type": $sockets.get(k.slice(7)).or("Other"),
+            "n": if e.tags.get(k) == "yes" { 1 } else { e.tags.get(k).int64().catch(0) }
+          }).filter(s -> s.n > 0),
+          "street": [e.tags.get("addr:street").or(e.tags.get("addr:place")).apply("text"), e.tags.get("addr:housenumber").apply("text")].filter(p -> p != null).join(" ")
+        }).map_each(o -> o.assign({
+          "capacity": if o.t.capacity.int64().catch(0) >= 1 { o.t.capacity.int64() } else if o.sockets.map_each(s -> s.n).sum() >= 1 { o.sockets.map_each(s -> s.n).sum().int64() } else { null },
+          "allowed": $vehicles.keys().sort().filter(k -> ["yes", "designated"].contains(o.t.get(k).or(""))).map_each(k -> $vehicles.get(k))
+        })).map_each(o -> {
+          "id": "urn:ngsi-ld:%v:banskabystrica.sk:%v:%v".format(o.kind, $space, o.local),
+          "type": o.kind,
+          "name": { "type": "LanguageProperty", "languageMap": if o.t.name.apply("text") != null { { "sk": o.t.name.trim() } } else { $unnamed.get(if o.kind == "EVChargingStation" { "charging_station" } else { o.cats.index(0) }) } },
+          "category": if o.kind == "PointOfInterest" { { "type": "Property", "value": o.cats } } else { deleted() },
+          "socketType": if o.kind == "EVChargingStation" && o.sockets.length() > 0 { { "type": "Property", "value": o.sockets.map_each(s -> s.type).unique().sort() } } else { deleted() },
+          "capacity": if o.kind == "EVChargingStation" && o.capacity != null { { "type": "Property", "value": o.capacity } } else { deleted() },
+          "allowedVehicleType": if o.kind == "EVChargingStation" && o.allowed.length() > 0 { { "type": "Property", "value": o.allowed } } else { deleted() },
+          "operator": if o.kind == "EVChargingStation" && o.t.operator.apply("text") != null { { "type": "Property", "value": o.t.operator.trim() } } else { deleted() },
+          "openingHours": if o.t.opening_hours.apply("text") != null { { "type": "Property", "value": o.t.opening_hours.trim() } } else { deleted() },
+          "address": if o.street != "" || o.t.get("addr:postcode").apply("text") != null || o.t.get("addr:city").apply("text") != null { { "type": "Property", "value": {
+            "streetAddress": if o.street != "" { o.street } else { deleted() },
+            "postalCode": o.t.get("addr:postcode").apply("text").or(deleted()),
+            "addressLocality": o.t.get("addr:city").apply("text").or(deleted()),
+            "addressCountry": "SK"
+          } } } else { deleted() },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": o.at } },
+          "dataProvider": { "type": "Property", "value": $attribution },
+          "source": { "type": "Property", "value": o.url }
+        })
+
+    # What the map no longer lists leaves the space; the batch delete takes the bare ids.
+    - branch:
+        request_map: |
+          meta keep = this.map_each(e -> e.id).join(" ")
+          # The selector goes in the body: the batch query takes only its window in the URL (T-4108).
+          root = { "type": "Query", "attrs": ["source"], "entities": ["PointOfInterest", "EVChargingStation"].map_each(t -> {
+            "type": t,
+            "idPattern": "^urn:ngsi-ld:%v:banskabystrica\\.sk:%v:osm-".format(t, env("JC_SPACE"))
+          }) }
+        processors:
+          - http:
+              url: ${JC_GATEWAY_URL}/api/endpoint/rpfqszwlbp5bonvg7kckhdsne5qedjor/ngsi-ld/v1/entityOperations/query?limit=1000&options=keyValues
+              verb: POST
+              headers: { Content-Type: application/json }
+              oauth2:
+                enabled: true
+                client_key: ${JC_CLIENT_ID}
+                client_secret: ${JC_CLIENT_SECRET}
+                token_url: ${JC_TOKEN_URL}
+              timeout: 30s
+              rate_limit: pipeline_egress
+          - mapping: |
+              let keep = @keep.split(" ")
+              let held = this.or([])
+              let gone = if $held.length() >= 1000 { [] } else { $held.map_each(e -> e.id).filter(id -> !$keep.contains(id)) }
+              root = $gone
+          # Nothing gone skips the call but keeps the message: a branch whose processors end
+          # with no message fails, and Bento then flags every entity errored, so none is written.
+          - switch:
+              - check: this.length() > 0
+                processors:
+                  - http:
+                      url: ${JC_GATEWAY_URL}/api/endpoint/rpfqszwlbp5bonvg7kckhdsne5qedjor/ngsi-ld/v1/entityOperations/delete
+                      verb: POST
+                      headers: { Content-Type: application/json }
+                      oauth2:
+                        enabled: true
+                        client_key: ${JC_CLIENT_ID}
+                        client_secret: ${JC_CLIENT_SECRET}
+                        token_url: ${JC_TOKEN_URL}
+                      timeout: 30s
+                      rate_limit: pipeline_egress
+        # The entities pass on unchanged; only the helper metadata goes.
+        result_map: meta keep = deleted()

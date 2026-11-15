@@ -1,0 +1,13 @@
+# The open-data catalogue the city's cleared endpoints publish to (EP-62, EP-67, T-2407). The
+# city cleared one dataset, the air-quality readings of `public-air`; its other endpoints stay out
+# of the catalogue until the city reviews them. The API token is a reference, as for hel-fi.
+apiVersion: joinedcontext.com/v1alpha1
+kind: CkanInstance
+metadata:
+  name: banskabystrica
+  namespace: banskabystrica
+  title: { sk: Mesto Banská Bystrica, en: City of Banská Bystrica }
+spec:
+  url: https://opendata.dev.joinedcontext.com
+  organizationDefault: banskabystrica
+  apiTokenRef: { name: ckan-api-token, key: token, envVar: CKAN_API_TOKEN }

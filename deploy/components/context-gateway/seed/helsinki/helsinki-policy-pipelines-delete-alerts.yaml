@@ -1,0 +1,17 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: pipelines-delete-alerts
+  namespace: helsinki
+  title: { en: The service-alerts pipeline removes the HSL alerts HSL withdrew }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: serviceAccount, id: pipelines }
+  # HSL sends its whole set every minute; an HSL Alert the set no longer lists is deleted
+  # (helsinki-pipeline-service-alerts-bento.yaml). Only Alerts: every other type of the space
+  # keeps "no delete" (pipelines-write, T-4823).
+  operations: [deleteBatch]
+  information:
+    - entities:
+        - type: Alert

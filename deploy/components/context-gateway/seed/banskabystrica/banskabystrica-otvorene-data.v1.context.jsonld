@@ -1,0 +1,409 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Address": {
+      "@id": "sdm:dataModel.CPSV-AP/Address"
+    },
+    "Article": {
+      "@id": "jc:Article"
+    },
+    "Contract": {
+      "@id": "jc:Contract"
+    },
+    "CouncilMeeting": {
+      "@id": "jc:CouncilMeeting"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "Garden": {
+      "@id": "sdm:dataModel.ParksAndGardens/Garden"
+    },
+    "Grant": {
+      "@id": "jc:Grant"
+    },
+    "KeyPerformanceIndicator": {
+      "@id": "sdm:dataModel.KeyPerformanceIndicator/KeyPerformanceIndicator"
+    },
+    "OffStreetParking": {
+      "@id": "sdm:dataModel.Parking/OffStreetParking"
+    },
+    "PurchaseOrder": {
+      "@id": "jc:PurchaseOrder"
+    },
+    "addressArea": {
+      "@id": "sdm:dataModel.CPSV-AP/addressArea"
+    },
+    "akcia": {
+      "@id": "jc:akcia"
+    },
+    "cASTOBCE": {
+      "@id": "jc:cASTOBCE"
+    },
+    "cOID": {
+      "@id": "jc:cOID",
+      "@type": "xsd:integer"
+    },
+    "cZasadnutia": {
+      "@id": "jc:cZasadnutia",
+      "@type": "xsd:integer"
+    },
+    "castObce": {
+      "@id": "jc:castObce"
+    },
+    "cenaCelkom": {
+      "@id": "jc:cenaCelkom"
+    },
+    "centralneCisloZmluvy": {
+      "@id": "jc:centralneCisloZmluvy"
+    },
+    "cisloObjednavky": {
+      "@id": "jc:cisloObjednavky"
+    },
+    "content": {
+      "@id": "jc:content"
+    },
+    "dPOSTA": {
+      "@id": "jc:dPOSTA"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dataset": {
+      "@id": "jc:dataset"
+    },
+    "dateGmt": {
+      "@id": "jc:dateGmt",
+      "@type": "xsd:dateTime"
+    },
+    "datumPodpisu": {
+      "@id": "jc:datumPodpisu"
+    },
+    "datumVystavenia": {
+      "@id": "jc:datumVystavenia"
+    },
+    "datumZasadnutia": {
+      "@id": "jc:datumZasadnutia"
+    },
+    "datumZverejnenia": {
+      "@id": "jc:datumZverejnenia"
+    },
+    "datumplatnosti": {
+      "@id": "jc:datumplatnosti",
+      "@type": "xsd:dateTime"
+    },
+    "datumvkladu": {
+      "@id": "jc:datumvkladu",
+      "@type": "xsd:dateTime"
+    },
+    "datumzmeny": {
+      "@id": "jc:datumzmeny",
+      "@type": "xsd:dateTime"
+    },
+    "den": {
+      "@id": "jc:den"
+    },
+    "dodavatel": {
+      "@id": "jc:dodavatel"
+    },
+    "druh": {
+      "@id": "jc:druh"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "iCO": {
+      "@id": "jc:iCO"
+    },
+    "iCOOrganizacie": {
+      "@id": "jc:iCOOrganizacie"
+    },
+    "iCOZiadatela": {
+      "@id": "jc:iCOZiadatela"
+    },
+    "iD": {
+      "@id": "jc:iD",
+      "@type": "xsd:float"
+    },
+    "ics": {
+      "@id": "jc:ics"
+    },
+    "id": "@id",
+    "idRegad": {
+      "@id": "jc:idRegad"
+    },
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "idzmeny": {
+      "@id": "jc:idzmeny"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "kRAJ": {
+      "@id": "jc:kRAJ"
+    },
+    "kRAJID": {
+      "@id": "jc:kRAJID",
+      "@type": "xsd:integer"
+    },
+    "link": {
+      "@id": "jc:link"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "mena": {
+      "@id": "jc:mena"
+    },
+    "modifiedGmt": {
+      "@id": "jc:modifiedGmt",
+      "@type": "xsd:dateTime"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "narodenych": {
+      "@id": "jc:narodenych",
+      "@type": "xsd:integer"
+    },
+    "narodenychM": {
+      "@id": "jc:narodenychM",
+      "@type": "xsd:integer"
+    },
+    "narodenychZ": {
+      "@id": "jc:narodenychZ",
+      "@type": "xsd:integer"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "oBEC": {
+      "@id": "jc:oBEC"
+    },
+    "oBECID": {
+      "@id": "jc:oBECID",
+      "@type": "xsd:integer"
+    },
+    "oKRES": {
+      "@id": "jc:oKRES"
+    },
+    "oKRESID": {
+      "@id": "jc:oKRESID",
+      "@type": "xsd:integer"
+    },
+    "oRIENTC": {
+      "@id": "jc:oRIENTC"
+    },
+    "oRIENTCC": {
+      "@id": "jc:oRIENTCC"
+    },
+    "oRIENTCP": {
+      "@id": "jc:oRIENTCP"
+    },
+    "obec": {
+      "@id": "jc:obec"
+    },
+    "objednavkaSpolu": {
+      "@id": "jc:objednavkaSpolu"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "odstahovanych": {
+      "@id": "jc:odstahovanych",
+      "@type": "xsd:integer"
+    },
+    "odstahovanychM": {
+      "@id": "jc:odstahovanychM",
+      "@type": "xsd:integer"
+    },
+    "odstahovanychZ": {
+      "@id": "jc:odstahovanychZ",
+      "@type": "xsd:integer"
+    },
+    "organSamospravy": {
+      "@id": "jc:organSamospravy"
+    },
+    "orientC": {
+      "@id": "jc:orientC"
+    },
+    "pSC": {
+      "@id": "jc:pSC"
+    },
+    "pocet": {
+      "@id": "jc:pocet",
+      "@type": "xsd:integer"
+    },
+    "pocetMuzov": {
+      "@id": "jc:pocetMuzov",
+      "@type": "xsd:integer"
+    },
+    "pocetObcanovVDanomVeku": {
+      "@id": "jc:pocetObcanovVDanomVeku"
+    },
+    "pocetZien": {
+      "@id": "jc:pocetZien",
+      "@type": "xsd:integer"
+    },
+    "pohlavie": {
+      "@id": "jc:pohlavie"
+    },
+    "popisobjektu": {
+      "@id": "jc:popisobjektu"
+    },
+    "postCode": {
+      "@id": "sdm:dataModel.CPSV-AP/postCode"
+    },
+    "postName": {
+      "@id": "sdm:dataModel.CPSV-AP/postName"
+    },
+    "pozadovaneProstriedky": {
+      "@id": "jc:pozadovaneProstriedky"
+    },
+    "predmet": {
+      "@id": "jc:predmet"
+    },
+    "prevazujicipovrch": {
+      "@id": "jc:prevazujicipovrch",
+      "@type": "xsd:integer"
+    },
+    "prirastok": {
+      "@id": "jc:prirastok"
+    },
+    "prirastokMuzi": {
+      "@id": "jc:prirastokMuzi"
+    },
+    "prirastokZeny": {
+      "@id": "jc:prirastokZeny"
+    },
+    "pristahovanych": {
+      "@id": "jc:pristahovanych",
+      "@type": "xsd:integer"
+    },
+    "pristahovanychM": {
+      "@id": "jc:pristahovanychM",
+      "@type": "xsd:integer"
+    },
+    "rok": {
+      "@id": "jc:rok",
+      "@type": "xsd:integer"
+    },
+    "rokDotacie": {
+      "@id": "jc:rokDotacie",
+      "@type": "xsd:integer"
+    },
+    "sCHRANKY": {
+      "@id": "jc:sCHRANKY",
+      "@type": "xsd:integer"
+    },
+    "sUPISNEC": {
+      "@id": "jc:sUPISNEC"
+    },
+    "schema": "http://schema.org/",
+    "schvProstr": {
+      "@id": "jc:schvProstr"
+    },
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "sourceId": {
+      "@id": "jc:sourceId"
+    },
+    "stavVybav": {
+      "@id": "jc:stavVybav"
+    },
+    "supC": {
+      "@id": "jc:supC"
+    },
+    "tYPBUDOVY": {
+      "@id": "jc:tYPBUDOVY",
+      "@type": "xsd:integer"
+    },
+    "textObjednavky": {
+      "@id": "jc:textObjednavky"
+    },
+    "thoroughfare": {
+      "@id": "sdm:dataModel.CPSV-AP/thoroughfare"
+    },
+    "title": {
+      "@id": "jc:title"
+    },
+    "typ": {
+      "@id": "jc:typ"
+    },
+    "type": "@type",
+    "typudrzovanezelene": {
+      "@id": "jc:typudrzovanezelene",
+      "@type": "xsd:integer"
+    },
+    "uLICA": {
+      "@id": "jc:uLICA"
+    },
+    "uLICAID": {
+      "@id": "jc:uLICAID",
+      "@type": "xsd:integer"
+    },
+    "ubytok": {
+      "@id": "jc:ubytok"
+    },
+    "ubytokMuzi": {
+      "@id": "jc:ubytokMuzi"
+    },
+    "ubytokZeny": {
+      "@id": "jc:ubytokZeny"
+    },
+    "ulica": {
+      "@id": "jc:ulica"
+    },
+    "url": {
+      "@id": "jc:url",
+      "@type": "xsd:anyURI"
+    },
+    "urovenumisteniobjektuzps": {
+      "@id": "jc:urovenumisteniobjektuzps",
+      "@type": "xsd:integer"
+    },
+    "vek": {
+      "@id": "jc:vek",
+      "@type": "xsd:integer"
+    },
+    "vrstva": {
+      "@id": "jc:vrstva"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zSJ": {
+      "@id": "jc:zSJ"
+    },
+    "zSJID": {
+      "@id": "jc:zSJID",
+      "@type": "xsd:float"
+    },
+    "ziadatel": {
+      "@id": "jc:ziadatel"
+    },
+    "zmluvneStrany": {
+      "@id": "jc:zmluvneStrany"
+    },
+    "zmluvneStranySUdajomICO": {
+      "@id": "jc:zmluvneStranySUdajomICO"
+    },
+    "zomrelych": {
+      "@id": "jc:zomrelych",
+      "@type": "xsd:integer"
+    },
+    "zomrelychM": {
+      "@id": "jc:zomrelychM",
+      "@type": "xsd:integer"
+    },
+    "zomrelychZ": {
+      "@id": "jc:zomrelychZ",
+      "@type": "xsd:integer"
+    }
+  },
+  "x-generator-version": "linkml-1.12.0"
+}

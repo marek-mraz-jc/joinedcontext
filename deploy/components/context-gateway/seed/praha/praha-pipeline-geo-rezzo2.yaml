@@ -1,0 +1,19 @@
+# One EmissionSource per record of the IPR layer Vyjmenované stacionární zdroje znečišťování ovzduší - REZZO 2 into the city space (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-rezzo2
+  namespace: praha
+  title:
+    en: Stationary air pollution sources, REZZO 2
+    cs: Vyjmenované stacionární zdroje znečišťování ovzduší - REZZO 2
+spec:
+  class: auto
+  # The register is updated once a year; one read a week keeps up.
+  period: 168h
+  schedule: '45 2 * * 4'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-rezzo2 }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: EmissionSource, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

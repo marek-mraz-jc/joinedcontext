@@ -1,0 +1,19 @@
+---
+# Checklist:
+# - [x] Minimal Resources (T-6316 kind measurement, Deployment/18)
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 448Mi
+  limits:
+    cpu: '1'
+    memory: 768Mi
+
+env:
+  SIDEKIQ_CONCURRENCY: "2"
+  # Rails' pool, one connection per job thread: what tests/test_postgres_connection_budget.py counts.
+  RAILS_MAX_THREADS: "2"

@@ -1,0 +1,18 @@
+# One BikeHireDockingStation per City Bike Vantaa station of `hsl-vantaa-bikes`, written into the city space
+# beside HSL's own stations (T-5254).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: vantaa-bikes
+  namespace: helsinki
+  title: { en: City bike stations of Vantaa }
+spec:
+  class: auto
+  # The register moves a station a few times a season; daily.
+  period: 24h
+  schedule: '40 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hsl-vantaa-bikes }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: BikeHireDockingStation, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 100 }

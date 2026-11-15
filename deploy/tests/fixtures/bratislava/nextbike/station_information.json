@@ -1,0 +1,443 @@
+{
+ "last_updated": 1792737946,
+ "ttl": 60,
+ "data": {
+  "stations": [
+   {
+    "station_id": "622290687",
+    "name": "TESCO Express Martinčekova",
+    "short_name": "23010",
+    "lat": 48.148543,
+    "lon": 17.144699,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622290687",
+     "ios": "https://app.nextbike.net/station?id=622290687",
+     "web": "https://nxtb.it/p/622290687"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622290896",
+    "name": "Námestie pri zimnom štadióne",
+    "short_name": "23011",
+    "lat": 48.2082,
+    "lon": 16.3738,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622290896",
+     "ios": "https://app.nextbike.net/station?id=622290896",
+     "web": "https://nxtb.it/p/622290896"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622291182",
+    "name": "Stavebná fakulta STU",
+    "short_name": "23012",
+    "lat": 17.116184,
+    "lon": 48.151786,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622291182",
+     "ios": "https://app.nextbike.net/station?id=622291182",
+     "web": "https://nxtb.it/p/622291182"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622291305",
+    "name": "Pred poisťovňou",
+    "short_name": "23013",
+    "lat": 48.153509,
+    "lon": 17.124443,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622291305",
+     "ios": "https://app.nextbike.net/station?id=622291305",
+     "web": "https://nxtb.it/p/622291305"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622291455",
+    "name": "Rázusovo nábrežie",
+    "short_name": "23014",
+    "lat": 48.139773,
+    "lon": 17.10924,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622291455",
+     "ios": "https://app.nextbike.net/station?id=622291455",
+     "web": "https://nxtb.it/p/622291455"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622291577",
+    "name": "Lodenica",
+    "short_name": "23015",
+    "lat": 48.1478,
+    "lon": 17.065244,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622291577",
+     "ios": "https://app.nextbike.net/station?id=622291577",
+     "web": "https://nxtb.it/p/622291577"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622291683",
+    "name": "Muchovo námestie - Billa",
+    "short_name": "23016",
+    "lat": 48.128745,
+    "lon": 17.114979,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622291683",
+     "ios": "https://app.nextbike.net/station?id=622291683",
+     "web": "https://nxtb.it/p/622291683"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622291781",
+    "name": "Kamenné námestie 1",
+    "short_name": "23017",
+    "lat": 48.144907,
+    "lon": 17.113285,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622291781",
+     "ios": "https://app.nextbike.net/station?id=622291781",
+     "web": "https://nxtb.it/p/622291781"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622291892",
+    "name": "Miestny úrad Bratislava Petržalka",
+    "short_name": "23018",
+    "lat": 48.111165,
+    "lon": 17.111191,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622291892",
+     "ios": "https://app.nextbike.net/station?id=622291892",
+     "web": "https://nxtb.it/p/622291892"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622292017",
+    "name": "Palisády 14 - stromy",
+    "short_name": "23019",
+    "lat": 48.147586,
+    "lon": 17.100427,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622292017",
+     "ios": "https://app.nextbike.net/station?id=622292017",
+     "web": "https://nxtb.it/p/622292017"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622292347",
+    "name": "Osobný prístav Bratislava",
+    "short_name": "23020",
+    "lat": 48.139959,
+    "lon": 17.112682,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622292347",
+     "ios": "https://app.nextbike.net/station?id=622292347",
+     "web": "https://nxtb.it/p/622292347"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622293966",
+    "name": "Pošta Bratislava 1",
+    "short_name": "23021",
+    "lat": 48.145565,
+    "lon": 17.108966,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622293966",
+     "ios": "https://app.nextbike.net/station?id=622293966",
+     "web": "https://nxtb.it/p/622293966"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622294171",
+    "name": "Jesenského x Palackého",
+    "short_name": "23022",
+    "lat": 48.142963,
+    "lon": 17.112419,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622294171",
+     "ios": "https://app.nextbike.net/station?id=622294171",
+     "web": "https://nxtb.it/p/622294171"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622294286",
+    "name": "Tehelná na rohu",
+    "short_name": "23023",
+    "lat": 48.162154,
+    "lon": 17.131536,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622294286",
+     "ios": "https://app.nextbike.net/station?id=622294286",
+     "web": "https://nxtb.it/p/622294286"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622295264",
+    "name": "Hradby - Úzka ul.",
+    "short_name": "23024",
+    "lat": 48.142265,
+    "lon": 17.104771,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622295264",
+     "ios": "https://app.nextbike.net/station?id=622295264",
+     "web": "https://nxtb.it/p/622295264"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622295378",
+    "name": "Borská",
+    "short_name": "23025",
+    "lat": 48.16218,
+    "lon": 17.049403,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622295378",
+     "ios": "https://app.nextbike.net/station?id=622295378",
+     "web": "https://nxtb.it/p/622295378"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622296046",
+    "name": "Okresné riaditeľstvo PZ Bratislava I",
+    "short_name": "23026",
+    "lat": 48.149448,
+    "lon": 17.122386,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622296046",
+     "ios": "https://app.nextbike.net/station?id=622296046",
+     "web": "https://nxtb.it/p/622296046"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622296592",
+    "name": "Karadžičova - CBC 1",
+    "short_name": "23027",
+    "lat": 48.147785,
+    "lon": 17.124926,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622296592",
+     "ios": "https://app.nextbike.net/station?id=622296592",
+     "web": "https://nxtb.it/p/622296592"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622296851",
+    "name": "Karadžičova - CBC 2",
+    "short_name": "23028",
+    "lat": 48.148802,
+    "lon": 17.125274,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622296851",
+     "ios": "https://app.nextbike.net/station?id=622296851",
+     "web": "https://nxtb.it/p/622296851"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622296973",
+    "name": "Medická záhrada",
+    "short_name": "23029",
+    "lat": 48.149033,
+    "lon": 17.120071,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622296973",
+     "ios": "https://app.nextbike.net/station?id=622296973",
+     "web": "https://nxtb.it/p/622296973"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622297188",
+    "name": "BILLA Karadžičova",
+    "short_name": "23030",
+    "lat": 48.149785,
+    "lon": 17.12562,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622297188",
+     "ios": "https://app.nextbike.net/station?id=622297188",
+     "web": "https://nxtb.it/p/622297188"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622297292",
+    "name": "Šancová x Žabotova",
+    "short_name": "23031",
+    "lat": 48.155379,
+    "lon": 17.108192,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622297292",
+     "ios": "https://app.nextbike.net/station?id=622297292",
+     "web": "https://nxtb.it/p/622297292"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622297409",
+    "name": "Dom kultúry Ružinov",
+    "short_name": "23032",
+    "lat": 48.156811,
+    "lon": 17.164319,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622297409",
+     "ios": "https://app.nextbike.net/station?id=622297409",
+     "web": "https://nxtb.it/p/622297409"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622297554",
+    "name": "FF UK - Gondova x Fajnorovo náb.",
+    "short_name": "23033",
+    "lat": 48.140104,
+    "lon": 17.116549,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622297554",
+     "ios": "https://app.nextbike.net/station?id=622297554",
+     "web": "https://nxtb.it/p/622297554"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622297696",
+    "name": "Vysoká",
+    "short_name": "23034",
+    "lat": 48.148851,
+    "lon": 17.112829,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622297696",
+     "ios": "https://app.nextbike.net/station?id=622297696",
+     "web": "https://nxtb.it/p/622297696"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622297810",
+    "name": "Lidl Karloveská",
+    "short_name": "23035",
+    "lat": 48.150111,
+    "lon": 17.06342,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622297810",
+     "ios": "https://app.nextbike.net/station?id=622297810",
+     "web": "https://nxtb.it/p/622297810"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622297941",
+    "name": "Kino Lumière",
+    "short_name": "23036",
+    "lat": 48.146503,
+    "lon": 17.115984,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622297941",
+     "ios": "https://app.nextbike.net/station?id=622297941",
+     "web": "https://nxtb.it/p/622297941"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622298071",
+    "name": "BBC 5",
+    "short_name": "23037",
+    "lat": 48.145319,
+    "lon": 17.115984,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622298071",
+     "ios": "https://app.nextbike.net/station?id=622298071",
+     "web": "https://nxtb.it/p/622298071"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622298665",
+    "name": "Ihrisko Aupark / Sad Janka Kráľa",
+    "short_name": "23038",
+    "lat": 48.133595,
+    "lon": 17.10859,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622298665",
+     "ios": "https://app.nextbike.net/station?id=622298665",
+     "web": "https://nxtb.it/p/622298665"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "622299607",
+    "name": "Hurbanovo námestie",
+    "short_name": "23039",
+    "lat": 48.146159,
+    "lon": 17.107206,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622299607",
+     "ios": "https://app.nextbike.net/station?id=622299607",
+     "web": "https://nxtb.it/p/622299607"
+    },
+    "is_virtual_station": true
+   },
+   {
+    "station_id": "999000001",
+    "name": "TESCO Express Martinčekova",
+    "short_name": "23010",
+    "lat": 48.148582999999995,
+    "lon": 17.144699,
+    "region_id": "1314",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=622290687",
+     "ios": "https://app.nextbike.net/station?id=622290687",
+     "web": "https://nxtb.it/p/622290687"
+    },
+    "is_virtual_station": true
+   }
+  ]
+ },
+ "version": "2.3"
+}

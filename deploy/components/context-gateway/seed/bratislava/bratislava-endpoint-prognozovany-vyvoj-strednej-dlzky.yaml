@@ -1,0 +1,44 @@
+# Projected life expectancy of men at birth in Bratislava's districts, 2022-2035: one public dataset of the hub (T-5274), item c0fe26d86ed046898639ff14b5d95fe5, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-prognozovany-vyvoj-strednej-dlzky
+  namespace: bratislava
+  title:
+    sk: Prognózovaný vývoj strednej dĺžky života mužov pri narodení v okresoch BA v r. 2022 – 2035
+    en: Projected life expectancy of men at birth in Bratislava's districts, 2022-2035
+  description:
+    sk: 'Ukazovatele tabuľky „Prognózovaný vývoj strednej dĺžky života mužov pri narodení v okresoch BA v r. 2022 – 2035“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Projected life expectancy of men at birth in Bratislava's districts, 2022-2035”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: p7mc7nnah2ocarnajcqgvpsqa7ekexra
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-prognozovany-vyvoj-strednej-dlzky
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [HEAL]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/c0fe26d86ed046898639ff14b5d95fe5
+        title:
+          sk: Prognózovaný vývoj strednej dĺžky života mužov pri narodení v okresoch BA v r. 2022 – 2035
+          en: Projected life expectancy of men at birth in Bratislava's districts, 2022-2035
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Prognózovaný vývoj strednej dĺžky života mužov pri narodení v okresoch BA v r. 2022 – 2035. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Projected life expectancy of men at birth in Bratislava's districts, 2022-2035. Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

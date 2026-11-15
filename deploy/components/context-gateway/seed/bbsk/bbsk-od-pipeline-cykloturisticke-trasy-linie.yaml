@@ -1,0 +1,24 @@
+# One CycleRoute per row of "Cykloturistické trasy - línie" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-cykloturisticke-trasy-linie
+  namespace: bbsk
+  title:
+    sk: Cykloturistické trasy - línie
+    en: Cykloturistické trasy - línie
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 21 1 * * 3
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-cykloturisticke-trasy-linie
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: CycleRoute
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

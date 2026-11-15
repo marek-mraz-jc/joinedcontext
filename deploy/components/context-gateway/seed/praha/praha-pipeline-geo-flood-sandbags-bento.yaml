@@ -1,0 +1,84 @@
+# The mapping of an IPR area or line layer of the space (T-5429, PL-03): one entity per record of the
+# layer Protipovodňová ochrana (pytle s pískem) (18 lines on 2026-10-24).
+# The radon, flood zone and flood defence layers share this mapping; only the lets of the second step
+# differ: the layer, the class, the name, the attributes every record of the layer carries (fixed) and
+# the code lists IPR publishes with the layer (coded: the record's field, the attribute it fills and,
+# per code, the model's value and the Czech words of the name).
+#
+# Ids: urn:ngsi-ld:{class}:{org}:{space}:geo-{layer}-{globalid}; the Policy of its
+# class (public-radon, public-zaplavova-uzemi, public-protipovodnova-ochrana) names them.
+#
+# Read: the outline or line (a third, height coordinate dropped, every coordinate rounded to 6 decimals,
+# about 0.1 m: the largest Q5 area falls from 4.3 MB to 2.5 MB, under the broker's 4 MiB body), and the
+# coded fields. Nothing else of the layer is read: id_poskyt, poskyt and the shape lengths and areas
+# are IPR's bookkeeping.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a GUID, with a code outside its list,
+# without an outline of the layer's geometry or with a point outside Prague's box (the city plus
+# about 1 km) is dropped, and so is a second record of one GUID; the log line counts each reason.
+# An answer that is not a feature list, an empty one, or one where fewer than half the records
+# survive (a projection or schema change) fails the run, so the areas already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes; more than 16 MiB is not an area layer".format(content().length())) } else { this }
+        - mapping: |
+            let set = "flood-sandbags"
+            let item = "98a6eba14f8646e1a6b7e3cd805f484b"
+            let kind = "FloodDefence"
+            let title = "Protipovodňová ochrana"
+            let shapes = ["LineString", "MultiLineString"]
+            let fixed = {}
+            let coded = [{"field": "typ", "attr": "defenceType", "codes": {"0": ["unknown", "neznámý typ"], "1": ["fixed", "pevné opatření"], "2": ["mobileWall", "mobilní stěna"], "3": ["sandbags", "pytle s pískem"]}}, {"field": "druh", "attr": "protectedBy", "codes": {"1": ["city", ""], "2": ["individual", ""]}}, {"field": "navrh_q", "attr": "designFlood", "codes": {"100": ["q100", ""], "2002": ["flood2002", ""]}}]
+            map round {
+              root = if this.type() == "array" && this.length() > 0 && this.index(0).type() == "number" { this.slice(0, 2).map_each(n -> if n.type() == "number" { (n * 1000000).round() / 1000000 } else { null }) } else if this.type() == "array" { this.map_each(c -> c.apply("round")) } else { null }
+            }
+            map flat {
+              root = if this.type() != "array" || this.length() == 0 { [null] } else if this.index(0).type() == "number" { [this.slice(0, 2)] } else { this.map_each(c -> c.apply("flat")).flatten() }
+            }
+            let features = this.features.catch(null)
+            root = if $features.type() != "array" {
+              throw("IPR layer %v did not answer a feature list".format($item))
+            } else if $features.length() == 0 {
+              throw("IPR layer %v listed no record; the layer is never empty, so the download failed".format($item))
+            } else {
+              { "set": $set, "kind": $kind, "title": $title, "fixed": $fixed, "item": $item, "rows": $features.map_each(f -> {
+                "shapeType": f.geometry.type.catch(""),
+                "outline": f.geometry.coordinates.catch(null).apply("round"),
+                "p": f.properties.catch({}),
+                "key": f.properties.globalid.catch("").string().re_replace_all("[{}]", "").lowercase(),
+                "codes": $coded.map_each(c -> { "attr": c.attr, "hit": c.codes.get(f.properties.get(c.field).catch(null).string().re_replace_all("\\.0$", "")).catch(null) })
+              }).map_each(r -> r.assign({ "shape": $shapes.contains(r.shapeType), "points": r.outline.apply("flat") })) }
+            }
+        - mapping: |
+            let rows = this.rows
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") && r.codes.filter(c -> c.hit == null).length() == 0)
+            let located = $usable.filter(r -> r.shape && r.points.all(c -> c.type() == "array" && c.length() == 2 && c.index(0).type() == "number" && c.index(1).type() == "number"))
+            let inside = $located.filter(r -> r.points.all(c -> c.index(0) >= 14.2 && c.index(0) <= 14.75 && c.index(1) >= 49.9 && c.index(1) <= 50.2))
+            let unique = $inside.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta set = this.set
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("IPR layer %v: only %v of %v records have a GUID, known codes and an outline in Prague".format(this.item, $unique.length(), $rows.length()))
+            } else { this.assign({ "rows": $unique.map_each(r -> r.without("points")) }) }
+        - log:
+            level: INFO
+            message: 'geo-${! meta("set") }: read ${! meta("read") }, dropped ${! meta("unusable") } without GUID or with an unknown code, ${! meta("outside") } without an outline in Prague, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            let set = this.set
+            let kind = this.kind
+            let title = this.title
+            let fixed = this.fixed
+            let source = "https://geoportalpraha.cz/data-a-sluzby/" + this.item
+            root = this.rows.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:geo-%v-%v".format($kind, env("JC_ORG_DOMAIN"), env("JC_SPACE"), $set, r.key),
+              "type": $kind,
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": [$title].concat(r.codes.map_each(c -> c.hit.index(1)).filter(w -> w != "").slice(0, 1)).join(": ") } },
+              "location": { "type": "GeoProperty", "value": { "type": r.shapeType, "coordinates": r.outline } },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+              "source": { "type": "Property", "value": $source }
+            }.merge($fixed.map_each(kv -> { "type": "Property", "value": kv.value })).merge(r.codes.map_each(c -> [c.attr, { "type": "Property", "value": c.hit.index(0) }]).fold({}, a -> a.tally.merge({ a.value.index(0): a.value.index(1) }))))

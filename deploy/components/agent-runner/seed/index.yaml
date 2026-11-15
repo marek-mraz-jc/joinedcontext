@@ -1,0 +1,6 @@
+# file in this folder -> its path in the configuration repository (jc-core PATH_TEMPLATEs),
+# committed by the forge bootstrap's seed beside the Helsinki seed. Organization scope: the
+# Portal files everything outside projects/ under `org`.
+app-builder.yaml: agentprofiles/app-builder.yaml
+chat.yaml: agentprofiles/chat.yaml
+app-from-prompt.yaml: blueprints/app-from-prompt/blueprint.yaml

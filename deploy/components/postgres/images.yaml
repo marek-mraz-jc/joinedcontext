@@ -1,0 +1,31 @@
+---
+# Re-pin a digest with: docker buildx imagetools inspect <repository>:<tag>
+# and copy the Digest of the image index.
+postgres:
+  # The operator image is also the reference the operator writes into every instance pod's
+  # bootstrap init container (OPERATOR_IMAGE_NAME), so pinning it here pins that one too.
+  operator:
+    repository: ghcr.io/cloudnative-pg/cloudnative-pg
+    tag: '1.30.1'
+    digest: 'sha256:923c267ec29636db3bee20f993d0ec4973fa22998e1adad37da79e4d32b5bc07'
+  # The role-setup Job runs `psql` against an already-running cluster, so it needs a client
+  # and nothing else. It was the one container of this deployment still running a mutable tag
+  # (`postgres:16-alpine`, hard-coded in the chart), which `scripts/ci/check-image-digests.py`
+  # now refuses. It runs the cluster's own image (T-3297): `postgres:16-alpine` and the Debian
+  # `postgres:16` both carried a fixable CRITICAL in their Go helper, and this image holds the
+  # same psql 16 the cluster serves, checked as uid 1000 on a read-only root.
+  roleJob:
+    repository: ghcr.io/cloudnative-pg/postgis
+    tag: '16-3.6-system-trixie'
+    digest: 'sha256:a08a1c1795fcbee5bfc3e935f21be68f08700e4e1e7f3b6af5e11866617d9e61'
+  cluster:
+    repository: ghcr.io/cloudnative-pg/postgis
+    tag: '16-3.6-system-trixie'
+    digest: 'sha256:a08a1c1795fcbee5bfc3e935f21be68f08700e4e1e7f3b6af5e11866617d9e61'
+  # The monthly restore drill (T-0046) is a shell script around kubectl: it creates the
+  # throwaway Cluster, waits for it, counts rows through `kubectl exec` and deletes it. The same
+  # kubectl-on-Alpine pin as the sandbox reaper; re-pin both with the cluster's upgrade.
+  drDrill:
+    repository: alpine/kubectl
+    tag: '1.33.4'
+    digest: 'sha256:f032392d7c23894ac391425ff5ff9658c064279d8519df8eb8c7d38dde867ce5'

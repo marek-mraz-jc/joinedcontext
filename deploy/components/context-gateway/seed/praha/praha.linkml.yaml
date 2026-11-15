@@ -1,0 +1,2860 @@
+id: https://joinedcontext.com/models/praha/praha-mesto
+name: praha-mesto
+title: Prague city data
+description: >-
+  What the Prague city space carries side by side (DM-01, DM-61): the nextbike docking stations
+  and what they hold now, ČHMÚ's hourly air quality at the city's stations, the city districts,
+  the schools, cultural venues, public toilets and sorted-waste points of the city's geoportal
+  (IPR Praha), the park-and-ride car parks and how full they are now, the monitored sorted-waste
+  containers and their fill level and the PID vehicles in service (Golemio), the PID ticket points, the parks, green
+  areas and trees of the shared green register (IPR Praha), and the city budget line by
+  line. One model, one space, one public endpoint. Where Smart Data Models has the class, its
+  IRI is cited rather than minted (DM-04, DM-16).
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  jc: https://joinedcontext.com/models/
+  sdm: https://smartdatamodels.org/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+default_prefix: sdm
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+
+slots:
+  identifier:
+    slot_uri: https://smartdatamodels.org/dataModel.CPSV-AP/identifier
+    description: >-
+      The budget line's own key, the year and its codes of area, function, item and purpose
+      (`mhmp-2026-00-612100-5011-000000000`), the identifier the BudgetLine extension requires.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Identifikátor
+          cs: Identifikátor
+          en: Identifier
+          de: Kennung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.CPSV-AP
+  name:
+    slot_uri: schema:name
+    description: The name, per language, as the publisher writes it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov
+          cs: Název
+          en: Name
+          de: Name
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: LanguageProperty
+      upstream_source: https://schema.org/name
+  address:
+    slot_uri: schema:address
+    description: >-
+      The Smart Data Models PostalAddress: the street address as the publisher writes it,
+      one line, in `streetAddress`, and the city and country every Prague source shares.
+    range: PostalAddress
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Adresa
+          cs: Adresa
+          en: Address
+          de: Adresse
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models/blob/master/common-schema.json
+  streetAddress:
+    slot_uri: schema:streetAddress
+    description: The street address line as the publisher writes it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Ulica a číslo
+          cs: Ulice a číslo
+          en: Street and number
+          de: Straße und Hausnummer
+        annotations: { generated: sk cs en de }
+      upstream_source: https://schema.org/streetAddress
+  addressLocality:
+    slot_uri: schema:addressLocality
+    description: The town, Praha.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obec
+          cs: Obec
+          en: Town
+          de: Ort
+        annotations: { generated: sk cs en de }
+      upstream_source: https://schema.org/addressLocality
+  addressCountry:
+    slot_uri: schema:addressCountry
+    description: The country, as an ISO 3166-1 alpha-2 code.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Krajina
+          cs: Země
+          en: Country
+          de: Land
+        annotations: { generated: sk cs en de }
+      upstream_source: https://schema.org/addressCountry
+  url:
+    slot_uri: schema:url
+    description: The place's own web page.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Webová stránka
+          cs: Webová stránka
+          en: Web page
+          de: Webseite
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/url
+  dataProvider:
+    slot_uri: sdm:dataProvider
+    description: >-
+      Who publishes the data the entity was read from, with the credit its licence asks for, as
+      an application shows it beside the data.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Poskytovateľ údajov
+          cs: Poskytovatel dat
+          en: Data provider
+          de: Datenanbieter
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  source:
+    slot_uri: sdm:source
+    description: The open-data service the entity was read from.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zdroj
+          cs: Zdroj
+          en: Source
+          de: Quelle
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  dateModified:
+    slot_uri: sdm:dateModified
+    description: When the publisher's station, counter or sensor last reported the values beside it, or when the publisher last edited the record.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Posledná zmena
+          cs: Poslední změna
+          en: Last modified
+          de: Zuletzt geändert
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  dateObserved:
+    slot_uri: sdm:dateObserved
+    description: >-
+      When the values were observed: the start of the hour the air quality readings average, the
+      time of a vehicle's last position report, or the end of a weather station's newest 10 minutes.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Čas merania
+          cs: Čas měření
+          en: Observed at
+          de: Messzeitpunkt
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  availableBikeNumber:
+    slot_uri: sdm:availableBikeNumber
+    description: Bikes ready to rent at the station right now.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Dostupné bicykle
+          cs: Dostupná kola
+          en: Available bikes
+          de: Verfügbare Fahrräder
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  freeSlotNumber:
+    slot_uri: sdm:freeSlotNumber
+    description: Empty docks a bike can be returned to right now.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Voľné miesta
+          cs: Volná místa
+          en: Free docks
+          de: Freie Stellplätze
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  totalSlotNumber:
+    slot_uri: sdm:totalSlotNumber
+    description: The number of docks the station has.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Počet stojanov
+          cs: Počet stojanů
+          en: Total docks
+          de: Stellplätze gesamt
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  status:
+    slot_uri: sdm:status
+    description: Whether the station rents bikes right now.
+    range: StationStatus
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Stav
+          cs: Stav
+          en: Status
+          de: Status
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  pm10:
+    slot_uri: sdm:pm10
+    description: Particulate matter up to 10 µm, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PM10
+          cs: PM10
+          en: PM10
+          de: PM10
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  pm25:
+    slot_uri: sdm:pm25
+    description: Particulate matter up to 2.5 µm, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PM2,5
+          cs: PM2,5
+          en: PM2.5
+          de: PM2,5
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  no2:
+    slot_uri: sdm:no2
+    description: Nitrogen dioxide, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: NO₂
+          cs: NO₂
+          en: NO₂
+          de: NO₂
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  o3:
+    slot_uri: sdm:o3
+    description: Ozone, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: O₃
+          cs: O₃
+          en: O₃
+          de: O₃
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  so2:
+    slot_uri: sdm:so2
+    description: Sulphur dioxide, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: SO₂
+          cs: SO₂
+          en: SO₂
+          de: SO₂
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  co:
+    slot_uri: sdm:co
+    description: Carbon monoxide, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: CO
+          cs: CO
+          en: CO
+          de: CO
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  serviceCategory:
+    slot_uri: jc:serviceCategory
+    description: Which kind of place it is.
+    range: ServiceCategory
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh služby
+          cs: Druh služby
+          en: Service type
+          de: Dienstart
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  facilityType:
+    slot_uri: jc:facilityType
+    description: The publisher's own word for the kind of place, such as Mateřská škola or ticketMachine.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh zariadenia
+          cs: Druh zařízení
+          en: Facility type
+          de: Einrichtungsart
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  capacity:
+    slot_uri: jc:capacity
+    description: How many pupils the school may take, as the school register states it.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kapacita
+          cs: Kapacita
+          en: Capacity
+          de: Kapazität
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  pupilCount:
+    slot_uri: jc:pupilCount
+    description: How many pupils the school has, a count the register publishes and never a name.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Počet žiakov
+          cs: Počet žáků
+          en: Number of pupils
+          de: Anzahl der Schüler
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  openingHours:
+    slot_uri: schema:openingHours
+    description: The opening hours, per language, one line per group of days.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Otváracie hodiny
+          cs: Otevírací doba
+          en: Opening hours
+          de: Öffnungszeiten
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: LanguageProperty
+      upstream_source: https://schema.org/openingHours
+  wheelchairAccessible:
+    slot_uri: jc:wheelchairAccessible
+    description: Whether the publisher states the place is reachable in a wheelchair; absent when it does not say.
+    range: boolean
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Bezbariérový prístup
+          cs: Bezbariérový přístup
+          en: Wheelchair accessible
+          de: Rollstuhlgerecht
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  stationCode:
+    slot_uri: jc:stationCode
+    description: >-
+      The collection point's number in the city's waste register, such as 0022/ 001, or the ČHMÚ
+      weather station's WIGOS id, such as 0-20000-0-11518.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Číslo stanovišťa
+          cs: Číslo stanoviště
+          en: Collection point number
+          de: Nummer des Sammelplatzes
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  accessRestriction:
+    slot_uri: jc:accessRestriction
+    description: Who may use the collection point.
+    range: WasteAccess
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Prístup
+          cs: Přístup
+          en: Access
+          de: Zugang
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  refDistrict:
+    slot_uri: jc:refDistrict
+    description: The city district the record lies in.
+    range: AdministrativeArea
+    inverse: wasteContainerIsles
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Mestská časť
+          cs: Městská část
+          en: District
+          de: Stadtbezirk
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Relationship
+      on_delete: restrict
+  totalSpotNumber:
+    slot_uri: sdm:totalSpotNumber
+    description: The number of cars the car park, the street parking section or bay or the street segment holds.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Počet miest
+          cs: Počet míst
+          en: Total spaces
+          de: Stellplätze gesamt
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+  availableSpotNumber:
+    slot_uri: sdm:availableSpotNumber
+    description: The free spaces of the car park right now, as its entry counters report them.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Voľné miesta
+          cs: Volná místa
+          en: Free spaces
+          de: Freie Stellplätze
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+  occupiedSpotNumber:
+    slot_uri: sdm:occupiedSpotNumber
+    description: The cars parked in the car park right now, as its entry counters report them.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obsadené miesta
+          cs: Obsazená místa
+          en: Occupied spaces
+          de: Belegte Stellplätze
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+  priceRatePerMinute:
+    slot_uri: sdm:priceRatePerMinute
+    description: >-
+      What a minute of parking costs, in priceCurrency: the garage's hourly charge divided by 60.
+      Mr.Parkit sells at least the hours its tariff's minimum names (12 hours on 2026-10-25).
+    range: float
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Cena za minútu
+          cs: Cena za minutu
+          en: Price per minute
+          de: Preis pro Minute
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+  pricePerDay:
+    slot_uri: jc:pricePerDay
+    description: What a day (24 hours) of parking costs, in priceCurrency, as the garage's tariff states it.
+    range: float
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Cena za deň
+          cs: Cena za den
+          en: Price per day
+          de: Preis pro Tag
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  priceCurrency:
+    slot_uri: sdm:priceCurrency
+    description: The ISO 4217 code of the currency the prices are in (CZK).
+    pattern: ^[A-Z]{3}$
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Mena
+          cs: Měna
+          en: Currency
+          de: Währung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+  fillingLevel:
+    slot_uri: sdm:fillingLevel
+    description: How full the container was at its sensor's last reading, 0 empty to 1 full.
+    range: float
+    minimum_value: 0
+    maximum_value: 1
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Naplnenosť
+          cs: Naplněnost
+          en: Filling level
+          de: Füllstand
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.WasteManagement
+  nextActuationDeadline:
+    slot_uri: sdm:nextActuationDeadline
+    description: The end of the day the container is next emptied, as the city's waste register plans it.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Najbližší odvoz
+          cs: Příští svoz
+          en: Next collection
+          de: Nächste Leerung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.WasteManagement
+  wasteKind:
+    slot_uri: jc:wasteKind
+    description: What the container takes, as the city's waste register sorts it.
+    range: WasteKind
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh odpadu
+          cs: Druh odpadu
+          en: Waste type
+          de: Abfallart
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  containerCode:
+    slot_uri: jc:containerCode
+    description: The container's number in the city's waste register (KSNKO).
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Číslo kontajnera
+          cs: Číslo kontejneru
+          en: Container number
+          de: Containernummer
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  refWasteContainerIsle:
+    slot_uri: sdm:refWasteContainerIsle
+    description: The collection point the container stands at.
+    range: WasteContainerIsle
+    required: true
+    inverse: wasteContainers
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Stanovište
+          cs: Stanoviště
+          en: Collection point
+          de: Sammelplatz
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Relationship
+      on_delete: restrict
+      upstream_source: https://github.com/smart-data-models/dataModel.WasteManagement
+  wasteContainers:
+    slot_uri: jc:wasteContainers
+    description: The containers at this collection point, computed from their refWasteContainerIsle and never stored.
+    range: WasteContainer
+    multivalued: true
+    inverse: refWasteContainerIsle
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kontajnery
+          cs: Kontejnery
+          en: Containers
+          de: Container
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Relationship
+  districtCode:
+    slot_uri: jc:districtCode
+    description: The district's RÚIAN code, the key the national registers and the waste register use; a planning balance unit has none.
+    pattern: ^[0-9]{6}$
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kód časti
+          cs: Kód části
+          en: District code
+          de: Bezirksnummer
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  fiscalYear:
+    slot_uri: jc:fiscalYear
+    description: The budget year.
+    range: integer
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Rozpočtový rok
+          cs: Rozpočtový rok
+          en: Fiscal year
+          de: Haushaltsjahr
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  budgetArea:
+    slot_uri: jc:budgetArea
+    description: The city's own area of the line (oblast), its code and name joined, such as 09 Školství; absent on a correction line the city files under none.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Oblasť rozpočtu
+          cs: Oblast rozpočtu
+          en: Budget area
+          de: Haushaltsbereich
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  budgetFunction:
+    slot_uri: jc:budgetFunction
+    description: The section of the national budget classification (paragraf, ODPA), code and name.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Paragraf
+          cs: Paragraf
+          en: Budget function
+          de: Gliederung nach Aufgaben
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  budgetItem:
+    slot_uri: jc:budgetItem
+    description: >-
+      The item of the national budget classification (položka), code and name. Items 1xxx to
+      4xxx are revenue, 5xxx and 6xxx expenditure, 8xxx financing.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Položka
+          cs: Položka
+          en: Budget item
+          de: Haushaltsposten
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  budgetPurpose:
+    slot_uri: jc:budgetPurpose
+    description: The earmark of the line (účelový znak), code and name.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Účelový znak
+          cs: Účelový znak
+          en: Earmark
+          de: Zweckbindung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  approvedAmount:
+    slot_uri: jc:approvedAmount
+    description: >-
+      The amount the council approved, as the city publishes it. The city's documentation names
+      no unit; the 2026 expenditure lines add up to 119 054 085, which is the size of Prague's
+      budget in thousands of CZK.
+    range: float
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Schválený rozpočet
+          cs: Schválený rozpočet
+          en: Approved amount
+          de: Genehmigter Betrag
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  adjustedAmount:
+    slot_uri: jc:adjustedAmount
+    description: The amount after the year's budget changes so far, in the same unit as the approved one.
+    range: float
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Upravený rozpočet
+          cs: Upravený rozpočet
+          en: Adjusted amount
+          de: Angepasster Betrag
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  wasteContainerIsles:
+    slot_uri: jc:wasteContainerIsles
+    description: The waste-container isles in this city district, computed from their refDistrict and never stored.
+    range: WasteContainerIsle
+    multivalued: true
+    inverse: refDistrict
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Stanovištia kontajnerov
+          cs: Stanoviště kontejnerů
+          en: Container collection points
+          de: Containerstandorte
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Relationship
+
+  parkingZone:
+    slot_uri: jc:parkingZone
+    description: The paid parking zone of the section as TSK codes it, RES (blue, residents), MIX (purple, mixed) or VIS (orange, visitors).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Parkovacia zóna
+          cs: Parkovací zóna
+          en: Parking zone
+          de: Parkzone
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  tariff:
+    slot_uri: jc:tariff
+    description: The section's tariff as TSK writes it, days, hours and price, such as Po-Ne 08:00-19:59 300Kč/hod (max. 75 Kč).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Tarifa
+          cs: Tarif
+          en: Tariff
+          de: Tarif
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  refParkingSite:
+    slot_uri: sdm:refParkingSite
+    description: The paid parking section (OnStreetParking) whose tariff this segment of a street follows.
+    domain: ParkingGroup
+    range: OnStreetParking
+    required: true
+    inverse: parkingGroups
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Parkovací úsek
+          cs: Parkovací úsek
+          en: Parking section
+          de: Parkabschnitt
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Relationship
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+  parkingGroups:
+    slot_uri: jc:parkingGroups
+    description: The street segments (ParkingGroup) of this paid parking section, computed from their refParkingSite and never stored.
+    domain: OnStreetParking
+    range: ParkingGroup
+    multivalued: true
+    inverse: refParkingSite
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Úseky ulíc
+          cs: Úseky ulic
+          en: Street segments
+          de: Straßenabschnitte
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Relationship
+  equipmentId:
+    slot_uri: sdm:equipmentId
+    description: The parking machine's number as TSK labels it on the machine, such as 22000004.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Číslo automatu
+          cs: Číslo automatu
+          en: Machine number
+          de: Automatennummer
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+
+  vehicleType:
+    slot_uri: sdm:vehicleType
+    description: >-
+      The Smart Data Models kind of vehicle (tram, bus, trolley, car); other for a metro train, a
+      train, a ferry and the funicular, which transportMode names; bicycle for what a cycle counter
+      counts.
+    range: VehicleKind
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Typ vozidla
+          cs: Druh vozidla
+          en: Vehicle type
+          de: Fahrzeugtyp
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  category:
+    slot_uri: sdm:category
+    description: >-
+      The Smart Data Models category: public and tracked for a PID vehicle in service; for an
+      OnStreetParking what the section or bay is for (forResidents and onlyWithPermit in the blue
+      resident zone RES, feeCharged and forResidents in the purple mixed zone MIX, feeCharged and
+      shortTerm in the orange visitor zone VIS, forDisabled for a ZTP/P bay, with onlyWithPermit
+      when it is reserved for one registration plate, forLoadUnload for a delivery bay and
+      onlyWithPermit for a special reserved bay).
+    range: VehicleCategory
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kategória
+          cs: Kategorie
+          en: Category
+          de: Kategorie
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  transportMode:
+    slot_uri: jc:transportMode
+    description: What the line runs, as the GTFS route type names it (tram, metro, train, bus, ferry, funicular, trolleybus).
+    range: TransportMode
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh dopravy
+          cs: Druh dopravy
+          en: Transport mode
+          de: Verkehrsmittel
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+  lineName:
+    slot_uri: jc:lineName
+    description: The PID line the vehicle runs, its short name (17, A, S9, 331).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Linka
+          cs: Linka
+          en: Line
+          de: Linie
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  direction:
+    slot_uri: jc:direction
+    description: Where the trip heads, its headsign (Libuš, Dolní Břežany,Zálepy).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Smer
+          cs: Směr
+          en: Direction
+          de: Richtung
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+  nextStop:
+    slot_uri: jc:nextStop
+    description: The PID (GTFS) id of the stop the vehicle reaches next (U1509Z1).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Nasledujúca zastávka
+          cs: Další zastávka
+          en: Next stop
+          de: Nächste Haltestelle
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+  delay:
+    slot_uri: jc:delay
+    description: Seconds behind the timetable, negative when ahead (Golemio's delay.actual).
+    range: integer
+    minimum_value: -10800
+    maximum_value: 10800
+    unit: { ucum_code: s }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Meškanie (s)
+          cs: Zpoždění
+          en: Delay
+          de: Verspätung (s)
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+  speed:
+    slot_uri: sdm:speed
+    description: Ground speed of the vehicle in km/h, as Smart Data Models states it; absent when the vehicle does not report one.
+    range: float
+    minimum_value: 0
+    maximum_value: 150
+    unit: { ucum_code: km/h }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Rýchlosť
+          cs: Rychlost
+          en: Speed
+          de: Geschwindigkeit
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  heading:
+    slot_uri: sdm:heading
+    description: Where the vehicle points, degrees clockwise from north (0 to 359).
+    range: integer
+    minimum_value: 0
+    maximum_value: 359
+    unit: { ucum_code: deg }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Smer jazdy (°)
+          cs: Směr jízdy
+          en: Heading
+          de: Fahrtrichtung (°)
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  fleetVehicleId:
+    slot_uri: sdm:fleetVehicleId
+    description: The operator's fleet number of the vehicle (9099); absent for the metro and trains, which report none.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Evidenčné číslo vozidla
+          cs: Evidenční číslo vozu
+          en: Fleet number
+          de: Wagennummer
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  operatorName:
+    slot_uri: jc:operatorName
+    description: >-
+      The carrier that runs the vehicle, as PID names it (DP PRAHA, ARRIVA CITY (Kladno)), or the
+      car-sharing company that rents the car out (car4way, Anytime, Bolt).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Dopravca
+          cs: Dopravce
+          en: Operator
+          de: Verkehrsunternehmen
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+
+  registerCategory:
+    slot_uri: jc:registerCategory
+    description: >-
+      Which part of the Prague emission register lists the source: REZZO 1 (large stationary
+      sources, rezzo1) or REZZO 2 (medium sources, rezzo2), as IPR Praha publishes them.
+    range: EmissionRegister
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Register emisií
+          cs: Registr emisí
+          en: Emission register
+          de: Emissionsregister
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  fuelType:
+    slot_uri: jc:fuelType
+    description: >-
+      The fuel group that dominates the source as the register writes it, such as zemní plyn,
+      nafta or technologie (a process, not a fuel).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh paliva
+          cs: Druh paliva
+          en: Fuel type
+          de: Brennstoffart
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  pm10Emission:
+    slot_uri: jc:pm10Emission
+    description: The source's yearly emission of PM10, in tonnes a year, as the register states it.
+    range: float
+    minimum_value: 0
+    maximum_value: 100000
+    unit: { ucum_code: t/a }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Emisie PM10
+          cs: Emise PM10
+          en: PM10 emission
+          de: PM10-Emission
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  pm25Emission:
+    slot_uri: jc:pm25Emission
+    description: The source's yearly emission of PM2.5, in tonnes a year (REZZO 2 only).
+    range: float
+    minimum_value: 0
+    maximum_value: 100000
+    unit: { ucum_code: t/a }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Emisie PM2,5
+          cs: Emise PM2,5
+          en: PM2.5 emission
+          de: PM2,5-Emission
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  so2Emission:
+    slot_uri: jc:so2Emission
+    description: The source's yearly emission of sulphur dioxide, in tonnes a year.
+    range: float
+    minimum_value: 0
+    maximum_value: 100000
+    unit: { ucum_code: t/a }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Emisie SO2
+          cs: Emise SO2
+          en: SO2 emission
+          de: SO2-Emission
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  noxEmission:
+    slot_uri: jc:noxEmission
+    description: The source's yearly emission of nitrogen oxides (NOx), in tonnes a year.
+    range: float
+    minimum_value: 0
+    maximum_value: 100000
+    unit: { ucum_code: t/a }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Emisie NOx
+          cs: Emise NOx
+          en: NOx emission
+          de: NOx-Emission
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  coEmission:
+    slot_uri: jc:coEmission
+    description: The source's yearly emission of carbon monoxide, in tonnes a year.
+    range: float
+    minimum_value: 0
+    maximum_value: 100000
+    unit: { ucum_code: t/a }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Emisie CO
+          cs: Emise CO
+          en: CO emission
+          de: CO-Emission
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  vocEmission:
+    slot_uri: jc:vocEmission
+    description: The source's yearly emission of volatile organic compounds, in tonnes a year.
+    range: float
+    minimum_value: 0
+    maximum_value: 100000
+    unit: { ucum_code: t/a }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Emisie VOC
+          cs: Emise VOC
+          en: VOC emission
+          de: VOC-Emission
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  radonRiskCategory:
+    slot_uri: jc:radonRiskCategory
+    description: >-
+      The radon risk category of the ground in the area, as the Czech Geological Survey's radon
+      index map gives it (transitional, low, medium, high).
+    range: RadonRisk
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kategória radónového rizika
+          cs: Kategorie radonového rizika
+          en: Radon risk category
+          de: Radonrisikokategorie
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  floodReturnPeriod:
+    slot_uri: jc:floodReturnPeriod
+    description: >-
+      The return period of the flood the area is flooded by, in years: 5, 20, 50 or 100 for the
+      designated flood areas Q5, Q20, Q50 and Q100.
+    range: integer
+    minimum_value: 1
+    maximum_value: 1000
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Doba opakovania povodne
+          cs: Doba opakování povodně
+          en: Flood return period
+          de: Wiederkehrintervall des Hochwassers
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  floodZoneCategory:
+    slot_uri: jc:floodZoneCategory
+    description: >-
+      The kind of zone of the Vltava and Berounka flood area: the active zone, where water flows
+      through, where it stands, or ground the city or its owners protect.
+    range: FloodZoneCategory
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kategória záplavového územia
+          cs: Kategorie záplavového území
+          en: Flood zone category
+          de: Kategorie des Überschwemmungsgebiets
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  noiseLevelLow:
+    slot_uri: jc:noiseLevelLow
+    description: >-
+      The lower bound of the area's 5 dB noise band, the A-weighted sound level the computed noise
+      map gives 4 m above ground, in decibels.
+    range: float
+    minimum_value: 0
+    maximum_value: 120
+    unit: { ucum_code: dB }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Dolná hranica hluku
+          cs: Dolní hranice hluku
+          en: Noise level from
+          de: Lärmpegel von
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  noiseLevelHigh:
+    slot_uri: jc:noiseLevelHigh
+    description: The upper bound of the area's 5 dB noise band, in decibels.
+    range: float
+    minimum_value: 5
+    maximum_value: 125
+    unit: { ucum_code: dB }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Horná hranica hluku
+          cs: Horní hranice hluku
+          en: Noise level to
+          de: Lärmpegel bis
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  assessmentPeriod:
+    slot_uri: jc:assessmentPeriod
+    description: The part of the day the noise level holds for, day (06:00-22:00) or night (22:00-06:00).
+    range: NoiseAssessmentPeriod
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Časť dňa
+          cs: Část dne
+          en: Assessment period
+          de: Beurteilungszeitraum
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  roadClass:
+    slot_uri: sdm:roadClass
+    description: >-
+      The Smart Data Models road class of the section, read from TSK's Czech classes: a motorway
+      (dálnice) NATIONAL_HIGHWAY, a road of class I, II or III (silnice I., II., III. třídy)
+      STATE_HIGHWAY, MAJOR_DISTRICT_ROAD or OTHER_DISTRICT_ROAD, a local road of class 1 or 2
+      (rychlostní, sběrná místní komunikace) MAJOR_CITY_ROAD, of class 3 or 4 (obslužná,
+      nemotoristická) MINOR_CITY_ROAD; absent on a section TSK leaves unclassified.
+    range: RoadClass
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Trieda cesty
+          cs: Třída komunikace
+          en: Road class
+          de: Straßenklasse
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  streetCleaningDates:
+    slot_uri: jc:streetCleaningDates
+    description: >-
+      The days of the year TSK cleans the street (blokové čištění), earliest first; a car parked
+      in the marked area on such a day is towed.
+    range: date
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Termíny blokového čistenia
+          cs: Termíny blokového čištění
+          en: Street cleaning dates
+          de: Termine der Straßenreinigung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  defenceType:
+    slot_uri: jc:defenceType
+    description: The kind of flood defence line, a fixed barrier, a mobile wall or sandbags.
+    range: FloodDefenceType
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Typ protipovodňovej ochrany
+          cs: Typ protipovodňové ochrany
+          en: Flood defence type
+          de: Art des Hochwasserschutzes
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  protectedBy:
+    slot_uri: jc:protectedBy
+    description: Who sets the line up and keeps it, the city or the owner of the ground behind it.
+    range: FloodDefenceKeeper
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kto zabezpečuje ochranu
+          cs: Kdo zajišťuje ochranu
+          en: Protected by
+          de: Geschützt durch
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  designFlood:
+    slot_uri: jc:designFlood
+    description: The flood the line is designed to hold back, the 100-year flood (q100) or the August 2002 flood (flood2002).
+    range: FloodDesignLevel
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Návrhová povodeň
+          cs: Návrhová povodeň
+          en: Design flood
+          de: Bemessungshochwasser
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  temperature:
+    slot_uri: sdm:temperature
+    description: The air temperature 2 m above ground, ČHMÚ's newest 10-minute value.
+    range: float
+    minimum_value: -40
+    maximum_value: 50
+    unit: { ucum_code: Cel }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Teplota vzduchu
+          cs: Teplota vzduchu
+          en: Air temperature
+          de: Lufttemperatur
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Weather
+  relativeHumidity:
+    slot_uri: sdm:relativeHumidity
+    description: The relative humidity as a fraction (0.57 is 57 %), the newest 10-minute value.
+    range: float
+    minimum_value: 0
+    maximum_value: 1
+    unit: { ucum_code: '1' }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Relatívna vlhkosť
+          cs: Relativní vlhkost
+          en: Relative humidity
+          de: Relative Luftfeuchtigkeit
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Weather
+  atmosphericPressure:
+    slot_uri: sdm:atmosphericPressure
+    description: The air pressure at the station's height (not reduced to sea level), the newest 10-minute value.
+    range: float
+    minimum_value: 800
+    maximum_value: 1100
+    unit: { ucum_code: hPa }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Atmosférický tlak
+          cs: Atmosférický tlak
+          en: Atmospheric pressure
+          de: Luftdruck
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Weather
+  precipitation:
+    slot_uri: sdm:precipitation
+    description: The precipitation of the newest 10 minutes, in millimetres (litres per square metre).
+    range: float
+    minimum_value: 0
+    maximum_value: 100
+    unit: { ucum_code: mm }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zrážky
+          cs: Srážky
+          en: Precipitation
+          de: Niederschlag
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Weather
+  windSpeed:
+    slot_uri: sdm:windSpeed
+    description: The mean wind speed 10 m above ground over the newest 10 minutes.
+    range: float
+    minimum_value: 0
+    maximum_value: 75
+    unit: { ucum_code: m/s }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Rýchlosť vetra
+          cs: Rychlost větru
+          en: Wind speed
+          de: Windgeschwindigkeit
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Weather
+  windDirection:
+    slot_uri: sdm:windDirection
+    description: The mean wind direction over the newest 10 minutes, in degrees from north.
+    range: float
+    minimum_value: 0
+    maximum_value: 360
+    unit: { ucum_code: deg }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Smer vetra
+          cs: Směr větru
+          en: Wind direction
+          de: Windrichtung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Weather
+  gustSpeed:
+    slot_uri: sdm:gustSpeed
+    description: The strongest gust of the newest 10 minutes, 10 m above ground.
+    range: float
+    minimum_value: 0
+    maximum_value: 100
+    unit: { ucum_code: m/s }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Rýchlosť nárazov vetra
+          cs: Rychlost nárazů větru
+          en: Gust speed
+          de: Böengeschwindigkeit
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Weather
+  routeCode:
+    slot_uri: sdm:routeCode
+    description: The PID line's GTFS route_id (L22, L991).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kód linky
+          cs: Kód linky
+          en: Route code
+          de: Liniencode
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.UrbanMobility
+  shortRouteCode:
+    slot_uri: sdm:shortRouteCode
+    description: The line's public number or letter (22, A, S9, P2).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Číslo linky
+          cs: Číslo linky
+          en: Line number
+          de: Liniennummer
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.UrbanMobility
+  transportationType:
+    slot_uri: sdm:transportationType
+    description: >-
+      The GTFS basic route type of the line: 0 tram, 1 metro, 2 train, 3 bus, 4 ferry, 7
+      funicular. The Smart Data Model lists only 0 to 7, so a trolleybus (GTFS 11) is 3 and its
+      transportMode says trolleybus.
+    range: integer
+    minimum_value: 0
+    maximum_value: 7
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh dopravy (GTFS)
+          cs: Druh dopravy (GTFS)
+          en: Transport type (GTFS)
+          de: Verkehrsart (GTFS)
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.UrbanMobility
+  description:
+    slot_uri: sdm:description
+    description: >-
+      The publisher's own description: the termini a line runs between, the streets and
+      connections a metro entrance leads to.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Popis
+          cs: Popis
+          en: Description
+          de: Beschreibung
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  code:
+    slot_uri: sdm:code
+    description: The sign of a metro entrance (E1, E2).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Označenie
+          cs: Označení
+          en: Sign
+          de: Kennzeichnung
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.UrbanMobility
+  platformCode:
+    slot_uri: jc:platformCode
+    description: The platform letter or number of a stop (A, 2); absent where the stop has one.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Nástupište
+          cs: Stanoviště
+          en: Platform
+          de: Bahnsteig
+      ngsi_ld_kind: Property
+  zoneCode:
+    slot_uri: sdm:zoneCode
+    description: >-
+      The PID fare zone (P, 0, B, 1 to 12): of a stop, every zone it counts in, comma separated
+      on a zone border; of a fare zone area, the zones it is.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Tarifné pásmo
+          cs: Tarifní pásmo
+          en: Fare zone
+          de: Tarifzone
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.UrbanMobility
+  transportModes:
+    slot_uri: jc:transportModes
+    description: What stops there, as the GTFS route types name it (bus, tram); a tram and bus stop lists both.
+    range: TransportMode
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druhy dopravy
+          cs: Druhy dopravy
+          en: Transport modes
+          de: Verkehrsarten
+      ngsi_ld_kind: Property
+  servedLines:
+    slot_uri: jc:servedLines
+    description: The PID lines that stop there, or that the metro entrance leads to (22, 136, A).
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Linky
+          cs: Linky
+          en: Lines
+          de: Linien
+      ngsi_ld_kind: Property
+  greenspaceType:
+    slot_uri: jc:greenspaceType
+    description: >-
+      IPR Praha's word for the kind of green area: its function in the shared green register
+      (Parky, Jiné (ostatní)), its character in the planning layer (lesopark, vnitroblok) or
+      přírodní park.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh zelene
+          cs: Druh zeleně
+          en: Kind of green area
+          de: Art der Grünfläche
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  vegetationType:
+    slot_uri: jc:vegetationType
+    description: IPR Praha's word for the vegetation element, such as Strom or Stromořadí.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Vegetačný prvok
+          cs: Vegetační prvek
+          en: Vegetation element
+          de: Vegetationselement
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  treeCategory:
+    slot_uri: jc:treeCategory
+    description: The register's category of the woody plant, such as listnatý strom (broadleaf tree).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kategória dreviny
+          cs: Kategorie dřeviny
+          en: Tree category
+          de: Gehölzkategorie
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  constructionMaterial:
+    slot_uri: jc:constructionMaterial
+    description: The construction material the register gives it, such as Dřevo or Beton.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Konštrukčný materiál
+          cs: Konstrukční materiál
+          en: Construction material
+          de: Baumaterial
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  surfaceType:
+    slot_uri: jc:surfaceType
+    description: The surface of a paved area or path as the register names it, such as Dlažba or Mlat.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Povrch
+          cs: Povrch
+          en: Surface
+          de: Oberfläche
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  careRegime:
+    slot_uri: jc:careRegime
+    description: The maintenance class the register gives it, such as Intenzitní třída údržby I.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Režim starostlivosti
+          cs: Režim péče
+          en: Care regime
+          de: Pflegeregime
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  areaServed:
+    slot_uri: sdm:areaServed
+    description: >-
+      Who looks after it, as the register names its manager: a city district (MČ Praha 9) or a
+      department of the City of Prague (MHMP-OCP).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Správca
+          cs: Správce
+          en: Manager
+          de: Verwalter
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.ParksAndGardens
+
+  intensity:
+    slot_uri: sdm:intensity
+    description: >-
+      Bicycles a Golemio cycle counter saw going one way in its newest five-minute interval
+      (dateObservedFrom to dateObservedTo).
+    range: integer
+    minimum_value: 0
+    maximum_value: 2000
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Počet bicyklov
+          cs: Počet kol
+          en: Bicycles
+          de: Fahrräder
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  dateObservedFrom:
+    slot_uri: sdm:dateObservedFrom
+    description: The start of the interval the count covers.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Od
+          cs: Od
+          en: From
+          de: Von
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  dateObservedTo:
+    slot_uri: sdm:dateObservedTo
+    description: The end of the interval the count covers.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Do
+          cs: Do
+          en: To
+          de: Bis
+        annotations: { generated: sk de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+
+  dataSet:
+    slot_uri: jc:dataSet
+    description: >-
+      The series the figure belongs to, the same for every year's file of one publication, such as
+      `mp-cinnost` for the monthly activity reports of the municipal police.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Séria
+          cs: Řada
+          en: Series
+          de: Reihe
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  indicator:
+    slot_uri: jc:indicator
+    description: >-
+      What the figure counts, as the publisher's own headings joined by ` / `, such as
+      `Odtahy vozidel / Celkem`, or the budget line's function and item codes.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Ukazovateľ
+          cs: Ukazatel
+          en: Indicator
+          de: Indikator
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  refArea:
+    slot_uri: jc:refArea
+    description: >-
+      The territory the figure describes: `CZ010` for the whole city, or a city district's
+      identification number (IČO) and name, such as `00063410 HMP-MČ PRAHA 1`.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Územie
+          cs: Území
+          en: Area
+          de: Gebiet
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  refPeriod:
+    slot_uri: jc:refPeriod
+    description: The period the figure covers, a month (`2025-09`) or a budget year to date (`2026`).
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obdobie
+          cs: Období
+          en: Period
+          de: Zeitraum
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  dimensionKey:
+    slot_uri: jc:dimensionKey
+    description: >-
+      The further breakdown beyond area and period: the police unit (`OŘ1`, `Hlídkový útvar`), the
+      budget area of a budget line (`09 Školství`) or where a district's transfer comes from
+      (`Státní rozpočet`); absent when the series has none.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Ďalšie členenie
+          cs: Další členění
+          en: Further breakdown
+          de: Weitere Gliederung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  kpiValue:
+    slot_uri: sdm:kpiValue
+    description: >-
+      The figure as published: a count (unitCode C62), a share in percent (P1), or an amount of money
+      drawn so far, in the unit the budget publishes (thousands of CZK), named by `unitText`.
+    range: float
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Hodnota
+          cs: Hodnota
+          en: Value
+          de: Wert
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.KeyPerformanceIndicator
+  unitText:
+    slot_uri: jc:unitText
+    description: The unit in words, such as `Kč` or `tis. Kč`, kept because a UN/CEFACT code has no currency.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Jednotka
+          cs: Jednotka
+          en: Unit
+          de: Einheit
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  startDate:
+    slot_uri: schema:startDate
+    description: When the work on the street starts, as the opravujeme.to record gives it in Europe/Prague time.
+    range: datetime
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Dátum začiatku
+          cs: Datum začátku
+          en: Start date
+          de: Beginndatum
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  endDate:
+    slot_uri: schema:endDate
+    description: When the work on the street is planned to end, in Europe/Prague time.
+    range: datetime
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Dátum konca
+          cs: Datum konce
+          en: End date
+          de: Enddatum
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  workState:
+    slot_uri: sdm:workState
+    description: Where the work stands, in the Smart Data Model's terms (planned, open, completed).
+    range: WorkState
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Stav stavby
+          cs: Stav stavby
+          en: Work state
+          de: Baustatus
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  workCategory:
+    slot_uri: jc:workCategory
+    description: What occupies the street, as opravujeme.to classes it (construction, cultural, sport, others).
+    range: WorkCategory
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh stavby
+          cs: Druh stavby
+          en: Work category
+          de: Bauart
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  trafficImpact:
+    slot_uri: jc:trafficImpact
+    description: How hard the work restricts traffic, opravujeme.to's colour as a word (minor green, moderate yellow, severe red).
+    range: TrafficImpact
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Dopad na dopravu
+          cs: Dopad na dopravu
+          en: Traffic impact
+          de: Verkehrsbeeinträchtigung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  contractingAuthority:
+    slot_uri: sdm:contractingAuthority
+    description: >-
+      The work's investor, a public body, utility or company; left out when it does not read as an
+      organisation, because a private investor is a person.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Investor
+          cs: Investor
+          en: Contracting authority
+          de: Auftraggeber
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+classes:
+  BikeHireDockingStation:
+    class_uri: sdm:BikeHireDockingStation
+    description: One nextbike station in and around Prague, its docks and what it holds right now.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Stanica zdieľaných bicyklov
+          cs: Stanice sdílených kol
+          en: Bike sharing station
+          de: Leihradstation
+    slots:
+      - name
+      - totalSlotNumber
+      - availableBikeNumber
+      - freeSlotNumber
+      - status
+      - dateModified
+      - dataProvider
+      - source
+  AirQualityObserved:
+    class_uri: sdm:AirQualityObserved
+    description: One of ČHMÚ's air quality stations in Prague and the hour's means it last published.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+      label:
+        tag: label
+        value:
+          sk: Meranie kvality ovzdušia
+          cs: Měření kvality ovzduší
+          en: Air quality reading
+          de: Luftqualitätsmessung
+    slots: [name, dateObserved, pm10, pm25, no2, o3, so2, co, dataProvider, source]
+  PointOfInterest:
+    class_uri: sdm:PointOfInterest
+    description: >-
+      One place a resident goes to: a school, a cultural venue, a public toilet, a public
+      transport ticket point, a library, a municipal office or police station, a garden, a
+      playground, a waste collection yard, or one of the city's amenities the IPR geoportal
+      maps: a health centre, a university, a place of worship, a community centre, an
+      accommodation, a grocery store, a cool spot, an animal corner, a landmark, a hazardous
+      or bio-waste collection point, a nature trail stop, or one of the areas and lines it
+      maps: a cemetery, a nature trail, a water area or stream, or a dog zone; or a place of
+      health care or a social service of the national registers.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.PointOfInterest
+      label:
+        tag: label
+        value:
+          sk: Miesto
+          cs: Místo
+          en: Place
+          de: Ort
+    slots:
+      - name
+      - serviceCategory
+      - facilityType
+      - address
+      - url
+      - capacity
+      - pupilCount
+      - openingHours
+      - wheelchairAccessible
+      - dateModified
+      - dataProvider
+      - source
+  WasteContainerIsle:
+    class_uri: sdm:WasteContainerIsle
+    description: One sorted-waste collection point of the city, where its containers stand.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.WasteManagement
+      label:
+        tag: label
+        value:
+          sk: Kontajnerové stanovište
+          cs: Kontejnerové stání
+          en: Waste container site
+          de: Containerstandort
+    slots:
+      - name
+      - stationCode
+      - accessRestriction
+      - refDistrict
+      - wasteContainers
+      - dataProvider
+      - source
+  WasteContainer:
+    class_uri: sdm:WasteContainer
+    description: One sorted-waste container of the city with its next collection, and how full it is where a sensor reads it.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.WasteManagement
+      label:
+        tag: label
+        value:
+          sk: Kontajner na odpad
+          cs: Kontejner na odpad
+          en: Waste container
+          de: Abfallbehälter
+    slots:
+      - name
+      - containerCode
+      - wasteKind
+      - fillingLevel
+      - nextActuationDeadline
+      - dateModified
+      - refWasteContainerIsle
+      - dataProvider
+      - source
+  OffStreetParking:
+    class_uri: sdm:OffStreetParking
+    description: >-
+      One car park: a park-and-ride at the edge of the city, or a garage the Mr.Parkit service
+      rents out by reservation, with its tariff (Golemio).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+      label:
+        tag: label
+        value:
+          sk: Parkovisko
+          cs: Parkoviště
+          en: Car park
+          de: Parkplatz
+    slots:
+      - name
+      - address
+      - url
+      - totalSpotNumber
+      - availableSpotNumber
+      - occupiedSpotNumber
+      - priceRatePerMinute
+      - pricePerDay
+      - priceCurrency
+      - dateModified
+      - dataProvider
+      - source
+  AdministrativeArea:
+    class_uri: jc:AdministrativeArea
+    description: >-
+      One of the 57 city districts (městské části) of Prague, its outline and its code, or one
+      of the 120 planning balance units (bilanční územní celky) IPR Praha divides the city into,
+      its outline and its name, as the Smart Data Model extension AdministrativeArea
+      (PointOfInterest base).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/AdministrativeArea
+      label:
+        tag: label
+        value:
+          sk: Územie
+          cs: Území
+          en: Administrative area
+          de: Verwaltungsgebiet
+    slots: [name, districtCode, dataProvider, source, wasteContainerIsles]
+  BudgetLine:
+    class_uri: jc:BudgetLine
+    description: >-
+      One line of the city budget of the City of Prague (Magistrát hl. m. Prahy), in the national
+      budget classification, with the approved and the adjusted amount, as the Smart Data Model
+      extension BudgetLine (CPSV-AP Cost base).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/BudgetLine
+      label:
+        tag: label
+        value:
+          sk: Rozpočtová položka
+          cs: Rozpočtová položka
+          en: Budget line
+          de: Haushaltsposten
+    slots:
+      - name
+      - identifier
+      - fiscalYear
+      - budgetArea
+      - budgetFunction
+      - budgetItem
+      - budgetPurpose
+      - approvedAmount
+      - adjustedAmount
+      - dataProvider
+      - source
+
+  Vehicle:
+    class_uri: sdm:Vehicle
+    description: >-
+      One PID bus, tram, trolleybus, metro train or train in service in Prague: where it is, its
+      line, where it heads, its next stop and how late it runs (Golemio vehicle positions); or one
+      car-sharing car free to rent and where it stands (Golemio shared cars).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Vozidlo
+          cs: Vozidlo
+          en: Vehicle
+          de: Fahrzeug
+    slots:
+      - name
+      - vehicleType
+      - category
+      - transportMode
+      - lineName
+      - direction
+      - nextStop
+      - delay
+      - speed
+      - heading
+      - fleetVehicleId
+      - operatorName
+      - wheelchairAccessible
+      - dateObserved
+      - dataProvider
+      - source
+
+  EmissionSource:
+    class_uri: jc:EmissionSource
+    description: >-
+      One stationary source of air pollution of the Prague emission register (REZZO 1 or REZZO 2):
+      where it is, its fuel and its yearly emissions, as the Smart Data Model extension
+      EmissionSource (PointOfInterest base). The operator is not read: some are private persons.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/EmissionSource
+      label:
+        tag: label
+        value:
+          sk: Zdroj znečistenia
+          cs: Zdroj znečištění
+          en: Emission source
+          de: Emissionsquelle
+    slots:
+      - name
+      - registerCategory
+      - fuelType
+      - pm10Emission
+      - pm25Emission
+      - so2Emission
+      - noxEmission
+      - coEmission
+      - vocEmission
+      - address
+      - dataProvider
+      - source
+  RadonRiskArea:
+    class_uri: jc:RadonRiskArea
+    description: >-
+      One area of Prague's radon risk map and the risk category of its ground, as the Smart
+      Data Model extension RadonRiskArea (PointOfInterest base).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/RadonRiskArea
+      label:
+        tag: label
+        value:
+          sk: Oblasť radónového rizika
+          cs: Oblast radonového rizika
+          en: Radon risk area
+          de: Radonrisikogebiet
+    slots: [name, radonRiskCategory, dataProvider, source]
+  FloodZone:
+    class_uri: jc:FloodZone
+    description: >-
+      One designated flood area of Prague: the ground a 5, 20, 50 or 100-year flood covers, or a
+      zone of the Vltava and Berounka flood area, as the Smart Data Model extension FloodZone
+      (PointOfInterest base).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/FloodZone
+      label:
+        tag: label
+        value:
+          sk: Záplavové územie
+          cs: Záplavové území
+          en: Flood zone
+          de: Überschwemmungsgebiet
+    slots: [name, floodReturnPeriod, floodZoneCategory, dataProvider, source]
+  NoiseZone:
+    class_uri: jc:NoiseZone
+    description: >-
+      One area of Prague's computed noise map of surface transport: the ground where the day or the
+      night sound level falls into one 5 dB band, as the Smart Data Model extension NoiseZone
+      (PointOfInterest base).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/NoiseZone
+      label:
+        tag: label
+        value:
+          sk: Hluková zóna
+          cs: Hluková zóna
+          en: Noise zone
+          de: Lärmzone
+    slots: [name, noiseLevelLow, noiseLevelHigh, assessmentPeriod, dataProvider, source]
+  FloodDefence:
+    class_uri: jc:FloodDefence
+    description: >-
+      One line of Prague's flood defences: a fixed barrier, a mobile wall or a sandbag line, who
+      keeps it and the flood it is designed for, as the Smart Data Model extension FloodDefence
+      (PointOfInterest base).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/FloodDefence
+      label:
+        tag: label
+        value:
+          sk: Protipovodňová ochrana
+          cs: Protipovodňová ochrana
+          en: Flood defence
+          de: Hochwasserschutz
+    slots: [name, defenceType, protectedBy, designFlood, dataProvider, source]
+  TrafficFlowObserved:
+    class_uri: sdm:TrafficFlowObserved
+    description: >-
+      One direction of a Golemio cycle counter in Prague and the bicycles it counted in its newest
+      five-minute interval (Golemio bicycle counters, Camea).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Sčítanie cyklistov
+          cs: Sčítání cyklistů
+          en: Cycle count
+          de: Radverkehrszählung
+        annotations: { generated: sk de }
+    slots: [name, vehicleType, intensity, dateObservedFrom, dateObservedTo, dataProvider, source]
+
+  WeatherObserved:
+    class_uri: sdm:WeatherObserved
+    description: One of ČHMÚ's weather stations in Prague and the newest 10-minute values it published.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Weather
+      label:
+        tag: label
+        value:
+          sk: Meranie počasia
+          cs: Měření počasí
+          en: Weather observation
+          de: Wetterbeobachtung
+    slots:
+      - name
+      - stationCode
+      - dateObserved
+      - temperature
+      - relativeHumidity
+      - atmosphericPressure
+      - precipitation
+      - windSpeed
+      - windDirection
+      - gustSpeed
+      - dataProvider
+      - source
+
+  PublicTransportRoute:
+    class_uri: sdm:PublicTransportRoute
+    description: >-
+      One PID line as IPR Praha maps it today: its number, what it runs, the termini and the line
+      it draws through Prague and Central Bohemia, simplified to about 5 m.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.UrbanMobility
+      label:
+        tag: label
+        value:
+          sk: Linka MHD
+          cs: Linka PID
+          en: Public transport route
+          de: ÖPNV-Linie
+    slots:
+      - name
+      - routeCode
+      - shortRouteCode
+      - transportationType
+      - transportMode
+      - description
+      - url
+      - dataProvider
+      - source
+  GtfsStop:
+    class_uri: sdm:GtfsStop
+    description: >-
+      One PID stop platform in Prague (GTFS stop of location type 0): its name, platform, fare
+      zone, the lines that stop there and whether it is step-free.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.UrbanMobility
+      label:
+        tag: label
+        value:
+          sk: Zastávka
+          cs: Zastávka
+          en: Stop
+          de: Haltestelle
+    slots:
+      - name
+      - platformCode
+      - zoneCode
+      - servedLines
+      - transportModes
+      - wheelchairAccessible
+      - dataProvider
+      - source
+  GtfsAccessPoint:
+    class_uri: sdm:GtfsAccessPoint
+    description: >-
+      One entrance of a Prague metro station: its sign, the station, the streets it leads to and
+      the metro lines behind it.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.UrbanMobility
+      label:
+        tag: label
+        value:
+          sk: Vstup do metra
+          cs: Vstup do metra
+          en: Metro entrance
+          de: U-Bahn-Eingang
+    slots: [name, code, description, servedLines, dataProvider, source]
+  FareZone:
+    class_uri: jc:FareZone
+    description: >-
+      One area of the PID fare zones (P, 0, B, 1 to 12) the ticket price is counted by. No Smart
+      Data Model holds a fare zone; the nearest, Transportation RestrictedTrafficArea, is an
+      access restriction.
+    is_a: Entity
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Tarifné pásmo
+          cs: Tarifní pásmo
+          en: Fare zone
+          de: Tarifzone
+    slots: [name, zoneCode, dataProvider, source]
+  Garden:
+    class_uri: sdm:Garden
+    description: >-
+      One green area of the city: a park of the planning layer, a nature park, or a basic green
+      area of the shared green register (IPR Praha), with its kind, manager and care regime.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.ParksAndGardens
+      label:
+        tag: label
+        value:
+          sk: Zeleň
+          cs: Zeleň
+          en: Green area
+          de: Grünfläche
+    slots: [name, greenspaceType, careRegime, areaServed, dateModified, dataProvider, source]
+  Tree:
+    class_uri: jc:Tree
+    description: >-
+      One tree or tree row of the city's shared green register or its tree-row layer (IPR Praha):
+      where it stands, its category, manager and care regime. Smart Data Models has no tree class;
+      the closest, GreenspaceRecord, records soil and weather readings of a green area.
+    is_a: Entity
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Strom
+          cs: Strom
+          en: Tree
+          de: Baum
+    slots:
+      - name
+      - vegetationType
+      - treeCategory
+      - careRegime
+      - areaServed
+      - dateModified
+      - dataProvider
+      - source
+  GreenAsset:
+    class_uri: jc:GreenAsset
+    description: >-
+      One technical element of the city's shared green register (IPR Praha): a bench, a fence, a path, a paved area, a wall, a water feature or a tree pit, where it is, its kind, material and surface, its manager and care regime. Smart Data Models has no class for it; the closest, GreenspaceRecord, records soil and weather readings of a green area.
+    is_a: Entity
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Technický prvok zelene
+          cs: Technický prvek zeleně
+          en: Green space element
+          de: Grünflächenelement
+    slots:
+      - name
+      - facilityType
+      - constructionMaterial
+      - surfaceType
+      - careRegime
+      - areaServed
+      - dateModified
+      - dataProvider
+      - source
+
+  OnStreetParking:
+    class_uri: sdm:OnStreetParking
+    description: >-
+      One street parking area of the city: a section of the paid parking zones (zóny placeného
+      stání) with its zone, tariff and spaces, or a reserved bay for ZTP/P card holders,
+      deliveries or a special purpose, as TSK hl. m. Prahy maps them on the IPR geoportal.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+      label:
+        tag: label
+        value:
+          sk: Parkovanie na ulici
+          cs: Parkování na ulici
+          en: On-street parking
+          de: Parken am Straßenrand
+    slots:
+      - name
+      - category
+      - parkingZone
+      - tariff
+      - totalSpotNumber
+      - parkingGroups
+      - dataProvider
+      - source
+    slot_usage:
+      category: { range: StreetParkingCategory }
+  ParkingGroup:
+    class_uri: sdm:ParkingGroup
+    description: >-
+      One street segment of a paid parking zone with its spaces, a group of spaces inside the
+      paid parking section whose tariff it follows.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+      label:
+        tag: label
+        value:
+          sk: Úsek parkovania
+          cs: Úsek parkování
+          en: Parking segment
+          de: Parkabschnitt
+    slots: [name, refParkingSite, totalSpotNumber, dataProvider, source]
+  RestrictedTrafficArea:
+    class_uri: sdm:RestrictedTrafficArea
+    description: One stretch of street where parking is prohibited (zákaz stání), as TSK hl. m. Prahy maps it.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Zákaz státia
+          cs: Zákaz stání
+          en: No parking
+          de: Parkverbot
+    slots: [name, dataProvider, source]
+  BikeLane:
+    class_uri: sdm:BikeLane
+    description: >-
+      One stretch of a cycle route of the city's cycle route map, its route number and the kind
+      of way it runs on (a cycle lane, a shared path, a quiet street), as IPR Praha maps it.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Cyklotrasa
+          cs: Cyklotrasa
+          en: Cycle route
+          de: Radroute
+    slots: [name, facilityType, dataProvider, source]
+  RoadSegment:
+    class_uri: sdm:RoadSegment
+    description: >-
+      One street section of TSK hl. m. Prahy's road register, its name, the kind of way and its
+      road class, or one street area of TSK's summer street cleaning and its cleaning dates. TSK
+      publishes no road register to point refRoad at, so it is absent.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Úsek komunikácie
+          cs: Úsek komunikace
+          en: Road segment
+          de: Straßenabschnitt
+    slots: [name, facilityType, roadClass, streetCleaningDates, dataProvider, source]
+  FareCollectionSystem:
+    class_uri: sdm:FareCollectionSystem
+    description: One parking machine of the paid parking zones, its number and its street.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Parkovací automat
+          cs: Parkovací automat
+          en: Parking machine
+          de: Parkscheinautomat
+    slots: [name, equipmentId, address, dataProvider, source]
+  KeyPerformanceIndicator:
+    class_uri: sdm:KeyPerformanceIndicator
+    description: >-
+      One figure of one city table for one period: a count of the municipal police's monthly
+      activity report, city-wide or per police unit, or what the city has drawn of a budget line or
+      of a transfer to a city district so far this year. Each year's file adds periods to the same
+      series (`dataSet`).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.KeyPerformanceIndicator
+      label:
+        tag: label
+        value:
+          sk: Ukazovateľ
+          cs: Ukazatel
+          en: Key performance indicator
+          de: Kennzahl
+    slots:
+      - name
+      - dataSet
+      - indicator
+      - refArea
+      - refPeriod
+      - dimensionKey
+      - kpiValue
+      - unitText
+      - approvedAmount
+      - adjustedAmount
+      - dataProvider
+      - source
+    slot_usage:
+      approvedAmount: { required: false }
+      adjustedAmount: { required: false }
+
+  CityWork:
+    class_uri: sdm:CityWork
+    description: >-
+      One work or event that occupies a Prague street, as the city's opravujeme.to service lists
+      it for drivers: what and where, from when until when, its state, how hard it restricts
+      traffic and who invests in it. The responsible people, their phones and e-mails and
+      the contractor are left out, and so are the free-text restrictions, which name contact people.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Práce na ulici
+          cs: Práce na ulici
+          en: City work
+          de: Baustelle
+    slots:
+      - name
+      - address
+      - startDate
+      - endDate
+      - workState
+      - workCategory
+      - trafficImpact
+      - contractingAuthority
+      - dataProvider
+      - source
+    slot_usage:
+      location: { required: true }
+  PostalAddress:
+    class_uri: schema:PostalAddress
+    description: >-
+      The value of `address`: a postal address, never an entity of its own (Smart Data Models'
+      common schema).
+    annotations:
+      upstream_source: https://schema.org/PostalAddress
+    slots: [streetAddress, addressLocality, addressCountry]
+enums:
+  StreetParkingCategory:
+    description: The OnStreetParking `category` values the Prague parking layers map to, a subset of the Smart Data Model's enum.
+    permissible_values:
+      forResidents:
+        description: Residents of the zone with a parking permit (RES, MIX).
+      onlyWithPermit:
+        description: A permit is needed (RES residents, a bay reserved for one plate, a special bay).
+      feeCharged:
+        description: Parking is paid by the time parked (MIX, VIS).
+      shortTerm: { description: Short-term visitor parking (VIS). }
+      forDisabled: { description: A bay for a ZTP/P card holder. }
+      forLoadUnload: { description: A delivery bay (zásobování). }
+  VehicleKind:
+    permissible_values:
+      tram: { description: A tram. }
+      bus: { description: A bus. }
+      trolley: { description: A trolleybus. }
+      car: { description: A car-sharing car. }
+      bicycle: { description: A bicycle as a cycle counter counts it. }
+      other:
+        description: A metro train, a train, a ferry or the funicular.
+  VehicleCategory:
+    permissible_values:
+      public: { description: A public transport vehicle. }
+      tracked: { description: A vehicle whose position its operator tracks. }
+  RoadClass:
+    permissible_values:
+      NATIONAL_HIGHWAY: { description: A motorway (dálnice). }
+      STATE_HIGHWAY: { description: A road of class I (silnice I. třídy). }
+      MAJOR_DISTRICT_ROAD: { description: A road of class II (silnice II. třídy). }
+      OTHER_DISTRICT_ROAD: { description: A road of class III (silnice III. třídy). }
+      MAJOR_CITY_ROAD:
+        description: A local road of class 1 or 2, an expressway or a collector (rychlostní, sběrná místní komunikace).
+      MINOR_CITY_ROAD:
+        description: A local road of class 3 or 4, an access road or a non-motorised way (obslužná, nemotoristická místní komunikace).
+  TransportMode:
+    permissible_values:
+      tram: { description: Tram (GTFS route type 0). }
+      metro: { description: Metro (GTFS route type 1). }
+      train: { description: Train (GTFS route type 2). }
+      bus: { description: Bus (GTFS route type 3). }
+      ferry: { description: Ferry (GTFS route type 4). }
+      funicular: { description: Funicular (GTFS route type 7). }
+      trolleybus: { description: Trolleybus (GTFS route type 11). }
+  StationStatus:
+    permissible_values:
+      working: { description: The station rents bikes and takes them back. }
+      outOfService: { description: The station neither rents nor takes back bikes right now. }
+  ServiceCategory:
+    permissible_values:
+      school: { description: A school or a school facility of the city's school register. }
+      culture:
+        description: A theatre, a museum, a gallery or another cultural venue.
+      publicToilet: { description: A public toilet. }
+      ticketSale: { description: A place that sells public transport tickets. }
+      library: { description: A branch of the Municipal Library of Prague. }
+      municipalAuthority:
+        description: The office of a city district or of the city (úřad městské části).
+      police:
+        description: A station or desk of the Municipal Police of Prague (Městská policie).
+      garden: { description: A public garden or park of the city. }
+      playground: { description: A public children's playground. }
+      wasteCollectionYard:
+        description: A waste collection yard (sběrný dvůr) that takes bulky and hazardous waste.
+      healthCentre: { description: A polyclinic or health centre. }
+      university:
+        description: A university, faculty or university workplace.
+      placeOfWorship:
+        description: A church, chapel, prayer room or other place of worship.
+      communityCentre:
+        description: A cultural or community centre, a local library, a youth or senior club.
+      accommodation:
+        description: A hotel, guest house, hostel, campsite or other accommodation.
+      groceryStore: { description: A full-range grocery store or supermarket. }
+      drinkingFountain: { description: A public drinking fountain. }
+      fountain: { description: A fountain or ornamental pool. }
+      spring: { description: A well or spring. }
+      waterPump: { description: A public water pump. }
+      mistShower: { description: A mist shower that cools passers-by in summer. }
+      bathingPlace:
+        description: A swimming pool, natural pool or other place to swim.
+      animalCorner:
+        description: A petting zoo, farm, terrarium or animal rescue station.
+      landmark: { description: A notable building or place of the city. }
+      wasteCollectionPoint:
+        description: A collection point for hazardous waste or bio-waste that is not a collection yard.
+      trailStop: { description: A stop of a nature trail. }
+      cemetery:
+        description: A cemetery or burial ground, drawn as its area.
+      natureTrail:
+        description: A nature trail, drawn as its course.
+      waterArea:
+        description: A stream, pond or other water area, drawn as its outline.
+      dogZone:
+        description: An area where dogs may run free, must stay on a lead or may not enter, or a dog park.
+      warMemorial:
+        description: A memorial or war grave of the IPR register of memorials and war graves.
+      postOffice: { description: A post office of the IPR layer of post offices. }
+      healthCareProvider:
+        description: A place of health care of the national register of health care providers (NRPZS).
+      socialService:
+        description: A social service at a facility of the register of social service providers (RPSS).
+  WasteAccess:
+    permissible_values:
+      public: { description: Anyone may use it (volně). }
+      residents: { description: Only the residents of the house may use it (obyvatelům domu). }
+  WasteKind:
+    permissible_values:
+      colouredGlass: { description: Coloured glass (barevné sklo). }
+      clearGlass: { description: Clear glass (čiré sklo). }
+      paper: { description: Paper (papír). }
+      plastic: { description: Plastic (plast). }
+      metal: { description: Metal (kovy). }
+      beverageCartons: { description: Beverage cartons (nápojové kartony). }
+      electronics: { description: Small electrical appliances (elektrozařízení). }
+      edibleOil: { description: Edible fats and oils (jedlé tuky a oleje). }
+      mixedRecyclables:
+        description: Paper, plastic and cartons in one container (multikomoditní sběr).
+  EmissionRegister:
+    permissible_values:
+      rezzo1:
+        description: REZZO 1, a large stationary source (kategorie 1).
+      rezzo2:
+        description: REZZO 2, a medium stationary source (kategorie 2).
+  RadonRisk:
+    permissible_values:
+      transitional:
+        description: Transitional, on variable Quaternary soils (přechodná).
+      low: { description: Low (nízká). }
+      medium: { description: Medium (střední). }
+      high: { description: High (vysoká). }
+  FloodZoneCategory:
+    permissible_values:
+      active:
+        description: The active zone, where a flood flows fastest (aktivní).
+      flowThrough: { description: Ground the flood flows through (průtočná). }
+      nonFlowThrough: { description: Ground where the flood water stands (neprůtočná). }
+      protectedByCity:
+        description: Ground the city's flood defences protect (určená k ochraně městem).
+      protectedIndividually:
+        description: Ground its owners protect themselves (určená k ochraně individuálně).
+  NoiseAssessmentPeriod:
+    permissible_values:
+      day:
+        description: The day, 06:00 to 22:00 (den).
+      night:
+        description: The night, 22:00 to 06:00 (noc).
+  FloodDefenceType:
+    permissible_values:
+      unknown: { description: The register does not say (neznámo). }
+      fixed: { description: A fixed barrier or wall (pevné opatření). }
+      mobileWall: { description: A mobile wall put up before a flood (mobilní stěna). }
+      sandbags: { description: A line of sandbags (pytle s pískem). }
+  FloodDefenceKeeper:
+    permissible_values:
+      city: { description: The city sets it up and keeps it (zajišťovaná městem). }
+      individual:
+        description: The owner of the ground behind it does (zajišťovaná individuálně).
+  FloodDesignLevel:
+    permissible_values:
+      q100: { description: The 100-year flood (Q100). }
+      flood2002: { description: The level of the August 2002 flood (Q2002). }
+  WorkState:
+    description: The CityWork `workState` values opravujeme.to's states map to, a subset of the Smart Data Model's enum.
+    permissible_values:
+      planned: { description: Announced and not started yet (FUTURE). }
+      open: { description: Under way now (ACTIVE). }
+      completed: { description: Finished (DONE). }
+  WorkCategory:
+    permissible_values:
+      construction: { description: Construction or repair work (CONSTRUCTION). }
+      cultural: { description: A cultural event on the street (CULTURAL). }
+      sport: { description: A sports event on the street (SPORT). }
+      other: { description: Anything else (OTHERS). }
+  TrafficImpact:
+    permissible_values:
+      minor:
+        description: Little restriction, opravujeme.to's green.
+      moderate:
+        description: Lanes or turns closed, opravujeme.to's yellow.
+      severe:
+        description: A street or ramp closed, opravujeme.to's red.

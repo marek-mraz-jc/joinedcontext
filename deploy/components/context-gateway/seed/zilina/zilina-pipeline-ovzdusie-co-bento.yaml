@@ -1,0 +1,44 @@
+# The mapping of the ovzdusie-co pipeline (PL-03, T-3138): the latest valid hourly mean of
+# carbon monoxide at SK0020A, Žilina's urban-background station of the
+# Slovak Hydrometeorological Institute, as the European Environment Agency republishes it
+# (in mg/m³, UN/CEFACT GP, as the file's `Unit` column says; up-to-date E2a data, one Parquet file per sampling point). One entity per station: the five pollutant
+# streams (PM10, PM2.5, NO2, O3, CO) each write their own attribute of it, and the upsert merges them.
+#
+# The station's own host (SHMÚ) does not answer, and the file carries neither the station's
+# name nor its place, so both come from the EEA station metadata (PanEuropean_metadata.csv,
+# read 2026-10-06): station SK0020A, urban background, 18.771215 E, 49.211447 N.
+
+pipeline:
+  processors:
+    - parquet_decode: {}
+    - archive: { format: json_array }
+    # The empty-read guard (T-3138): a station file without a record is the service failing, not
+    # the air clearing, so the run fails where it can be seen instead of writing nothing.
+    - mapping: |
+        root = if content().parse_json().or([]).length() == 0 { throw("the station file holds no record") } else { this }
+    - mapping: |
+        let attribute = "co"
+        let station = "SK0020A"
+        # Parquet INT96: [nanoseconds of the day, low and high 32 bits, Julian day]. The times
+        # are UTC+1, the offset EEA's download service has always used (its CSV printed
+        # "+01:00"); read as UTC, the latest hour of a file fetched at 05:59 UTC ends at 06:00.
+        map instant {
+          root = ((this.index(2) - 2440588) * 86400 + ((this.index(1) * 4294967296 + this.index(0)) / 1000000000).floor() - 3600).ts_format("2006-01-02T15:04:05Z07:00", "UTC")
+        }
+        # Validity 1, 2 and 3 are valid readings; -1 and -99 are not (EEA vocabulary
+        # "observationvalidity"). A value that is not a number, or is negative, is no reading.
+        # The decoder hands INT96 and byte columns over as Go values Bloblang cannot index; read
+        # back from the archived JSON they are plain arrays, numbers and strings.
+        let valid = content().parse_json().or([]).filter(r -> [1, 2, 3].contains(r.Validity) && r.End.type() == "array" && r.End.length() == 3 && r.Value.number().catch(-1) >= 0)
+        let latest = $valid.sort_by(r -> r.End.index(2) * 86400 + (r.End.index(1) * 4294967296 + r.End.index(0)) / 1000000000).slice(-1).index(0).catch(null)
+        root = if $latest == null { [] } else { [{
+          "id": "urn:ngsi-ld:%v:%v:%v:eea-%v".format("AirQualityObserved", "zilina.sk", env("JC_SPACE"), $station),
+          "type": "AirQualityObserved",
+          "name": { "type": "LanguageProperty", "languageMap": { "sk": "Stanica SK0020A, mestské pozadie", "en": "Station SK0020A, urban background" } },
+          "stationCode": { "type": "Property", "value": $station },
+          $attribute: { "type": "Property", "value": $latest.Value.number(), "unitCode": "GP", "observedAt": $latest.End.apply("instant") },
+          "dateObserved": { "type": "Property", "value": $latest.End.apply("instant") },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [18.771215, 49.211447] } },
+          "dataProvider": { "type": "Property", "value": "European Environment Agency, air quality data reported by SHMÚ (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://eeadmz1-downloads-api-appservice.azurewebsites.net/" }
+        }] }

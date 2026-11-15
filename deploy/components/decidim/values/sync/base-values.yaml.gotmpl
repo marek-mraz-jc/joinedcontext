@@ -1,0 +1,32 @@
+---
+{{- $global := .Values.global }}
+{{- $web := .Values.decidim.web }}
+{{- $images := index .Values.images "decidim" "sidekiq" }}
+{{- $pg := printf "postgres-cluster-rw.%s.svc.cluster.local" .Values.postgres.cluster.namespace }}
+{{- $host := printf "%s.%s" $web.subDomain $global.domain }}
+# Checklist:
+# - [x] Runs as 10001 with `readOnlyRootFilesystem`, the Sidekiq image
+# - [x] No ServiceAccount token, no claim: it reads the database and writes to Redis, nothing else
+# - [x] Secrets by reference only, the web's environment (values/env.yaml.tpl)
+
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+
+{{- $ctx := dict "global" $global "web" $web "pg" $pg "host" $host }}
+# One connection is all a task that lists publications holds.
+env:
+  {{- range (tpl (readFile "../env.yaml.tpl") $ctx | fromYaml).env }}{{ if ne .name "RAILS_MAX_THREADS" }}
+  - {{ . | toJson }}
+  {{- end }}{{ end }}
+  - { name: RAILS_MAX_THREADS, value: "1" }
+
+podSecurityContext:
+  {{ merge (dict "runAsUser" 10001 "runAsGroup" 10001 "fsGroup" 10001) .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

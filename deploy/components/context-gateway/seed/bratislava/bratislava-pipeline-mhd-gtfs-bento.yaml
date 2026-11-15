@@ -1,0 +1,100 @@
+# The mapping of the mhd-gtfs pipeline (PL-03, T-5273): Dopravný podnik Bratislava's GTFS
+# `agency.txt`, `routes.txt` and `stops.txt`, as the archive read of `dpb-gtfs` leaves them (one
+# message per member, its name in `archive_filename`, PL-72).
+#
+# - agency.txt: one GtfsAgency per agency (DPB alone).
+# - routes.txt: one GtfsRoute per line number. DPB's route_id changes with each timetable variant
+#   (65012 replaced an older 65012 variant), so the id carries the number riders see; route_long_name
+#   holds DPB's internal variant note ("nové chrono"), not a name, and is not written. A number
+#   beyond ASCII (the school line Šk) keys its id by route_id instead, as a URN keeps to ASCII. A trolleybus
+#   (GTFS 11) is routeType 3 with transportMode trolleybus: Smart Data Models lists 0 to 7 only.
+# - stops.txt: one GtfsStop per platform (location type 0); the file lists no station.
+#
+# Plausibility (owner 2026-10-22): a row is left out, its reason counted in one WARN line, when it
+# has no usable id, no position, lies outside Bratislava and a kilometre around it (swapped
+# coordinates among them), names a route type other than tram, bus or trolleybus, or repeats an
+# earlier row (the same id, the same line number, or the same stop name and platform letter). A
+# member that keeps nothing, or a stops.txt where fewer than half of the platforms survive (a column
+# or projection change), fails the run, so the space keeps the last network instead of none.
+
+pipeline:
+  processors:
+    - mapping: |
+        let box = { "w": 16.93, "s": 47.99, "e": 17.3, "n": 48.28 }
+        let file = @archive_filename.or("")
+        let rows = if ["agency.txt", "routes.txt", "stops.txt"].contains($file) { content().string().trim_prefix("\ufeff").parse_csv().catch([]) } else { [] }
+        let text = $rows.map_each(r -> r.map_each(kv -> kv.value.or("").string().trim()))
+        let judged = match $file {
+          "agency.txt" => $text.map_each(r -> r.assign({ "key": r.agency_id.or(""), "reason":
+            if !r.agency_id.or("").re_match("^[A-Za-z0-9_-]{1,32}$") || r.agency_name.or("") == "" { "noId" } else { null } })),
+          "routes.txt" => $text.map_each(r -> r.assign({ "key": r.route_short_name.or(""), "reason":
+            if !r.route_short_name.or("").re_match("^[\\p{L}0-9]{1,8}$") || !r.route_id.or("").re_match("^[0-9A-Za-z]{1,20}$") { "noId" }
+            else if !["0", "3", "11"].contains(r.route_type.or("")) { "unknownRouteType" } else { null } })),
+          "stops.txt" => $text.map_each(r -> r.assign({
+            "key": r.stop_id.or(""), "place": "%v|%v".format(r.stop_name.or(""), r.platform_code.or("")),
+            "lat": r.stop_lat.or("").number().catch(null), "lon": r.stop_lon.or("").number().catch(null) })).map_each(r -> r.assign({ "reason":
+            if !r.key.re_match("^[0-9]{1,20}$") || r.stop_name.or("") == "" { "noId" }
+            else if !["", "0"].contains(r.location_type.or("")) { "notAPlatform" }
+            else if r.lat == null || r.lon == null { "noLocation" }
+            else if !(r.lon >= $box.w && r.lon <= $box.e && r.lat >= $box.s && r.lat <= $box.n) {
+              if r.lat >= $box.w && r.lat <= $box.e && r.lon >= $box.s && r.lon <= $box.n { "swappedCoordinates" } else { "outsideBratislava" }
+            } else { null } })),
+          _ => [],
+        }
+        # A repeat: the same key, or for a stop the same name and platform letter, as a row kept before it.
+        let marked = $judged.enumerated().map_each(e -> e.value.assign({ "reason":
+          if e.value.reason != null { e.value.reason }
+          else if $judged.slice(0, e.index).any(o -> o.reason == null && (o.key == e.value.key || (o.place.or("") != "" && o.place.or("") == e.value.place.or("")))) { "duplicate" }
+          else { null } }))
+        let kept = $marked.filter(r -> r.reason == null)
+        let dropped = $marked.filter(r -> r.reason != null).fold({}, t -> t.tally.assign({ t.value.reason: t.tally.get(t.value.reason).or(0) + 1 }))
+        meta dropped = if $dropped.keys().length() > 0 { "%v %v".format($file, $dropped.format_json(no_indent: true).string()) } else { "" }
+        meta problem = if $file == "" || $kept.length() == 0 { "%v of DPB's GTFS kept no row of %v".format($file.or("a member"), $rows.length()) } else if $file == "stops.txt" && $kept.length() * 2 < $rows.length() { "stops.txt kept only %v of %v platforms in Bratislava".format($kept.length(), $rows.length()) } else { "" }
+        let urn = "urn:ngsi-ld:%v:%v:%v:dpb-%v"
+        let provider = { "type": "Property", "value": "Dopravný podnik Bratislava, a.s., GTFS (CC BY 4.0)" }
+        let source = { "type": "Property", "value": "https://data.bratislava.sk/datasets/aba12fd2cbac4843bc7406151bc66106" }
+        root = $kept.map_each(r -> match $file {
+          "agency.txt" => {
+            "id": $urn.format("GtfsAgency", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.key),
+            "type": "GtfsAgency",
+            "agencyName": { "type": "Property", "value": r.agency_name },
+            "page": if r.agency_url.or("").re_match("^https?://[^\\s\"<>]+$") { { "type": "Property", "value": r.agency_url } } else { null },
+            "timezone": if r.agency_timezone.or("") != "" { { "type": "Property", "value": r.agency_timezone } } else { null },
+            "language": if r.agency_lang.or("").re_match("^[a-z]{2}$") { { "type": "Property", "value": r.agency_lang } } else { null },
+            "phone": if r.agency_phone.or("") != "" { { "type": "Property", "value": r.agency_phone } } else { null },
+            "dataProvider": $provider,
+            "source": $source
+          },
+          "routes.txt" => {
+            "id": $urn.format("GtfsRoute", env("JC_ORG_DOMAIN"), env("JC_SPACE"), if r.key.re_match("^[A-Za-z0-9]+$") { "line-" + r.key.lowercase() } else { "route-" + r.route_id }),
+            "type": "GtfsRoute",
+            "shortName": { "type": "Property", "value": r.key },
+            "routeType": { "type": "Property", "value": if r.route_type == "0" { "0" } else { "3" } },
+            "transportMode": { "type": "Property", "value": if r.route_type == "0" { "tram" } else if r.route_type == "11" { "trolleybus" } else { "bus" } },
+            "routeColor": if r.route_color.or("").uppercase().re_match("^[0-9A-F]{6}$") { { "type": "Property", "value": r.route_color.uppercase() } } else { null },
+            "operatedBy": if r.agency_id.or("").re_match("^[A-Za-z0-9_-]{1,32}$") { { "type": "Relationship", "object": $urn.format("GtfsAgency", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.agency_id) } } else { null },
+            "dataProvider": $provider,
+            "source": $source
+          },
+          _ => {
+            "id": $urn.format("GtfsStop", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.key),
+            "type": "GtfsStop",
+            "name": { "type": "Property", "value": r.stop_name },
+            "stopCode": if r.stop_code.or("").re_match("^[0-9A-Za-z]{1,10}$") { { "type": "Property", "value": r.stop_code } } else { null },
+            "platformCode": if r.platform_code.or("").re_match("^[0-9A-Za-z]{1,4}$") { { "type": "Property", "value": r.platform_code } } else { null },
+            "zoneCode": if r.zone_id.or("").re_match("^[0-9]{1,4}$") { { "type": "Property", "value": r.zone_id } } else { null },
+            "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [r.lon, r.lat] } },
+            "dataProvider": $provider,
+            "source": $source
+          },
+        }.filter(entry -> entry.value != null))
+    - switch:
+        - check: '@dropped != ""'
+          processors:
+            - log: { level: WARN, message: 'MHD GTFS rows left out: ${! @dropped }' }
+    # A thrown message keeps its content: [] first, so nothing is written.
+    - mapping: |
+        root = if @problem != "" { [] } else { this }
+    - mapping: |
+        root = if @problem != "" { throw(@problem) } else { this }
+    - unarchive: { format: json_array }

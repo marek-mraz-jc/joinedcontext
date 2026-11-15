@@ -1,0 +1,73 @@
+# The mapping of the speed-reducers pipeline (PL-03, T-5431): one StreetFurniture per speed reducer
+# of Open Data BCN's street inventory (dataset infraestructures-inventari-reductors-velocitat,
+# Infraestruc_Mobiliari_Urba_Reductors_Velocitat.csv, rewritten weekly): gis_id, the model code
+# (codi: Coixi Berlines, the Berlin cushion, or BRE, BRE 2, BRE 3, the bands), its description in
+# Catalan (descripcio), nom_carrer and num_carrer, nom_districte, WGS84 longitud/latitud and the day
+# it left the inventory (data_baixa, 9999-12-31 while it stands). A row whose data_baixa lies before
+# 9999 is gone from the street and is not written (none of 1,774 on 2026-10-23). `expiresAt`: a
+# reducer the file drops leaves every read three weeks (three update periods) after the file last
+# listed it.
+#
+# Plausibility (owner 2026-10-22): a row with no numeric id or a model code the mapping does not
+# know, a point that is no number or lies outside the municipality's 1 km margin (the space's
+# in-area bbox) and a second row of one id are dropped, each counted by reason in `dropped`, which
+# the next step logs. A file over 4 MiB or 20,000 rows (654 kB and 1,774 rows on 2026-10-23) is
+# refused, and a file with no current reducer fails the run, so the reducers stand instead of going quiet.
+
+pipeline:
+  processors:
+    - mapping: |
+        let text = if content().length() > 4194304 { throw("the speed reducers file is %d bytes, more than the 4 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿") }
+        let bbox = [2.04, 41.3, 2.24, 41.48]
+        let kinds = {
+          "Coixi Berlines": "speedCushion", "BRE": "speedBump", "BRE 2": "speedBump", "BRE 3": "speedBump"
+        }
+        let rows = $text.parse_csv(true, ",")
+        let read = if $rows.length() > 20000 { throw("the speed reducers file holds %d rows, more than the 20,000 read".format($rows.length())) } else { $rows }
+        let current = $read.filter(r -> r.data_baixa.or("").trim() == "" || r.data_baixa.trim().has_prefix("9999"))
+        let coded = $current.filter(r -> r.gis_id.or("").trim().re_match("^[0-9]{1,12}$") && $kinds.exists(r.codi.or("").trim()))
+        let placed = $coded.map_each(r -> {
+          "id": r.gis_id.trim(),
+          "kind": $kinds.get(r.codi.trim()),
+          "label": r.descripcio.or("").trim(),
+          "street": [r.nom_carrer.or("").trim(), r.num_carrer.or("").trim()].filter(s -> s != "").join(" "),
+          "district": r.nom_districte.or("").trim(),
+          "lon": r.longitud.or("").trim().number().catch(null),
+          "lat": r.latitud.or("").trim().number().catch(null)
+        }).filter(c -> c.lon != null && c.lat != null)
+        let inside = $placed.filter(c -> c.lon >= $bbox.index(0) && c.lon <= $bbox.index(2) && c.lat >= $bbox.index(1) && c.lat <= $bbox.index(3))
+        # One reducer per id: sorted, so a repeat sits beside its first.
+        let by_id = $inside.sort_by(c -> c.id)
+        let unique = $by_id.enumerated().filter(e -> e.index == 0 || $by_id.index(e.index - 1).id != e.value.id).map_each(e -> e.value)
+        root.dropped = {
+          "removed": $read.length() - $current.length(),
+          "noIdOrKind": $current.length() - $coded.length(),
+          "noPoint": $coded.length() - $placed.length(),
+          "outsideTheCity": $placed.length() - $inside.length(),
+          "duplicateId": $inside.length() - $unique.length()
+        }
+        root.reducers = if $unique.length() == 0 { throw("the speed reducers file holds no current reducer") } else { $unique }
+    - log:
+        level: INFO
+        message: 'speed reducers: ${! json("reducers").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.reducers
+    - unarchive: { format: json_array }
+    - mapping: |
+        # The run's clock (a test sets bcn_now to read a recorded file as of its own day).
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:speed-reducer-%v".format("StreetFurniture", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
+          "type": "StreetFurniture",
+          "expiresAt": ($now + 21 * 86400).ts_format("2006-01-02T15:04:05Z", "UTC"),
+          "furnitureType": { "type": "Property", "value": this.kind },
+          "furnitureTypeLabel": if this.label == "" { null } else { { "type": "Property", "value": this.label } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [this.lon, this.lat] } },
+          "address": { "type": "Property", "value": {
+            "streetAddress": this.street,
+            "addressLocality": "Barcelona",
+            "district": this.district,
+            "addressCountry": "ES"
+          }.filter(entry -> entry.value != "") },
+          "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/infraestructures-inventari-reductors-velocitat" }
+        }.filter(entry -> entry.value != null)

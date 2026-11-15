@@ -1,0 +1,2 @@
+# The platform commit whose Model Tools ci.yml model-datasets runs over the seeded models (T-5066).
+platform: dd7d32c9b45fd8f7a08d1f7235167df2b4473f0f

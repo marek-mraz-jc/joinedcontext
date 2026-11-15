@@ -1,0 +1,7 @@
+---
+component: prometheus
+parts:
+  # One release: the Prometheus Operator with its CRDs, Prometheus, Alertmanager,
+  # kube-state-metrics and node-exporter (T-5154).
+  - name: stack
+    timeout: 600

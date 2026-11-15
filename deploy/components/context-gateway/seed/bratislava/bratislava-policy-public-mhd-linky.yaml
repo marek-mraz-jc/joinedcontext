@@ -1,0 +1,28 @@
+# Public read of the Endpoint bratislava-mhd-linky (T-5273): the lines and the agency their operatedBy names; the space's other types stay with their own datasets.
+# No history: the space keeps the current network only.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-mhd-linky
+  namespace: bratislava
+  title: { sk: 'Verejné čítanie: linky MHD', en: 'Public read: public transport lines' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: GtfsRoute
+        - type: GtfsAgency

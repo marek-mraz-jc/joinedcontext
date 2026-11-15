@@ -1,0 +1,24 @@
+# One Rule per row of "Zoznam účinných všeobecne záväzných nariadení (VZN)" (T-4255); a generally binding regulation (VZN) is a CPSV-AP Rule: name, description, identifier.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-zoznam-ucinnych-vseobecne-zavaznych-nari
+  namespace: bbsk
+  title:
+    sk: Zoznam účinných všeobecne záväzných nariadení (VZN)
+    en: Zoznam účinných všeobecne záväzných nariadení (VZN)
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 27 5 * * 4
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-zoznam-ucinnych-vseobecne-zavaznych-nari
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: Rule
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

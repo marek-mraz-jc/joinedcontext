@@ -1,0 +1,47 @@
+# The mapping of the traffic-lights and warning-lights pipelines (PL-03): one TrafficSignalJunction per
+# junction or crossing of the open WFS layers `Liikennevalot_piste` (traffic lights) and
+# `Varoitusvalot_piste` (warning lights). Both pipelines run this one text: the layer a record comes
+# from, the prefix of its feature id, gives its signal kind, its id and its source.
+#
+# A junction is keyed by the layer's row id: the installation number (`numero`) the cabinet shows
+# repeats (three numbers twice among 557 traffic lights, 905 twice among 12 warning lights).
+# `Rakenteilla` in `tyyppi` marks signals still being built.
+#
+# `expiresAt` (NGSI-LD 4.22): a junction leaves every read 21 days after the layer last listed it,
+# three weekly runs, so signals the city removes do not stay on the map.
+
+pipeline:
+  processors:
+    - mapping: |
+        let lease = (now().ts_unix() + 1814400).ts_format("2006-01-02T15:04:05Z", "UTC")
+        # The WFS writes a field it has no value for as null or the string "None".
+        map text {
+          root = if this == null || this.string().trim() == "" || this.string() == "None" { null } else { this.string().trim().re_replace_all("\\s+", " ") }
+        }
+        root = this.features.or([]).filter(f -> f.id.or("").string().re_match("^(Liikennevalot|Varoitusvalot)_piste[.][0-9]{1,10}$") && f.properties.id.or("").string().re_match("^[0-9]{1,10}$") && f.geometry.type.or("") == "Point").map_each(f -> {
+          "p": f.properties,
+          "layer": f.id.string().split(".").index(0),
+          "street": f.properties.risteys.apply("text"),
+          "number": if f.properties.numero.or("").string().re_match("^[0-9]{1,6}$") { f.properties.numero.string() } else { null },
+          "f": f
+        }).map_each(s -> s.assign({
+          "lights": s.layer == "Liikennevalot_piste",
+          "local": if s.layer == "Liikennevalot_piste" { "traffic-lights-" } else { "warning-lights-" } + s.p.id.string()
+        })).map_each(s -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("TrafficSignalJunction", env("JC_ORG_DOMAIN"), env("JC_SPACE"), s.local),
+          "type": "TrafficSignalJunction",
+          "expiresAt": $lease,
+          # The streets that meet there; a record without them is named by its kind and number.
+          "name": if s.street != null { { "type": "LanguageProperty", "languageMap": { "fi": s.street } } } else if s.number != null { { "type": "LanguageProperty", "languageMap": {
+            "fi": if s.lights { "Liikennevalot " } else { "Varoitusvalot " } + s.number,
+            "en": if s.lights { "Traffic lights " } else { "Warning lights " } + s.number
+          } } } else { null },
+          "signalKind": { "type": "Property", "value": if s.lights { "trafficLights" } else { "warningLights" } },
+          "junctionNumber": if s.number != null { { "type": "Property", "value": s.number } } else { null },
+          "status": { "type": "Property", "value": if s.p.tyyppi.apply("text").or("") == "Rakenteilla" { "underConstruction" } else { "inService" } },
+          "description": if s.p.lisatiedot.apply("text") != null { { "type": "LanguageProperty", "languageMap": { "fi": s.p.lisatiedot.apply("text") } } } else { null },
+          "dateModified": if s.p.paivitetty_tietopalveluun.or("").string().re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") { { "type": "Property", "value": s.p.paivitetty_tietopalveluun.string() + "T00:00:00Z" } } else { null },
+          "location": { "type": "GeoProperty", "value": s.f.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Urban Environment Division" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:" + s.layer }
+        }.filter(entry -> entry.value != null))

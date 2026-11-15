@@ -1,0 +1,20 @@
+# Fintraffic's LIIPI park and ride register (T-3894), the successor of HSL's p.hsl.fi since May
+# 2024: the facilities inside the HSL area's box, one JSON document (545 facilities, 1.0 MB on
+# 2026-10-12). No key. CC BY 4.0.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: liipi-facilities
+  namespace: helsinki
+  title:
+    en: Park and ride facilities of the HSL area (Fintraffic LIIPI)
+    fi: HSL-alueen liityntäpysäköintipaikat (Fintraffic LIIPI)
+spec:
+  type: http
+  http:
+    # geometry=POLYGON((24.2 60.05, 25.6 60.05, 25.6 60.55, 24.2 60.55, 24.2 60.05)): the HSL
+    # area and its edge (Kirkkonummi to Sipoo, Espoo to Kerava), not the whole country (784).
+    url: https://parking.fintraffic.fi/api/v1/facilities?geometry=POLYGON%28%2824.2%2060.05%2C25.6%2060.05%2C25.6%2060.55%2C24.2%2060.55%2C24.2%2060.05%29%29
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

@@ -1,0 +1,5 @@
+---
+{{- $argocd := index .Values "gitops" "argocd" }}
+environment: {{ .Environment.Name | quote }}
+repoURL: {{ $argocd.repoURL | quote }}
+targetRevision: {{ $argocd.targetRevision | quote }}

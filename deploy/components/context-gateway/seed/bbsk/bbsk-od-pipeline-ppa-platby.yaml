@@ -1,0 +1,24 @@
+# One Grant per row of "PPA platby" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-ppa-platby
+  namespace: bbsk
+  title:
+    sk: PPA platby
+    en: PPA platby
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 46 2 * * 2
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-ppa-platby
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: Grant
+    mode: replace
+  quotas:
+    maxMemoryMb: 256
+    cpuMillicores: 100

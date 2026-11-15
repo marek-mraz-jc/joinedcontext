@@ -1,0 +1,22 @@
+{% ckan_extends %}
+
+{# The installation's look on every page (T-3009): the stylesheet holds no colour of its own,
+   so a second installation restyles the catalogue by its branding block alone (OPS-47). #}
+{% block custom_styles %}
+  {{ super() }}
+  {% snippet 'snippets/jc_styles.html' %}
+  {# T-4685: room for an assistant docked on the page before, before the first paint. #}
+  <script src="{{ h.url_for_static('/jc-dock.js') }}"></script>
+  {# Every copy button of the theme, on every page that has one (T-4762: /connector had none). #}
+  <script src="{{ h.url_for_static('/jc-copy.js') }}" defer></script>
+  {# What CKAN's own forms wrote as onclick attributes, which the CSP refuses (T-5147). #}
+  <script src="{{ h.url_for_static('/jc-forms.js') }}" defer></script>
+{% endblock %}
+
+{# A demo's pages ask search engines to stay out (T-4687); its edge also says so in X-Robots-Tag. #}
+{% block meta %}
+  {{ super() }}
+  {# htmx 1.9 writes its indicator styles as an inline style element the CSP refuses: jc-theme.css holds them (T-5147). #}
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+  {% if h.jc_branding().noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
+{% endblock %}

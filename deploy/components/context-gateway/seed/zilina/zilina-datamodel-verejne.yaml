@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: zilina-verejne
+  namespace: zilina
+  title: { sk: Otvorené dáta Žiliny, en: Open data of Žilina }
+spec:
+  contextSpaceRef: zilina-verejne
+  linkml: ./zilina-verejne.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [AirQualityObserved, PointOfInterest, GtfsStop]
+  # A published model commits all four artifacts (DM-02); the gateway serves schema/v1 from them
+  # (DM-22, EP-49). Regenerate: see README.md.
+  artifacts:
+    jsonSchema: ./zilina-verejne.v1.schema.json
+    context: ./zilina-verejne.v1.context.jsonld
+    docs: ./zilina-verejne.v1.md
+    example: ./zilina-verejne.v1.example.jsonld

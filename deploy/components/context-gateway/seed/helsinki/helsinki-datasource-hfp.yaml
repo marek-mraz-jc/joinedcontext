@@ -1,0 +1,25 @@
+# HSL's high-frequency positioning broker, public and read only: every vehicle of every mode
+# (owner, T-5046), about 1,000 frames a second in the evening and 2,000 at peak, one a second
+# per vehicle. The pipeline's mapping writes one in thirty seconds per vehicle.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-hfp
+  namespace: helsinki
+  title:
+    en: 'HSL high-frequency positioning: every bus, tram, metro, train and ferry'
+    fi: 'HSL:n suurtaajuinen paikannus: kaikki bussit, raitiovaunut, metrot, junat ja lautat'
+spec:
+  type: mqtt
+  mqtt:
+    # MQTT over WebSocket on 443, not MQTT over TLS on 8883: the cluster's firewall
+    # (kube-hetzner's outbound defaults) lets 443 out and nothing on 8883, and HSL serves the
+    # same broker on both. `wss://` renders the stream's TLS block.
+    urls:
+      - wss://mqtt.hsl.fi:443/
+    # Position reports (vp) only: the other event kinds (door, stop, departure) carry no
+    # position the Vehicle model keeps, and the topic is where the runner stops reading them.
+    topics:
+      - /hfp/v2/journey/ongoing/vp/#
+    qos: 0
+    cleanSession: true

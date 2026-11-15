@@ -1,0 +1,44 @@
+# Events held by BKIS (without DPOH): one public dataset of the hub (T-5274), item b680cb55f28c4598af16e61911302b02, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-zrealizovanych-podujati-bkis-bez
+  namespace: bratislava
+  title:
+    sk: Počet zrealizovaných podujatí BKIS (bez DPOH)
+    en: Events held by BKIS (without DPOH)
+  description:
+    sk: 'Ukazovatele tabuľky „Počet zrealizovaných podujatí BKIS (bez DPOH)“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Events held by BKIS (without DPOH)”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: jh3hyqkfdkwduwpfeiqh2xudjuf3kuoo
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-zrealizovanych-podujati-bkis-bez
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/b680cb55f28c4598af16e61911302b02
+        title:
+          sk: Počet zrealizovaných podujatí BKIS (bez DPOH)
+          en: Events held by BKIS (without DPOH)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet zrealizovaných podujatí BKIS (bez DPOH). Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Events held by BKIS (without DPOH). Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

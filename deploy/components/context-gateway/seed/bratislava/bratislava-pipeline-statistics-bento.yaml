@@ -1,0 +1,402 @@
+# The mapping of the statistics pipeline (T-5274): the hub's tables of the 17 city districts as Smart Data Models
+# KeyPerformanceIndicator, one entity per table, figure, breakdown, area and period. One mapping
+# text for every Feature Service statistics table of the matrix (Research/bratislava-open-data.md
+# 6.4): the statistics, statistics-okresy, statistics-mesto and statistics-denne pipelines run the same text
+# and differ only in `tables` below, split by area (the daily tables apart) so that one run fits its memory quota. A table is
+# one line of `tables`, never a pipeline of its own. The bratislava-hub DataSource answers the
+# hub's list of services; a table the list no longer names is logged and left out. Each table is
+# read in pages of 1,000 rows, at most 20; a table that holds more fails instead of writing part
+# of it. A table of events or bookings is read as the hub's own counts and sums per group (T-5671).
+# Nothing here deletes.
+pipeline:
+  processors:
+    - mapping: |
+        # name: the id prefix and the dataset's Endpoint idPattern; path: the Feature Service as the
+        # hub's URL writes it; areas: district (the 17 city districts), okres (Bratislava I to V),
+        # city (Bratislava as a whole), zsj (the census's basic settlement units of the city), obec
+        # (the municipalities of the Bratislava Region) or kraj (the Bratislava region, NUTS 3 SK010);
+        # area: the area column (a zsj's 7-digit code), none for a table of the city alone; label: a
+        # zsj's name column, within: its city district's code column; year: the period column (a
+        # year, a range of years, two ranges compared, a day or a month such as 2018-06), quarter:
+        # its quarter column, month: its month column (1 to 12), spans: the range each year of it
+        # stands for (a model's 1991 is 1991-2021), or fixed: the year or range the table's title or
+        # the item's description names; by: breakdown columns (age, sex,
+        # category), each one segment of the id and one part of the name, or {code, name, optional}:
+        # the id segment from the code column, the name part from the name column (a budget item's
+        # code and title), an optional one left out of both where its cell is empty; abs: the figure
+        # without its sign (an age pyramid writes the men's side negative); only: [column, prefix]
+        # keeps the rows of one breakdown (all school founders, not the districts' own schools);
+        # values: [column, id segment, Slovak label, minimum, maximum], null where no bound holds.
+        # A table of events or bookings asks the hub for sums: group: the columns or expressions
+        # (SUBSTRING of a date) one figure stands for, in the order the hub names its answer
+        # (an expression answers as EXPR_1); stats: [statistic, column or expression, answer
+        # column]; where: the rows counted (the year-end month of a running ledger); labels: a
+        # breakdown code by its Slovak word; past: a period that starts after today is a wrong
+        # date in the ledger, dropped.
+        let tables = [
+          {"name": "priestupky", "item": "db2bc2a556af4a3dbb1d76107769a089", "path": "Po%C4%8Det_priestupkov_pod%C4%BEa_mestsk%C3%BDch_%C4%8Dast%C3%AD_Bratislavy_pod%C4%BEa_evidencie_mestskej_pol%C3%ADcie", "title": "Priestupky podľa evidencie mestskej polície", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["POCET_PRIESTUPKOV", "pocet", "Počet priestupkov", 0, null]]},
+          {"name": "komare", "item": "95df2faeda284dfdba5dbbcebd2d5cfd", "path": "Z%C3%A1sahy_pod%C4%BEa_jednotliv%C3%BDch_mestsk%C3%BDch_%C4%8Dast%C3%AD", "title": "Biologická regulácia komárov", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["POCET_KONTROL", "kontroly", "Počet kontrol", 0, null], ["OSETRENA_PLOCHA_V_M2", "plocha-m2", "Ošetrená plocha (m²)", 0, null]]},
+          {"name": "demografia", "item": "b75314b4584f4875a3ce47a74bb67112", "path": "Demografia%20Bratislavy", "title": "Demografia", "areas": "district", "area": "Mestská_časť", "year": "Rok", "values": [["Stredný__priemerný__stav_trvale", "obyvatelia", "Stredný stav trvale bývajúcich obyvateľov", 0, null], ["Sobáše__Počet_v_jednotkách_", "sobase", "Sobáše", 0, null], ["Rozvody__Počet_v_jednotkách_", "rozvody", "Rozvody", 0, null], ["Narodení__Osoba_", "narodeni", "Narodení", 0, null], ["Zomretí__Osoba_", "zomreli", "Zomretí", 0, null], ["Prirodzený_prírastok_obyvateľst", "prirodzeny-prirastok", "Prirodzený prírastok", null, null], ["Prisťahovaní_na_trvalý_pobyt__O", "pristahovani", "Prisťahovaní na trvalý pobyt", 0, null], ["Vysťahovaní_z_trvalého_pobytu__", "vystahovani", "Vysťahovaní z trvalého pobytu", 0, null], ["Migračné_saldo__Osoba_", "migracne-saldo", "Migračné saldo", null, null], ["Celkový_prírastok_obyvateľstva_", "celkovy-prirastok", "Celkový prírastok", null, null]]},
+          {"name": "prognoza-obyvatelia", "item": "35e2060c0fba4308b16d6bb02401bc0d", "path": "Progn%C3%B3za_po%C4%8Dtu_obyvate%C4%BEov_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy", "title": "Prognóza počtu obyvateľov", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["POCET_OBYVATELOV", "pocet", "Počet obyvateľov (prognóza)", 0, null]]},
+          {"name": "prognoza-celkovy-prirastok", "item": "da8cd2a844a2498db96236ef8925cd2b", "path": "Progn%C3%B3za_celkov%C3%A9ho_pr%C3%ADrastku_obyvate%C4%BEov_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy", "title": "Prognóza celkového prírastku obyvateľov", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["CELKOVY_PRIRASTOK", "prirastok", "Celkový prírastok (prognóza)", null, null]]},
+          {"name": "prognoza-ekonomicke-zatazenie", "item": "8e1efb34a91348ee8437fc2dd5505ed3", "path": "Progn%C3%B3za_indexu_ekonomick%C3%A9ho_za%C5%A5a%C5%BEenia_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy", "title": "Prognóza indexu ekonomického zaťaženia", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["INDEX_EKON_ZATAZ", "index", "Index ekonomického zaťaženia (prognóza)", 0, 1000]]},
+          {"name": "prognoza-index-starnutia", "item": "a2042a88ba3b4e94a324b33640115efd", "path": "Progn%C3%B3za_indexu_starnutia_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavye_Bratislava", "title": "Prognóza indexu starnutia", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["INDEX_STARNUTIA", "index", "Index starnutia (prognóza)", 0, 1000]]},
+          {"name": "prognoza-priemerny-vek", "item": "d97203f6cd2e42478d3e75f9bedaa344", "path": "Progn%C3%B3za_priemern%C3%A9ho_veku_obyvate%C4%BEov_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy", "title": "Prognóza priemerného veku obyvateľov", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["PRIEMERNY_VEK", "vek", "Priemerný vek (prognóza)", 0, 120]]},
+          {"name": "prognoza-prirodzeny-prirastok", "item": "d83f7db610274623af5a3de553b2c980", "path": "Progn%C3%B3za_prirodzen%C3%A9ho_pr%C3%ADrastku_obyvate%C4%BEov_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy", "title": "Prognóza prirodzeného prírastku obyvateľov", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["PRIRODZENY_PRIRASTOK", "prirastok", "Prirodzený prírastok (prognóza)", null, null]]},
+          {"name": "nezamestnanost", "item": "d6b68e6e282f41a0ab6157cb6df3b13c", "path": "Miera_evidovanej_nezamestnanosti_mestsk%C3%BDch_%C4%8Dast%C3%AD_Bratislavy_v_%C5%A1tvr%C5%A5rokoc_%E2%80%93_k%C3%B3pia", "title": "Miera evidovanej nezamestnanosti", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "quarter": "STVRTROK", "values": [["NEZAMESTNANOST_V__", "miera", "Miera evidovanej nezamestnanosti (%)", 0, 100]]},
+          {"name": "ms-kapacita", "item": "8bdd3b3a849240dbb19ca309b0eb6be4", "path": "Kapacita_matersk%C3%BDch_%C5%A1k%C3%B4l_v_Bratislave_v_roku_2021", "title": "Kapacita materských škôl", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "only": ["ZRIADOVATEL", "všetci"], "values": [["POCET", "miesta", "Kapacita materských škôl (miesta)", 0, null]]},
+          {"name": "ms-deti", "item": "ac96675df45f4d7b997efdff5e86a628", "path": "Celkov%C3%BD_po%C4%8Det_det%C3%AD_v_matersk%C3%BDch_%C5%A1kol%C3%A1ch_v_Bratislave_v_roku_2021", "title": "Počet detí v materských školách", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "only": ["ZRIADOVATEL", "všetci"], "values": [["POCET", "deti", "Počet detí v materských školách", 0, null]]},
+          {"name": "zs-kapacita", "item": "a312b68160ee49bcbf7958f65e3beea2", "path": "Kapacita_z%C3%A1kladn%C3%BDch_%C5%A1k%C3%B4l_v_Bratislave_v_roku_2021", "title": "Kapacita základných škôl", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "only": ["ZRIADOVATEL", "všetci"], "values": [["POCET", "miesta", "Kapacita základných škôl (miesta)", 0, null]]},
+          {"name": "zs-ziaci", "item": "fd3bd5dd82434f4c8b82b31198884341", "path": "Celkov%C3%BD_po%C4%8Det_%C5%BEiakov_na_z%C3%A1kladn%C3%BDch_%C5%A1kol%C3%A1ch_v_Bratislave_v_roku_2021", "title": "Počet žiakov na základných školách", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "only": ["ZRIADOVATEL", "všetci"], "values": [["POCET", "ziaci", "Počet žiakov na základných školách", 0, null]]},
+          {"name": "ss-kapacita", "item": "cb2256a435f24178b2cca29be684d5c9", "path": "Kapacita_stredn%C3%BDch_%C5%A1k%C3%B4l_v_Bratislave", "title": "Kapacita stredných škôl", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "only": ["ZRIADOVATEL", "všetci"], "values": [["POCET", "miesta", "Kapacita stredných škôl (miesta)", 0, null]]},
+          {"name": "ss-studenti", "item": "968d67b7a5124129992019d4372efbcd", "path": "Celkov%C3%BD_po%C4%8Det_%C5%A1tudentov_na_stredn%C3%BDch_%C5%A1kol%C3%A1ch_v_Bratislave_v_roku_2021", "title": "Počet študentov na stredných školách", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "only": ["ZRIADOVATEL", "všetci"], "values": [["POCET", "studenti", "Počet študentov na stredných školách", 0, null]]},
+          {"name": "plodnost", "item": "191b3fe8bfcc43c8821863cabe8dfad2", "path": "%C3%9Ahrnn%C3%A1_plodnos%C5%A5_%C5%BEien_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy_vo_vybran%C3%BDch_obdobiach_", "title": "Úhrnná plodnosť žien", "areas": "district", "area": "MESTSKA_CAST", "values": [["UHRNNA_PLODNOST", "uhrnna", "Úhrnná plodnosť (deti na ženu)", 0, 10]], "year": "OBDOBIE"},
+          {"name": "vymera", "item": "43bacf5da7a6447c9de670220786cc6d", "path": "V%C3%BDmera_%C3%BAzemia_pod%C4%BEa_druhu_pozemku_2019___2022", "title": "Výmera územia podľa druhu pozemku", "areas": "district", "area": "Mestská_časť", "year": "Rok", "values": [["Celková_výmera_m2", "celkova", "Celková výmera (m²)", 0, null], ["Pozemok_v_zastavanom_území_obce", "v-zastavanom-uzemi", "Pozemky v zastavanom území (m²)", 0, null], ["Pozemok_mimo_zastavaného_územia", "mimo-zastavaneho-uzemia", "Pozemky mimo zastavaného územia (m²)", 0, null], ["Orná_pôda", "orna-poda", "Orná pôda (m²)", 0, null], ["Chmelnice", "chmelnice", "Chmeľnice (m²)", 0, null], ["Vinice", "vinice", "Vinice (m²)", 0, null], ["Záhrady", "zahrady", "Záhrady (m²)", 0, null], ["Ovocné_sady", "ovocne-sady", "Ovocné sady (m²)", 0, null], ["Trvalé_trávnaté_porasty", "travnate-porasty", "Trvalé trávnaté porasty (m²)", 0, null], ["Poľnohospodárska_pôda", "polnohospodarska-poda", "Poľnohospodárska pôda (m²)", 0, null], ["Lesné_pozemky", "lesne-pozemky", "Lesné pozemky (m²)", 0, null], ["Vodné_plochy", "vodne-plochy", "Vodné plochy (m²)", 0, null], ["Zastavané_plochy_a_nádvoria", "zastavane-plochy", "Zastavané plochy a nádvoria (m²)", 0, null], ["Ostatné_plochy", "ostatne-plochy", "Ostatné plochy (m²)", 0, null]]},
+          {"name": "index-migracnej-efektivnosti-mestskych", "item": "fa97e97036264bbdbde0b9ff87650db9", "path": "Index_migra%C4%8Dnej_efekt%C3%ADvnosti_mestsk%C3%BDch_%C4%8Dast%C3%AD_Bratislavy_v_obdob%C3%AD_2000_%E2%80%93_2021", "title": "Index migračnej efektívnosti mestských častí Bratislavy v období 2000 – 2021", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["INDEX_", "index", "Index migračnej efektívnosti mestských častí Bratislavy v období 2000 – 2021", null, null]]},
+          {"name": "migracne-saldo-mestskych-casti-v-obdobi", "item": "e19b4c5d7015444aa62043119ff12d81", "path": "Migra%C4%8Dn%C3%A9_saldo_mestsk%C3%BDch_%C4%8Dast%C3%AD_Bratislavy_v_obdob%C3%AD_2000_%E2%80%93_2021", "title": "Migračné saldo mestských častí Bratislavy v období 2000 – 2021", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["MIGRACNE_SALDO", "migracne-saldo", "Migračné saldo mestských častí Bratislavy v období 2000 – 2021", null, null]]},
+          {"name": "migracny-obrat-mestskych-casti-v-obdobi", "item": "07609224cb1f458eb2f24cd0391fff0b", "path": "Migra%C4%8Dn%C3%BD_obrat_mestsk%C3%BDch_%C4%8Dast%C3%AD_Bratislavy_v_obdob%C3%AD_2000_%E2%80%93_2021", "title": "Migračný obrat mestských častí Bratislavy v období 2000 – 2021", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["MIGRACNY_OBRAT", "migracny-obrat", "Migračný obrat mestských častí Bratislavy v období 2000 – 2021", null, null]]},
+          {"name": "odchadzka-do-zamestnania-a-skol-v", "item": "9bf60619525e472caa5b15c794e3ab78", "path": "Odch%C3%A1dzka_do_zamestnania_a_%C5%A1k%C3%B4l_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy_v_rokoch_2011_2021_a_2035", "title": "Odchádzka do zamestnania a škôl v mestských častiach Bratislavy v rokoch 2011, 2021 a 2035", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["ODCHADZKA_ZAM", "odchadzka-zam", "Odchadzka zam", null, null], ["ODCHADZKA_SKOL", "odchadzka-skol", "Odchadzka skol", null, null]]},
+          {"name": "podiel-plodnosti-zien-vo-veku-30-a-viac", "item": "7a7b8427f2754c0fb9243a24595eb35f", "path": "Podiel_plodnosti_zien_vo_veku_30_a_viac_z_celkovej_intenzity_plodnosti_v_MC_BA", "title": "Podiel plodnosti žien vo veku 30 a viac z celkovej intenzity plodnosti v mestských č. BA", "areas": "district", "area": "MESTSKA_CAST", "year": "OBDOBIE", "values": [["PODIEL_PLODNOSTI", "podiel-plodnosti", "Podiel plodnosti žien vo veku 30 a viac z celkovej intenzity plodnosti v mestských č. BA", 0, 100]]},
+          {"name": "podiel-plodnosti-zien-vo-veku-do-25-z", "item": "58579af8f19a40d0aabfe18ffa7ebe86", "path": "Podiel_plodnosti_%C5%BEien_vo_veku_do_25_z_celkovej_intenzity_plodnosti_v_mestskych_%C4%8D_BA", "title": "Podiel plodnosti žien vo veku do 25 z celkovej intenzity plodnosti v mestských č. BA", "areas": "district", "area": "MESTSKA_CAST", "year": "OBDOBIE", "values": [["PODIEL_PLODNOSTI", "podiel-plodnosti", "Podiel plodnosti žien vo veku do 25 z celkovej intenzity plodnosti v mestských č. BA", 0, 100]]},
+          {"name": "podiel-zahranicnej-zlozky-na-celkovom", "item": "91b48ecef18d4480b9765e328c78f75f", "path": "Podiel_zahrani%C4%8Dnej_zlo%C5%BEky_na_celkovom_migra%C4%8Dnom_obrate_mestsk%C3%BDch_%C4%8Dast%C3%AD_BA_v", "title": "Podiel zahraničnej zložky na celkovom migračnom obrate mestských častí BA (v %)", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["PODIEL", "podiel", "Podiel zahraničnej zložky na celkovom migračnom obrate mestských častí BA (v %)", 0, 100]]},
+          {"name": "podiel-ziakov-v-zakladnych-skolach", "item": "be9d5bbe89234bb18cb1e2ef9e9fb9ed", "path": "Podiel_%C5%BEiakov_v_z%C3%A1kladn%C3%BDch_%C5%A1kol%C3%A1ch_v_Bratislave_doch%C3%A1dzaj%C3%BAcich_z_mimobratislavsk%C3%BDch_okr", "title": "Podiel žiakov v základných školách v Bratislave dochádzajúcich z mimobratislavských okresov v roku 2021", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "by": ["PERCENTO_DOCHADZAJUCICH"], "values": [["PERCENT_", "percent", "Podiel žiakov v základných školách v Bratislave dochádzajúcich z mimobratislavských okresov v roku 2021", 0, 100]]},
+          {"name": "pocet-obyvatelov-v-mestskych-castiach-v", "item": "39354c8e25a44394b6464c1249725271", "path": "Pocet_obyvatelov_v_mestskych_castiach_Bratislavy_v_roku_2035", "title": "Počet obyvateľov v mestských častiach Bratislavy v roku 2035", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2035", "values": [["POCET_OBYVATELOV", "pocet-obyvatelov", "Počet obyvateľov v mestských častiach Bratislavy v roku 2035", 0, null]]},
+          {"name": "pocet-trvalych-pobytov-deti-v-mestskych", "item": "9e065873e00b4b75989dbee034f9f4b3", "path": "Po%C4%8Det_trval%C3%BDch_pobytov_det%C3%AD_v_mestsk%C3%BDch_%C4%8Dastiach_a_lokaliz%C3%A1cie_ich_matersk%C3%BDch_sk%C3%B4l_v_BA", "title": "Počet trvalých pobytov detí v mestských častiach a lokalizácie ich materských skôl v Bratislave v roku 2021", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "by": ["LOKALIZACIA_MS"], "values": [["POCET", "pocet", "Počet trvalých pobytov detí v mestských častiach a lokalizácie ich materských skôl v Bratislave v roku 2021", 0, null]]},
+          {"name": "predpokladane-migracne-saldo-mestskych", "item": "26c01a38675746ffb2c8edc1fba2be53", "path": "Predpokladane_migracne_saldo_mestskych_casti_Bratislavy_do_roku_2035", "title": "Predpokladané migračné saldo mestských častí Bratislavy do roku 2035", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["MIGRACNE_SALDO", "migracne-saldo", "Predpokladané migračné saldo mestských častí Bratislavy do roku 2035", null, null]]},
+          {"name": "predpokladany-vyvoj-uhrnnej-plodnosti-v", "item": "3b302b42fe0347ab9a71b90244b47769", "path": "Predpokladan%C3%BD_v%C3%BDvoj_%C3%BAhrnnej_plodnosti_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy_vo_vybran%C3%BDch_rokoch", "title": "Predpokladaný vývoj úhrnnej plodnosti v mestských častiach Bratislavy vo vybraných rokoch", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["UHRNNA_PLODNOST", "uhrnna-plodnost", "Predpokladaný vývoj úhrnnej plodnosti v mestských častiach Bratislavy vo vybraných rokoch", null, null]]},
+          {"name": "priemerna-obsadenost-bytov-trvalo", "item": "697fb5048590485d905d7af62a359556", "path": "Priemern%C3%A1_obsadenos%C5%A5_bytov_trvalo_b%C3%BDvaj%C3%BAcimi_obyvate%C4%BEmi_v_Bratisalve_v_rokoch_1980_-_2051", "title": "Priemerná obsadenosť bytov trvalo bývajúcimi obyvateľmi v Bratislave v rokoch 1980 - 2051", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["OBSADENOST", "obsadenost", "Priemerná obsadenosť bytov trvalo bývajúcimi obyvateľmi v Bratislave v rokoch 1980 - 2051", null, null]]},
+          {"name": "priemerny-pocet-bytov-na-dom-podla", "item": "fed9805037bf4a7ca5a834dbb694a376", "path": "Priemern%C3%BD_po%C4%8Det_bytov_na_dom_pod%C4%BEa_mestsk%C3%BDch_%C4%8Dast%C3%AD_Bratislavy_v_rokoch_1980_-_2051", "title": "Priemerný počet bytov na dom podľa mestských častí Bratislavy v rokoch 1980 - 2051", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["POMER_BYT_DOM", "pomer-byt-dom", "Priemerný počet bytov na dom podľa mestských častí Bratislavy v rokoch 1980 - 2051", null, null]]},
+          {"name": "priemerny-rozsah-zastavanych-ploch-na", "item": "f20a561a147649dca43d2078814ccf13", "path": "Priemern%C3%BD_rozsah_zastavan%C3%BDch_pl%C3%B4ch_na_trvalo_ob%C3%BDvan%C3%BD_dom_pod%C4%BEa_v_BA_v_rokoch_2001_-_2051", "title": "Priemerný rozsah zastavaných plôch na trvalo obývaný dom v Bratislave v rokoch 2001 - 2051 (v m²)", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["PLOCHA", "plocha", "Priemerný rozsah zastavaných plôch na trvalo obývaný dom v Bratislave v rokoch 2001 - 2051 (v m²)", null, null]]},
+          {"name": "priemerny-vek-obyvatelov-v-mestskych", "item": "0aa2ba2561cd4f55a9fdbdb6ec62db64", "path": "Priemerny_vek_obyvatelov_v_mestskych_castiach_Bratislavy_v_roku_2035", "title": "Priemerný vek obyvateľov v mestských častiach Bratislavy v roku 2035", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2035", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Priemerný vek obyvateľov v mestských častiach Bratislavy v roku 2035", null, null]]},
+          {"name": "priemerny-vek-obyvatelstva-mestskych", "item": "85e4fc2a40eb4731b708849ec75c0a3f", "path": "Priemern%C3%BD_vek_obyvate%C4%BEstva_mestsk%C3%BDch_%C4%8Dast%C3%AD_Bratislavy_v_roku_2000_a_2021", "title": "Priemerný vek obyvateľstva mestských častí Bratislavy v roku 2000 a 2021", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Priemerný vek obyvateľstva mestských častí Bratislavy v roku 2000 a 2021", null, null]]},
+          {"name": "priemerny-vek-zien-pri-narodeni-dietata", "item": "42dd8f2e98494c32a8ddffd0fba449a2", "path": "Priemerny_vek_zien_pri_narodeni_dietata_v_m_castiach_Bratislavy_vo_vybranych_obdobiach", "title": "Priemerný vek žien pri narodení dieťaťa v mestských častiach BA vo vybraných obdobiach", "areas": "district", "area": "MESTSKA_CAST", "year": "OBDOBIE", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Priemerný vek žien pri narodení dieťaťa v mestských častiach BA vo vybraných obdobiach", null, null]]},
+          {"name": "priemerny-vek-zien-pri-narodeni-prveho", "item": "f07b618b623a4033901144084eaf026f", "path": "Priemern%C3%BD_vek_%C5%BEien_pri_naroden%C3%AD_prv%C3%A9ho_die%C5%A5a%C5%A5a_v_mestsk%C3%BDch_%C4%8D_BA_vo_vybran%C3%BDch_obdobiach", "title": "Priemerný vek žien pri narodení prvého dieťaťa v mestských č. BA vo vybraných obdobiach", "areas": "district", "area": "MESTSKA_CAST", "year": "OBDOBIE", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Priemerný vek žien pri narodení prvého dieťaťa v mestských č. BA vo vybraných obdobiach", null, null]]},
+          {"name": "vnutorna-priestorova-struktura-medzi", "item": "44905e2fbe5145e2850c106db4fac7e7", "path": "Vn%C3%BAtorn%C3%A1_priestorov%C3%A1_%C5%A1trukt%C3%BAra_medzi_mestsk%C3%BDmi_%C4%8Das%C5%A5ami_Bratislavy_v_rokoch_2001_-_2051", "title": "Vnútorná priestorová štruktúra medzi mestskými časťami Bratislavy v rokoch 2001 - 2051 (v %)", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["PERCENT_", "percent", "Vnútorná priestorová štruktúra medzi mestskými časťami Bratislavy v rokoch 2001 - 2051 (v %)", 0, 100]]},
+          {"name": "vzdelanostna-struktura-muzov-vo-veku-15", "item": "6eef1acabda54feba2096cab5133f4e1", "path": "Vzdelanostn%C3%A1_%C5%A1trukt%C3%BAra_mu%C5%BEov_vo_veku_15_a_viac_rokov_v_mestsk%C3%BDch_%C4%8Dastiach_BA_SODB_2021", "title": "Vzdelanostná štruktúra mužov vo veku 15 a viac rokov v mestských častiach BA (SODB 2021)", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "by": ["VZDELANIE"], "values": [["PODIEL", "podiel", "Vzdelanostná štruktúra mužov vo veku 15 a viac rokov v mestských častiach BA (SODB 2021)", 0, 100]]},
+          {"name": "vzdelanostna-struktura-zien-vo-veku-15", "item": "8a63421f816548da99e782d220182e16", "path": "Vzdelanostn%C3%A1_%C5%A1trukt%C3%BAra_%C5%BEien_vo_veku_15_a_viac_rokov_v_mestsk%C3%BDch_%C4%8Dastiach_BA_SODB_2021", "title": "Vzdelanostná štruktúra žien vo veku 15 a viac rokov v mestských častiach BA (SODB 2021)", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "by": ["VZDELANIE"], "values": [["PODIEL", "podiel", "Vzdelanostná štruktúra žien vo veku 15 a viac rokov v mestských častiach BA (SODB 2021)", 0, 100]]},
+          {"name": "vzajomne-migracne-saldo-mestskych-casti", "item": "fb9838356ea5404cb0bf9d2e2f7600dc", "path": "Vzajomn%C3%A9_migra%C4%8Dn%C3%A9_saldo_mestsk%C3%BDch_%C4%8Dast%C3%AD_Bratislavy_2017_%E2%80%93_2021", "title": "Vzájomné migračné saldo mestských častí Bratislavy 2017 – 2021", "areas": "district", "area": "MESTSKA_CAST_ZISKOVA", "fixed": "2017-2021", "by": ["MESTSKA_CAST_STRATOVA"], "values": [["MIGRACNE_SALDO", "migracne-saldo", "Vzájomné migračné saldo mestských častí Bratislavy 2017 – 2021", null, null]]},
+          {"name": "vysadba-stromov-a-krov-v-katastralnych", "item": "b000dfd7da3c4b339d1d6033ccdb7c60", "path": "V%C3%BDsadba_stromov_a_krov_v_katastr%C3%A1lnych_%C3%BAzemiach_v_Bratislave", "title": "Výsadba stromov a krov v katastrálnych územiach v Bratislave", "areas": "district", "area": "KATASTRALNE_UZEMIE", "year": "ROK", "values": [["POCET_STROMOV", "pocet-stromov", "Pocet stromov", 0, null], ["POCET_KROV", "pocet-krov", "Pocet krov", 0, null]]},
+          {"name": "vysadba-v-katastralnych-uzemiach-v", "item": "1533dde678ad47b583a5a39d53332b33", "path": "V%C3%BDsadba_v_katastr%C3%A1lnych_%C3%BAzemiach_v_r%C3%A1mci_projektu_10_000_stromov_a_n%C3%A1hradnej_v%C3%BDsadby", "title": "Výsadba v katastrálnych územiach v Bratislave v rámci projektu 10 000 stromov a náhradnej výsadby", "areas": "district", "area": "KATASTRALNE_UZEMIE", "year": "ROK", "values": [["PROJEKT_10000_STROMOV", "projekt-10000-stromov", "Projekt 10000 stromov", null, null], ["NAHRADNA_VYSADBA", "nahradna-vysadba", "Nahradna vysadba", null, null]]},
+          {"name": "zmena-poctu-obyvatelov-v-mestskych", "item": "accd3a06cdfe4bbebed1b176f34cbd51", "path": "Zmena_po%C4%8Dtu_obyvate%C4%BEov_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy_medzi_rokom_2000_a_2021", "title": "Zmena počtu obyvateľov v mestských častiach Bratislavy medzi rokom 2000 a 2021", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2000-2021", "values": [["ZMENA", "zmena", "Zmena počtu obyvateľov v mestských častiach Bratislavy medzi rokom 2000 a 2021", null, null]]},
+          {"name": "zmena-poctu-obyvatelov-v-rokom-2022-a-2035-ba", "item": "d336e0a2135c4efe95b02fe68edcf8a5", "path": "Zmena_po%C4%8Dtu_obyvate%C4%BEov_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy_medzi_rokom_2022_a_2035", "title": "Zmena počtu obyvateľov v mestských častiach Bratislavy medzi rokom 2022 a 2035", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2022-2035", "values": [["ZMENA__", "zmena", "Zmena počtu obyvateľov v mestských častiach Bratislavy medzi rokom 2022 a 2035", null, null]]},
+          {"name": "zmena-priemerneho-veku-v-mestskych", "item": "5341875a8a804866a8186744f002d73d", "path": "Zmena_priemern%C3%A9ho_veku_v_mestsk%C3%BDch_%C4%8Dastiach_Bratislavy_medzi_rokom_2000_a_2021", "title": "Zmena priemerného veku v mestských častiach Bratislavy medzi rokom 2000 a 2021", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2000-2021", "values": [["ZMENA", "zmena", "Zmena priemerného veku v mestských častiach Bratislavy medzi rokom 2000 a 2021", null, null]]},
+          {"name": "zmena-priemerneho-veku-v-rokom-2022-a-2035-ba", "item": "d068c0dbdef045a7b552defe5c3bf110", "path": "Zmena_priemerneho_veku_v_mestskych_castiach_Bratislavy_medzi_rokom_2022_a_2035", "title": "Zmena priemerného veku v mestských častiach Bratislavy medzi rokom 2022 a 2035", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2022-2035", "values": [["ZMENA", "zmena", "Zmena priemerného veku v mestských častiach Bratislavy medzi rokom 2022 a 2035", null, null]]},
+          {"name": "struktura-muzov-podla-rodinneho-stavu", "item": "ee1cedb128cb4023adbe0bdcdbb04b06", "path": "%C5%A0trukt%C3%BAra_mu%C5%BEov_pod%C4%BEa_rodinn%C3%A9ho_stavu_vo_veku_15_a_viac_v_mestsk%C3%BDch_%C4%8Dastiach_BA_SODB_2021", "title": "Štruktúra mužov podľa rodinného stavu vo veku 15 a viac v mestských častiach BA (SODB 2021", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "by": ["STAV"], "values": [["PODIEL__", "podiel", "Štruktúra mužov podľa rodinného stavu vo veku 15 a viac v mestských častiach BA (SODB 2021", 0, 100]]},
+          {"name": "struktura-zien-podla-rodinneho-stavu-vo", "item": "cf25831c45134acaa3cfd32df50049e2", "path": "%C5%A0trukt%C3%BAra_%C5%BEien_pod%C4%BEa_rodinn%C3%A9ho_stavu_vo_veku_15_a_viac_v_mestsk%C3%BDch_%C4%8Dastiach_BA_SODB_2021", "title": "Štruktúra žien podľa rodinného stavu vo veku 15 a viac v mestských častiach BA - SODB 2021", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "by": ["STAV"], "values": [["PODIEL__", "podiel", "Štruktúra žien podľa rodinného stavu vo veku 15 a viac v mestských častiach BA - SODB 2021", 0, 100]]},
+          {"name": "dochadzka-do-zamestnania-medzi", "item": "6ef6d351ec6a411dbc41c2ac405450a5", "path": "Doch%C3%A1dzka_do_zamestnania_medzi_jednotliv%C3%BDmi_mestsk%C3%BDmi_%C4%8Das%C5%A5ami_Bratislavy_v_roku_2035", "title": "Dochádzka do zamestnania medzi jednotlivými mestskými časťami Bratislavy v roku 2035", "areas": "district", "area": "ODKIAL", "fixed": "2035", "by": ["KAM"], "values": [["POCET_DOCH", "pocet-doch", "Dochádzka do zamestnania medzi jednotlivými mestskými časťami Bratislavy v roku 2035", 0, null]]},
+          {"name": "dochadzka-do-skol-medzi-jednotlivymi", "item": "4a2aa468dda64f9c9188d3a59bc69c6f", "path": "Doch%C3%A1dzka_do_%C5%A1k%C3%B4l_medzi_jednotliv%C3%BDmi_mestsk%C3%BDmi_%C4%8Das%C5%A5ami_Bratislavy_v_roku_2035", "title": "Dochádzka do škôl medzi jednotlivými mestskými časťami Bratislavy v roku 2035", "areas": "district", "area": "ODKIAL", "fixed": "2035", "by": ["KAM"], "values": [["POCET_DOCH", "pocet-doch", "Dochádzka do škôl medzi jednotlivými mestskými časťami Bratislavy v roku 2035", 0, null]]},
+          {"name": "pocet-dochadzajucich-deti-do-materskych", "item": "27af84172ee643cba55d1a3e95eaae68", "path": "Po%C4%8Det_doch%C3%A1dzaj%C3%BAcich_det%C3%AD_do_matersk%C3%BDch_%C5%A1k%C3%B4l_v_Bratislave_v_roku_2021", "title": "Počet dochádzajúcich detí do materských škôl v Bratislave v roku 2021", "areas": "district", "area": "ODKIAL", "fixed": "2021", "by": ["KAM"], "values": [["POCET", "pocet", "Počet dochádzajúcich detí do materských škôl v Bratislave v roku 2021", 0, null]]},
+          {"name": "pocet-dochadzajucich-studentov-na", "item": "c83e89386f934fdd9da39462514cc823", "path": "Po%C4%8Det_doch%C3%A1dzaj%C3%BAcich_%C5%A1tudentov_na_stredn%C3%A9_%C5%A1koly_v_Bratislave_v_roku_2021", "title": "Počet dochádzajúcich študentov na stredné školy v Bratislave v roku 2021", "areas": "district", "area": "ODKIAL", "fixed": "2021", "by": ["KAM"], "values": [["POCET", "pocet", "Počet dochádzajúcich študentov na stredné školy v Bratislave v roku 2021", 0, null]]},
+          {"name": "pocet-dochadzajucich-ziakov-do", "item": "c56bb45c161543f5afe4691491c3c515", "path": "Po%C4%8Det_doch%C3%A1dzaj%C3%BAcich_%C5%BEiakov_do_z%C3%A1kladn%C3%BDch_%C5%A1k%C3%B4l_v_Bratislave_v_roku_2021", "title": "Počet dochádzajúcich žiakov do základných škôl v Bratislave v roku 2021", "areas": "district", "area": "ODKIAL", "fixed": "2021", "by": ["KAM"], "values": [["POCET", "pocet", "Počet dochádzajúcich žiakov do základných škôl v Bratislave v roku 2021", 0, null]]},
+          {"name": "pocet-evidovanych-prvkov-v-dtm", "item": "fcdb104865884e47843fde98c0883deb", "path": "Po%C4%8Det_evidovan%C3%BDch_prvkov_v_DTM_mesta_Bratislava", "title": "Počet evidovaných prvkov v DTM mesta Bratislava", "areas": "district", "area": "MESTSKA_CAST", "year": "ROK", "values": [["KANALIZACNE_SACHTY", "kanalizacne-sachty", "Kanalizacne sachty", null, null], ["VODOMERNE_SACHTY", "vodomerne-sachty", "Vodomerne sachty", null, null], ["SACHTY_BEZ_ROZLISENIA", "sachty-bez-rozlisenia", "Sachty bez rozlisenia", null, null], ["SACHTY_SPOLU", "sachty-spolu", "Sachty spolu", null, null], ["NADZEMNE_HYDRANTY", "nadzemne-hydranty", "Nadzemne hydranty", null, null], ["PODZEMNE_HYDRANTY", "podzemne-hydranty", "Podzemne hydranty", null, null], ["HYDRANTY_SPOLU", "hydranty-spolu", "Hydranty spolu", null, null], ["LAMPY", "lampy", "Lampy", null, null], ["ULICNE_VPUSTE", "ulicne-vpuste", "Ulicne vpuste", null, null], ["ELEKTROMER", "elektromer", "Elektromer", null, null], ["HUP_SKRINKY", "hup-skrinky", "Hup skrinky", null, null], ["OCHRANNE_SKRINKY_BEZ_ROZLISENIA", "ochranne-skrinky-bez-rozlisenia", "Ochranne skrinky bez rozlisenia", null, null], ["OCHRANNE_SKRINKY_SPOLU", "ochranne-skrinky-spolu", "Ochranne skrinky spolu", null, null], ["JEDNOTLIVO_RASTUCE_STROMY", "jednotlivo-rastuce-stromy", "Jednotlivo rastuce stromy", null, null], ["PLYNOVE_A_VODOVODNE_SUPATKY", "plynove-a-vodovodne-supatky", "Plynove a vodovodne supatky", null, null]]},
+          {"name": "sodb-2011-byty-podla-druhu-budovy", "item": "97998bf1dd064b4aafccaa664a4e4319", "path": "SODB%202011%20-%20Byty%20pod%C4%BEa%20druhu%20budovy", "title": "SODB 2011 - Byty podľa druhu budovy", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Slobodárne__spoločné_domovy", "slobodarne-spolocne-domovy", "Slobodárne, spoločné domovy", null, null], ["Podnikové_ubytovne", "podnikove-ubytovne", "Podnikové ubytovne", null, null], ["Nezistený", "nezisteny", "Nezistený", null, null], ["Rodinný_dom___samostatný", "rodinny-dom-samostatny", "Rodinný dom - samostatný", null, null], ["Rodinný_dom___dvojdom", "rodinny-dom-dvojdom", "Rodinný dom - dvojdom", null, null], ["Rodinný_dom___radový_dom", "rodinny-dom-radovy-dom", "Rodinný dom - radový dom", null, null], ["Bytový_dom", "bytovy-dom", "Bytový dom", null, null], ["Internát__študentský_domov", "internat-studentsky-domov", "Internát, študentský domov", null, null], ["Cirkevná_inštitúcia", "cirkevna-institucia", "Cirkevná inštitúcia", null, null], ["Domovy_sociálnych_služieb", "domovy-socialnych-sluzieb", "Domovy sociálnych služieb", null, null], ["Domov_dôchodcov__penzión", "domov-dochodcov-penzion", "Domov dôchodcov, penzión", null, null], ["Ubytovacie_zariadenie_bez_bytu", "ubytovacie-zariadenie-bez-bytu", "Ubytovacie zariadenie bez bytu", null, null], ["Domovy_pre_deti_a_mládež_telesn", "domovy-pre-deti-a-mladez-telesn", "Domovy pre deti a mládež telesne a mentálne postihnutých", null, null], ["Ost__zariadenia_pre_deti_a_mlád", "ost-zariadenia-pre-deti-a-mlad", "Ost. zariadenia pre deti a mládež (vrátane ústavov náprav. a výchov. starostlivosti o mládež), jasle a materské škôlky s nepretržitou prevádzkou", null, null], ["Nemocnice_a_ostatné_lôžkové_a_l", "nemocnice-a-ostatne-lozkove-a-l", "Nemocnice a ostatné lôžkové a liečebné zariadenia", null, null], ["Hotely__motely__penzióny__ubyto", "hotely-motely-penziony-ubyto", "Hotely, motely, penzióny, ubytovacie hostince (zariadenia slúžiace na krátkodobé ubytovanie)", null, null], ["Ubytovne__turistické_chaty__noc", "ubytovne-turisticke-chaty-noc", "Ubytovne, turistické chaty, nocľahárne telovýchovných organizácií", null, null], ["Ostatné_rekreačné_a_ubytovacie_", "ostatne-rekreacne-a-ubytovacie", "Ostatné rekreačné a ubytovacie zariadenia (vrátane školy v prírode a pod.)", null, null], ["Prevádzkové_budovy__iba_s_bytmi", "prevadzkove-budovy-iba-s-bytmi", "Prevádzkové budovy (iba s bytmi bez ubytovacích zariadení)", null, null], ["Kláštory", "klastory", "Kláštory", null, null], ["Utečenecké_tábory__humanitárne_", "utecenecke-tabory-humanitarne", "Utečenecké tábory, humanitárne strediská", null, null], ["Obydlie_mimo_bytového_fondu__fi", "obydlie-mimo-bytoveho-fondu-fi", "Obydlie mimo bytového fondu, fiktívny dom", null, null], ["Dom_bez_čísla__núdzové_obydlie_", "dom-bez-cisla-nudzove-obydlie", "Dom bez čísla, núdzové obydlie (chatrč)", null, null], ["Budova_neurčená_na_bývanie__gar", "budova-neurcena-na-byvanie-gar", "Budova neurčená na bývanie (garáž, sklad, záhradná chatka)", null, null], ["Hromadné_ubytovacie_zariadenie_", "hromadne-ubytovacie-zariadenie", "Hromadné ubytovacie zariadenie dočasného ubytovania (nocľaháreň, domov na pol ceste)", null, null], ["Bez_prístrešku__fiktívny_dom_", "bez-pristresku-fiktivny-dom", "Bez prístrešku (fiktívny dom)", null, null], ["Iný", "iny", "Iný", null, null], ["Spolu", "spolu", "Spolu", null, null]]},
+          {"name": "sodb-2011-byty-podla-obdobia-vystavby", "item": "f5e6996cadbb4955949e2e61b47311e6", "path": "SODB%202011%20-%20Byty%20pod%C4%BEa%20obdobia%20v%C3%BDstavby", "title": "SODB 2011 - Byty podľa obdobia výstavby", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["Pred_r__1919", "pred-r-1919", "Pred r. 1919", null, null], ["F1919___1945", "f1919-1945", "1919 - 1945", null, null], ["F1946___1960", "f1946-1960", "1946 - 1960", null, null], ["F1961___1970", "f1961-1970", "1961 - 1970", null, null], ["F1971___1980", "f1971-1980", "1971 - 1980", null, null], ["F1981___1990", "f1981-1990", "1981 - 1990", null, null], ["F1991___2000", "f1991-2000", "1991 - 2000", null, null], ["F2001___2005", "f2001-2005", "2001 - 2005", null, null], ["F2006_a_neskôr", "f2006-a-neskor", "2006 a neskôr", null, null], ["Nezistené", "nezistene", "Nezistené", null, null]]},
+          {"name": "sodb-2011-byty-podla-obyvanosti", "item": "3909f6dc9ab74d26bd0fbc3b0e812347", "path": "SODB%202011%20-%20Byty%20pod%C4%BEa%20ob%C3%BDvanosti", "title": "SODB 2011 - Byty podľa obývanosti", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["Obývané_byty", "obyvane-byty", "Obývané byty", null, null], ["Neobývané_byty__spolu_", "neobyvane-byty-spolu", "Neobývané byty (spolu)", null, null], ["Neobývané_byty___Byty_vyhradené", "neobyvane-byty-byty-vyhradene", "Neobývané byty - Byty vyhradené na sezónne alebo druhotné používanie (nepovinné)", null, null], ["Neobývané_byty___Prázdne_byty__", "neobyvane-byty-prazdne-byty", "Neobývané byty - Prázdne byty (nepovinné)", null, null], ["Nezistené", "nezistene", "Nezistené", null, null]]},
+          {"name": "sodb-2011-byty-podla-typu-budovy", "item": "b73091a84fe944cc8b88e557b4512c97", "path": "SODB%202011%20-%20Byty%20pod%C4%BEa%20typu%20budovy", "title": "SODB 2011 - Byty podľa typu budovy", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["Byty_v_bytových_budovách__spolu", "byty-v-bytovych-budovach-spolu", "Byty v bytových budovách (spolu)", null, null], ["Byty_v_bytových_budovách_s_jedn", "byty-v-bytovych-budovach-s-jedn", "Byty v bytových budovách s jedným bytom", null, null], ["Byty_v_bytových_budovách_s_dvom", "byty-v-bytovych-budovach-s-dvom", "Byty v bytových budovách s dvoma bytmi", null, null], ["Byty_v_bytových_budovách_s_trom", "byty-v-bytovych-budovach-s-trom", "Byty v bytových budovách s troma alebo viac bytmi", null, null], ["Byty_v_nebytových_budovách", "byty-v-nebytovych-budovach", "Byty v nebytových budovách", null, null], ["Nezistené", "nezistene", "Nezistené", null, null]]},
+          {"name": "sodb-2011-obyvatelstvo-podla", "item": "3d9f6c20f6544bd489c039fc09470370", "path": "SODB%202011%20-%20Obyvate%C4%BEstvo%20pod%C4%BEa%20ekonomickej%20aktivity", "title": "SODB 2011 - Obyvateľstvo podľa ekonomickej aktivity", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Osoby_ekonomicky_aktívne", "osoby-ekonomicky-aktivne", "Osoby ekonomicky aktívne", null, null], ["Osoby_na_rodičovskej_dovolenke", "osoby-na-rodicovskej-dovolenke", "Osoby na rodičovskej dovolenke", null, null], ["Nepracujúci_dôchodcovia", "nepracujuci-dochodcovia", "Nepracujúci dôchodcovia", null, null], ["Ostatní_nezávislí", "ostatni-nezavisli", "Ostatní nezávislí", null, null], ["Osoby_závislé__deti_do_16_rokov", "osoby-zavisle-deti-do-16-rokov", "Osoby závislé (deti do 16 rokov, študenti SŠ a VŠ)", null, null], ["Ostatní_závislí__nezistení", "ostatni-zavisli-nezisteni", "Ostatní závislí, nezistení", null, null], ["Úhrn_obyvateľstva", "uhrn-obyvatelstva", "Úhrn obyvateľstva", null, null]]},
+          {"name": "sodb-2011-obyvatelstvo-vzdelania", "item": "bebeaf9d68604ee3a41d33b2ba43123b", "path": "SODB%202011%20-%20Obyvate%C4%BEstvo%20pod%C4%BEa%20najvy%C5%A1%C5%A1ieho%20dosiahnut%C3%A9ho%20vzdelania", "title": "SODB 2011 - Obyvateľstvo podľa najvyššieho dosiahnutého vzdelania", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Základné", "zakladne", "Základné", null, null], ["Učňovské__bez_maturity_", "ucnovske-bez-maturity", "Učňovské (bez maturity)", null, null], ["Stredné_odborné__bez_maturity_", "stredne-odborne-bez-maturity", "Stredné odborné (bez maturity)", null, null], ["Úplné_stredné_učňovské__s_matur", "uplne-stredne-ucnovske-s-matur", "Úplné stredné učňovské (s maturitou)", null, null], ["Úplné_stredné_odborné__s_maturi", "uplne-stredne-odborne-s-maturi", "Úplné stredné odborné (s maturitou)", null, null], ["Úplné_stredné_všeobecné", "uplne-stredne-vseobecne", "Úplné stredné všeobecné", null, null], ["Vyššie_odborné_vzdelanie", "vyssie-odborne-vzdelanie", "Vyššie odborné vzdelanie", null, null], ["Vysokoškolské_bakalárske", "vysokoskolske-bakalarske", "Vysokoškolské bakalárske", null, null], ["Vysokoškolské_magisterské__inži", "vysokoskolske-magisterske-inzi", "Vysokoškolské magisterské, inžinierske, doktorské", null, null], ["Vysokoškolské_doktorandské", "vysokoskolske-doktorandske", "Vysokoškolské doktorandské", null, null], ["Vysokoškolské_spolu", "vysokoskolske-spolu", "Vysokoškolské spolu", null, null], ["Vysokoškolské___prírodné_vedy", "vysokoskolske-prirodne-vedy", "Vysokoškolské - prírodné vedy", null, null], ["Vysokoškolské___technické_vedy_", "vysokoskolske-technicke-vedy", "Vysokoškolské - technické vedy a náuky I (baníctvo, hutníctvo, strojárstvo, informatika a VT, elektrotech., tech. chémia, potravinárstvo)", null, null], ["Vysokoškolské___technické_vedy1", "vysokoskolske-technicke-vedy1", "Vysokoškolské - technické vedy a náuky II (textilná v.,sprac.kože,dreva, plastov, v.hud.nástrojov, archit., staveb.,dopr.,pošty,telekom.,automatiz., špec. odb.)", null, null], ["Vysokoškolské___poľnohospodársk", "vysokoskolske-polnohospodarsk", "Vysokoškolské - poľnohospodársko-lesnícke a veterinárne vedy a náuky", null, null], ["Vysokoškolské___zdravotníctvo", "vysokoskolske-zdravotnictvo", "Vysokoškolské - zdravotníctvo", null, null], ["Vysokoškolské___spoločenské_ved", "vysokoskolske-spolocenske-ved", "Vysokoškolské - spoločenské vedy, náuky a služby I (filozof.,ekon.,polit. a práv.vedy, ekonomika a manaž., obchod a služby,SŠ- OA, HA, praktická š.,učeb.odb.)", null, null], ["Vysokoškolské___spoločenské_v_1", "vysokoskolske-spolocenske-v-1", "Vysokoškolské - spoločenské vedy, náuky a služby II (histor.,filolog.,pedag. a psych.vedy, publicistika a informácie, telových.,učiteľstvo, SŠ - gym.)", null, null], ["Vysokoškolské___vedy_a_náuky_o_", "vysokoskolske-vedy-a-nauky-o", "Vysokoškolské - vedy a náuky o kultúre a umení", null, null], ["Vysokoškolské___vojenské_a_bezp", "vysokoskolske-vojenske-a-bezp", "Vysokoškolské - vojenské a bezpečnostné vedy a náuky", null, null], ["Vysokoškolské___nezistený", "vysokoskolske-nezisteny", "Vysokoškolské - nezistený", null, null], ["Bez_školského_vzdelania", "bez-skolskeho-vzdelania", "Bez školského vzdelania", null, null], ["Nezistené", "nezistene", "Nezistené", null, null], ["Úhrn", "uhrn", "Úhrn", null, null]]},
+          {"name": "sodb-2011-obyvatelstvo-podla-postavenia", "item": "ca9f7e2d0fb84bfbba022756cd7ecf9d", "path": "SODB%202011%20-%20Obyvate%C4%BEstvo%20pod%C4%BEa%20postavenia%20v%20dom%C3%A1cnosti", "title": "SODB 2011 - Obyvateľstvo podľa postavenia v domácnosti", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["Osoby_žijúce_v_súkromnej_domácn", "osoby-zijuce-v-sukromnej-domacn", "Osoby žijúce v súkromnej domácnosti", null, null], ["Osoby_žijúce_v_súkromnej_domá_1", "osoby-zijuce-v-sukromnej-doma-1", "Osoby žijúce v súkromnej domácnosti - Osoby v manželskom páre", null, null], ["Osoby_žijúce_v_súkromnej_domá_2", "osoby-zijuce-v-sukromnej-doma-2", "Osoby žijúce v súkromnej domácnosti - Synovia/dcéry", null, null], ["Osoby_žijúce_v_súkromnej_domá_3", "osoby-zijuce-v-sukromnej-doma-3", "Osoby žijúce v súkromnej domácnosti - Partneri žijúci v konsenzuálnom zväzku", null, null], ["Osoby_žijúce_v_súkromnej_domá_4", "osoby-zijuce-v-sukromnej-doma-4", "Osoby žijúce v súkromnej domácnosti - Osamelí rodičia", null, null], ["Osoby_žijúce_v_súkromnej_domá_5", "osoby-zijuce-v-sukromnej-doma-5", "Osoby žijúce v súkromnej domácnosti - Nežijúce samé", null, null], ["Osoby_žijúce_v_súkromnej_domá_6", "osoby-zijuce-v-sukromnej-doma-6", "Osoby žijúce v súkromnej domácnosti - Žijúce samé", null, null], ["Osoby_žijúce_v_súkromnej_domá_7", "osoby-zijuce-v-sukromnej-doma-7", "Osoby žijúce v súkromnej domácnosti - Neuvedené", null, null], ["Osoby_nežijúce_v_súkromnej_domá", "osoby-nezijuce-v-sukromnej-doma", "Osoby nežijúce v súkromnej domácnosti", null, null]]},
+          {"name": "sodb-2011-obyvatelstvo-podla-vekovych", "item": "ef2704518f1d45379da05a0ffa6fcad4", "path": "SODB%202011%20-%20Obyvate%C4%BEstvo%20pod%C4%BEa%20vekov%C3%BDch%20skup%C3%ADn", "title": "SODB 2011 - Obyvateľstvo podľa vekových skupín", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Do_5_rokov", "do-5-rokov", "Do 5 rokov", null, null], ["F5_až_9_rokov", "f5-az-9-rokov", "5 až 9 rokov", null, null], ["F10_až_14_rokov", "f10-az-14-rokov", "10 až 14 rokov", null, null], ["F15_až_19_rokov", "f15-az-19-rokov", "15 až 19 rokov", null, null], ["F20_až_24_rokov", "f20-az-24-rokov", "20 až 24 rokov", null, null], ["F25_až_29_rokov", "f25-az-29-rokov", "25 až 29 rokov", null, null], ["F30_až_34_rokov", "f30-az-34-rokov", "30 až 34 rokov", null, null], ["F35_až_39_rokov", "f35-az-39-rokov", "35 až 39 rokov", null, null], ["F40_až_44_rokov", "f40-az-44-rokov", "40 až 44 rokov", null, null], ["F45_až_49_rokov", "f45-az-49-rokov", "45 až 49 rokov", null, null], ["F50_až_54_rokov", "f50-az-54-rokov", "50 až 54 rokov", null, null], ["F55_až_59_rokov", "f55-az-59-rokov", "55 až 59 rokov", null, null], ["F60_až_64_rokov", "f60-az-64-rokov", "60 až 64 rokov", null, null], ["F65_až_69_rokov", "f65-az-69-rokov", "65 až 69 rokov", null, null], ["F70_až_74_rokov", "f70-az-74-rokov", "70 až 74 rokov", null, null], ["F75_až_79_rokov", "f75-az-79-rokov", "75 až 79 rokov", null, null], ["F80_až_84_rokov", "f80-az-84-rokov", "80 až 84 rokov", null, null], ["F85_až_89_rokov", "f85-az-89-rokov", "85 až 89 rokov", null, null], ["F90_až_94_rokov", "f90-az-94-rokov", "90 až 94 rokov", null, null], ["F95_až_99_rokov", "f95-az-99-rokov", "95 až 99 rokov", null, null], ["F100_rokov_a_viac", "f100-rokov-a-viac", "100 rokov a viac", null, null]]},
+          {"name": "sodb-2011-obyvane-byty-podla-formy", "item": "5cba8e8f411b4faf86dcb5521214385a", "path": "SODB%202011%20-%20Ob%C3%BDvan%C3%A9%20byty%20pod%C4%BEa%20formy%20vlastn%C3%ADctva", "title": "SODB 2011 - Obývané byty podľa formy vlastníctva", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["Byty_obývané_vlastníkom", "byty-obyvane-vlastnikom", "Byty obývané vlastníkom", null, null], ["Družstevné_byty", "druzstevne-byty", "Družstevné byty", null, null], ["Byty_v_nájme", "byty-v-najme", "Byty v nájme", null, null], ["Iná_forma_vlastníctva_bytu", "ina-forma-vlastnictva-bytu", "Iná forma vlastníctva bytu", null, null], ["Nezistené", "nezistene", "Nezistené", null, null], ["Neaplikovateľné", "neaplikovatelne", "Neaplikovateľné", null, null]]},
+          {"name": "sodb-2011-obyvane-byty-podla-poctu", "item": "6885594d130948238f335f8f73e83895", "path": "SODB%202011%20-%20Ob%C3%BDvan%C3%A9%20byty%20pod%C4%BEa%20po%C4%8Dtu%20obytn%C3%BDch%20miestnost%C3%AD", "title": "SODB 2011 - Obývané byty podľa počtu obytných miestností", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["F1_obytná_miestnosť", "f1-obytna-miestnost", "1 obytná miestnosť", null, null], ["F2_obytné_miestnosti", "f2-obytne-miestnosti", "2 obytné miestnosti", null, null], ["F3_obytné_miestnosti", "f3-obytne-miestnosti", "3 obytné miestnosti", null, null], ["F4_obytné_miestnosti", "f4-obytne-miestnosti", "4 obytné miestnosti", null, null], ["F5_obytných_miestností", "f5-obytnych-miestnosti", "5 obytných miestností", null, null], ["F6_obytných_miestností", "f6-obytnych-miestnosti", "6 obytných miestností", null, null], ["F7_obytných_miestností", "f7-obytnych-miestnosti", "7 obytných miestností", null, null], ["F8_obytných_miestností", "f8-obytnych-miestnosti", "8 obytných miestností", null, null], ["F9_obytných_miestností_a_viac", "f9-obytnych-miestnosti-a-viac", "9 obytných miestností a viac", null, null], ["Nezistené", "nezistene", "Nezistené", null, null]]},
+          {"name": "sodb-2011-obyvane-byty-obyvatelov-v-byte", "item": "680e9bf1df8a4be5bf440e54bf6ef417", "path": "SODB%202011%20-%20Ob%C3%BDvan%C3%A9%20byty%20pod%C4%BEa%20po%C4%8Dtu%20obyvate%C4%BEov%20v%20byte", "title": "SODB 2011 - Obývané byty podľa počtu obyvateľov v byte", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["F1_osoba", "f1-osoba", "1 osoba", null, null], ["F2_osoby", "f2-osoby", "2 osoby", null, null], ["F3_osoby", "f3-osoby", "3 osoby", null, null], ["F4_osoby", "f4-osoby", "4 osoby", null, null], ["F5_osôb", "f5-osob", "5 osôb", null, null], ["F6_osôb", "f6-osob", "6 osôb", null, null], ["F7_osôb", "f7-osob", "7 osôb", null, null], ["F8_osôb", "f8-osob", "8 osôb", null, null], ["F9_osôb", "f9-osob", "9 osôb", null, null], ["F10_osôb", "f10-osob", "10 osôb", null, null], ["F11_osôb_a_viac", "f11-osob-a-viac", "11 osôb a viac", null, null]]},
+          {"name": "sodb-2011-obyvane-byty-podla-systemu", "item": "7991751189964796bcd551949a14a4ca", "path": "SODB%202011%20-%20Ob%C3%BDvan%C3%A9%20byty%20pod%C4%BEa%20syst%C3%A9mu%20dod%C3%A1vky%20vody", "title": "SODB 2011 - Obývané byty podľa systému dodávky vody", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["V_obytnej_jednotke_je_tečúca_vo", "v-obytnej-jednotke-je-tecuca-vo", "V obytnej jednotke je tečúca voda", null, null], ["V_obytnej_jednotke_nie_je_tečúc", "v-obytnej-jednotke-nie-je-tecuc", "V obytnej jednotke nie je tečúca voda", null, null], ["Nezistené", "nezistene", "Nezistené", null, null]]},
+          {"name": "sodb-2011-obyvane-byty-podla-typu", "item": "56529303f5fb4b3791f5e3dcc5dfee6f", "path": "SODB%202011%20-%20Ob%C3%BDvan%C3%A9%20byty%20pod%C4%BEa%20typu%20obydlia", "title": "SODB 2011 - Obývané byty podľa typu obydlia", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["Obývané_byty", "obyvane-byty", "Obývané byty", null, null], ["Iné_obytné_jednotky", "ine-obytne-jednotky", "Iné obytné jednotky", null, null], ["Kolektívne_obydlia", "kolektivne-obydlia", "Kolektívne obydlia", null, null], ["Nezistené", "nezistene", "Nezistené", null, null]]},
+          {"name": "sodb-2011-pocet-obyvatelov-podla", "item": "860a92772e9249d1be9df5176857b8be", "path": "SODB%202011%20-%20Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20pohlavia", "title": "SODB 2011 - Počet obyvateľov podľa pohlavia", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["Muži", "muzi", "Muži", null, null], ["Ženy", "zeny", "Ženy", null, null]]},
+          {"name": "sodb-2011-rodiny-podla-typu", "item": "f90b2171065e4c6f9600d4d04645837b", "path": "SODB%202011%20-%20Rodiny%20pod%C4%BEa%20typu", "title": "SODB 2011 - Rodiny podľa typu", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Rodiny_pozostávajúce_z_manželsk", "rodiny-pozostavajuce-z-manzelsk", "Rodiny pozostávajúce z manželských párov", null, null], ["Rodiny_pozostávajúce_z_párov_ži", "rodiny-pozostavajuce-z-parov-zi", "Rodiny pozostávajúce z párov žijúcich v konsenzuálnom zväzku", null, null], ["Rodiny_osamelých_otcov", "rodiny-osamelych-otcov", "Rodiny osamelých otcov", null, null], ["Rodiny_osamelých_matiek", "rodiny-osamelych-matiek", "Rodiny osamelých matiek", null, null]]},
+          {"name": "sodb-2011-rodiny-podla-velkosti-zakladu", "item": "5219ceb7097b43af981364554176774c", "path": "SODB%202011%20-%20Rodiny%20pod%C4%BEa%20ve%C4%BEkosti%20z%C3%A1kladu%20rodiny", "title": "SODB 2011 - Rodiny podľa veľkosti základu rodiny", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["F2_osoby", "f2-osoby", "2 osoby", null, null], ["F3_až_5_osôb", "f3-az-5-osob", "3 až 5 osôb", null, null], ["F6_až_10_osôb", "f6-az-10-osob", "6 až 10 osôb", null, null], ["F11_a_viac_osôb", "f11-a-viac-osob", "11 a viac osôb", null, null]]},
+          {"name": "sodb-2011-sukromne-domacnosti-podla", "item": "5f285aedcabb4e9b8018b207c5ff05ae", "path": "SODB%202011%20-%20S%C3%BAkromn%C3%A9%20dom%C3%A1cnosti%20pod%C4%BEa%20pr%C3%A1vneho%20u%C5%BE%C3%ADvania%20bytu", "title": "SODB 2011 - Súkromné domácnosti podľa právneho užívania bytu", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["Domácnosti__v_ktorých_je_aspoň_", "domacnosti-v-ktorych-je-aspon", "Domácnosti, v ktorých je aspoň jeden člen domácnosti vlastníkom obytnej jednotky", null, null], ["Domácnosti__v_ktorých_je_aspoň1", "domacnosti-v-ktorych-je-aspon1", "Domácnosti, v ktorých je aspoň jeden člen domácnosti nájomcom celej obytnej jednotky alebo jej časti", null, null], ["Domácnosti__ktoré_obývajú_celú_", "domacnosti-ktore-obyvaju-celu", "Domácnosti, ktoré obývajú celú obytnú jednotku alebo jej časť na základe iného právneho dôvodu užívania", null, null], ["Nezistené", "nezistene", "Nezistené", null, null]]},
+          {"name": "sodb-2011-sukromne-domacnosti-podla-typu", "item": "87118ab82ab847cfbcb32bee21db2326", "path": "SODB%202011%20-%20S%C3%BAkromn%C3%A9%20dom%C3%A1cnosti%20pod%C4%BEa%20typu", "title": "SODB 2011 - Súkromné domácnosti podľa typu", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Nerodinné_domácnosti__spolu_", "nerodinne-domacnosti-spolu", "Nerodinné domácnosti (spolu)", null, null], ["Nerodinné_domácnosti___Domácnos", "nerodinne-domacnosti-domacnos", "Nerodinné domácnosti - Domácnosti jednotlivcov", null, null], ["Nerodinné_domácnosti___Viacčlen", "nerodinne-domacnosti-viacclen", "Nerodinné domácnosti - Viacčlenné domácnosti", null, null], ["Domácnosti__ktoré_tvorí_jedna_r", "domacnosti-ktore-tvori-jedna-r", "Domácnosti, ktoré tvorí jedna rodina (spolu)", null, null], ["Domácnosti__ktoré_tvorí_jedna_1", "domacnosti-ktore-tvori-jedna-1", "Domácnosti, ktoré tvorí jedna rodina - Domácnosti pozostávajúce z manželských párov", null, null], ["Domácnosti__ktoré_tvorí_jedna_2", "domacnosti-ktore-tvori-jedna-2", "Domácnosti, ktoré tvorí jedna rodina - Domácnosti párov žijúcich v konsenzuálnom zväzku", null, null], ["Domácnosti__ktoré_tvorí_jedna_3", "domacnosti-ktore-tvori-jedna-3", "Domácnosti, ktoré tvorí jedna rodina - Domácnosti osamelých otcov", null, null], ["Domácnosti__ktoré_tvorí_jedna_4", "domacnosti-ktore-tvori-jedna-4", "Domácnosti, ktoré tvorí jedna rodina - Domácnosti osamelých matiek", null, null], ["Domácnosti_pozostávajúce_z_dvoc", "domacnosti-pozostavajuce-z-dvoc", "Domácnosti pozostávajúce z dvoch a viac rodín", null, null]]},
+          {"name": "sodb-2011-sukromne-podla-velkosti", "item": "c1d6b2ff59b84d6aa6e8229390b8f145", "path": "SODB%202011%20-%20S%C3%BAkromn%C3%A9%20dom%C3%A1cnosti%20pod%C4%BEa%20ve%C4%BEkosti", "title": "SODB 2011 - Súkromné domácnosti podľa veľkosti", "areas": "district", "area": "Mestská_časť", "fixed": "2011", "by": ["Okres"], "values": [["Spolu", "spolu", "Spolu", null, null], ["F1_osoba", "f1-osoba", "1 osoba", null, null], ["F2_osoby", "f2-osoby", "2 osoby", null, null], ["F3_až_5_osôb", "f3-az-5-osob", "3 až 5 osôb", null, null], ["F6_až_10_osôb", "f6-az-10-osob", "6 až 10 osôb", null, null], ["F11_osôb_a_viac", "f11-osob-a-viac", "11 osôb a viac", null, null]]},
+          {"name": "vzajomne-migracne-saldo-casti-2000-2004-ba", "item": "504e50b164f44b8d80dcf76ae9b77caa", "path": "Vz%C3%A1jomn%C3%A9_migra%C4%8Dn%C3%A9_saldo_mestsk%C3%BDch_%C4%8Dast%C3%AD_Bratislavy_2000_%E2%80%93_2004", "title": "Vzájomné migračné saldo mestských častí Bratislavy 2000 – 2004", "areas": "district", "area": "MESTSKA_CAST_ZISKOVA", "fixed": "2000-2004", "by": ["MESTSKA_CAST_STRATOVA"], "values": [["MIGRACNE_SALDO", "migracne-saldo", "Vzájomné migračné saldo mestských častí Bratislavy 2000 – 2004", null, null]]},
+          {"name": "pocet-ostatnych-udalosti", "item": "453481307bfe4386b8d2ec14ca8fb63d", "path": "Po%C4%8Det%20ostatn%C3%BDch%20udalost%C3%AD%20v%20rokoch%202017%20-%202022", "title": "Počet ostatných udalostí v rokoch 2017 - 2022", "areas": "district", "area": "Mestská_časť", "year": "EXPR_1", "past": true, "by": ["Skupina_udalosti"], "group": "SUBSTRING(Dátum_a_čas_od,1,4),Skupina_udalosti,Mestská_časť", "stats": [["count", "ObjectId", "n"]], "values": [["n", "pocet", "Počet udalostí", 0, null]]},
+          {"name": "pocet-priestupkov-podla-druhu-udalosti", "item": "2566d894a604427196b65b09a46ea60b", "path": "Po%C4%8Det%20priestupkov%20pod%C4%BEa%20druhu%20udalosti%20v%20rokoch%202017%20-%202022", "title": "Počet priestupkov podľa druhu udalosti v rokoch 2017 - 2022", "areas": "district", "area": "Mestská_časť", "year": "EXPR_1", "past": true, "by": ["Skupina_udalosti"], "group": "SUBSTRING(Dátum_a_čas_od,1,4),Skupina_udalosti,Mestská_časť", "stats": [["count", "ObjectId", "n"]], "values": [["n", "pocet", "Počet priestupkov", 0, null]]},
+          {"name": "rozloha-mestskych-casti", "item": "baa9f32132a340b7a193d5cd130619c2", "path": "Rozloha%20mestsk%C3%BDch%20%C4%8Dast%C3%AD", "title": "Rozloha mestských častí", "areas": "district", "area": "Mestská_časť", "fixed": "2023", "values": [["Rozloha__km2_", "rozloha-km2", "Rozloha mestskej časti (km²)", 0, 400]]},
+          {"name": "vekove-zlozenie-podiel", "item": "c1252c1579444a15998d8046aef696ea", "path": "Vekov%C3%A9_zlo%C5%BEenie_obyvate%C4%BEov_v_najstar%C5%A1ej_a_najmlad%C5%A1ej_mestskej_%C4%8Dasti_Bratislavy_v_roku_2021", "title": "Vekové zloženie obyvateľov najstaršej a najmladšej mestskej časti Bratislavy v roku 2021 (podiel)", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "by": ["POHLAVIE", "VEK"], "abs": true, "values": [["PODIEL", "podiel", "Podiel na obyvateľoch rovnakého pohlavia v mestskej časti", 0, 1]]},
+          {"name": "vekove-zlozenie-pocet", "item": "9ddb4493ef6047898e378431c34d8a02", "path": "Vekov%C3%A9_zlo%C5%BEenie_obyvate%C4%BEov_v_najstar%C5%A1ej_a_najmlad%C5%A1ej_mestskej_%C4%8Dasti_Bratislavy_v_roku_202", "title": "Vekové zloženie obyvateľov najstaršej a najmladšej mestskej časti Bratislavy v roku 2021 (počet)", "areas": "district", "area": "MESTSKA_CAST", "fixed": "2021", "by": ["POHLAVIE", "VEK"], "abs": true, "values": [["POCET_OBYVATELOV", "pocet", "Počet obyvateľov", 0, null]]}
+        ]
+        let listed = this.services.or([]).map_each(s -> s.name.or(""))
+        let found = $tables.filter(t -> $listed.contains(t.path.unescape_url_query()))
+        let missing = $tables.filter(t -> !$listed.contains(t.path.unescape_url_query())).map_each(t -> t.name)
+        meta missing = $missing.join(", ")
+        root = if content().length() > 1048576 {
+          throw("the hub's list of services is %d bytes, more than the 1 MiB read".format(content().length()))
+        } else if this.error.or(null) != null {
+          throw("the hub refused its list of services: %s".format(this.error.message.or("no reason given")))
+        } else if $found.length() == 0 {
+          throw("the hub lists none of the statistics tables: nothing is written")
+        } else { $found }
+    - switch:
+        - check: '@missing != ""'
+          processors:
+            - log:
+                level: WARN
+                message: 'statistics: the hub no longer lists ${! @missing }, left out of this run'
+    - unarchive: { format: json_array }
+
+    # One table at a time, read in pages of 1,000 rows (the hub's smallest maxRecordCount) until
+    # the hub says no more, at most 20 pages; a table with more fails instead of writing part of
+    # it. The path and the query are the constants above, never text of an answer. A table line
+    # with `group` asks the hub for its sums instead of its rows: one row a group, ordered by the
+    # group so the pages do not overlap.
+    - for_each:
+        - branch:
+            request_map: |
+              meta path = this.path
+              meta query = if this.group.or("") == "" { "where=1%3D1&outFields=*" } else {
+                "where=" + this.where.or("1=1").escape_url_query() +
+                "&groupByFieldsForStatistics=" + this.group.escape_url_query() +
+                "&orderByFields=" + this.group.escape_url_query() +
+                "&outStatistics=" + this.stats.map_each(s -> { "statisticType": s.index(0), "onStatisticField": s.index(1), "outStatisticFieldName": s.index(2) }).format_json(no_indent: true).escape_url_query()
+              }
+              root = { "rows": [], "offset": 0, "more": true }
+            processors:
+              - while:
+                  check: this.more && !errored()
+                  max_loops: 20
+                  processors:
+                    - branch:
+                        request_map: |
+                          meta offset = this.offset.string()
+                          root = ""
+                        processors:
+                          - sleep: { duration: '200ms' }
+                          - http:
+                              url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/${! @path }/FeatureServer/0/query?${! @query }&resultOffset=${! @offset }&resultRecordCount=1000&f=json
+                              verb: GET
+                              headers:
+                                Accept: application/json
+                                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+                              timeout: 30s
+                              retries: 2
+                        result_map: |
+                          root.rows = if content().length() > 4194304 {
+                            throw("the table answer is over 4 MiB")
+                          } else if this.error.or(null) != null {
+                            throw("the hub refused the query: %s".format(this.error.message.or("no reason given")))
+                          } else { root.rows.concat(this.features.or([]).map_each(f -> f.attributes)) }
+                          root.offset = root.offset + 1000
+                          root.more = this.exceededTransferLimit.or(false)
+            result_map: |
+              root.rows = if this.more { throw("the table holds more than 20,000 rows, more than 20 pages") } else { this.rows }
+    # A table the hub refuses is logged and left out of this run; the others still write.
+    - catch:
+        - log: { level: WARN, message: 'statistics: ${! json("name") } not read: ${! error() }' }
+        - mapping: root = deleted()
+    - archive: { format: json_array }
+
+    # Plausibility (owner 2026-10-22T18:10Z): dropped and counted by reason, never guessed at: an
+    # area outside the city; no period; a breakdown cell left empty; a figure that is no number or
+    # lies outside its bounds; one figure twice for the same breakdown, area and period (the first
+    # is kept).
+    - mapping: |
+        # The 17 city districts by their name folded to ASCII, with their ZÚJ code (the
+        # AdministrativeArea id the districts pipeline writes). The hub writes names three ways:
+        # with diacritics, without them and abbreviated ("D. N. Ves", dots dropped: a key with a dot
+        # is a path to `get`); the mosquito table writes č as è and ň as ò (a cp1250 text read as
+        # Latin-1), folded here too, and its 2025 figures with a space between thousands.
+        let districts = {
+          "stare mesto": ["528595", "Staré Mesto"], "podunajske biskupice": ["529311", "Podunajské Biskupice"],
+          "p biskupice": ["529311", "Podunajské Biskupice"], "ruzinov": ["529320", "Ružinov"], "vrakuna": ["529338", "Vrakuňa"],
+          "nove mesto": ["529346", "Nové Mesto"], "raca": ["529354", "Rača"], "vajnory": ["529362", "Vajnory"],
+          "devinska nova ves": ["529371", "Devínska Nová Ves"], "d n ves": ["529371", "Devínska Nová Ves"],
+          "dubravka": ["529389", "Dúbravka"], "karlova ves": ["529397", "Karlova Ves"], "devin": ["529401", "Devín"],
+          "lamac": ["529419", "Lamač"], "zahorska bystrica": ["529427", "Záhorská Bystrica"], "z bystrica": ["529427", "Záhorská Bystrica"],
+          "cunovo": ["529435", "Čunovo"], "jarovce": ["529443", "Jarovce"], "petrzalka": ["529460", "Petržalka"], "rusovce": ["529494", "Rusovce"]
+        }
+        # The five okresy (LAU 1, Bratislava I to V, codes 101 to 105), written in Roman or Arabic
+        # numerals; the city as a whole by its municipality code. A table of the whole region keeps
+        # the Bratislava okresy, a table of Bratislava beside Slovakia the Bratislava rows.
+        let okresy = {
+          "bratislava i": ["101", "Bratislava I"], "bratislava ii": ["102", "Bratislava II"], "bratislava iii": ["103", "Bratislava III"],
+          "bratislava iv": ["104", "Bratislava IV"], "bratislava v": ["105", "Bratislava V"], "bratislava 1": ["101", "Bratislava I"],
+          "bratislava 2": ["102", "Bratislava II"], "bratislava 3": ["103", "Bratislava III"], "bratislava 4": ["104", "Bratislava IV"],
+          "bratislava 5": ["105", "Bratislava V"]
+        }
+        # A table of the region beside Slovakia keeps the region's rows.
+        let kraje = { "bratislavsky kraj": ["sk010", "Bratislavský kraj"] }
+        # A table without an area column ("*") is the city's, and so is its row named after the city.
+        let city = ["582000", "Bratislava"]
+        # A basic settlement unit (ZSJ) by its 7-digit code, named with its city district, kept only
+        # inside one of the 17; a municipality of the region by its name, the hub giving no code.
+        let parts = $districts.values()
+        map fold {
+          root = this.string().lowercase().replace_all_many([
+            "á", "a", "ä", "a", "à", "a", "â", "a", "č", "c", "ç", "c", "ď", "d", "é", "e", "ě", "e", "ë", "e", "í", "i", "ĺ", "l",
+            "ľ", "l", "ň", "n", "ó", "o", "ô", "o", "ö", "o", "ő", "o", "ŕ", "r", "ř", "r", "š", "s", "ť", "t", "ú", "u", "ü", "u",
+            "ű", "u", "ů", "u", "ý", "y", "ž", "z", "è", "c", "ò", "n", ".", ""
+          ]).re_replace_all("\\s+", " ").trim()
+        }
+        map segment {
+          root = this.apply("fold").re_replace_all("[^a-z0-9]+", "-").trim("-")
+        }
+        map number {
+          root = if this == null { null } else { this.string().re_replace_all("[\\s %]", "").replace_all(",", ".").number().catch(null) }
+        }
+        map magnitude {
+          let n = this.apply("number")
+          root = if $n == null { null } else { $n.abs() }
+        }
+        map yearmonth {
+          let y = this.slice(0, 4).number().int64()
+          let m = this.slice(5, 7).number().int64()
+          let february = if $y % 4 == 0 && ($y % 100 != 0 || $y % 400 == 0) { "29" } else { "28" }
+          root = {
+            "from": this + "-01",
+            "to": this + "-" + ["31", $february, "31", "30", "31", "30", "31", "31", "30", "31", "30", "31"].index($m - 1),
+            "slug": this,
+            "label": ["január", "február", "marec", "apríl", "máj", "jún", "júl", "august", "september", "október", "november", "december"].index($m - 1) + " " + $y.string(),
+            "frequency": "monthly"
+          }
+        }
+        map years {
+          let v = this.string().trim()
+          let y = $v.re_find_all("(19|20)[0-9]{2}")
+          root = if $v.re_match("^(19|20)[0-9]{2}$") {
+            { "from": $v + "-01-01", "to": $v + "-12-31", "slug": $v, "label": $v, "frequency": "yearly" }
+          } else if $v.re_match("^(19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2}$") {
+            { "from": $y.index(0) + "-01-01", "to": $y.index(1) + "-12-31", "slug": $y.join("-"), "label": $y.join("–") }
+          } else if $v.re_match("^(19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2} a (19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2}$") {
+            # Two ranges compared ("2017 – 2019 a 2000 – 2002"): the period spans both.
+            {
+              "from": $y.sort().index(0) + "-01-01", "to": $y.sort().index(3) + "-12-31", "slug": $y.join("-"),
+              "label": $y.index(0) + "–" + $y.index(1) + " a " + $y.index(2) + "–" + $y.index(3)
+            }
+          } else if $v.re_match("^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}$") && $v.ts_parse("2006-01-02").catch(null) != null {
+            { "from": $v, "to": $v, "slug": $v, "label": $v, "frequency": "daily" }
+          } else if $v.re_match("^(19|20)[0-9]{2}-(0[1-9]|1[0-2])$") { $v.apply("yearmonth") } else { null }
+        }
+        map quarter {
+          let y = this.index(0)
+          # "3" or the transit table's "3.Q".
+          let q = this.index(1).re_replace_all("^([1-4])\\s*\\.?\\s*[Qq]$", "$1")
+          root = if $y.re_match("^(19|20)[0-9]{2}$") && $q.re_match("^[1-4]$") {
+            {
+              "from": $y + "-" + ["01-01", "04-01", "07-01", "10-01"].index($q.number() - 1),
+              "to": $y + "-" + ["03-31", "06-30", "09-30", "12-31"].index($q.number() - 1),
+              "slug": $y + "-q" + $q,
+              "label": $q + ". štvrťrok " + $y,
+              "frequency": "quarterly"
+            }
+          } else { null }
+        }
+        # A month column holds 1 to 12, with or without a leading zero; anything else is no period.
+        map month {
+          let y = this.index(0)
+          let m = this.index(1).trim_prefix("0")
+          root = if $y.re_match("^(19|20)[0-9]{2}$") && $m.re_match("^([1-9]|1[0-2])$") {
+            {
+              "from": "%s-%02d-01".format($y, $m.number().int64()),
+              "to": "%s-%02d-%s".format($y, $m.number().int64(), if $m == "2" && $y.number().int64() % 4 == 0 && ($y.number().int64() % 100 != 0 || $y.number().int64() % 400 == 0) { "29" } else {
+                ["31", "28", "31", "30", "31", "30", "31", "31", "30", "31", "30", "31"].index($m.number().int64() - 1)
+              }),
+              "slug": "%s-%02d".format($y, $m.number().int64()),
+              "label": "%d/%s".format($m.number().int64(), $y),
+              "frequency": "monthly"
+            }
+          } else { null }
+        }
+        map period {
+          let t = this.table
+          let r = this.row
+          root = if $t.fixed.or("") != "" { $t.fixed.apply("years") }
+            else if $t.spans.or(null) != null { $t.spans.get($r.get($t.year).or("").string().trim()).or("").apply("years") }
+            else if $t.quarter.or("") != "" { [$r.get($t.year).or("").string().trim(), $r.get($t.quarter).or("").string().trim()].apply("quarter") }
+            else if $t.month.or("") != "" { [$r.get($t.year).or("").string().trim(), $r.get($t.month).or("").string().trim()].apply("month") }
+            else { $r.get($t.year).or("").apply("years") }
+        }
+        map areaname {
+          root = if this.table.area.or("") == "" { "*" } else { this.row.get(this.table.area).or("").apply("fold") }
+        }
+        # Each breakdown cell as its id segment and its label; a label read as Latin-1 from cp1250
+        # text ("Raèianska") gets its č and ň back.
+        map breakdown {
+          let r = this.row
+          let labels = this.table.labels.or({})
+          # "Nan" is the hub's word for a category it did not detect: no breakdown.
+          root = this.table.by.or([]).map_each(c -> if c.type() == "string" { { "code": c } } else { c }).map_each(c -> c.assign({
+            "raw": $r.get(c.code).or("").string().trim()
+          })).map_each(c -> c.assign({ "raw": if c.raw.lowercase() == "nan" { "" } else { $labels.get(c.raw).or(c.raw) } })).map_each(c -> {
+            "segment": c.raw.apply("segment"),
+            "label": (if c.name.or("") != "" { $r.get(c.name).or("").string().trim() } else { c.raw }).replace_all_many(["è", "č", "ò", "ň"]),
+            "optional": c.optional.or(false)
+          })
+        }
+        map zsj {
+          let code = this.row.get(this.table.area).or("").string().trim()
+          let name = this.row.get(this.table.label).or("").string().trim()
+          let within = this.row.get(this.table.within).or("").string().trim()
+          let part = this.parts.filter(d -> d.index(0) == $within)
+          root = if $code.re_match("^[0-9]{7}$") && $name != "" && $part.length() > 0 { [$code, $name + " (" + $part.index(0).index(1) + ")"] } else { null }
+        }
+        map obec {
+          let name = this.row.get(this.table.area).or("").string().trim()
+          root = if $name.apply("segment") != "" { [$name.apply("segment"), $name] } else { null }
+        }
+        let cells = this.map_each(t -> t.rows.or([]).filter(r -> if t.only.or(null) == null { true } else {
+          r.get(t.only.index(0)).or("").string().has_prefix(t.only.index(1))
+        }).map_each(r -> t.values.map_each(v -> {
+          "table": t.without("rows", "values"),
+          "value": v,
+          "area": if t.areas == "district" { $districts.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if t.areas == "okres" { $okresy.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if t.areas == "zsj" { { "table": t, "row": r, "parts": $parts }.apply("zsj") }
+            else if t.areas == "obec" { { "table": t, "row": r }.apply("obec") }
+            else if t.areas == "kraj" { $kraje.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if ["*", $city.index(1).lowercase()].contains({ "table": t, "row": r }.apply("areaname")) { $city } else { null },
+          "by": { "table": t, "row": r }.apply("breakdown"),
+          "period": { "table": t, "row": r }.apply("period"),
+          "number": r.get(v.index(0)).apply(if t.abs.or(false) { "magnitude" } else { "number" })
+        }))).flatten().flatten()
+        map reason {
+          let v = this.value
+          root = if this.area == null {
+              { "district": "not a city district", "okres": "not a Bratislava okres", "city": "not Bratislava",
+                "zsj": "not a ZSJ of the city", "obec": "no municipality", "kraj": "not the Bratislava region" }.get(this.table.areas)
+            }
+            else if this.period == null { "no period" }
+            else if this.table.past.or(false) && this.period.from > now().ts_format("2006-01-02") { "in the future" }
+            else if this.by.filter(b -> b.segment == "" && !b.optional).length() > 0 { "no breakdown" }
+            else if this.number == null { "no number" }
+            else if ($v.index(3) != null && this.number < $v.index(3)) || ($v.index(4) != null && this.number > $v.index(4)) { "out of range" }
+            else { null }
+        }
+        let marked = $cells.map_each(c -> c.assign({
+          "_drop": c.apply("reason"),
+          "_id": ([c.table.name, c.value.index(1)].concat(c.by.map_each(b -> b.segment).filter(s -> s != "")).concat([c.area.index(0).or(""), c.period.slug.or("")])).join(".")
+        }))
+        let usable = $marked.filter(c -> c._drop == null)
+        let once = $usable.unique(c -> c._id)
+        let tally = $marked.filter(c -> c._drop != null).fold({}, item -> item.tally.assign({ item.value._drop: item.tally.get(item.value._drop).or(0) + 1 }))
+        let dups = $usable.length() - $once.length()
+        meta dropped = (if $dups > 0 { $tally.assign({ "duplicate": $dups }) } else { $tally }).format_json(no_indent: true)
+        meta kept = $once.length().string()
+        root = if $once.length() == 0 { throw("the statistics tables hold no usable figure: nothing is written") } else { $once }
+    - log:
+        level: INFO
+        message: 'statistics: ${! @kept } figures kept, dropped by reason ${! @dropped }'
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44).
+        let t = this.table
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this._id),
+          "type": "KeyPerformanceIndicator",
+          "name": { "type": "Property", "value": ([this.value.index(2)].concat(this.by.map_each(b -> b.label).filter(l -> l != "")).concat([this.area.index(1), this.period.label])).join(", ") },
+          "description": { "type": "Property", "value": $t.title },
+          "process": { "type": "Property", "value": this.value.index(2) },
+          "category": { "type": "Property", "value": ["quantitative"] },
+          "kpiValue": { "type": "Property", "value": this.number },
+          "calculationPeriod": { "type": "Property", "value": { "from": this.period.from, "to": this.period.to } },
+          # Smart Data Models names hourly to yearly; a period of several years carries none.
+          "calculationFrequency": if this.period.frequency.or("") == "" { null } else { { "type": "Property", "value": this.period.frequency } },
+          "area": { "type": "Property", "value": this.area.index(1) },
+          "organization": { "type": "Property", "value": "Hlavné mesto SR Bratislava" },
+          "dataProvider": { "type": "Property", "value": "Hlavné mesto SR Bratislava, data.bratislava.sk (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://data.bratislava.sk/datasets/" + $t.item }
+        }
+        root = root.filter(entry -> entry.value != null)
+
+    - split: { size: 500 }
+    - archive: { format: json_array }

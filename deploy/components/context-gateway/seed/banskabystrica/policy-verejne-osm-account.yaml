@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: verejne-osm-account
+  namespace: banskabystrica
+  title:
+    sk: Kanál OSM zapisuje a odstraňuje svoje miesta a nabíjacie stanice
+    en: The OSM pipeline writes and removes its places and charging stations
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: banskabystrica-verejne }
+  assigner: did:web:banskabystrica.sk
+  # Where the runner gives each Pipeline its own account (PL-19, the hosted environments), the osm
+  # pipeline writes as pl-osm, which verejne-pipelines-write and verejne-osm-delete do not name,
+  # and its derived Policy grants only the output's one type: every EVChargingStation was refused
+  # (T-5320). The same two types and operations those two Policies grant the shared account.
+  assignee: { kind: serviceAccount, id: pl-osm }
+  operations: [upsertBatch, createBatch, queryBatch, deleteBatch]
+  information:
+    - entities:
+        - type: PointOfInterest
+        - type: EVChargingStation

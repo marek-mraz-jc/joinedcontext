@@ -1,0 +1,273 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "PublicInvestment": {
+      "@id": "jc:PublicInvestment"
+    },
+    "adresa": {
+      "@id": "jc:adresa"
+    },
+    "aktivne": {
+      "@id": "jc:aktivne"
+    },
+    "aktualnyStav": {
+      "@id": "jc:aktualnyStav"
+    },
+    "aktualnyStavUpraveny": {
+      "@id": "jc:aktualnyStavUpraveny"
+    },
+    "celkovaZazmluvnenaSuma": {
+      "@id": "jc:celkovaZazmluvnenaSuma",
+      "@type": "xsd:float"
+    },
+    "cerpanieSpolu": {
+      "@id": "jc:cerpanieSpolu",
+      "@type": "xsd:float"
+    },
+    "dOW": {
+      "@id": "jc:dOW",
+      "@type": "xsd:dateTime"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "datumZaniku": {
+      "@id": "jc:datumZaniku"
+    },
+    "fACC": {
+      "@id": "jc:fACC"
+    },
+    "fLAT": {
+      "@id": "jc:fLAT"
+    },
+    "fLON": {
+      "@id": "jc:fLON"
+    },
+    "gEOMLATBACKUP": {
+      "@id": "jc:gEOMLATBACKUP",
+      "@type": "xsd:float"
+    },
+    "gEOMLONBACKUP": {
+      "@id": "jc:gEOMLONBACKUP",
+      "@type": "xsd:float"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "iCO": {
+      "@id": "jc:iCO"
+    },
+    "iCOOrganizacia": {
+      "@id": "jc:iCOOrganizacia"
+    },
+    "iCOPrijimatela": {
+      "@id": "jc:iCOPrijimatela"
+    },
+    "iDN2": {
+      "@id": "jc:iDN2",
+      "@type": "xsd:integer"
+    },
+    "iDN3": {
+      "@id": "jc:iDN3",
+      "@type": "xsd:integer"
+    },
+    "iDN4": {
+      "@id": "jc:iDN4",
+      "@type": "xsd:integer"
+    },
+    "iDProjektu": {
+      "@id": "jc:iDProjektu"
+    },
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "index": {
+      "@id": "jc:index"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "kategoria": {
+      "@id": "jc:kategoria"
+    },
+    "kodKraja": {
+      "@id": "jc:kodKraja"
+    },
+    "kodObce": {
+      "@id": "jc:kodObce"
+    },
+    "kodOkresuKraja": {
+      "@id": "jc:kodOkresuKraja",
+      "@type": "xsd:integer"
+    },
+    "lATJitter": {
+      "@id": "jc:lATJitter",
+      "@type": "xsd:float"
+    },
+    "lAU1": {
+      "@id": "jc:lAU1"
+    },
+    "lAU1CODE": {
+      "@id": "jc:lAU1CODE"
+    },
+    "lAU2": {
+      "@id": "jc:lAU2"
+    },
+    "lAU2CODE": {
+      "@id": "jc:lAU2CODE"
+    },
+    "lONJitter": {
+      "@id": "jc:lONJitter",
+      "@type": "xsd:float"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "miestoRealizacieProjektu": {
+      "@id": "jc:miestoRealizacieProjektu"
+    },
+    "miestoRealizacieProjektuKraj": {
+      "@id": "jc:miestoRealizacieProjektuKraj"
+    },
+    "miestoRealizacieProjektuObec": {
+      "@id": "jc:miestoRealizacieProjektuObec"
+    },
+    "nM2": {
+      "@id": "jc:nM2"
+    },
+    "nM3": {
+      "@id": "jc:nM3"
+    },
+    "nM4": {
+      "@id": "jc:nM4"
+    },
+    "nUTS1": {
+      "@id": "jc:nUTS1"
+    },
+    "nUTS1CODE": {
+      "@id": "jc:nUTS1CODE"
+    },
+    "nUTS2": {
+      "@id": "jc:nUTS2"
+    },
+    "nUTS2CODE": {
+      "@id": "jc:nUTS2CODE"
+    },
+    "nUTS3": {
+      "@id": "jc:nUTS3"
+    },
+    "nUTS3CODE": {
+      "@id": "jc:nUTS3CODE"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "nazovKraja": {
+      "@id": "jc:nazovKraja"
+    },
+    "nazovPrijimatela": {
+      "@id": "jc:nazovPrijimatela"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "oBJECTID1": {
+      "@id": "jc:oBJECTID1",
+      "@type": "xsd:integer"
+    },
+    "obecNUTS": {
+      "@id": "jc:obecNUTS"
+    },
+    "obecNazov": {
+      "@id": "jc:obecNazov"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "obstaravaciaCena": {
+      "@id": "jc:obstaravaciaCena",
+      "@type": "xsd:float"
+    },
+    "oficialnyNazov": {
+      "@id": "jc:oficialnyNazov"
+    },
+    "okresKraj": {
+      "@id": "jc:okresKraj"
+    },
+    "okresNazov": {
+      "@id": "jc:okresNazov"
+    },
+    "platnostProjektuOd": {
+      "@id": "jc:platnostProjektuOd",
+      "@type": "xsd:dateTime"
+    },
+    "poznamka": {
+      "@id": "jc:poznamka"
+    },
+    "rok": {
+      "@id": "jc:rok"
+    },
+    "rokText": {
+      "@id": "jc:rokText"
+    },
+    "rokZaradenia": {
+      "@id": "jc:rokZaradenia"
+    },
+    "rozpocetAktualny": {
+      "@id": "jc:rozpocetAktualny",
+      "@type": "xsd:float"
+    },
+    "rozsahUzemiaProjektu": {
+      "@id": "jc:rozsahUzemiaProjektu"
+    },
+    "sUMCerpanieSpolu": {
+      "@id": "jc:sUMCerpanieSpolu",
+      "@type": "xsd:float"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "sektorOvZPUpraveny": {
+      "@id": "jc:sektorOvZPUpraveny"
+    },
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "typObce": {
+      "@id": "jc:typObce"
+    },
+    "type": "@type",
+    "uradOvZPICO": {
+      "@id": "jc:uradOvZPICO"
+    },
+    "uradOvZPOvZP": {
+      "@id": "jc:uradOvZPOvZP"
+    },
+    "uroven": {
+      "@id": "jc:uroven"
+    },
+    "vYMERA": {
+      "@id": "jc:vYMERA",
+      "@type": "xsd:float"
+    },
+    "vecnaOblast": {
+      "@id": "jc:vecnaOblast"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zauzivanyNazov": {
+      "@id": "jc:zauzivanyNazov"
+    },
+    "zauzivanyNazovKratky": {
+      "@id": "jc:zauzivanyNazovKratky"
+    },
+    "zauzivanyNazovUpraveny": {
+      "@id": "jc:zauzivanyNazovUpraveny"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

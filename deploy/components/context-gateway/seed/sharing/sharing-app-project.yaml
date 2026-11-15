@@ -1,0 +1,26 @@
+# The App sharing matrix (T-4911): one of five copies of the sharing-probe bundle the Portal image
+# ships (portal apps/sharing-probe); the five differ only in visibility.
+# A person with a binding in force in sharing opens it (demo.member, demo.author).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: sharing-project
+  namespace: sharing
+  title: { en: Sharing probe (project) }
+  description:
+    en: 'Test page of the App sharing matrix, visibility project: who opens it and how many city-bike stations it shows them.'
+  annotations: { joinedcontext.com/shipped-with: portal }
+spec:
+  kind: ui
+  source:
+    path: ./apps/sharing-project
+  # The Portal parses `build` for every App, a shipped one too (dev: "missing field `build`", T-5774).
+  build: { node: '22' }
+  visibility: project
+  lifecycle: published
+  dataNeeds:
+    - contextSpaceRef: { kind: ContextSpace, name: sharing-bikes }
+      types: [BikeHireDockingStation]
+      attrs: [name, location]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld]

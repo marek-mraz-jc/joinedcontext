@@ -1,0 +1,20 @@
+# The social services of the register of social service providers (RPSS), MPSV, read through MPSV's
+# SPARQL endpoint (the dataset's own SPARQL distribution, 00551023/67fbe10b64bf457cd59551999d33e085):
+# the query asks only Prague's facilities still in use, without a secret address, and only the
+# columns the mapping writes, 879 rows and 0.9 MB on 2026-10-25 instead of the whole 100 MB file.
+# No key; neither a copyrighted work nor a protected database (T-5691).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: rpss-social-services
+  namespace: praha
+  title:
+    en: Social services in Prague (RPSS, MPSV)
+    cs: Sociální služby v Praze (RPSS, MPSV)
+spec:
+  type: http
+  http:
+    url: https://data.mpsv.cz/sparql/?query=PREFIX%20m%3A%20%3Chttps%3A%2F%2Fdata.mpsv.cz%2Fpojem%2F%3E%20PREFIX%20skos%3A%20%3Chttp%3A%2F%2Fwww.w3.org%2F2004%2F02%2Fskos%2Fcore%23%3E%20SELECT%20DISTINCT%20%3Fsluzba%20%3Fdruh%20%3Fnazev%20%3Fulice%20%3Fcp%20%3Fco%20%3Fkod%20%3Fweb%20WHERE%20%7B%20%3Fs%20m%3AportalId%20%3Fsluzba%20%3B%20m%3AdruhSocialniSluzby%2Fskos%3AprefLabel%20%3Fdruh%20%3B%20m%3Azarizeni%20%3Fz%20.%20FILTER%20NOT%20EXISTS%20%7B%20%3Fs%20m%3AdatumPoskytovaniDo%20%3Fkonec%20FILTER%28%3Fkonec%20%3C%3D%20NOW%28%29%29%20%7D%20%3Fz%20m%3Anazev%20%3Fnazev%20%3B%20m%3AutajenaAdresa%200%20%3B%20m%3Aadresa%20%3Fa%20.%20FILTER%20NOT%20EXISTS%20%7B%20%3Fz%20m%3AposkytujeDo%20%3Fzdo%20%7D%20%3Fa%20m%3Aobec%20%3Chttps%3A%2F%2Fdata.mpsv.cz%2Fzdroj%2FObec%2F554782%3E%20%3B%20m%3AkodAdresnihoMista%20%3Fkod%20.%20OPTIONAL%20%7B%20%3Fa%20m%3Aulice%2Fm%3Anazev%20%3Fulice%20%7D%20OPTIONAL%20%7B%20%3Fa%20m%3AcisloDomovni%20%3Fcp%20%7D%20OPTIONAL%20%7B%20%3Fa%20m%3AcisloOrientacni%20%3Fco%20%7D%20OPTIONAL%20%7B%20%3Fs%20m%3Aweby%2Fm%3Aweb%20%3Fweb%20%7D%20%7D
+    verb: GET
+    headers: { Accept: application/sparql-results+json }
+    timeout: 60s

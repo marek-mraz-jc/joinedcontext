@@ -1,0 +1,52 @@
+{{- if not .Values.environment }}{{ fail "gitops root: environment is required" }}{{ end }}
+# The root of the app of apps: gitops/chart with this environment's generated component list
+# and the hold switch. It syncs itself and prunes the Applications of a component that left
+# the list; the Applications have no finalizer, so their objects stay (OPS-55).
+# Its own AppProject, not `default`, which allows any repository, destination and cluster kind
+# (F-R2DEP2-014): the root reads the deployment repository and writes the platform's
+# AppProject and Applications in this namespace, nothing else (ADR-N-056 §2.3).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.environment }}-root
+  namespace: {{ .Release.Namespace }}
+spec:
+  description: The app of apps of {{ .Values.environment }} (ADR-N-056)
+  sourceRepos:
+    - {{ .Values.repoURL }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: {{ .Release.Namespace }}
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: Application
+    - group: argoproj.io
+      kind: AppProject
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Values.environment }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  project: {{ .Values.environment }}-root
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.targetRevision }}
+    path: gitops/chart
+    helm:
+      # hold.yaml holds every environment; hold-<environment>.yaml, where it exists, holds
+      # only this one (a release branch adopting a cluster, T-4678).
+      valueFiles:
+        - ../{{ .Values.environment }}.yaml
+        - ../hold.yaml
+        - ../hold-{{ .Values.environment }}.yaml
+      ignoreMissingValueFiles: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Release.Namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

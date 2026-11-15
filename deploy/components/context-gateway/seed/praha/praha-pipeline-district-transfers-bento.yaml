@@ -1,0 +1,75 @@
+# The mapping of the district-transfers pipeline (T-5428, PL-03): one KeyPerformanceIndicator per
+# transfer line between the City of Prague and its 57 city districts (Finanční vztahy mezi HMP a MČ
+# HMP, LKOD edf20520, monthly, no rights reserved), 1119 lines in 2026: what the district has drawn of
+# the line so far this year (`kpiValue`) beside the approved and the adjusted amount. `refArea` is the
+# district's identification number (IČO) and name, `dimensionKey` where the money comes from (the
+# city, the state budget or the districts).
+#
+# The file starts with a UTF-8 byte order mark, read as text first, as the budget's. The codes stay
+# zero-padded strings, the amounts are in thousands of CZK like the budget's. Each year's file adds a
+# year to the series `mhmp-mc-vztahy`; the DataSource's URL moves in January (ponytail: the year is
+# in the file name).
+#
+# Ids: urn:ngsi-ld:KeyPerformanceIndicator:{org}:{space}:mhmp-mc-vztahy-{year}-{ičo}-{odpa}-{pol}-{uz}.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a line with a malformed IČO, code or amount, an amount
+# beyond 1,000,000,000 thousand CZK either way, a year after the current one, or a second line of
+# one key is dropped, and the log line counts each reason. An answer without a row list, an empty
+# one, or one where fewer than half the lines survive fails the run.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 8388608 { throw("the city answered %v bytes; more than 8 MiB is not a year of district transfers".format(content().length())) } else { content() }
+        - mapping: |
+            let source = "https://opendata-storage.praha.eu/ROZ_rozpocet_finance/financni_vztahy/Zdroje/2026/Financni_vztahy_mezi_HMP_a_MC_HMP_2026.json"
+            let rows = content().string().trim_prefix("\ufeff").parse_json().data.row.catch(null)
+            root = if $rows.type() != "array" {
+              throw("the district transfers file %v holds no row list".format($source))
+            } else if $rows.length() == 0 {
+              throw("the district transfers file %v lists no line; the transfers are never empty, so the download failed".format($source))
+            } else { { "source": $source, "rows": $rows } }
+        - mapping: |
+            let year = now().ts_format("2006", "Europe/Prague")
+            let amount = "^-?[0-9]+(\\.[0-9]+)?$"
+            let rows = this.rows
+            let usable = $rows.filter(r -> r.rok.or("").re_match("^[0-9]{4}$") && r.mc_ic.or("").re_match("^[0-9]{8}$") && r.mc_nazev.or("").trim() != "" && r.odpa.or("").re_match("^[0-9]{6}$") && r.pol.or("").re_match("^[0-9]{4}$") && r.uz.or("").re_match("^[0-9]{9}$") && r.rozpocet_schvaleny.or("").re_match($amount) && r.rozpocet_upraveny.or("").re_match($amount) && r.cerpani.or("").re_match($amount)).map_each(r -> r.assign({ "drawn": r.cerpani.number(), "approved": r.rozpocet_schvaleny.number(), "budget": r.rozpocet_upraveny.number(), "district": r.mc_nazev.trim().re_replace_all("\\s+", " "), "key": "%v-%v-%v-%v-%v".format(r.rok, r.mc_ic, r.odpa, r.pol, r.uz) }))
+            let plausible = $usable.filter(r -> r.drawn.abs() <= 1000000000 && r.approved.abs() <= 1000000000 && r.budget.abs() <= 1000000000)
+            let current = $plausible.filter(r -> r.rok <= $year)
+            let unique = $current.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta range = $usable.length() - $plausible.length()
+            meta future = $plausible.length() - $current.length()
+            meta duplicate = $current.length() - $unique.length()
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("district transfers file %v: only %v of %v lines are well-formed and plausible".format(this.source, $unique.length(), $rows.length()))
+            } else { this.assign({ "rows": $unique }) }
+        - log:
+            level: INFO
+            message: 'mhmp-mc-vztahy: read ${! meta("read") }, dropped ${! meta("unusable") } malformed, ${! meta("range") } out of range, ${! meta("future") } of a future year, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            map named {
+              root = if this.code.or("").trim() == "" { null } else { (this.code.trim() + " " + this.name.or("").trim()).trim() }
+            }
+            let source = this.source
+            root = this.rows.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:mhmp-mc-vztahy-%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.key),
+              "type": "KeyPerformanceIndicator",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": "%v %v: %v".format(r.district, r.rok, [r.nazev_odpa.or("").trim(), r.nazev_pol.or("").trim(), r.nazev_uz.or("").trim()].filter(t -> t != "").join(": ")) } },
+              "dataSet": { "type": "Property", "value": "mhmp-mc-vztahy" },
+              "indicator": { "type": "Property", "value": [{ "code": r.odpa, "name": r.nazev_odpa }.apply("named"), { "code": r.pol, "name": r.nazev_pol }.apply("named"), { "code": r.uz, "name": r.nazev_uz }.apply("named")].filter(t -> t != null).join(" / ") },
+              "refArea": { "type": "Property", "value": "%v %v".format(r.mc_ic, r.district) },
+              "refPeriod": { "type": "Property", "value": r.rok },
+              "dimensionKey": if r.nazev_zdroj.or("").trim() == "" { null } else { { "type": "Property", "value": r.nazev_zdroj.trim() } },
+              "kpiValue": { "type": "Property", "value": r.drawn },
+              "unitText": { "type": "Property", "value": "tis. Kč" },
+              "approvedAmount": { "type": "Property", "value": r.approved },
+              "adjustedAmount": { "type": "Property", "value": r.budget },
+              "dataProvider": { "type": "Property", "value": "Magistrát hl. m. Prahy (open data, no rights reserved)" },
+              "source": { "type": "Property", "value": $source }
+            }.filter(kv -> kv.value != null))
+        # 500 records per request to the endpoint, about 0.5 MB, far under the broker's 4 MiB body limit.
+        - unarchive: { format: json_array }
+        - split: { size: 500 }
+        - archive: { format: json_array }

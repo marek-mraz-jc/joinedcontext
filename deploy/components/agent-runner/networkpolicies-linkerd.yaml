@@ -1,0 +1,180 @@
+---
+# Meshed traffic reaches a pod through its Linkerd inbound proxy on 4143, not on the service
+# port, and a pod under an egress policy must still reach the control plane: identity (8080),
+# destination (8086) and policy (8090). The same two rules every meshed component carries.
+agent-proxy-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: agent-runner-proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        # A workspace is meshed, so its calls land here (F-PLT1-008).
+        - podSelector:
+            matchExpressions:
+              - key: joinedcontext.com/run-id
+                operator: Exists
+          componentNamespace: portal
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+agent-proxy-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: agent-runner-proxy
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 4143
+
+portal-linkerd-from-agent-proxy:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - port: 4143
+          protocol: TCP
+
+portal-linkerd-to-agent-proxy:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# The Portal's calls to a meshed workspace land on its inbound proxy (F-PLT1-008).
+portal-linkerd-to-agent-workspaces:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: joinedcontext.com/run-id
+                operator: Exists
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 4143
+
+gateway-linkerd-from-agent-proxy:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - port: 4143
+          protocol: TCP
+
+gitea-linkerd-from-agent-proxy:
+  componentNamespace: gitea
+  podSelector:
+    app.kubernetes.io/name: gitea
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - port: 4143
+          protocol: TCP
+
+keycloak-linkerd-from-agent-proxy:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP

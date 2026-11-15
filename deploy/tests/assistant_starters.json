@@ -1,0 +1,316 @@
+{
+ "starters": [
+  {
+   "id": "bbsk-sk-hours",
+   "assistant": "bbsk-demo",
+   "lang": "sk",
+   "q": "Aké sú úradné hodiny Úradu BBSK a kde sídli?",
+   "must": [
+    [
+     "8:00"
+    ],
+    [
+     "15:00"
+    ],
+    [
+     "7:30"
+    ],
+    [
+     "15:30"
+    ],
+    [
+     "Námestie SNP 23"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/dataset/bbsk-uradne-hodiny-c912ed",
+    "https://opendata.{domain}/dataset/bbsk-kontaktne-miesta-2128a0"
+   ],
+   "reference": "Podateľňa a sociálne služby pondelok až piatok 8:00 až 15:00, zdravotníctvo pondelok až štvrtok 7:30 až 15:30 (14 riadkov OfficeHours); sídlo Úradu BBSK Námestie SNP 23, 974 01 Banská Bystrica (PointOfInterest kontaktne-miesta-10).",
+   "source": "prod Endpoint 6b4yqhzqieutqcoeew5rnxrx5udqeert (bbsk-otvorene-data), types OfficeHours (count 14) and PointOfInterest of dataset bbsk-kontaktne-miesta-2128a0, read 2026-10-19T20:55Z"
+  },
+  {
+   "id": "bbsk-sk-timetables",
+   "assistant": "bbsk-demo",
+   "lang": "sk",
+   "q": "Kde nájdem cestovné poriadky autobusov v kraji?",
+   "must": [
+    [
+     "idsbbsk.sk"
+    ]
+   ],
+   "links": [
+    "https://www.bbsk.sk/cestovne-poriadky",
+    "https://www.idsbbsk.sk"
+   ],
+   "reference": "Cestovné poriadky prímestských autobusov kraja sú na webe Integrovaného dopravného systému BBSK www.idsbbsk.sk; stránka www.bbsk.sk/cestovne-poriadky odkazuje naň (a na cp.sk).",
+   "source": "https://www.bbsk.sk/cestovne-poriadky (bbsk/web, answer of 2026-10-19T20:50Z cited it)"
+  },
+  {
+   "id": "bbsk-sk-bridges",
+   "assistant": "bbsk-demo",
+   "lang": "sk",
+   "q": "Koľko mostov je v registri mostov kraja a koľko je postavených pred rokom 1900?",
+   "must": [
+    [
+     "1651",
+     "1 651",
+     "1,651",
+     "1.651"
+    ],
+    [
+     "32"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/dataset/bbsk-mosty"
+   ],
+   "reference": "Register mostov kraja (bbsk-mosty) má 1 651 mostov; 32 z nich je postavených pred rokom 1900. Banskobystrická regionálna správa ciest z nich spravuje 1 037 (20 pred rokom 1900).",
+   "source": "prod Endpoint omto6qk5sfn5ft7zl5pdiaxunj2ljnae, type Bridge: 1 651 rows, of them yearBuilt < 1900: 32 (the oldest 1800); read 2026-10-20T00:25Z"
+  },
+  {
+   "id": "bbsk-en-hours",
+   "assistant": "bbsk-demo",
+   "lang": "en",
+   "q": "What are the office hours of the BBSK Office and where is it?",
+   "must": [
+    [
+     "8:00"
+    ],
+    [
+     "15:00"
+    ],
+    [
+     "7:30"
+    ],
+    [
+     "15:30"
+    ],
+    [
+     "Námestie SNP 23"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/dataset/bbsk-uradne-hodiny-c912ed",
+    "https://opendata.{domain}/dataset/bbsk-kontaktne-miesta-2128a0"
+   ],
+   "reference": "Podateľňa a sociálne služby pondelok až piatok 8:00 až 15:00, zdravotníctvo pondelok až štvrtok 7:30 až 15:30 (14 riadkov OfficeHours); sídlo Úradu BBSK Námestie SNP 23, 974 01 Banská Bystrica (PointOfInterest kontaktne-miesta-10).",
+   "source": "prod Endpoint 6b4yqhzqieutqcoeew5rnxrx5udqeert (bbsk-otvorene-data), types OfficeHours (count 14) and PointOfInterest of dataset bbsk-kontaktne-miesta-2128a0, read 2026-10-19T20:55Z"
+  },
+  {
+   "id": "bbsk-en-timetables",
+   "assistant": "bbsk-demo",
+   "lang": "en",
+   "q": "Where can I find the region's bus timetables?",
+   "must": [
+    [
+     "idsbbsk.sk"
+    ]
+   ],
+   "links": [
+    "https://www.bbsk.sk/cestovne-poriadky",
+    "https://www.idsbbsk.sk"
+   ],
+   "reference": "Cestovné poriadky prímestských autobusov kraja sú na webe Integrovaného dopravného systému BBSK www.idsbbsk.sk; stránka www.bbsk.sk/cestovne-poriadky odkazuje naň (a na cp.sk).",
+   "source": "https://www.bbsk.sk/cestovne-poriadky (bbsk/web, answer of 2026-10-19T20:50Z cited it)"
+  },
+  {
+   "id": "bbsk-en-bridges",
+   "assistant": "bbsk-demo",
+   "lang": "en",
+   "q": "How many bridges are in the region's bridge register, and how many were built before 1900?",
+   "must": [
+    [
+     "1651",
+     "1 651",
+     "1,651",
+     "1.651"
+    ],
+    [
+     "32"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/dataset/bbsk-mosty"
+   ],
+   "reference": "Register mostov kraja (bbsk-mosty) má 1 651 mostov; 32 z nich je postavených pred rokom 1900. Banskobystrická regionálna správa ciest z nich spravuje 1 037 (20 pred rokom 1900).",
+   "source": "prod Endpoint omto6qk5sfn5ft7zl5pdiaxunj2ljnae, type Bridge: 1 651 rows, of them yearBuilt < 1900: 32 (the oldest 1800); read 2026-10-20T00:25Z"
+  },
+  {
+   "id": "data-sk-bridges",
+   "assistant": "data",
+   "lang": "sk",
+   "q": "Koľko mostov je v registri mostov BBSK?",
+   "must": [
+    [
+     "1651",
+     "1 651",
+     "1,651",
+     "1.651"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/dataset/bbsk-mosty"
+   ],
+   "reference": "Register mostov Banskobystrického kraja eviduje 1 651 mostov.",
+   "source": "prod Endpoint omto6qk5sfn5ft7zl5pdiaxunj2ljnae, type Bridge, NGSILD-Results-Count 1651, 2026-10-19T21:00Z; dataset bbsk-mosty"
+  },
+  {
+   "id": "data-sk-mcp",
+   "assistant": "data",
+   "lang": "sk",
+   "q": "Ako pripojím katalóg cez MCP do Clauda?",
+   "must": [
+    [
+     "api.{domain}/api/mcp"
+    ],
+    [
+     "claude mcp add"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/assistants/claude"
+   ],
+   "reference": "Jedna adresa pre celý katalóg https://api.{domain}/api/mcp; Claude: Nastavenia, Konektory, Pridať vlastný konektor, overenie prázdne; Claude Code: claude mcp add --transport http joinedcontext https://api.{domain}/api/mcp.",
+   "source": "the catalogue assistant's own guide (ci/example-deployments/environments/<env>/ckan.yaml.gotmpl systemPrompt, which links the step-by-step page /assistants/claude since T-4769); initialize on https://api.smartcity.joinedcontext.com/api/mcp answered 2026-10-19T20:55Z"
+  },
+  {
+   "id": "data-en-bridges",
+   "assistant": "data",
+   "lang": "en",
+   "q": "How many bridges are in the BBSK bridge register?",
+   "must": [
+    [
+     "1651",
+     "1 651",
+     "1,651",
+     "1.651"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/dataset/bbsk-mosty"
+   ],
+   "reference": "Register mostov Banskobystrického kraja eviduje 1 651 mostov.",
+   "source": "prod Endpoint omto6qk5sfn5ft7zl5pdiaxunj2ljnae, type Bridge, NGSILD-Results-Count 1651, 2026-10-19T21:00Z; dataset bbsk-mosty"
+  },
+  {
+   "id": "data-en-mcp",
+   "assistant": "data",
+   "lang": "en",
+   "q": "How do I add the catalogue to Claude via MCP?",
+   "must": [
+    [
+     "api.{domain}/api/mcp"
+    ],
+    [
+     "claude mcp add"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/assistants/claude"
+   ],
+   "reference": "Jedna adresa pre celý katalóg https://api.{domain}/api/mcp; Claude: Nastavenia, Konektory, Pridať vlastný konektor, overenie prázdne; Claude Code: claude mcp add --transport http joinedcontext https://api.{domain}/api/mcp.",
+   "source": "the catalogue assistant's own guide (ci/example-deployments/environments/<env>/ckan.yaml.gotmpl systemPrompt, which links the step-by-step page /assistants/claude since T-4769); initialize on https://api.smartcity.joinedcontext.com/api/mcp answered 2026-10-19T20:55Z"
+  },
+  {
+   "id": "data-fi-bridges",
+   "assistant": "data",
+   "lang": "fi",
+   "q": "Montako siltaa BBSK:n siltarekisterissä on?",
+   "must": [
+    [
+     "1651",
+     "1 651",
+     "1,651",
+     "1.651"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/dataset/bbsk-mosty"
+   ],
+   "reference": "Register mostov Banskobystrického kraja eviduje 1 651 mostov.",
+   "source": "prod Endpoint omto6qk5sfn5ft7zl5pdiaxunj2ljnae, type Bridge, NGSILD-Results-Count 1651, 2026-10-19T21:00Z; dataset bbsk-mosty"
+  },
+  {
+   "id": "data-fi-mcp",
+   "assistant": "data",
+   "lang": "fi",
+   "q": "Miten yhdistän katalogin Claudeen MCP:n kautta?",
+   "must": [
+    [
+     "api.{domain}/api/mcp"
+    ],
+    [
+     "claude mcp add"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/assistants/claude"
+   ],
+   "reference": "Jedna adresa pre celý katalóg https://api.{domain}/api/mcp; Claude: Nastavenia, Konektory, Pridať vlastný konektor, overenie prázdne; Claude Code: claude mcp add --transport http joinedcontext https://api.{domain}/api/mcp.",
+   "source": "the catalogue assistant's own guide (ci/example-deployments/environments/<env>/ckan.yaml.gotmpl systemPrompt, which links the step-by-step page /assistants/claude since T-4769); initialize on https://api.smartcity.joinedcontext.com/api/mcp answered 2026-10-19T20:55Z"
+  },
+  {
+   "id": "bbsk-sk-air-quality",
+   "assistant": "bbsk-demo",
+   "lang": "sk",
+   "card": false,
+   "q": "Aká je kvalita ovzdušia v BB?",
+   "must": [
+    [
+     "SK0263A"
+    ],
+    [
+     "PM10",
+     "PM₁₀"
+    ]
+   ],
+   "live": {
+    "url": "https://api.{domain}/api/endpoint/32ea6ze7db7g6u7qnlgezpwp75/ngsi-ld/v1/entities/urn:ngsi-ld:AirQualityObserved:banskabystrica.sk:banskabystrica-verejne:eea-SK0263A",
+    "attr": "pm10"
+   },
+   "links": [
+    "https://opendata.{domain}/dataset/public-air"
+   ],
+   "reference": "Stanica SK0263A (mestské pozadie) v Banskej Bystrici: PM10 a ďalšie znečisťujúce látky s časom merania (2026-10-20T08:00Z: PM10 19,9 µg/m³).",
+   "source": "prod Endpoint 32ea6ze7db7g6u7qnlgezpwp75 (banskabystrica-verejne), AirQualityObserved eea-SK0263A read 2026-10-20T09:40Z; owner question on bbsk-demo 2026-10-20T09:08Z (T-4810)"
+  },
+  {
+   "id": "bbsk-sk-datasets",
+   "assistant": "bbsk-demo",
+   "lang": "sk",
+   "card": false,
+   "q": "K akým datasetom máš prístup?",
+   "must": [
+    [
+     "most"
+    ],
+    [
+     "úradn",
+     "uradn"
+    ],
+    [
+     "faktúr",
+     "faktur"
+    ],
+    [
+     "zmluv"
+    ],
+    [
+     "cyklotras",
+     "cyklotrás"
+    ],
+    [
+     "ovzduš",
+     "ovzdus"
+    ]
+   ],
+   "links": [
+    "https://opendata.{domain}/dataset/bbsk-mosty",
+    "https://opendata.{domain}/dataset/public-air"
+   ],
+   "reference": "Živé dáta kraja (registre, tabuľky katalógu: mosty, úradné hodiny, faktúry, zmluvy, cyklotrasy, ukazovatele) a mesta Banská Bystrica (kvalita ovzdušia, podujatia, otvorené dáta mesta), zoskupené podľa vydavateľa: 11 verejných Endpointov servera bbsk/kraj-a-mesto.",
+   "source": "prod MCP list_endpoints of bbsk/kraj-a-mesto, 11 public Endpoints, read 2026-10-20T09:40Z; owner question on bbsk-demo 2026-10-20T09:09Z (T-4810)"
+  }
+ ]
+}

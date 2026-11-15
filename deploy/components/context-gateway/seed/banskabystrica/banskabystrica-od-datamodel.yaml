@@ -1,0 +1,29 @@
+# The one model of the space (DM-61), generated with it.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: banskabystrica-otvorene-data
+  namespace: banskabystrica
+  title:
+    sk: Banská Bystrica — otvorené dáta mesta
+    en: Banská Bystrica, the city's open data
+spec:
+  contextSpaceRef: banskabystrica-otvorene-data
+  linkml: ./banskabystrica-otvorene-data.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes:
+  - Address
+  - Article
+  - Contract
+  - CouncilMeeting
+  - Garden
+  - Grant
+  - KeyPerformanceIndicator
+  - OffStreetParking
+  - PurchaseOrder
+  artifacts:
+    jsonSchema: ./banskabystrica-otvorene-data.v1.schema.json
+    context: ./banskabystrica-otvorene-data.v1.context.jsonld
+    docs: ./banskabystrica-otvorene-data.v1.md
+    example: ./banskabystrica-otvorene-data.v1.example.jsonld

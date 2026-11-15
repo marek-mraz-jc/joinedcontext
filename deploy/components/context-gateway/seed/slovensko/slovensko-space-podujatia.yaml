@@ -1,0 +1,41 @@
+# Public events from every Slovak town, region and cultural body that announces them in a feed (T-5047, owner
+# 2026-10-21): the national store, its own space in the Slovakia project, so the Banská Bystrica Region keeps its
+# own bbsk-podujatia. The podujatia-* pipelines of seeds/bbsk-events/generate.py write it; nobody else does.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: slovensko-podujatia
+  namespace: slovensko
+  title: { sk: Podujatia na Slovensku, en: Events in Slovakia }
+  description:
+    sk: >-
+      Nadchádzajúce verejné podujatia miest, obcí, krajov a kultúrnych inštitúcií všetkých ôsmich krajov s časom
+      a miestom konania (GPS). Každé podujatie má rozsah /SK/{kraj}/{obec}, napríklad /SK/KE/kosice, a zostáva
+      v priestore do dňa po svojom konci alebo kým ho zdroj nestiahne. Zdroj: webové stránky a kanály, ktoré
+      podujatie zverejnili.
+    en: >-
+      Upcoming public events of towns, municipalities, regions and cultural bodies in all eight regions with
+      their time and place (GPS). Each event carries the scope /SK/{region}/{municipality}, for example
+      /SK/KE/kosice, and stays in the space until the day after it ends or until its source drops it. Source:
+      the web sites and feeds that announced it.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: slovensko-podujatia
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: slovensko-podujatia }
+  defaultLocale: sk
+  # Current state only (DM-82): an event leaves the space through the rolling expiresAt its pipeline writes.
+  retention:
+    - entityType: Event
+      history: 'off'
+    # Venues change rarely; the daily miesta-podujati upsert would write one history row per attribute per day.
+    - entityType: PointOfInterest
+      history: 'off'
+  # Slovakia with a margin: a point outside it is flagged (DM-87); the pipelines refuse it first.
+  quality:
+    - name: in-slovakia
+      entityType: Event
+      kind: area
+      attribute: location
+      bbox: [16.8, 47.7, 22.6, 49.7]

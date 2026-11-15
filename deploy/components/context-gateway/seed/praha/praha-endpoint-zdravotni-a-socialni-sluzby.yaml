@@ -1,0 +1,56 @@
+# Health care and social services in Prague (T-5691): the places of care of legal persons from the
+# national register of health care providers and the social services with a facility address from
+# MPSV's register, geocoded at ČÚZK. PointOfInterest of the space praha-mesto read through its own
+# Policy, which narrows the public read to the nrpzs- and rpss- ids.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-zdravotni-a-socialni-sluzby
+  namespace: praha
+  title: { cs: Zdravotní a sociální služby — Praha, en: Health care and social services — Prague }
+  description:
+    cs: 'Ordinace, nemocnice, lékárny a další místa poskytování zdravotních služeb právnických osob z Národního registru poskytovatelů zdravotních služeb a sociální služby se zařízením v Praze z Registru poskytovatelů sociálních služeb: poloha, druh, adresa a web. Zdroj: ÚZIS ČR (CC BY 4.0), MPSV, poloha sociálních služeb © ČÚZK (CC BY 4.0).'
+    en: 'Surgeries, hospitals, pharmacies and other places of health care run by legal persons from the national register of health care providers, and the social services with a facility in Prague from the register of social service providers: location, kind, address and web page. Source: ÚZIS ČR (CC BY 4.0), MPSV, social service locations © ČÚZK (CC BY 4.0).'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: sctc4o5vaqbjtf6mn6p26bqrme42jpbr
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zdravotni-a-socialni-sluzby
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Places of legal persons and social service facilities by address; a sole trader's place, a
+    # secret address, the facility head and every phone and e-mail are never read (T-5691).
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: Národní registr poskytovatelů zdravotních služeb, ÚZIS ČR (CC BY 4.0); Registr poskytovatelů sociálních služeb, MPSV; poloha sociálních služeb z RÚIAN © ČÚZK (CC BY 4.0)'
+      en: 'Source: National register of health care providers, ÚZIS ČR (CC BY 4.0); register of social service providers, MPSV; social service locations from RÚIAN © ČÚZK (CC BY 4.0)'
+    themes: [HEAL, SOCI]
+    keywords:
+      cs: [Praha, zdravotnictví, lékaři, nemocnice, lékárny, sociální služby, domovy pro seniory]
+      en: [Prague, health care, doctors, hospitals, pharmacies, social services, care homes]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://datanzis.uzis.gov.cz/data/NR-01-NRPZS/NR-01-06/Otevrena-data-NR-01-06-nrpzs-mista-poskytovani-zdravotnich-sluzeb.csv
+        title:
+          cs: Místa poskytování zdravotních služeb (NRPZS, ÚZIS ČR)
+          en: Places of health care (NRPZS, ÚZIS ČR)
+        description:
+          cs: Národní registr poskytovatelů zdravotních služeb, místa poskytování péče s polohou, ÚZIS ČR, CC BY 4.0.
+          en: The national register of health care providers, places of care with their location, ÚZIS ČR, CC BY 4.0.
+      - url: https://data.mpsv.cz/sparql/?query=PREFIX%20m%3A%20%3Chttps%3A%2F%2Fdata.mpsv.cz%2Fpojem%2F%3E%20PREFIX%20skos%3A%20%3Chttp%3A%2F%2Fwww.w3.org%2F2004%2F02%2Fskos%2Fcore%23%3E%20SELECT%20DISTINCT%20%3Fsluzba%20%3Fdruh%20%3Fnazev%20%3Fulice%20%3Fcp%20%3Fco%20%3Fkod%20%3Fweb%20WHERE%20%7B%20%3Fs%20m%3AportalId%20%3Fsluzba%20%3B%20m%3AdruhSocialniSluzby%2Fskos%3AprefLabel%20%3Fdruh%20%3B%20m%3Azarizeni%20%3Fz%20.%20FILTER%20NOT%20EXISTS%20%7B%20%3Fs%20m%3AdatumPoskytovaniDo%20%3Fkonec%20FILTER%28%3Fkonec%20%3C%3D%20NOW%28%29%29%20%7D%20%3Fz%20m%3Anazev%20%3Fnazev%20%3B%20m%3AutajenaAdresa%200%20%3B%20m%3Aadresa%20%3Fa%20.%20FILTER%20NOT%20EXISTS%20%7B%20%3Fz%20m%3AposkytujeDo%20%3Fzdo%20%7D%20%3Fa%20m%3Aobec%20%3Chttps%3A%2F%2Fdata.mpsv.cz%2Fzdroj%2FObec%2F554782%3E%20%3B%20m%3AkodAdresnihoMista%20%3Fkod%20.%20OPTIONAL%20%7B%20%3Fa%20m%3Aulice%2Fm%3Anazev%20%3Fulice%20%7D%20OPTIONAL%20%7B%20%3Fa%20m%3AcisloDomovni%20%3Fcp%20%7D%20OPTIONAL%20%7B%20%3Fa%20m%3AcisloOrientacni%20%3Fco%20%7D%20OPTIONAL%20%7B%20%3Fs%20m%3Aweby%2Fm%3Aweb%20%3Fweb%20%7D%20%7D
+        title:
+          cs: Registr poskytovatelů sociálních služeb – Praha (MPSV, SPARQL)
+          en: Register of social service providers – Prague (MPSV, SPARQL)
+        description:
+          cs: Sociální služby se zařízením v Praze z otevřených dat MPSV; poloha z adresního místa RÚIAN, © ČÚZK, CC BY 4.0.
+          en: The social services with a facility in Prague from MPSV's open data; location from the RÚIAN address point, © ČÚZK, CC BY 4.0.

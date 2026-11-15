@@ -1,0 +1,48 @@
+{{- if .Values.composer.enabled }}
+# The Portal's reconciler composes the edge file (ADR-N-030, AP-112): it reads the base and
+# writes the one Secret APISIX mounts, in this namespace and nothing else here. It never creates
+# the Secret (a `create` cannot be narrowed to a name); this chart seeds it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: edge-file-composer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["apisix-standalone-base"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["apisix-standalone-config"]
+    verbs: ["get", "update"]
+  # Every published App's host (ADR-N-037, AP-133): the Portal copies the edge Ingress and asks
+  # the edge certificate's issuer, so it reads both, and it creates, lists and deletes the
+  # Ingress and the Certificate of each App. A `create` or a `delete` cannot be narrowed to a
+  # name the Portal does not know yet; it deletes only the objects it labelled, and reads no
+  # Secret here but the one above.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: edge-file-composer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: edge-file-composer
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.composer.serviceAccount }}
+    namespace: {{ .Values.composer.namespace }}
+{{- end }}

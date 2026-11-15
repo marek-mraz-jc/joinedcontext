@@ -1,0 +1,16 @@
+# Land area of the city by kind of land, in m², 1996 on. No key, CC-BY-SA-4.0 (NKOD, the SendReport distribution of pl5001rr).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-pl5001rr
+  namespace: banskabystrica
+  title:
+    sk: Druhy pozemkov (ŠÚ SR, pl5001rr)
+    en: Land by kind (ŠÚ SR, pl5001rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/pl5001rr/SK0321508438/*/*?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

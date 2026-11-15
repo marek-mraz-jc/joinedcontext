@@ -1,0 +1,24 @@
+# The University of Žilina's openly licensed works from DREPO, its digital library: title, kind, year, faculty and licence, no author names.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: zilina-uniza
+  namespace: zilina
+  title:
+    sk: Žilinská univerzita — výskum
+    en: University of Žilina, research
+  description:
+    sk: Otvorene licencované diela Žilinskej univerzity z digitálnej knižnice DREPO.
+    en: The openly licensed works of the University of Žilina from its digital library DREPO.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: zilina-uniza
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: zilina-uniza }
+  defaultLocale: sk
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: Article
+      history: 'off'

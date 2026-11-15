@@ -1,0 +1,208 @@
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix ns1: <https://w3id.org/linkml/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sdm: <https://smartdatamodels.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://joinedcontext.com/models/sdm/extensions/RiverBasin> ns1:generator_version "linkml-1.11.1" .
+
+jc:RiverBasin a sh:NodeShape ;
+    rdfs:comment "A river basin of the region." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 30 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `SOI`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 20 ;
+            sh:path jc:sOI ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `AUT`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 4 ;
+            sh:path jc:aUT ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `nameLangua`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 17 ;
+            sh:path jc:nameLangua ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `inspireIdL`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 12 ;
+            sh:path jc:inspireIdL ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `link`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 14 ;
+            sh:path jc:link ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `thematicId`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 23 ;
+            sh:path jc:thematicId ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `IDN2`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 11 ;
+            sh:path jc:iDN2 ],
+        [ sh:description "The service the row was read from." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:order 1 ;
+            sh:path sdm:source ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NM2`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 15 ;
+            sh:path jc:nM2 ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `FID_subpovodia_bbsk`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 9 ;
+            sh:path jc:fIDSubpovodiaBbsk ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `ACH`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path jc:aCH ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `zoneType`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 26 ;
+            sh:path jc:zoneType ],
+        [ sh:datatype xsd:dateTime ;
+            sh:description "The source column `DOW`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 5 ;
+            sh:path jc:dOW ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `wiseEvolut`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 25 ;
+            sh:path jc:wiseEvolut ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `relatedZ_1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 18 ;
+            sh:path jc:relatedZ1 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `FACC`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 7 ;
+            sh:path jc:fACC ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `designatio`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 6 ;
+            sh:path jc:designatio ],
+        [ sh:description "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:order 2 ;
+            sh:path jc:isPartOf ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `gml_id`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 10 ;
+            sh:path jc:gmlId ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `nameText`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 16 ;
+            sh:path sdm:name ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `FID_kraj_0`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 8 ;
+            sh:path jc:fIDKraj0 ],
+        [ sh:datatype xsd:string ;
+            sh:description "Who published the row, with the credit its licence asks for." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 0 ;
+            sh:path sdm:dataProvider ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `relatedZon`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 19 ;
+            sh:path jc:relatedZon ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `specialise`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 21 ;
+            sh:path jc:specialise ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `thematic_1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 22 ;
+            sh:path jc:thematic1 ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 29 ;
+            sh:path geojson:geometry ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source column `VYMERA`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 24 ;
+            sh:path jc:vYMERA ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `inspireIdN`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 13 ;
+            sh:path jc:inspireIdN ] ;
+    sh:targetClass jc:RiverBasin .
+
+ngsi-ld:Entity a sh:NodeShape ;
+    rdfs:comment "The root every NGSI-LD entity class specialises." ;
+    sh:closed true ;
+    sh:ignoredProperties ( jc:inspireIdL sdm:name sdm:source jc:thematic1 jc:dOW jc:nameLangua jc:inspireIdN rdf:type jc:thematicId jc:zoneType jc:aUT jc:isPartOf jc:gmlId jc:nM2 jc:relatedZon sdm:dataProvider jc:designatio jc:fIDKraj0 jc:aCH jc:sOI jc:wiseEvolut jc:fACC jc:specialise jc:relatedZ1 jc:link jc:iDN2 jc:vYMERA jc:fIDSubpovodiaBbsk ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass ngsi-ld:Entity .
+

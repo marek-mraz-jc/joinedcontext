@@ -1,0 +1,260 @@
+{
+  "@context": {
+    "@vocab": "https://smartdatamodels.org/",
+    "AdministrativeArea": {
+      "@id": "jc:AdministrativeArea"
+    },
+    "AirQualityObserved": {
+      "@id": "sdm:AirQualityObserved"
+    },
+    "BikeHireDockingStation": {
+      "@id": "sdm:BikeHireDockingStation"
+    },
+    "CrowdFlowObserved": {
+      "@id": "sdm:CrowdFlowObserved"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "GtfsAgency": {
+      "@id": "sdm:GtfsAgency"
+    },
+    "GtfsRoute": {
+      "@id": "sdm:GtfsRoute"
+    },
+    "GtfsStop": {
+      "@id": "sdm:GtfsStop"
+    },
+    "KeyPerformanceIndicator": {
+      "@id": "sdm:KeyPerformanceIndicator"
+    },
+    "KpiPeriod": {
+      "@id": "jc:KpiPeriod"
+    },
+    "OnStreetParking": {
+      "@id": "sdm:OnStreetParking"
+    },
+    "PointOfInterest": {
+      "@id": "sdm:PointOfInterest"
+    },
+    "PostalAddress": {
+      "@id": "schema:PostalAddress"
+    },
+    "TrafficFlowObserved": {
+      "@id": "sdm:TrafficFlowObserved"
+    },
+    "address": {
+      "@id": "schema:address"
+    },
+    "addressCountry": {
+      "@id": "schema:addressCountry"
+    },
+    "addressLocality": {
+      "@id": "schema:addressLocality"
+    },
+    "agencyName": {
+      "@id": "sdm:agencyName"
+    },
+    "allowedVehicleType": {
+      "@id": "sdm:allowedVehicleType"
+    },
+    "area": {
+      "@id": "sdm:area"
+    },
+    "availableBikeNumber": {
+      "@id": "sdm:availableBikeNumber",
+      "@type": "xsd:integer"
+    },
+    "calculationFrequency": {
+      "@id": "sdm:calculationFrequency"
+    },
+    "calculationPeriod": {
+      "@id": "sdm:calculationPeriod"
+    },
+    "category": {
+      "@id": "sdm:category"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dateModified": {
+      "@id": "sdm:dateModified",
+      "@type": "xsd:dateTime"
+    },
+    "dateObserved": {
+      "@id": "sdm:dateObserved",
+      "@type": "xsd:dateTime"
+    },
+    "dateObservedFrom": {
+      "@id": "sdm:dateObservedFrom",
+      "@type": "xsd:dateTime"
+    },
+    "dateObservedTo": {
+      "@id": "sdm:dateObservedTo",
+      "@type": "xsd:dateTime"
+    },
+    "description": {
+      "@id": "schema:description"
+    },
+    "district": {
+      "@id": "sdm:district"
+    },
+    "districtCode": {
+      "@id": "jc:districtCode"
+    },
+    "freeSlotNumber": {
+      "@id": "sdm:freeSlotNumber",
+      "@type": "xsd:integer"
+    },
+    "from": {
+      "@id": "sdm:from",
+      "@type": "xsd:date"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "intensity": {
+      "@id": "sdm:intensity",
+      "@type": "xsd:integer"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "kpiValue": {
+      "@id": "sdm:kpiValue",
+      "@type": "xsd:float"
+    },
+    "laneDirection": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "sdm:laneDirection"
+    },
+    "language": {
+      "@id": "sdm:language"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@id": "schema:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "operatedBy": {
+      "@id": "sdm:operatedBy",
+      "@type": "@id"
+    },
+    "organization": {
+      "@id": "sdm:organization"
+    },
+    "page": {
+      "@id": "sdm:page",
+      "@type": "xsd:anyURI"
+    },
+    "peopleCount": {
+      "@id": "sdm:peopleCount",
+      "@type": "xsd:integer"
+    },
+    "peopleCountAway": {
+      "@id": "sdm:peopleCountAway",
+      "@type": "xsd:integer"
+    },
+    "peopleCountTowards": {
+      "@id": "sdm:peopleCountTowards",
+      "@type": "xsd:integer"
+    },
+    "phone": {
+      "@id": "sdm:phone"
+    },
+    "platformCode": {
+      "@id": "jc:platformCode"
+    },
+    "pm10": {
+      "@id": "sdm:pm10",
+      "@type": "xsd:float"
+    },
+    "process": {
+      "@id": "sdm:process"
+    },
+    "routeColor": {
+      "@id": "sdm:routeColor"
+    },
+    "routeType": {
+      "@id": "sdm:routeType"
+    },
+    "routes": {
+      "@id": "jc:routes",
+      "@type": "@id"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "shortName": {
+      "@id": "sdm:shortName"
+    },
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "status": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "sdm:status"
+    },
+    "stopCode": {
+      "@id": "jc:stopCode"
+    },
+    "streetAddress": {
+      "@id": "schema:streetAddress"
+    },
+    "timezone": {
+      "@id": "sdm:timezone"
+    },
+    "to": {
+      "@id": "sdm:to",
+      "@type": "xsd:date"
+    },
+    "totalSlotNumber": {
+      "@id": "sdm:totalSlotNumber",
+      "@type": "xsd:integer"
+    },
+    "totalSpotNumber": {
+      "@id": "sdm:totalSpotNumber",
+      "@type": "xsd:integer"
+    },
+    "transportMode": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:transportMode"
+    },
+    "type": "@type",
+    "url": {
+      "@id": "schema:url",
+      "@type": "xsd:anyURI"
+    },
+    "vehicleType": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "sdm:vehicleType"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zoneCode": {
+      "@id": "sdm:zoneCode"
+    }
+  },
+  "x-generator-version": "linkml-1.12.0"
+}

@@ -1,0 +1,27 @@
+{{- /*
+  One DNS record per broker pod, ready or not, for the gateway's CONNECT check (T-5893). Under
+  the mesh a broker sees a client of its internal listener 1883 at its own address, the Linkerd
+  proxy's forward, never the runner's or the Portal's; the other listeners read the client's
+  address from Traefik's PROXY header, and no broker dials another. The gateway therefore admits
+  the runner's and the capture's tokenless CONNECTs from these addresses too, which only 1883's
+  Server (the runner's and the Portal's mesh identities) can produce. Rendered with no broker
+  listed too: the Portal stamps brokers into this namespace at runtime.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt-broker-pods
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "brokers.labels" (dict "root" . "managedBy" .Release.Service) | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: mqtt-broker
+    app.kubernetes.io/part-of: mqtt-brokers
+  ports:
+    - name: mqtt-internal
+      port: 1883
+      targetPort: 1883
+      protocol: TCP

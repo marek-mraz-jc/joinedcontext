@@ -1,0 +1,19 @@
+# One RoadSegment per record of the IPR layer Letní údržba komunikací TSK whose oid falls in oid>=55745 into the city space (T-5677).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: tsk-letni-1
+  namespace: praha
+  title:
+    en: TSK summer street cleaning, part 2 of 2
+    cs: Letní údržba komunikací TSK, část 2 z 2
+spec:
+  class: auto
+  # TSK republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '35 3 * * 0'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-tsk-letni }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: RoadSegment, mode: upsert }
+  quotas: { maxMemoryMb: 192, cpuMillicores: 100 }

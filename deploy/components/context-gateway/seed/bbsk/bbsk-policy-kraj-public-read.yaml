@@ -1,0 +1,44 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: kraj-public-read
+  namespace: bbsk
+  title: { sk: Verejné čítanie zdrojových riadkov kraja, en: "Public read: the region's raw rows" }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-kraj }
+  assigner: did:web:bbsk.sk
+  assignee: { kind: role, id: public }
+  # Read only, and every published column of the statistics office's rows. stewardNote is the
+  # region's own annotation (statistical-observation 1.1.0), written by its steward and not open
+  # data, so it is left out (T-2934).
+  # Discovery beside the reads (T-4258, EP-116): which types and attributes the Endpoint holds,
+  # narrowed to this grant (EP-26), so an anonymous MCP client finds them before it queries.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # Its types keep history: anyone reads it, as far back as the space keeps it (T-4372).
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+      propertyNames:
+        - dataSet
+        - indicator
+        - refArea
+        - refPeriod
+        - dimensionKey
+        - kpiValue
+        - unitText
+        - source
+        - dateObserved

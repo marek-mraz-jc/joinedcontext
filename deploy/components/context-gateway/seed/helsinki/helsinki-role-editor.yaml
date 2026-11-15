@@ -1,0 +1,44 @@
+# PF-56, CC-34, PF-50: the person who writes the configuration and administers nothing. They
+# propose and approve the demo kinds, and they may not delete any of them — which is what makes
+# their own change the plain self-approval refusal and not the PF-58 administrator exception the
+# steward gets (`administers` is `approve` *and* `delete`, joinedcontext-portal
+# ui/src/api/approval.ts:100-106).
+#
+# T-2231 asked for a role with `propose` and no `approve`, and reusing `endpoint-editor` if its
+# verbs fit. Neither reaches what the task is for, and both were read before this role was
+# written:
+#   * `endpoint-editor` stops at `Endpoint` and `ModelProjection`, so its holder cannot open the
+#     grant form at all and the PF-50 refusal would again read "you may not propose a
+#     RoleBinding" — the viewer's weaker statement, which `roles-refusals.spec.ts` already plays;
+#   * a role with no `approve` never reaches the self-approval rule either: `approvalStanding`
+#     answers `needsRole` before it looks at who wrote the change (approval.ts:88), so such a
+#     person gets the missing-role refusal the viewer already proves.
+# The verb that must be absent is `delete`, and it is absent here.
+#
+# The holder is still strictly below `demo.steward`, who also holds `org-admin` with `delete`
+# over every kind.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: editor
+  namespace: org
+spec:
+  rules:
+    - kinds:
+        - ContextSpace
+        - DataModel
+        - Mapping
+        - Policy
+        - Endpoint
+        - ModelProjection
+        - Pipeline
+        - DataSource
+        # T-6516: a Grafana visualization (Portal /projects/{p}/grafana) is saved on check(Dashboard,
+        # propose); without it no TOTP-free demo person can save one and the film cannot be made.
+        - Dashboard
+      verbs: [propose, approve]
+    # Granting a role is proposing a binding, and it is never this role's to decide: what the
+    # holder may hand out is bounded by the verbs they hold themselves (PF-50), and somebody
+    # else approves the grant.
+    - kinds: [RoleBinding]
+      verbs: [propose]

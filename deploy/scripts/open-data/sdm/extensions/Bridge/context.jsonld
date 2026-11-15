@@ -1,0 +1,125 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Bridge": {
+      "@id": "jc:Bridge"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "aktualnyStavebnotechnickyStav": {
+      "@id": "jc:aktualnyStavebnotechnickyStav"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dlzkaPremosteniaM": {
+      "@id": "jc:dlzkaPremosteniaM",
+      "@type": "xsd:float"
+    },
+    "docasnostMosta": {
+      "@id": "jc:docasnostMosta"
+    },
+    "druhNosnejKonstrukcie": {
+      "@id": "jc:druhNosnejKonstrukcie"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "hodnotenie": {
+      "@id": "jc:hodnotenie"
+    },
+    "id": "@id",
+    "identifikacneCislo": {
+      "@id": "jc:identifikacneCislo"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "komunikacia": {
+      "@id": "jc:komunikacia"
+    },
+    "legislativnyStav": {
+      "@id": "jc:legislativnyStav"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "materialNosnejKonstrukcie": {
+      "@id": "jc:materialNosnejKonstrukcie"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "normalnaZatazitelnostT": {
+      "@id": "jc:normalnaZatazitelnostT"
+    },
+    "obec": {
+      "@id": "jc:obec"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "ojedinelaZatazitelnostT": {
+      "@id": "jc:ojedinelaZatazitelnostT"
+    },
+    "okres": {
+      "@id": "jc:okres"
+    },
+    "pocetDilCelkov": {
+      "@id": "jc:pocetDilCelkov",
+      "@type": "xsd:integer"
+    },
+    "predmetPremostenia": {
+      "@id": "jc:predmetPremostenia"
+    },
+    "rokKonstrukcie": {
+      "@id": "jc:rokKonstrukcie",
+      "@type": "xsd:integer"
+    },
+    "rokZasadnejRekonstrukcie": {
+      "@id": "jc:rokZasadnejRekonstrukcie",
+      "@type": "xsd:integer"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "spravca": {
+      "@id": "jc:spravca"
+    },
+    "triedaCesty": {
+      "@id": "jc:triedaCesty"
+    },
+    "typKomunikacie": {
+      "@id": "jc:typKomunikacie"
+    },
+    "typPamiatky": {
+      "@id": "jc:typPamiatky"
+    },
+    "type": "@type",
+    "ulica": {
+      "@id": "jc:ulica"
+    },
+    "vlastnik": {
+      "@id": "jc:vlastnik"
+    },
+    "vyhradnaZatazitelnostT": {
+      "@id": "jc:vyhradnaZatazitelnostT"
+    },
+    "vynimocnaZatazitelnostT": {
+      "@id": "jc:vynimocnaZatazitelnostT"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zatazitelnostNaJednuNapravu": {
+      "@id": "jc:zatazitelnostNaJednuNapravu"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

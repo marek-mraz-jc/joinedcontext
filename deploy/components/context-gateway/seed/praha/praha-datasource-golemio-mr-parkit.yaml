@@ -1,0 +1,25 @@
+# The garages Mr.Parkit rents out by reservation, as Golemio's parking register lists them (Parking
+# v3, primary source mr_parkit): 132 on 2026-10-25, 128 of them in Prague (T-5680). The key is the
+# owner's (T-2785) and travels as the X-Access-Token header from the secret `golemio`, never as a
+# value here (CC-06, MF-35); the mapping reads the garages' tariffs with the same key.
+#
+# Terms as for golemio-park-and-ride: Golemio's OpenAPI marks Parking v3 "Open Data" and names no
+# licence; a key is limited to 20 requests per 8 seconds and 10 000 rows per answer.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: golemio-mr-parkit
+  namespace: praha
+  title: { en: Mr.Parkit garages (Golemio), cs: Garáže Mr.Parkit (Golemio) }
+spec:
+  type: http
+  http:
+    url: https://api.golemio.cz/v3/parking?primarySource=mr_parkit&limit=10000
+    verb: GET
+    headers: { Accept: application/json }
+    authorization:
+      header: X-Access-Token
+      headerRef: { name: golemio, key: token }
+    timeout: 30s
+    # the runner caps the body at its default (32 MiB on platform main); `maxBytes` waits for the
+    # Portal and gateway pins to read it (tests/test_portal_pin_reads_the_seed.py)

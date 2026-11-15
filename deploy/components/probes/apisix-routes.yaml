@@ -1,0 +1,11 @@
+---
+# The public status page on its own host, status.{domain} (T-5102). `subDomain` also puts the host
+# on the edge Ingress and in the certificate's SAN list. Anonymous and read-only: the page answers
+# GET and HEAD and nothing else.
+status-page:
+  name: status-page
+  description: The public status page of every public surface
+  upstream: status-page.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "probes") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  subDomain: status
+  uri: '/*'
+  methods: [GET, HEAD]

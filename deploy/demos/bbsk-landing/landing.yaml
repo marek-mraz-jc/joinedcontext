@@ -1,0 +1,92 @@
+# bbsk.smartcity.joinedcontext.com after the cutover (supervisor 2026-11-10 06:3xZ): prod's BBSK demo
+# landing page alone, beside jc-prod on the dev cluster. jc-prod's edge routes the host here
+# (jc.server.hostUpstreams.bbsk); nothing else reaches it and it reaches nothing. Apply:
+#   kubectl apply -f demos/bbsk-landing/landing.yaml -f demos/bbsk-landing/site.yaml
+# Same pod as prod's demo-bbsk-landing (demos/bbsk/chart/templates/landing.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bbsk-landing
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-bbsk-landing
+  namespace: bbsk-landing
+  labels: { app.kubernetes.io/name: demo-bbsk-landing }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: demo-bbsk-landing }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: demo-bbsk-landing }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: nginx
+          # prod's pin (components/basemap/images.yaml at release 23a43801).
+          image: docker.io/nginxinc/nginx-unprivileged:1.30.4-alpine-slim@sha256:7bbe8940bc478e5618e6d4cfbeda406e5b4217cacc06faacd665aca5e468595e
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true }
+            - { name: site, mountPath: /srv/site, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+            - { name: cache, mountPath: /var/cache/nginx }
+      volumes:
+        - { name: config, configMap: { name: demo-bbsk-landing } }
+        - { name: site, configMap: { name: demo-bbsk-landing-site } }
+        - { name: tmp, emptyDir: { sizeLimit: 16Mi } }
+        - { name: cache, emptyDir: { sizeLimit: 16Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-bbsk-landing
+  namespace: bbsk-landing
+spec:
+  selector: { app.kubernetes.io/name: demo-bbsk-landing }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+# Ingress from jc-prod's edge only (the half in jc-prod: apisix-egress-to-dev-status-tiles); no egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: demo-bbsk-landing
+  namespace: bbsk-landing
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: demo-bbsk-landing }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: jc-prod }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: apisix }
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress: []

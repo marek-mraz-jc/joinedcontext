@@ -1,0 +1,56 @@
+# Anyone reads every type of the space: each is open data, and no mapping reads a column that names
+# or reaches a person (Research/bb-bbsk-ngsi-ld-mapping.md §5).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: otvorene-data-read
+  namespace: bbsk
+  title:
+    sk: Verejné čítanie otvorených dát
+    en: 'Public read: open data'
+spec:
+  contextSpaceRef:
+    kind: ContextSpace
+    name: bbsk-otvorene-data
+  assigner: did:web:bbsk.sk
+  assignee:
+    kind: role
+    id: public
+  operations:
+  - retrieveOps
+  - retrieveEntityTypes
+  - retrieveEntityTypeDetails
+  - retrieveEntityTypeInfo
+  - retrieveAttrTypes
+  - retrieveAttrTypeDetails
+  - retrieveAttrTypeInfo
+  - createSubscription
+  - retrieveSubscription
+  - updateSubscription
+  - deleteSubscription
+  information:
+  - entities:
+    - type: AdministrativeArea
+    - type: Bridge
+    - type: CommitteeSeat
+    - type: Contract
+    - type: CouncilMeeting
+    - type: CouncilVote
+    - type: CycleRoute
+    - type: Grant
+    - type: Invoice
+    - type: KeyPerformanceIndicator
+    - type: OfficeHours
+    - type: Organization
+    - type: Person
+    - type: Petition
+    - type: PointOfInterest
+    - type: PublicInvestment
+    - type: PublicOrganization
+    - type: PublicProcurement
+    - type: PurchaseOrder
+    - type: RiverBasin
+    - type: RoadAccident
+    - type: RoadStructure
+    - type: Rule
+    - type: WaterBodyStatus

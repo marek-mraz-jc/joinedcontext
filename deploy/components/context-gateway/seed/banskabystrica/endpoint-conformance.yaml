@@ -1,0 +1,22 @@
+# The conformance suite's surface (F-BNT1-002): organization audience, so no anonymous caller
+# reads the fixtures; the account `conformance` writes through its Policy. Not published.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: conformance
+  namespace: banskabystrica
+  title: { sk: Konformančné testy, en: Conformance tests }
+  description:
+    sk: Testovacie entity smoke testu a sady ETSI NGSI-LD; nie sú to údaje mesta.
+    en: Test entities of the smoke run and the ETSI NGSI-LD suite; not city data.
+spec:
+  contextSpaceRef: conformance
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:banskabystrica.sk:conformance:conformance-steward-read
+    - urn:ngsi-ld:Policy:banskabystrica.sk:conformance:conformance-write
+  slug: dv7iyelohbhylxfilexaneobbl
+  audience: organization
+  # The surfaces every seeded Endpoint serves (T-3957, T-4074), so the suites reach each one here; OData,
+  # SensorThings and CSV too, so the release gate's roundtrip (T-5914) reads a write back through each.
+  enabledRepresentations: [ngsi-ld, mcp, ogc-features, websocket, odata, sta, csv]

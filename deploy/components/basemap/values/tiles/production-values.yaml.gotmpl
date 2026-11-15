@@ -1,0 +1,18 @@
+---
+# The same sizes as development: the server reads files and the job runs once a month.
+server:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 64Mi
+refresh:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

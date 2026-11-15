@@ -1,0 +1,20 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: web
+  namespace: helsinki
+spec:
+  # Helsinki's website (T-3067, user decision 2026-10-07): the city's own
+  # website, crawled once on arrival and then weekly, so the knowledge assistant's answer-quality
+  # evals are written from what it really indexes. Bounded for the one dev node: three links
+  # deep, 500 pages, PDFs of at most 20 MB and 200 pages.
+  source: website
+  startUrls:
+    - https://www.hel.fi/
+  sitemap: true
+  maxDepth: 3
+  maxPages: 500
+  pdf: { policy: include, maxBytes: 20971520, maxPages: 200 }
+  schedule: '0 3 * * 0'
+  languages: [fi, sv, en]
+  visibility: public

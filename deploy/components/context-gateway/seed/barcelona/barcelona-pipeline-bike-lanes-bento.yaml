@@ -1,0 +1,95 @@
+# The mapping of the bike-lanes pipeline (PL-03, T-5374): one BikeLane per segment of Open Data
+# BCN's bike network, the open lanes (carril-bici, CARRIL_BICI.geojson, the DataSource's answer)
+# the bike corridors (corredors-bici-bcn, CORREDORS_BICI.geojson: lanes shared with buses or
+# traffic calmed for bicycles) and the lanes under construction (carrils-bici-en-construccio,
+# CARRIL_BICI_CONSTRUCCIO.geojson), both read here from the same host. Each feature is a LineString with ID (the map layer's segment
+# code, GL followed by digits) and TOOLTIP (its label in Catalan). The length is summed over the
+# line's points on a local plane at 41.4° N, within 0.2 % across the city.
+#
+# Plausibility (owner 2026-10-22): a feature with no GL code, a geometry that is no LineString of
+# at least two numeric points, a line with a point outside the municipality's 1 km margin (the
+# space's in-area bbox), and a second feature of one code (an open lane listed again under
+# construction keeps its open state) are dropped; a length of 0 or above 20 km is left out of the
+# entity. Each is counted in the run's log line. An open-lane layer with no segment, or a layer
+# that does not answer or is no GeoJSON, fails the run, which writes nothing.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 4194304 { throw("the bike lane layer is %d bytes, more than the 4 MiB read".format(content().length())) } else { content().string().parse_json() }
+        - branch:
+            request_map: root = ""
+            processors:
+              - http:
+                  url: https://opendata-ajuntament.barcelona.cat/resources/bcn/CarrilsBici/CORREDORS_BICI.geojson
+                  verb: GET
+                  headers:
+                    Accept: application/geo+json
+                    User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+                  rate_limit: barcelona_opendata
+              - mapping: |
+                  root = if content().length() > 1048576 { throw("the corridor layer is %d bytes, more than the 1 MiB read".format(content().length())) } else { content().string() }
+            result_map: root.corridors = content().string()
+        - branch:
+            request_map: root = ""
+            processors:
+              - http:
+                  url: https://opendata-ajuntament.barcelona.cat/resources/bcn/CarrilsBici/CARRIL_BICI_CONSTRUCCIO.geojson
+                  verb: GET
+                  headers:
+                    Accept: application/geo+json
+                    User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+                  rate_limit: barcelona_opendata
+              - mapping: |
+                  root = if content().length() > 1048576 { throw("the construction layer is %d bytes, more than the 1 MiB read".format(content().length())) } else { content().string() }
+            result_map: root.construction = content().string()
+        - mapping: |
+            let bbox = [2.04, 41.3, 2.24, 41.48]
+            let open = if this.type.or("") != "FeatureCollection" || this.features.type() != "array" { throw("the bike lane layer is no GeoJSON FeatureCollection") } else { this.features.map_each(f -> f.assign({ "state": "inService", "layer": "carril-bici" })) }
+            let corridors = this.corridors.parse_json().catch({}).(c -> if c.type.or("") != "FeatureCollection" || c.features.type() != "array" { throw("the corridor layer is no GeoJSON FeatureCollection") } else { c.features.map_each(f -> f.assign({ "state": "inService", "layer": "corredors-bici-bcn" })) })
+            let building = this.construction.parse_json().catch({}).(c -> if c.type.or("") != "FeatureCollection" || c.features.type() != "array" { throw("the construction layer is no GeoJSON FeatureCollection") } else { c.features.map_each(f -> f.assign({ "state": "underConstruction", "layer": "carrils-bici-en-construccio" })) })
+            let all = $open.concat($corridors, $building)
+            let coded = $all.filter(f -> f.properties.ID.or("").string().re_match("^GL[0-9]{1,12}$"))
+            let lined = $coded.filter(f -> f.geometry.type.or("") == "LineString" && f.geometry.coordinates.type() == "array" && f.geometry.coordinates.length() >= 2 && f.geometry.coordinates.all(p -> p.type() == "array" && p.length() >= 2 && p.index(0).type() == "number" && p.index(1).type() == "number"))
+            let inside = $lined.filter(f -> f.geometry.coordinates.all(p -> p.index(0) >= $bbox.index(0) && p.index(0) <= $bbox.index(2) && p.index(1) >= $bbox.index(1) && p.index(1) <= $bbox.index(3)))
+            # Open lanes come first, then corridors, so a code listed again under construction keeps its open state.
+            let lanes = $inside.fold({ "seen": {}, "kept": [] }, t -> if t.tally.seen.exists(t.value.properties.ID) { t.tally } else { { "seen": t.tally.seen.merge({ t.value.properties.ID: true }), "kept": t.tally.kept.append(t.value) } }).kept.map_each(f -> {
+              "id": f.properties.ID,
+              "name": f.properties.TOOLTIP.or("").string().trim(),
+              "state": f.state,
+              "layer": f.layer,
+              "line": f.geometry.coordinates.map_each(p -> [p.index(0), p.index(1)]),
+              "length": f.geometry.coordinates.enumerated().slice(1).fold(0, t -> t.tally + (((t.value.value.index(0) - f.geometry.coordinates.index(t.value.index - 1).index(0)) * 83550).pow(2) + ((t.value.value.index(1) - f.geometry.coordinates.index(t.value.index - 1).index(1)) * 111050).pow(2)).pow(0.5)).round()
+            })
+            root.dropped = {
+              "noSegmentCode": $all.length() - $coded.length(),
+              "lineMalformed": $coded.length() - $lined.length(),
+              "outsideTheCity": $lined.length() - $inside.length(),
+              "duplicateSegment": $inside.length() - $lanes.length(),
+              "lengthOutOfRange": $lanes.filter(l -> l.length <= 0 || l.length > 20000).length()
+            }
+            root.lanes = if $lanes.filter(l -> l.layer == "carril-bici").length() == 0 { throw("the bike lane layer holds no open lane") } else { $lanes }
+        - log:
+            level: INFO
+            message: 'bike lanes: ${! json("lanes").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.lanes
+        - unarchive: { format: json_array }
+        - mapping: |
+            let now = now().ts_unix()
+            root = {
+              "id": "urn:ngsi-ld:%v:%v:%v:carril-%v".format("BikeLane", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id.lowercase()),
+              "type": "BikeLane",
+              "expiresAt": ($now + 21 * 86400).ts_format("2006-01-02T15:04:05Z", "UTC"),
+              "name": if this.name == "" { null } else { { "type": "Property", "value": this.name } },
+              "localId": { "type": "Property", "value": this.id },
+              "bikeLaneState": { "type": "Property", "value": this.state },
+              "laneLength": if this.length <= 0 || this.length > 20000 { null } else { { "type": "Property", "value": this.length, "unitCode": "MTR" } },
+              "location": { "type": "GeoProperty", "value": { "type": "LineString", "coordinates": this.line } },
+              "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN (CC BY 4.0)" },
+              "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/" + this.layer }
+            }.filter(entry -> entry.value != null)

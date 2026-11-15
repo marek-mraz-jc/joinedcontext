@@ -1,0 +1,13 @@
+# The demo dashboard (T-0528, UI-17, UI-19): public, so every layer reads a public endpoint.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Dashboard
+metadata:
+  name: city-bikes
+  namespace: helsinki
+spec:
+  title: { en: Helsinki city bikes, fi: Helsingin kaupunkipyörät }
+  visibility: public
+  pages:
+    - title: Stations
+      layout: full-map
+      layers: [bike-stations]

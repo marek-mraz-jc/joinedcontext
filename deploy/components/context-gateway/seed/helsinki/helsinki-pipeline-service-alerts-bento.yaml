@@ -1,0 +1,170 @@
+# The mapping of the hsl-service-alerts pipeline (PL-03, T-3892): HSL's GTFS-RT service alerts,
+# decoded in the runner with Bento's `protobuf` step and the GTFS-RT schema mounted at /proto
+# (as hsl-departures, T-3891), become one Alert each: its header and description in Finnish,
+# Swedish and English, GTFS-RT's cause and effect, its severity, the span of its active periods,
+# and the lines (refRoute) and stops (refStop) it affects.
+#
+# dateIssued, which dataModel.Alert requires (T-4002): GTFS-RT gives an alert no issue time. The
+# start of its first active period stands in, the moment HSL says it applies from: it stays the
+# same every refresh. An alert with no dated period takes the feed header's timestamp, when HSL
+# produced the feed; that one moves each refresh, and HSL sent no such alert on 2026-10-12. An
+# alert announced for a later period takes the feed's timestamp too, until its period starts: an
+# issue time in the future is no issue time (4 of 66 on dev 2026-10-22, T-5259).
+#
+# The gateway refuses a relationship to an entity the space does not hold (DM-70,
+# `target-missing`), and HSL's alerts name route variants routes.txt does not list (20 of 81 on
+# 2026-10-12). So the pipeline asks the space which of the named lines and stops it holds, links
+# those, and keeps the others as text in `unknownReference`. A failed lookup writes nothing this
+# round rather than a guess; the next refresh asks again.
+#
+# HSL sends the whole set every time (FULL_DATASET): an HSL Alert the space holds that the feed
+# no longer lists is withdrawn, and is deleted in the same refresh. A Digitraffic Alert, or one a
+# steward wrote, is never touched here.
+# ponytail: a line or stop an alert stops naming keeps its old link until the alert is withdrawn
+# (an upsert updates the attributes it writes); HSL edits an alert's scope rarely.
+
+pipeline:
+  processors:
+    # A body over 1 MiB is not HSL's alerts (21 kB): refused before decoding.
+    - mapping: |
+        root = if content().length() > 1048576 { throw("the service alerts feed is %d bytes, more than the 1 MiB read".format(content().length())) } else { content() }
+
+    - protobuf:
+        operator: to_json
+        message: transit_realtime.FeedMessage
+        import_paths: [/proto]
+
+    # A body too large or not a feed is dropped, as the runner drops a failed fetch: it must never
+    # read as an empty feed, which withdraws every HSL alert.
+    - mutation: root = if errored() { deleted() }
+
+    # The lines and stops the alerts name, as the ids the space would hold them under.
+    - mapping: |
+        let urn = "urn:ngsi-ld:%v:%v:%v:%v"
+        let id = "^[A-Za-z0-9._-]{1,64}$"
+        root.feed = this
+        root.named = this.entity.or([]).map_each(e -> e.alert.informedEntity.or([])).flatten().map_each(i -> if i.routeId.or("").re_match($id) {
+          $urn.format("GtfsRoute", env("JC_ORG_DOMAIN"), env("JC_SPACE"), i.routeId)
+        } else if i.stopId.or("").re_match($id) {
+          $urn.format("GtfsStop", env("JC_ORG_DOMAIN"), env("JC_SPACE"), i.stopId)
+        } else { null }).filter(n -> n != null).unique()
+
+    # Which of them the space holds: one batch query through the city endpoint.
+    - branch:
+        request_map: |
+          root = if this.named.length() == 0 { deleted() } else { {
+            "type": "Query",
+            "entities": this.named.map_each(n -> { "id": n, "type": n.split(":").index(2) })
+          } }
+        processors:
+          - try:
+              - http:
+                  url: ${JC_GATEWAY_URL}/api/endpoint/si6epqkx364lprho5uaigutk274r5grb/ngsi-ld/v1/entityOperations/query?limit=1000&options=keyValues
+                  verb: POST
+                  headers: { Content-Type: application/json }
+                  oauth2:
+                    enabled: true
+                    client_key: ${JC_CLIENT_ID}
+                    client_secret: ${JC_CLIENT_SECRET}
+                    token_url: ${JC_TOKEN_URL}
+                  timeout: 20s
+                  rate_limit: pipeline_egress
+              - mapping: 'root = { "held": this.map_each(e -> e.id) }'
+          - catch:
+              - mapping: 'root = { "failed": true }'
+        result_map: root.known = this
+    - mapping: |
+        root = if this.known.failed.or(false) { deleted() } else { this }
+
+    - mapping: |
+        map text {
+          root = this.translation.or([]).filter(t -> ["fi", "sv", "en"].contains(t.language.or("")) && t.text.or("").trim() != "").fold({}, t -> t.tally.merge({ (t.value.language): t.value.text.trim() }))
+        }
+        map alert_of {
+          let id = "^[A-Za-z0-9._-]{1,64}$"
+          let periods = this.activePeriod.or([])
+          root = {
+            "header": this.headerText.apply("text"),
+            "body": this.descriptionText.apply("text"),
+            "effect": this.effect.or("").string(),
+            "cause": this.cause.or("").string(),
+            "severity": this.severityLevel.or("").string(),
+            "starts": $periods.map_each(p -> p.start.or("0").number()).filter(t -> t > 0),
+            "ends": $periods.map_each(p -> p.end.or("0").number()).filter(t -> t > 0),
+            "open": $periods.any(p -> p.end.or("0").number() == 0),
+            "routes": this.informedEntity.or([]).map_each(i -> i.routeId.or("")).filter(r -> r.re_match($id)).unique(),
+            "stops": this.informedEntity.or([]).filter(i -> i.routeId.or("") == "").map_each(i -> i.stopId.or("")).filter(s -> s.re_match($id)).unique()
+          }
+        }
+        let urn = "urn:ngsi-ld:%v:%v:%v:%v"
+        let id = "^[A-Za-z0-9._-]{1,64}$"
+        let held = this.known.held.or([])
+        let produced = this.feed.header.timestamp.or("0").number()
+        let severity = { "INFO": "informational", "WARNING": "medium", "SEVERE": "high" }
+        let effects = ["NO_SERVICE", "REDUCED_SERVICE", "SIGNIFICANT_DELAYS", "DETOUR", "ADDITIONAL_SERVICE", "MODIFIED_SERVICE", "OTHER_EFFECT", "UNKNOWN_EFFECT", "STOP_MOVED", "NO_EFFECT", "ACCESSIBILITY_ISSUE"]
+        let causes = ["UNKNOWN_CAUSE", "OTHER_CAUSE", "TECHNICAL_PROBLEM", "STRIKE", "DEMONSTRATION", "ACCIDENT", "HOLIDAY", "WEATHER", "MAINTENANCE", "CONSTRUCTION", "POLICE_ACTIVITY", "MEDICAL_EMERGENCY"]
+        let route = "urn:ngsi-ld:GtfsRoute:%v:%v:%v"
+        let stop = "urn:ngsi-ld:GtfsStop:%v:%v:%v"
+        let alerts = this.feed.entity.or([]).filter(e -> e.alert != null && e.id.or("").string().re_match($id)).map_each(e -> e.alert.apply("alert_of").assign({ "id": e.id.string() }))
+        let alerts = $alerts.map_each(a -> a.assign({
+            "linkedRoutes": a.routes.map_each(r -> $route.format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), r)).filter(u -> $held.contains(u)),
+            "linkedStops": a.stops.map_each(s -> $stop.format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), s)).filter(u -> $held.contains(u)),
+            "unknown": a.routes.filter(r -> !$held.contains($route.format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), r))).map_each(r -> "route:" + r).concat(a.stops.filter(s -> !$held.contains($stop.format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), s))).map_each(s -> "stop:" + s))
+          }))
+        root = $alerts.map_each(a -> {
+            "id": $urn.format("Alert", env("JC_ORG_DOMAIN"), env("JC_SPACE"), "hsl-" + a.id),
+            "type": "Alert",
+            "name": if a.header.keys().length() > 0 { { "type": "LanguageProperty", "languageMap": a.header } },
+            "description": if a.body.keys().length() > 0 { { "type": "LanguageProperty", "languageMap": a.body } },
+            "category": { "type": "Property", "value": "traffic" },
+            "alertSource": { "type": "Property", "value": "HSL" },
+            "effect": if $effects.contains(a.effect) { { "type": "Property", "value": a.effect } },
+            "cause": if $causes.contains(a.cause) { { "type": "Property", "value": a.cause } },
+            "severity": if $severity.get(a.severity) != null { { "type": "Property", "value": $severity.get(a.severity) } },
+            "dateIssued": if a.starts.length() > 0 && $produced > 0 { { "type": "Property", "value": [a.starts.sort().index(0), $produced].min().ts_format("2006-01-02T15:04:05Z", "UTC") } } else if a.starts.length() > 0 { { "type": "Property", "value": a.starts.sort().index(0).ts_format("2006-01-02T15:04:05Z", "UTC") } } else if $produced > 0 { { "type": "Property", "value": $produced.ts_format("2006-01-02T15:04:05Z", "UTC") } },
+            "validFrom": if a.starts.length() > 0 { { "type": "Property", "value": a.starts.sort().index(0).ts_format("2006-01-02T15:04:05Z", "UTC") } },
+            "validTo": if a.ends.length() > 0 && !a.open { { "type": "Property", "value": a.ends.sort().index(-1).ts_format("2006-01-02T15:04:05Z", "UTC") } },
+            "refRoute": if a.linkedRoutes.length() > 0 { { "type": "Relationship", "object": a.linkedRoutes } },
+            "refStop": if a.linkedStops.length() > 0 { { "type": "Relationship", "object": a.linkedStops } },
+            "unknownReference": if a.unknown.length() > 0 { { "type": "Property", "value": a.unknown } },
+            "source": { "type": "Property", "value": "https://realtime.hsl.fi/realtime/service-alerts/v2/hsl" }
+          }.filter(f -> f.value != null))
+
+    # Withdrawn alerts: the HSL Alerts the space holds that this feed no longer lists are deleted
+    # through the city endpoint (deleteBatch of the pipelines-delete-alerts Policy, Alerts only).
+    - branch:
+        request_map: 'root = { "current": this.map_each(e -> e.id) }'
+        processors:
+          - try:
+              - branch:
+                  request_map: root = ""
+                  processors:
+                    - http:
+                        url: http://${JC_GATEWAY_HOST}/api/endpoint/dhiw4735mzyvwkrmszljpxcvvgv32q33/ngsi-ld/v1/entities?type=Alert&limit=1000&options=keyValues&attrs=source
+                        verb: GET
+                        headers: { Accept: application/json }
+                        timeout: 20s
+                        rate_limit: pipeline_egress
+                  result_map: root.held = this
+              - mapping: |
+                  let source = "https://realtime.hsl.fi/realtime/service-alerts/v2/hsl"
+                  let current = this.current
+                  root = this.held.or([]).filter(a -> a.source.or("") == $source && !$current.contains(a.id.or(""))).map_each(a -> a.id)
+              - switch:
+                  - check: this.length() > 0
+                    processors:
+                      - http:
+                          url: ${JC_GATEWAY_URL}/api/endpoint/si6epqkx364lprho5uaigutk274r5grb/ngsi-ld/v1/entityOperations/delete
+                          verb: POST
+                          headers: { Content-Type: application/json }
+                          oauth2:
+                            enabled: true
+                            client_key: ${JC_CLIENT_ID}
+                            client_secret: ${JC_CLIENT_SECRET}
+                            token_url: ${JC_TOKEN_URL}
+                          timeout: 30s
+                          rate_limit: pipeline_egress
+          - catch:
+              - mapping: root = {}
+
+    - unarchive: { format: json_array }

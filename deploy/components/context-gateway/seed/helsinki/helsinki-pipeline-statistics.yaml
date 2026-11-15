@@ -1,0 +1,20 @@
+# One KeyPerformanceIndicator per (indicator, area) of the City of Helsinki's area statistics
+# (Aluesarjat, stat.hel.fi PXWEB), written into the city space beside the sub-districts it links
+# (T-5258). Which tables, and why, is in the mapping and in the task's matrix.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: statistics
+  namespace: helsinki
+  title: { en: Helsinki area statistics, fi: Helsingin aluesarjat }
+spec:
+  class: auto
+  # Yearly, quarterly and monthly tables, each published on its own day: a daily read finds a new
+  # period within a day and writes no history row when nothing changed (record: observed).
+  period: 24h
+  schedule: '35 5 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-statistics-table }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

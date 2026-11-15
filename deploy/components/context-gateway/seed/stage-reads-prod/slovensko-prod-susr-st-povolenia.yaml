@@ -1,0 +1,16 @@
+# Stage reads prod's public Endpoint susr-st-povolenia for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-susr-st-povolenia
+  namespace: slovensko
+  title: Prod susr-st-povolenia
+spec:
+  contextSpaceRef: susr-st-povolenia
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/ssyq2yewnyqs4rypdmghumswi3haak3t
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

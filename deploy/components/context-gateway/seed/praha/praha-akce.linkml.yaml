@@ -1,0 +1,797 @@
+id: https://joinedcontext.com/models/praha/praha-akce
+name: praha-akce
+title: Events in Prague
+description: >-
+  One public event as a town, a region or a cultural body announces it on its web site or feed:
+  what it is, when it starts and ends, and where, as a GPS point. The class is
+  schema.org's Event under the names Smart Data Models and schema.org use, so the space's
+  iCalendar surface (RFC 5545, EP-125) reads it as published: `id` the UID, `name` the SUMMARY,
+  `startDate` and `endDate` DTSTART and DTEND, `description`, `address`, `location` and `url`
+  DESCRIPTION, LOCATION, GEO and URL, `organizer` ORGANIZER. An event without a name, a start or
+  a link is refused by the pipeline and never reaches the space (owner 2026-10-20, 2026-10-22); its
+  point and organizer are kept where known. One event announced
+  by two sources is one entity: its id is
+  `urn:ngsi-ld:Event:praha-akce:` followed by the first 16 hex digits of the SHA-256 of
+  `name | start | lower(addressLocality)` (the name in lower case with only its letters and digits,
+  the start to the hour in UTC or the day), so the second source overwrites the first rather than
+  adding a copy.
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  jc: https://joinedcontext.com/models/
+  sdm: https://smartdatamodels.org/
+  schema: https://schema.org/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+default_prefix: sdm
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+
+slots:
+  name:
+    slot_uri: schema:name
+    description: The title of the event as the source writes it, in its own language (Czech or Slovak).
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov
+          cs: Název
+          en: Name
+          de: Name
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/name
+  description:
+    slot_uri: schema:description
+    description: What the source says about the event, as plain text without markup.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Popis
+          cs: Popis
+          en: Description
+          de: Beschreibung
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/description
+  startDate:
+    slot_uri: schema:startDate
+    description: >-
+      When the event starts: an RFC 3339 instant with its offset (`2026-11-14T19:00:00+01:00`,
+      Europe/Bratislava as the source publishes it), or a date alone (`2026-11-14`) for an event
+      that lasts whole days.
+    range: string
+    pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$
+    examples:
+      - value: '2026-11-14T19:00:00+01:00'
+      - value: '2026-11-14'
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Začiatok
+          cs: Začátek
+          en: Start
+          de: Beginn
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/startDate
+  endDate:
+    slot_uri: schema:endDate
+    description: >-
+      When the event ends, written as `startDate`; for a whole-day event its last day,
+      inclusive. Absent when the source gives no end: the calendar then shows the start alone.
+    range: string
+    pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$
+    examples:
+      - value: '2026-11-14T22:00:00+01:00'
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Koniec
+          cs: Konec
+          en: End
+          de: Ende
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/endDate
+  venue:
+    slot_uri: jc:venue
+    description: The name of the place, as the source writes it (a hall, a square, a museum).
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Miesto konania
+          cs: Místo konání
+          en: Venue
+          de: Veranstaltungsort
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/location
+  address:
+    slot_uri: schema:address
+    description: >-
+      The postal address of the venue, field by field (Smart Data Models' common PostalAddress);
+      `addressLocality` is the town a calendar filters on. A field the source leaves out is absent,
+      never guessed.
+    range: PostalAddress
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Adresa
+          cs: Adresa
+          en: Address
+          de: Adresse
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models/blob/master/common-schema.json
+  streetAddress:
+    slot_uri: schema:streetAddress
+    description: The street and the house number.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Ulica a číslo
+          cs: Ulice a číslo
+          en: Street and number
+          de: Straße und Hausnummer
+        annotations: { generated: sk cs en de }
+      upstream_source: https://schema.org/streetAddress
+  postalCode:
+    slot_uri: schema:postalCode
+    description: The postal code.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PSČ
+          cs: PSČ
+          en: Postal code
+          de: Postleitzahl
+        annotations: { generated: sk cs en de }
+      upstream_source: https://schema.org/postalCode
+  addressLocality:
+    slot_uri: schema:addressLocality
+    description: The town or the municipality, by its official name with diacritics (`Praha`, `Banská Bystrica`).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obec
+          cs: Obec
+          en: Town
+          de: Ort
+        annotations: { generated: sk cs en de }
+      upstream_source: https://schema.org/addressLocality
+  addressRegion:
+    slot_uri: schema:addressRegion
+    description: The self-governing region, by its official name (`Hlavní město Praha`, `Banskobystrický kraj`).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kraj
+          cs: Kraj
+          en: Region
+          de: Region
+        annotations: { generated: sk cs en de }
+      upstream_source: https://schema.org/addressRegion
+  addressCountry:
+    slot_uri: schema:addressCountry
+    description: The country, as an ISO 3166-1 alpha-2 code.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Krajina
+          cs: Země
+          en: Country
+          de: Land
+        annotations: { generated: sk cs en de }
+      upstream_source: https://schema.org/addressCountry
+  eventCategory:
+    slot_uri: jc:eventCategory
+    description: >-
+      The kind of event in the source's own words (`koncert`, `výstava`, `šport`), kept so `category` can be
+      traced back to it.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kategória u zdroja
+          cs: Kategorie u zdroje
+          en: Category at the source
+          de: Kategorie der Quelle
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/eventType
+  category:
+    slot_uri: sdm:category
+    description: >-
+      The event's main category, one code of the platform's list of 16 (docs API/12-event-categories.md),
+      picked by the rule table seeds/event-categories.json from the source's own word, the name or the kind of
+      body that announced it (`music`, `sport`), else by the decision model's cached answer. A list of
+      one, as Smart Data Models' Event writes `category`; absent while neither has named the event.
+    range: EventCategory
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kategória
+          cs: Kategorie
+          en: Category
+          de: Kategorie
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.TourismDestinations/blob/master/Event/schema.json
+  categorySource:
+    slot_uri: jc:categorySource
+    description: >-
+      How `category` was picked: `rule` the rule table, `model` the decision model's cached answer for an event no
+      rule decides (scripts/events-classify.py).
+    range: string
+    pattern: ^(rule|model)$
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Pôvod kategórie
+          cs: Původ kategorie
+          en: Category picked by
+          de: Kategorie bestimmt durch
+      ngsi_ld_kind: Property
+  audience:
+    slot_uri: sdm:audience
+    description: >-
+      Who the event is for, in Smart Data Models' Event codes; set with the category `children-family`,
+      `children` when the source or the name says children, else `family`.
+    range: EventAudience
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Pre koho
+          cs: Pro koho
+          en: Audience
+          de: Zielgruppe
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.TourismDestinations/blob/master/Event/schema.json
+  url:
+    slot_uri: schema:url
+    description: >-
+      An http(s) link a person opens: the page of the event at its source, where they read more or
+      buy a ticket, else the organizer's page that lists its events.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Odkaz
+          cs: Odkaz
+          en: Link
+          de: Link
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/url
+  organizer:
+    slot_uri: schema:organizer
+    description: >-
+      Who runs the event: the museum, the school, the town or the named performer, never the feed or
+      the aggregator that announced it (that is `dataProvider`). Its name and its web site only, never
+      a person's e-mail or phone.
+    range: Organizer
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Organizátor
+          cs: Pořadatel
+          en: Organizer
+          de: Veranstalter
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/organizer
+  source:
+    slot_uri: sdm:source
+    description: The feed or the page the pipeline read the event from.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zdroj
+          cs: Zdroj
+          en: Source
+          de: Quelle
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  sourceId:
+    slot_uri: jc:sourceId
+    description: The event's own identifier at its source, so a record can be traced back.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Identifikátor v zdroji
+          cs: Identifikátor ve zdroji
+          en: Source id
+          de: Quell-ID
+      ngsi_ld_kind: Property
+  dataProvider:
+    slot_uri: sdm:dataProvider
+    description: Who announced the event (the town, the region, the cultural body), as the credit names it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Poskytovateľ
+          cs: Poskytovatel
+          en: Provider
+          de: Anbieter
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  locationPrecision:
+    slot_uri: jc:locationPrecision
+    description: >-
+      How close `location` is to the venue: `source` the publisher's own point, `building` the venue's building
+      (the address register or a venue checked against OpenStreetMap), `office` the organizer's or the town's
+      office standing in for a venue nobody placed, `centre` the town's centre. A map draws `office` and `centre`
+      as approximate.
+    range: LocationPrecision
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Presnosť polohy
+          cs: Přesnost polohy
+          en: Location precision
+          de: Genauigkeit des Orts
+      ngsi_ld_kind: Property
+  locationSource:
+    slot_uri: jc:locationSource
+    description: >-
+      Who placed `location`: `feed` the publisher, `register-adries`, `overpass`, `nominatim` or `hand` the venue
+      table's row (seeds/bbsk-events/venues.csv), `towns` the town table's office or centre.
+    range: string
+    pattern: ^(feed|register-adries|overpass|nominatim|hand|towns)$
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zdroj polohy
+          cs: Zdroj polohy
+          en: Location placed by
+          de: Ort bestimmt durch
+      ngsi_ld_kind: Property
+  areaServed:
+    slot_uri: sdm:areaServed
+    description: >-
+      The municipality the event or the venue belongs to, by its official name (`Detva`, `Košice`): the key a count or
+      a filter per town reads, on every event (DM-141).
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obec
+          cs: Obec
+          en: Municipality
+          de: Gemeinde
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models/blob/master/common-schema.json
+  refPointOfInterest:
+    slot_uri: sdm:refPointOfInterest
+    description: >-
+      The venue as a PointOfInterest of this space, when the venue table placed the event; every event held
+      there links the same one (DM-141).
+    range: PointOfInterest
+    inverse: venueEvents
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Miesto
+          cs: Místo
+          en: Place
+          de: Ort
+      ngsi_ld_kind: Relationship
+      upstream_source: https://github.com/smart-data-models/dataModel.TourismDestinations
+  venueEvents:
+    slot_uri: jc:venueEvents
+    description: The events held at this venue, computed from their refPointOfInterest and never stored.
+    range: Event
+    multivalued: true
+    inverse: refPointOfInterest
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Podujatia
+          cs: Akce
+          en: Events
+          de: Veranstaltungen
+      ngsi_ld_kind: Relationship
+  dateModified:
+    slot_uri: sdm:dateModified
+    description: When the source last changed the record.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zmenené
+          cs: Změněno
+          en: Modified
+          de: Geändert
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+
+classes:
+  Event:
+    class_uri: schema:Event
+    description: >-
+      One public event: its name, its start and a link are required (owner 2026-10-22); its place as a
+      GPS point is expected and filled from the source or the venue table, its organizer kept where the
+      source names one, the rest kept where the source gives it.
+    is_a: Entity
+    annotations:
+      upstream_source: https://schema.org/Event
+      # How the catalogue's table opens (DM-133, DM-134): the default filter shows as filled inputs
+      # the reader can clear, soonest first, 20 rows a page. A publisher edits these in the Portal.
+      view_order_by: startDate
+      view_filter: startDate>=today
+      view_page_length: 20
+      # What a reader reads first (owner 2026-10-22, T-5231): name, start, place, organizer; the
+      # rest is one tick away in the table and in the row card. The class label names the type.
+      view_columns: name,startDate,venue,organizer
+      label:
+        tag: label
+        value:
+          sk: Podujatie
+          cs: Akce
+          en: Event
+          de: Veranstaltung
+    slots:
+      - name
+      - startDate
+      - endDate
+      - location
+      - locationPrecision
+      - locationSource
+      - venue
+      - refPointOfInterest
+      - areaServed
+      - address
+      - category
+      - eventCategory
+      - audience
+      - categorySource
+      - description
+      - organizer
+      - url
+      - dataProvider
+      - source
+      - sourceId
+      - dateModified
+    slot_usage:
+      name:
+        required: true
+        rank: 1
+        annotations: { summary: true }
+      startDate:
+        required: true
+        rank: 2
+        annotations: { summary: true }
+      endDate: { rank: 3 }
+      location:
+        description: >-
+          Where the event takes place, a GeoJSON Point in WGS 84 inside the source's country (Czechia: longitude 12.0 to 18.9, latitude 48.5 to 51.1; Slovakia: longitude 16.8
+          to 22.6, latitude 47.7 to 49.7): the source's own point, the venue's building, else the
+          organizer's or the town's office or the town's centre, as `locationPrecision` says (owner 2026-10-21:
+          at least 90 % of events with a point).
+        rank: 4
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Poloha
+              cs: Poloha
+              en: Location
+              de: Standort
+            annotations: { generated: sk cs en de }
+          ngsi_ld_kind: GeoProperty
+          upstream_source: ETSI NGSI-LD core context v1.8
+      venue:
+        rank: 5
+        annotations: { summary: true }
+      address: { rank: 6 }
+      category:
+        rank: 7
+        annotations: { summary: true }
+      eventCategory: { rank: 10 }
+      audience: { rank: 11 }
+      categorySource: { rank: 12 }
+      organizer:
+        rank: 8
+        annotations: { summary: true }
+      url: { required: true, rank: 9 }
+  PointOfInterest:
+    class_uri: sdm:PointOfInterest
+    description: >-
+      One venue of the venue table (seeds/bbsk-events/venues.csv): a hall, a square, a museum where events take
+      place, one entity per real place (table rows of one name within 50 m are one venue), its id the OpenStreetMap
+      object of its building or a hash of its town, name and point (DM-141).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.PointOfInterest
+      view_columns: name,areaServed,address
+      label:
+        tag: label
+        value:
+          sk: Miesto konania
+          cs: Místo konání
+          en: Venue
+          de: Veranstaltungsort
+    slots: [name, location, address, areaServed, source, dataProvider, venueEvents]
+    slot_usage:
+      name: { required: true, description: The venue's name (`Dom kultúry A. Sládkoviča`). }
+      location:
+        required: true
+        description: The venue's building as a GeoJSON Point in WGS 84 inside the source's country.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Poloha
+              cs: Poloha
+              en: Location
+              de: Standort
+            annotations: { generated: sk cs en de }
+          ngsi_ld_kind: GeoProperty
+          upstream_source: ETSI NGSI-LD core context v1.8
+  PostalAddress:
+    class_uri: schema:PostalAddress
+    description: The value of `address`, never an entity of its own.
+    slots: [streetAddress, postalCode, addressLocality, addressRegion, addressCountry]
+  Organizer:
+    class_uri: schema:Organization
+    description: The value of `organizer`, never an entity of its own.
+    slots: [name, url]
+    slot_usage:
+      name:
+        required: true
+        description: The organizer's name as the source writes it (`Stredoslovenské múzeum`).
+      url:
+        description: The organizer's own web site, when the source names it.
+
+enums:
+  LocationPrecision:
+    description: How close an event's point is to its venue; office and centre are approximate.
+    permissible_values:
+      source:
+        description: The point the publisher gives.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Podľa zdroja
+              cs: Podle zdroje
+              en: From the source
+              de: Laut Quelle
+      building:
+        description: The venue's building.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Budova
+              cs: Budova
+              en: Building
+              de: Gebäude
+      office:
+        description: The organizer's or the town's office, approximate.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Približne, úrad
+              cs: Přibližně, úřad
+              en: Approximate, office
+              de: Ungefähr, Amt
+      centre:
+        description: The town's centre, approximate.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Približne, stred obce
+              cs: Přibližně, střed obce
+              en: Approximate, town centre
+              de: Ungefähr, Ortsmitte
+  EventCategory:
+    description: The main event categories of the platform, with labels in sk, cs, en and de.
+    permissible_values:
+      sport:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Šport
+              cs: Sport
+              en: Sport
+              de: Sport
+      outdoor-nature:
+        description: Smart Data Models category outdoorActivities, excursion.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Príroda a turistika
+              cs: Příroda a turistika
+              en: Outdoors and nature
+              de: Natur und Wandern
+      film:
+        description: Smart Data Models category spectacle.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Film
+              cs: Film
+              en: Film
+              de: Film
+      theatre-dance:
+        description: Smart Data Models category spectacle.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Divadlo a tanec
+              cs: Divadlo a tanec
+              en: Theatre and dance
+              de: Theater und Tanz
+      music:
+        description: Smart Data Models category spectacle.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Hudba
+              cs: Hudba
+              en: Music
+              de: Musik
+      festival-fair:
+        description: Smart Data Models category spectacle.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Festivaly a jarmoky
+              cs: Festivaly a jarmarky
+              en: Festivals and fairs
+              de: Feste und Jahrmärkte
+      food-market:
+        description: Smart Data Models category gastronomy, shopping.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Gastronómia a trhy
+              cs: Gastronomie a trhy
+              en: Food and markets
+              de: Essen und Märkte
+      exhibition-museum:
+        description: Smart Data Models category museum.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Výstavy a múzeá
+              cs: Výstavy a muzea
+              en: Exhibitions and museums
+              de: Ausstellungen und Museen
+      history-heritage:
+        description: Smart Data Models category history.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: História a pamiatky
+              cs: Historie a památky
+              en: History and heritage
+              de: Geschichte und Denkmäler
+      faith-tradition:
+        description: Smart Data Models category religiousWorship.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Viera a tradície
+              cs: Víra a tradice
+              en: Faith and traditions
+              de: Glaube und Brauchtum
+      education-talk:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Vzdelávanie a prednášky
+              cs: Vzdělávání a přednášky
+              en: Education and talks
+              de: Bildung und Vorträge
+      children-family:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Deti a rodina
+              cs: Děti a rodina
+              en: Children and family
+              de: Kinder und Familie
+      hobby-workshop:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Hobby a tvorivé dielne
+              cs: Hobby a tvořivé dílny
+              en: Hobbies and workshops
+              de: Hobby und Workshops
+      health-wellness:
+        description: Smart Data Models category wellness.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Zdravie a wellness
+              cs: Zdraví a wellness
+              en: Health and wellness
+              de: Gesundheit und Wellness
+      community-civic:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Komunita a samospráva
+              cs: Komunita a samospráva
+              en: Community and civic life
+              de: Gemeinschaft und Bürgerleben
+      other:
+        description: No other code fits; only the decision model gives it, never the rule table.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Iné
+              cs: Jiné
+              en: Other
+              de: Sonstiges
+  EventAudience:
+    description: The Smart Data Models Event audience codes the pipelines write.
+    permissible_values:
+      children:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Deti
+              cs: Děti
+              en: Children
+              de: Kinder
+      family:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Rodiny
+              cs: Rodiny
+              en: Families
+              de: Familien

@@ -1,0 +1,15 @@
+# The extract, its fonts and sprites. Kept when the release goes: a re-download is gigabytes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "tiles.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tiles.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.storage | quote }}

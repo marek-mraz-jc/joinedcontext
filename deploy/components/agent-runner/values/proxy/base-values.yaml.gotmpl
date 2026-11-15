@@ -1,0 +1,127 @@
+---
+{{- $thisProxy := index .Values "agent-runner" "proxy" -}}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /healthz
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required -> no API token
+# - [x] Named ports -> 8080 container mapped to 8080 service
+# - [ ] Ingress with TLS -> not applicable, reached from the Portal alone
+
+fullnameOverride: agent-proxy
+nameOverride: agent-runner-proxy
+
+{{- $images := index .Values.images "agent-runner" "proxy" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+# The image's entrypoint is the gateway; the proxy is the binary beside it.
+command:
+  - /usr/local/bin/jc-agent-proxy
+
+containerPort: 8080
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  name: http
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 5
+
+# Every credential the proxy holds, and none of them reaches a workspace (AG-50): its Keycloak
+# client is proved by the pod's projected token (PF-47, T-2868; JC_OIDC_CLIENT_ASSERTION_FILE
+# below), the forge token is minted by the forge's bootstrap Job, the model key is the
+# operator's.
+envSecret:
+  JC_MODEL_KEY:
+    secret: {{ $thisProxy.modelKeySecret }}
+    key: key
+{{- if has "gitea" .Values.components }}
+  # ponytail: the Portal's own forge token, until the bootstrap Job mints one per consumer;
+  # a `static` run commits through the Portal and never through this route.
+  JC_FORGE_TOKEN:
+    secret: gitea-token-portal
+    key: token
+{{- end }}
+
+env:
+  JC_PROXY_BIND: "0.0.0.0:8080"
+  # The Portal's internal listener (AG-52): the run behind a ticket, and the events a run
+  # posts. Port 9090, which the edge does not route.
+  JC_PORTAL_BASE: "http://portal.{{ .Values.portal.portal.namespace }}.svc.cluster.local:9090"
+  JC_GATEWAY_BASE: "http://context-gateway.{{ index .Values "context-gateway" "gateway" "namespace" }}.svc.cluster.local:8080"
+{{- if has "gitea" .Values.components }}
+  JC_FORGE_BASE: "http://gitea-http.{{ .Values.gitea.forge.namespace }}.svc.cluster.local:3000"
+  JC_FORGE_REPO: "{{ $global.configRepo.owner }}/{{ $global.configRepo.name }}"
+{{- end }}
+  JC_OIDC_ISSUER: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}"
+  JC_OIDC_CLIENT_ASSERTION_FILE: /var/run/secrets/jc/keycloak/token
+  # Where this proxy asks for a token, which is not the issuer: the issuer is the address a browser
+  # uses, and a pod cannot dial its own cluster's ingress hostname (T-2272). Every token this proxy
+  # mints goes through here — the endpoint tokens of a run, and its own for the Portal's internal
+  # listener (T-2271).
+  JC_OIDC_TOKEN_URL: "http://keycloak-app-keycloakx-http.{{ .Values.keycloak.app.namespace }}.svc.cluster.local:80{{ .Values.keycloak.app.pathPrefix | trimSuffix "/" }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/token"
+  JC_OIDC_CLIENT_ID: "{{ $thisProxy.project }}-agent-proxy"
+  JC_MODEL_BASE: {{ $thisProxy.modelBase | quote }}
+  JC_MODEL_PROVIDER: {{ $thisProxy.modelProvider | quote }}
+  JC_MODEL_PROBE_SECS: {{ $thisProxy.modelProbeSecs | default 900 | quote }}
+  JC_DAILY_TOKENS_ASSISTANT: {{ $thisProxy.dailyTokens.assistant | default 0 | int64 | quote }}
+  JC_DAILY_TOKENS_APP_BUILDER: {{ $thisProxy.dailyTokens.appBuilder | default 0 | int64 | quote }}
+  JC_DAILY_TOKENS_OTHER: {{ $thisProxy.dailyTokens.other | default 0 | int64 | quote }}
+  JC_DAILY_TOKENS_PER_PERSON: {{ $thisProxy.dailyTokens.perPerson | default 0 | int64 | quote }}
+  # A run's ticket is honoured from the run's own workspace (`agent-run-{id}`) or the Portal's
+  # workload alone, by the caller's Linkerd identity (F-PLT1-008): a ticket copied out of a run
+  # works from no other pod. Off only where there is no mesh to name the caller.
+  JC_REQUIRE_MESH_IDENTITY: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") | quote }}
+  JC_PROXY_PORTAL_IDENTITY: "portal.{{ .Values.portal.portal.namespace }}"
+  # A run's data credential is honoured from the jc-functions workload alone, named with its
+  # namespace: an account of that name in any other namespace is another workload (F-17).
+  JC_PROXY_FUNCTIONS_IDENTITY: "jc-functions.{{ .Values.functions.runtime.namespace }}"
+
+# The token endpoint on the cluster's public host and the model provider are both the
+# proxy's own TLS to hosts outside the mesh, the hop the Portal's values describe: 443 leaves
+# the outbound redirect, every in-cluster call stays meshed.
+podAnnotations:
+  config.linkerd.io/skip-outbound-ports: "443"
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+
+# The token the `{project}-agent-proxy` client proves itself with (PF-47, T-2868): this pod's
+# ServiceAccount, bound to the realm as its audience so it opens nothing else, ten minutes long;
+# the kubelet renews it in place and the proxy reads it again at every realm call.
+extraVolumes:
+  - name: keycloak-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            audience: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}"
+            expirationSeconds: 600
+            path: token
+
+extraVolumeMounts:
+  - { name: keycloak-token, mountPath: /var/run/secrets/jc/keycloak, readOnly: true }

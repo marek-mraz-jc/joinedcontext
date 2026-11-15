@@ -1,0 +1,142 @@
+{{- /*
+  The API token `jcctl publish ckan` and the reconciler publish with (T-0493, EP-62, EP-67).
+  CKAN mints an API token and shows it once, so the secrets component can neither generate it
+  nor read it back: this Job keeps the Secret as the record. A token in it that still
+  authenticates as the site administrator is left alone; anything else is revoked by name and
+  replaced. Running it twice is a no-op, running it after a restore is the repair.
+
+  It logs in the way a person does (session + CSRF) on the catalogue's own Service, because
+  CKAN 2.11 has no password grant for its API and the CLI would need the database, Solr and
+  Redis. That is one peer on port 5000 beside the edge, instead of three.
+*/}}
+{{- if .Values.apiToken.enabled }}
+{{- $part := "api-token" }}
+{{- $full := include "ckan.fullname" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $full }}-{{ $part }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ckan.labels" (dict "root" . "part" $part) | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $full }}-{{ $part }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ckan.labels" (dict "root" . "part" $part) | nindent 4 }}
+rules:
+  # The one Secret it writes, by name: the namespace also holds the database credentials and
+  # the administrator password this Job signs in with.
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [{{ .Values.apiToken.secret | quote }}{{ if .Values.harvest.sources }}, {{ .Values.apiToken.harvestSecret | quote }}{{ end }}]
+    verbs: [get, update]
+  # `create` takes no `resourceNames`: the object does not exist yet on a first install.
+  - apiGroups: ['']
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $full }}-{{ $part }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ckan.labels" (dict "root" . "part" $part) | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $full }}-{{ $part }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $full }}-{{ $part }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $full }}-{{ $part }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ckan.labels" (dict "root" . "part" $part) | nindent 4 }}
+  annotations:
+    # A Job's pod template is immutable, so it is recreated on every apply; that is also what
+    # makes it the convergence step.
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "ckan.selectorLabels" (dict "root" . "part" $part) | nindent 8 }}
+      annotations:
+        security.joinedcontext.com/api-access-reason: >-
+          Catalogue API token: writes the token it mints in CKAN into the one Secret its Role
+          names, which is the only way a token minted at run time reaches the publisher.
+        {{- if .Values.serviceMesh.enabled }}
+        # Told to exit with the script, or the pod stays Running and the Job never completes.
+        linkerd.io/inject: enabled
+        config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+        {{- end }}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ $full }}-{{ $part }}
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api-token
+          # CKAN's own image: it is already pinned and carries python3, and nothing else here
+          # needs a tool.
+          image: {{ include "ckan.image" .Values.ckan.image }}
+          imagePullPolicy: {{ .Values.ckan.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 96Mi }
+          env:
+            - name: CATALOGUE
+              value: {{ printf "%s.%s.svc.cluster.local" $full .Release.Namespace | quote }}
+            - name: TOKEN_SECRET
+              value: {{ .Values.apiToken.secret | quote }}
+            - name: TOKEN_NAME
+              value: {{ .Values.apiToken.name | quote }}
+            {{- if .Values.harvest.sources }}
+            # The organizations the harvests write, created here, and the harvest user's token.
+            {{- $orgs := list }}
+            {{- range .Values.harvest.sources }}
+            {{- $orgs = append $orgs (dict "name" .organization "title" .publisherName "description" (.publisherDescription | default "")) }}
+            {{- end }}
+            - name: HARVEST_ORGS
+              value: {{ $orgs | toJson | quote }}
+            - name: HARVEST_SECRET
+              value: {{ .Values.apiToken.harvestSecret | quote }}
+            - name: HARVEST_USER
+              value: {{ .Values.apiToken.harvestUser | quote }}
+            {{- end }}
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
+            - name: ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.admin.name }}
+                  key: {{ .Values.secrets.admin.userKey }}
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.admin.name }}
+                  key: {{ .Values.secrets.admin.passwordKey }}
+          command: [python3, -c]
+          args:
+            - {{ .Files.Get "files/api-token.py" | toJson }}
+{{- end }}

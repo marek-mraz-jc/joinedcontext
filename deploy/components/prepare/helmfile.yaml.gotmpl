@@ -1,0 +1,146 @@
+---
+bases:
+  - "../../defaults/helm-defaults.yaml"
+---
+{{- $componentData := (readFile "./component.yaml" | fromYaml) }}
+
+{{- $root := .Values }}
+{{- $component := $componentData.component }}
+
+
+{{- $layer := $root.deployLayer | default "" }}
+{{/* Check for supported deploy layers:
+      - "" (legacy single-instance, manage everynamespace)
+      - "operators" (only the shared operator namespace)"
+      - instance" (everything except operators) */}}
+{{- if and (ne $layer "") (ne $layer "operators") (ne $layer "instance") }}
+  {{- fail (printf "prepare: unsupported deployLayer %q (expected \"\", \"operators\" or \"instance\")" $layer) }}
+{{- end }}
+{{/* Effective shared-operator namespace. Mirrors jc.operatorNamespaceConfigured
+     (defaults/environment/_helpers.tpl); state files cannot use that helper, so the
+     "jc-operators" default is repeated here — keep both in sync. */}}
+{{- $opNs := ($root.global.operators | default dict).namespace | default "" }}
+{{- if and (eq $opNs "") (ne $layer "") }}{{- $opNs = "jc-operators" }}{{- end }}
+{{- $managedNamespaces := dict }}
+{{- range $component := ($root.components | default list) }}
+  {{- if ne $component "namespaces" }}
+    {{- $componentValues := index $root $component | default dict }}
+    {{- if eq (len $componentValues) 0 }}
+      {{- range $rootKey, $rootVal := $root }}
+        {{- if and (kindIs "map" $rootVal) (eq ($rootKey | kebabcase) ($component | kebabcase)) }}
+          {{- $componentValues = $rootVal }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- range $partName, $partValues := $componentValues }}
+      {{- if and (kindIs "map" $partValues) (hasKey $partValues "namespace") (or (not (hasKey $partValues "enabled")) (index $partValues "enabled")) }}
+        {{- $namespace := index $partValues "namespace" }}
+        {{/* In the shared-operator model, only manage the operator namespace in the operators
+             layer and exclude it from the instance layer. With no operator namespace set
+             (legacy single-instance mode) every namespace is managed as before. */}}
+        {{- $isOpNs := and (ne $opNs "") (eq $namespace $opNs) }}
+        {{- $keep := true }}
+        {{- if eq $layer "operators" }}{{- $keep = $isOpNs }}{{- end }}
+        {{- if eq $layer "instance" }}{{- $keep = (not $isOpNs) }}{{- end }}
+        {{- if and $namespace $keep }}
+          {{- $_ := set $managedNamespaces $namespace true }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $namespaceNames := keys $managedNamespaces | sortAlpha }}
+{{- $linkerdEnabled := and ($root.global.serviceMesh.enable | default false) (eq ($root.global.serviceMesh.type | default "") "linkerd") }}
+{{- $createNamespaces := $root.global.createNamespaces | default false }}
+{{- $patchNamespaces := and ($root.global.serviceMesh.enable | default false) ($root.global.serviceMesh.patchNamespaces | default false) }}
+{{- $defaultInboundPolicy := $root.global.serviceMesh.defaultInboundPolicy | default "" }}
+{{/* The injected proxy's requests and memory limit as namespace annotations (T-5554): the
+     Linkerd control plane is the kit's, so the namespace is where this deployment sets them. */}}
+{{- $proxyResources := $root.global.serviceMesh.proxyResources | default dict }}
+{{- $proxyAnnotations := "" }}
+{{- range $key, $annotation := dict "cpuRequest" "proxy-cpu-request" "memoryRequest" "proxy-memory-request" "memoryLimit" "proxy-memory-limit" }}
+  {{- $value := index $proxyResources $key | default "" | toString }}
+  {{- if $value }}
+    {{- if not (regexMatch "^[0-9]+(\\.[0-9]+)?(m|Ki|Mi|Gi)?$" $value) }}
+      {{- fail (printf "prepare: global.serviceMesh.proxyResources.%s %q is not a Kubernetes quantity (for example 10m or 64Mi)" $key $value) }}
+    {{- end }}
+    {{- $proxyAnnotations = printf "%s config.linkerd.io/%s=%s" $proxyAnnotations $annotation $value }}
+  {{- else }}
+    {{- /* Emptied: remove what an earlier apply wrote, so Linkerd's own default applies again. */}}
+    {{- $proxyAnnotations = printf "%s config.linkerd.io/%s-" $proxyAnnotations $annotation }}
+  {{- end }}
+{{- end }}
+{{/* Distribute the in-cluster self-signed CA as `custom-ca-cert` whenever the
+     self-signed issuer is in use */}}
+{{- $isSelfSignedCa := eq ($root.global.ingress.clusterIssuer | default "") "selfsigned-ca" }}
+
+hooks:
+  - events: ["prepare"]
+    showlogs: true
+    command: sh
+    args:
+      - -ec
+      - |
+        set -eu
+        # stderr into the hook log: a kubectl refusal is otherwise an exit code with no words
+        # (deployment-variants 0,1,1, ci-full 34786322385).
+        exec 2>&1
+        cmd="{{`{{ .HelmfileCommand }}`}}"
+        if [ "$cmd" != "sync" ] && [ "$cmd" != "apply" ]; then
+          echo "Skipping prepare hook for helmfile command: $cmd"
+          exit 0
+        fi
+        # just dev-apply-pins (T-6155): a pin-only sync moves no namespace and no annotation
+        if [ "${JC_PREPARE_SKIP:-}" = pins ]; then
+          echo "Skipping prepare hook: a pin-only sync changes no namespace"
+          exit 0
+        fi
+        {{- if gt (len $namespaceNames) 0 }}
+        {{- range $ns := $namespaceNames }}
+        {{- if $createNamespaces }}
+        kubectl get namespace {{ $ns | quote }} >/dev/null 2>&1 || kubectl create namespace {{ $ns | quote }}
+        echo "Ensured namespace {{ $ns | quote }} exists."
+        {{- end }}
+        {{- if $patchNamespaces }}
+        {{- if $linkerdEnabled }}
+        {{- if $defaultInboundPolicy }}
+        # Injection and the inbound policy in one write: Kyverno's
+        # require-meshed-namespace-inbound-policy refuses a namespace marked for injection without
+        # the policy, so injection alone first was refused on a new namespace (ci-full 36096443083).
+        kubectl annotate namespace {{ $ns | quote }} linkerd.io/inject=enabled config.linkerd.io/default-inbound-policy={{ $defaultInboundPolicy | quote }}{{ $proxyAnnotations }} --overwrite
+        echo "Patched namespace {{ $ns | quote }} for Linkerd injection with default-inbound-policy={{ $defaultInboundPolicy }}."
+        {{- else }}
+        kubectl annotate namespace {{ $ns | quote }} linkerd.io/inject=enabled{{ $proxyAnnotations }} --overwrite
+        echo "Patched namespace {{ $ns | quote }} for Linkerd injection."
+        kubectl annotate namespace {{ $ns | quote }} config.linkerd.io/default-inbound-policy-
+        echo "Cleared Linkerd default-inbound-policy on namespace {{ $ns | quote }}."
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- if $isSelfSignedCa }}
+        if kubectl get secret ca-secret -n cert-manager -o jsonpath='{.data.tls\.crt}' >/dev/null 2>&1; then
+          CA_CERT=$(kubectl get secret ca-secret -n cert-manager -o jsonpath='{.data.tls\.crt}')
+          {{- range $ns := $namespaceNames }}
+          kubectl apply -f - <<EOF
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: custom-ca-cert
+          namespace: {{ $ns }}
+        type: Opaque
+        data:
+          ca.crt: ${CA_CERT}
+        EOF
+          echo "Distributed CA certificate to namespace {{ $ns | quote }}."
+          {{- end }}
+        else
+          echo "No access to ca-secret in cert-manager namespace. Skipping CA certificate distribution."
+        fi
+        {{- end }}
+        {{- else }}
+        echo "No namespaces configured."
+        {{- end }}
+
+commonLabels:
+  component: {{ $component }}

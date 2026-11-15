@@ -1,0 +1,16 @@
+---
+# Checklist:
+# - [x] Resources (requests and limits): README.md section 4 (measured); the CPU limit is the
+#   ONNX Runtime thread count (`threads`), the model runs one text at a time
+# - [x] 1 Replica: one model, one queue, so a question goes before every passage of every
+#   deployment; a second replica halves neither (README.md section 4)
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: '2'
+    memory: 768Mi

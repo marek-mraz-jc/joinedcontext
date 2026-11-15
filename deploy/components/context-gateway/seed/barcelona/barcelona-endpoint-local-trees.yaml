@@ -1,0 +1,53 @@
+# The city's trees of local interest as one public dataset (T-5413): the 208 trees Barcelona protects
+# for their age, size or history as Smart Data Models PointOfInterest, refreshed weekly from Open Data BCN.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: local-trees
+  namespace: barcelona
+  title:
+    ca: Arbres d'interès local de Barcelona
+    es: Árboles de interés local de Barcelona
+    en: Barcelona trees of local interest
+  description:
+    ca: "Els arbres d'interès local de Barcelona, protegits per la seva edat, mida o història: el nom (espècie i lloc), l'adreça, el districte i el punt. Font: Open Data BCN, CC BY 4.0."
+    es: 'Los árboles de interés local de Barcelona, protegidos por su edad, tamaño o historia: el nombre (especie y lugar), la dirección, el distrito y el punto. Fuente: Open Data BCN, CC BY 4.0.'
+    en: 'The trees of local interest of Barcelona, protected for their age, size or history: the name (species and place), the address, the district and the point. Source: Open Data BCN, CC BY 4.0.'
+spec:
+  contextSpaceRef: barcelona
+  slug: kxklwmn7xk6rfp3suzdp2cqgsajjlf3z
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-local-trees
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [ENVI]
+    keywords:
+      ca: [arbres, patrimoni natural, espais verds]
+      es: [árboles, patrimonio natural, espacios verdes]
+      en: [trees, natural heritage, green spaces]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: WEEKLY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/arbres-interes-local
+        title: { ca: Arbres d'interès local, en: Trees of local interest }
+        description:
+          ca: Els arbres d'interès local de la ciutat de Barcelona, CC BY 4.0.
+          en: The trees of local interest of the city of Barcelona, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: local-trees }

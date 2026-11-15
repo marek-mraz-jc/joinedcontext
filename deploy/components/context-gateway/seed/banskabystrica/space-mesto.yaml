@@ -1,0 +1,36 @@
+# What the city's publishers published, as they published it. The city's own registers and the
+# national cubes sliced to the city's LAU code SK0321508438; the indicators computed from them
+# live next door in `banskabystrica-kpi` and never here (PF-54).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: banskabystrica-mesto
+  namespace: banskabystrica
+  title:
+    sk: Banská Bystrica — zdrojové údaje
+    en: Banská Bystrica, raw data
+  description:
+    sk: Riadky otvorených dát pre mesto Banská Bystrica, tak ako ich publikovalo mesto a ŠÚ SR.
+    en: Open data rows for the city of Banská Bystrica, as the city and ŠÚ SR published them.
+spec:
+  urnSegment: banskabystrica-mesto
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: statistical-observation }
+  defaultLocale: sk
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: KeyPerformanceIndicator
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        dataSet: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        dimensionKey: { record: onChange, heartbeat: P7D }
+        indicator: { record: onChange, heartbeat: P7D }
+        refArea: { record: onChange, heartbeat: P7D }
+        refPeriod: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        unitText: { record: onChange, heartbeat: P7D }

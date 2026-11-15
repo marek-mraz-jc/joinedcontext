@@ -1,0 +1,24 @@
+# One KeyPerformanceIndicator per row of "Pohyb obyvateľstva v okresoch (1996 - 2024)" (T-4255); one row per area (and year).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-pohyb-obyvatelstva-v-okresoch
+  namespace: bbsk
+  title:
+    sk: Pohyb obyvateľstva v okresoch (1996 - 2024)
+    en: Pohyb obyvateľstva v okresoch (1996 - 2024)
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 32 2 1 * *
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-pohyb-obyvatelstva-v-okresoch
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: KeyPerformanceIndicator
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

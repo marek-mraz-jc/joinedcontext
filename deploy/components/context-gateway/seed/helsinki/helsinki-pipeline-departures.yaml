@@ -1,0 +1,22 @@
+# The next five departures of 231 stops and platforms, from HSL's GTFS-RT trip updates every 30 s,
+# written onto each GtfsStop (T-3891). The stops' static half comes from transit-stops once a day;
+# the upsert updates the one attribute and leaves the rest.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: hsl-departures
+  namespace: helsinki
+  title:
+    en: HSL departures of the busiest stops, every 30 s
+spec:
+  class: auto
+  period: 30s
+  source:
+    dataSourceRef: { kind: DataSource, name: hsl-trip-updates }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: GtfsStop, mode: upsert }
+  quotas:
+    # The day's feed decoded is about 5 MB of JSON; measured locally under 64 MB over Bento's
+    # baseline (see the README's GTFS-RT section).
+    maxMemoryMb: 128
+    cpuMillicores: 250

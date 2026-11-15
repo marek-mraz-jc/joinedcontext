@@ -1,0 +1,20 @@
+# The City of Helsinki's utility and service properties in its energy management service (Nuuka):
+# 1,810 rows, 1,073 distinct locations, each with its name and property code. The list is the first
+# read of the service-property-energy pipeline, which then asks each location's monthly use. No key.
+# CC-BY-4.0, read from the HRI catalogue (package
+# helsingin-kaupungin-palvelukiinteistojen-energiankulutustietoja). T-5278.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-nuuka-properties
+  namespace: helsinki
+  title:
+    en: Service properties of the City of Helsinki (Nuuka energy data)
+    fi: Helsingin kaupungin palvelukiinteistöt (Nuuka-energiatiedot)
+spec:
+  type: http
+  http:
+    url: https://helsinki-openapi.nuuka.cloud/api/v1.0/Property/List
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

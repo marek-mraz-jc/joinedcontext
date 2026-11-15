@@ -1,0 +1,17 @@
+# One AdministrativeArea per record of `hel-voting-districts`, written into the city space (T-5256).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: voting-districts
+  namespace: helsinki
+  title: { en: Voting districts }
+spec:
+  class: auto
+  # The city redraws the voting districts before an election at most; weekly is already more than it needs.
+  period: 168h
+  schedule: '0 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-voting-districts }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: AdministrativeArea, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

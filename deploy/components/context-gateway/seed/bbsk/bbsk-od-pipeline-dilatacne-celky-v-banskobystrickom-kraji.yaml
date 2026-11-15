@@ -1,0 +1,24 @@
+# One RoadStructure per row of "Dilatačné celky v Banskobystrickom kraji (public view)" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-dilatacne-celky-v-banskobystrickom-kraji
+  namespace: bbsk
+  title:
+    sk: Dilatačné celky v Banskobystrickom kraji (public view)
+    en: Dilatačné celky v Banskobystrickom kraji (public view)
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 42 1 * * 6
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-dilatacne-celky-v-banskobystrickom-kraji
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: RoadStructure
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

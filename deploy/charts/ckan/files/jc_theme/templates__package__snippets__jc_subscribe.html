@@ -1,0 +1,27 @@
+{# "Odoberať": the dataset's calendar and its feed outputs, grouped as Calendar and News (EP-125,
+   EP-150, T-5203). Nothing for a dataset whose items do not appear over time. A <details> opens
+   and closes with the keyboard and a screen reader without a script. #}
+{% if subscriptions.calendar or subscriptions.news %}
+<details class="jc-subscribe">
+  <summary class="btn btn-default">{{ h.jc_t('subscribe') }}</summary>
+  <div class="jc-subscribe-menu">
+    {% if subscriptions.calendar %}
+    <p class="jc-subscribe-group" id="jc-subscribe-calendar">{{ h.jc_t('subscribe_calendar') }}</p>
+    <ul aria-labelledby="jc-subscribe-calendar">
+      {% for item in subscriptions.calendar %}
+      <li><a href="{{ item.url | replace('https://', 'webcal://', 1) }}">{{ item.name }}</a> · <a href="{{ item.url }}" type="{{ item.mimetype }}">.ics</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if subscriptions.news %}
+    <p class="jc-subscribe-group" id="jc-subscribe-news">{{ h.jc_t('subscribe_news') }}</p>
+    <ul aria-labelledby="jc-subscribe-news">
+      {% for item in subscriptions.news %}
+      <li><a href="{{ item.url }}" type="{{ item.mimetype }}">{{ item.name }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <p class="jc-subscribe-hint">{{ h.jc_t('subscribe_hint') }}</p>
+  </div>
+</details>
+{% endif %}

@@ -1,0 +1,234 @@
+{
+ "count": 10,
+ "next": null,
+ "previous": null,
+ "results": {
+  "type": "FeatureCollection",
+  "features": [
+   {
+    "type": "Feature",
+    "id": 100016107,
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      24.893665910203715,
+      60.16150150968766
+     ]
+    },
+    "properties": {
+     "id": 100016107,
+     "name": "Lauttasaaren silta etelä",
+     "source": "EcoCounter",
+     "sourceId": 100016107,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   },
+   {
+    "type": "Feature",
+    "id": 300060423,
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      24.893665910203715,
+      60.16150150968766
+     ]
+    },
+    "properties": {
+     "id": 300060423,
+     "name": "Formula : Lauttasaaren silta etelä",
+     "source": "EcoCounter",
+     "sourceId": 300060423,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   },
+   {
+    "type": "Feature",
+    "id": 100010338,
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      0.0,
+      0.0
+     ]
+    },
+    "properties": {
+     "id": 100010338,
+     "name": "Vaihtolaskin Zelt GW 02",
+     "source": "EcoCounter",
+     "sourceId": 100010338,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   },
+   {
+    "type": "Feature",
+    "id": 100133755,
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      24.799972156986225,
+      60.17491800326973
+     ]
+    },
+    "properties": {
+     "id": 100133755,
+     "name": "Espoonlahti_Clone",
+     "source": "EcoCounter",
+     "sourceId": 100133755,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   },
+   {
+    "type": "Feature",
+    "id": 100020820,
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      24.9939792690277,
+      60.1855357884049
+     ]
+    },
+    "properties": {
+     "id": 100020820,
+     "name": "Kulosaaren silta et.",
+     "source": "EcoCounter",
+     "sourceId": 100020820,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   },
+   {
+    "type": "Feature",
+    "id": 100016673,
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      24.938332378733325,
+      60.16958184935728
+     ]
+    },
+    "properties": {
+     "id": 100016673,
+     "name": "2_Forumin tunneli",
+     "source": "EcoCounter",
+     "sourceId": 100016673,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   },
+   {
+    "type": "Feature",
+    "id": 100016670,
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      24.94723,
+      60.16716
+     ]
+    },
+    "properties": {
+     "id": 100016670,
+     "name": "5_Eteläesplanadi",
+     "source": "EcoCounter",
+     "sourceId": 100016670,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   },
+   {
+    "type": "Feature",
+    "id": 300048239,
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      24.92606,
+      60.16933
+     ]
+    },
+    "properties": {
+     "id": 300048239,
+     "name": "Baana",
+     "source": "EcoCounter",
+     "sourceId": 300048239,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   },
+   {
+    "type": "Feature",
+    "id": 100008544,
+    "geometry": null,
+    "properties": {
+     "id": 100008544,
+     "name": "Munkkiniemi ET",
+     "source": "EcoCounter",
+     "sourceId": 100008544,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   },
+   {
+    "type": "Feature",
+    "id": 100008545,
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      60.19607,
+      24.887291
+     ]
+    },
+    "properties": {
+     "id": 100008545,
+     "name": "Munkkiniemi PO",
+     "source": "EcoCounter",
+     "sourceId": 100008545,
+     "classifying": true,
+     "crsEpsg": 4326,
+     "municipalityCode": "091",
+     "dataReceived": false,
+     "firstStoredObservation": null,
+     "lastStoredObservation": null
+    }
+   }
+  ]
+ }
+}

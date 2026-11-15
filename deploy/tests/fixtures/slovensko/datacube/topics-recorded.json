@@ -1,0 +1,324 @@
+{
+ "as1001rs": {
+  "theme": "as",
+  "update": "2025-12-19",
+  "cells": 1050,
+  "sk": "Obyvateľstvo a charakteristiky veku",
+  "en": "Population and attributes of age"
+ },
+ "cr1004rs": {
+  "theme": "cr",
+  "update": "2026-02-11",
+  "cells": 54,
+  "sk": "Návštevníci v ubytovacích zariadeniach podľa hustoty osídlenia- ročné údaje",
+  "en": "Visitors in accommodation establishments of tourism by population density - yearly data"
+ },
+ "cr1804rs": {
+  "theme": "cr",
+  "update": "2026-06-25",
+  "cells": 624,
+  "sk": "Počet prenocovaní - ročne",
+  "en": "Number of nights spent - yearly"
+ },
+ "do1007rs": {
+  "theme": "do",
+  "update": "2025-10-31",
+  "cells": 9072,
+  "sk": "Cestná doprava - nákladná a osobná",
+  "en": "Road transport - transport of goods and transport of passengers"
+ },
+ "do1012rs": {
+  "theme": "do",
+  "update": "2025-10-31",
+  "cells": 2772,
+  "sk": "Cestná doprava - infraštruktúra, motorové vozidlá, nehody",
+  "en": "Road transport - the infrastructure, motor vehicles, traffic accidents"
+ },
+ "en1001ms": {
+  "theme": "en",
+  "update": "2026-08-31",
+  "cells": 1911,
+  "sk": "Zdroje elektriny v GWh",
+  "en": "Sources of Electricity in GWh"
+ },
+ "ik1001rs": {
+  "theme": "ik",
+  "update": "2025-10-31",
+  "cells": 484,
+  "sk": "Vybrané ukazovatele za telekomunikácie",
+  "en": "Selected indicators for telecommunications"
+ },
+ "kp0003qs": {
+  "theme": "kp",
+  "update": "2026-07-30",
+  "cells": 3808,
+  "sk": "Konjunkturálny prieskum v priemysle (štvrťročný)",
+  "en": "Industrial confidence indicator (quarterly)"
+ },
+ "kp0022ms": {
+  "theme": "kp",
+  "update": "2026-08-28",
+  "cells": 2160,
+  "sk": "Indikátor ekonomického sentimentu",
+  "en": "Economic Sentiment Indicator"
+ },
+ "ku3802rr": {
+  "theme": "ku",
+  "update": "2025-12-16",
+  "cells": 2340,
+  "sk": "Repertoár a návštevníci subjektov profesionálneho scénického umenia (od roku 2021) - ročne",
+  "en": "Repertory and attendance of subjects of professional performing arts (since 2021) - yearly"
+ },
+ "kz1001rs": {
+  "theme": "kz",
+  "update": "2026-05-29",
+  "cells": 126,
+  "sk": "Medián ekvivalentného čistého príjmu",
+  "en": "Median equivalised net income"
+ },
+ "kz1016rs": {
+  "theme": "kz",
+  "update": "2026-05-29",
+  "cells": 264,
+  "sk": "Zdravé roky života a Stredná dĺžka života",
+  "en": "Healthy Life Years and Life expectancy"
+ },
+ "np3112qr": {
+  "theme": "np",
+  "update": "2026-09-02",
+  "cells": 4914,
+  "sk": "Priemerná mzda v hospodárstve SR",
+  "en": "Average wage in the economy of the SR"
+ },
+ "nu0001qs": {
+  "theme": "nu",
+  "update": "2026-08-14",
+  "cells": 128,
+  "sk": "Rýchly odhad HDP a zamestnanosti podľa ESA 2010",
+  "en": "Flash estimate of GDP and Total employment according to ESA 2010"
+ },
+ "nu0005qs": {
+  "theme": "nu",
+  "update": "2026-09-04",
+  "cells": 4480,
+  "sk": "Štvrťročné údaje HDP podľa odvetví v bežných cenách",
+  "en": "Quarterly GDP data by industry at current prices"
+ },
+ "ob0004ms": {
+  "theme": "ob",
+  "update": "2026-09-04",
+  "cells": 1820,
+  "sk": "Maloobchod okrem motorových vozidiel (Tržby za vlastné výkony a tovar)",
+  "en": "Retail trade except of motor vehicles (Turnover)"
+ },
+ "od0008ms": {
+  "theme": "od",
+  "update": "2026-09-14",
+  "cells": 3570,
+  "sk": "Priemerná mesačná mzda vo vybraných odvetviach - mesačne",
+  "en": "Average monthly wages in selected branches - monthly"
+ },
+ "og2019qs": {
+  "theme": "og",
+  "update": "2026-07-31",
+  "cells": 680,
+  "sk": "Ekonomické subjekty podľa právnych foriem",
+  "en": "Economic subjects by legal forms"
+ },
+ "om2019rs": {
+  "theme": "om",
+  "update": "2026-04-30",
+  "cells": 530,
+  "sk": "Stav obyvateľstva",
+  "en": "Population"
+ },
+ "om2801ms": {
+  "theme": "om",
+  "update": "2026-08-31",
+  "cells": 924,
+  "sk": "Vybrané ukazovatele pohybu obyvateľstva v SR",
+  "en": "Selected indicators of the population change of the SR"
+ },
+ "om7104rr": {
+  "theme": "om",
+  "update": "2026-03-31",
+  "cells": 142560,
+  "sk": "Prehľad pohybu obyvateľstva - SR-oblasť-kraj-okres, m-v (ročne)",
+  "en": "Population Change - SR-Area-Reg-District, U-R (yearly)"
+ },
+ "pl2016rs": {
+  "theme": "pl",
+  "update": "2026-04-23",
+  "cells": 784,
+  "sk": "Stavy hospodárskych zvierat k 31.12.",
+  "en": "Livestock as of December, 31st"
+ },
+ "pm0043ms": {
+  "theme": "pm",
+  "update": "2026-09-09",
+  "cells": 4284,
+  "sk": "Priemyselná produkcia (medziročný index, neočistené) - mesačne",
+  "en": "Industrial production (year-on-year index, not adjusted) - monthly"
+ },
+ "pm0048ms": {
+  "theme": "pm",
+  "update": "2026-08-17",
+  "cells": 4104,
+  "sk": "Cenové indexy priemyselných výrobcov tuzemsko podľa SK NACE Rev. 2 (bázický index) - mesačne",
+  "en": "Industrial producers prices indices domestic according to NACE Rev. 2 (basic index) - monthly"
+ },
+ "pr0101qs": {
+  "theme": "pr",
+  "update": "2026-09-02",
+  "cells": 2070,
+  "sk": "Unemployment by the Labour Force Sample Survey (since 2021)",
+  "en": "Unemployment by the Labour Force Sample Survey (since 2021)"
+ },
+ "pr0204qs": {
+  "theme": "pr",
+  "update": "2026-09-02",
+  "cells": 630,
+  "sk": "Priemerná mesačná mzda v hospodárstve SR",
+  "en": "Average monthly wages in economy of the SR"
+ },
+ "ps1002rs": {
+  "theme": "ps",
+  "update": "2026-04-30",
+  "cells": 132,
+  "sk": "Príjmy, výdavky a chudoba domácností",
+  "en": "Household income, expenditure and poverty"
+ },
+ "ps1009rs": {
+  "theme": "ps",
+  "update": "2026-04-30",
+  "cells": 1134,
+  "sk": "Príjmy, výdavky a chudoba domácností",
+  "en": "Household income, expenditure and poverty"
+ },
+ "ra1003rs": {
+  "theme": "ra",
+  "update": "2025-12-19",
+  "cells": 528,
+  "sk": "Trh práce",
+  "en": "Labour market"
+ },
+ "sk1001rs": {
+  "theme": "sk",
+  "update": "2026-07-31",
+  "cells": 368,
+  "sk": "Vývoj počtu trestných činov v základných skupinách a druhoch",
+  "en": "Number of crimes by basic groups and types"
+ },
+ "so3801rr": {
+  "theme": "so",
+  "update": "2025-10-31",
+  "cells": 2444,
+  "sk": "Výdavky na dôchodky",
+  "en": "Expenditures on pensions"
+ },
+ "sp0005ms": {
+  "theme": "sp",
+  "update": "2026-01-15",
+  "cells": 2197,
+  "sk": "Indexy spotrebiteľských cien oproti rovnakému obdobiu minulého roku - mesačne",
+  "en": "Indices of consumer prices in comparison with corresponding period of previous year - monthly"
+ },
+ "sp0008ms": {
+  "theme": "sp",
+  "update": "2026-09-15",
+  "cells": 910,
+  "sk": "Jadrová a čistá inflácia - oproti rovnakému obdobiu minulého roku v % - mesačne",
+  "en": "Development of core and net inflation change in comparison with corresponding period of previous year in % - monthly"
+ },
+ "st2022qs": {
+  "theme": "st",
+  "update": "2026-09-03",
+  "cells": 4224,
+  "sk": "Začaté, dokončené a rozostavané byty podľa druhu vlastníctva - štvrťročné údaje",
+  "en": "Started, completed and under construction dwellings by ownership - quarterly data"
+ },
+ "st2024qs": {
+  "theme": "st",
+  "update": "2026-09-03",
+  "cells": 2880,
+  "sk": "Stavebné povolenia - štvrťročné údaje",
+  "en": "Building permits - quarterly data"
+ },
+ "sv2005rs": {
+  "theme": "sv",
+  "update": "2025-08-28",
+  "cells": 504,
+  "sk": "Vysoké školy",
+  "en": "Higher education institutions"
+ },
+ "ts0003ms": {
+  "theme": "ts",
+  "update": "2026-09-14",
+  "cells": 3510,
+  "sk": "Vybrané trhové služby - tržby za vlastné výkony a tovar (medziročný index) - mesačne",
+  "en": "Selected market services - Turnover (year-on-year index) - monthly"
+ },
+ "vh3001rr": {
+  "theme": "vh",
+  "update": "2025-10-31",
+  "cells": 2820,
+  "sk": "Verejné vodovody a kanalizácie",
+  "en": "Public water-supply and sewage systems"
+ },
+ "vt0001rs": {
+  "theme": "vt",
+  "update": "2026-07-15",
+  "cells": 312,
+  "sk": "Zamestnané osoby vo výskume a vývoji (VV)",
+  "en": "Research and development (R&D) personnel"
+ },
+ "vt0002rs": {
+  "theme": "vt",
+  "update": "2026-07-15",
+  "cells": 390,
+  "sk": "Výdavky na výskum a vývoj (VV) - kľúčové ukazovatele",
+  "en": "Gross domestic expenditures on R&D (GERD) - key indicators"
+ },
+ "zd1004rs": {
+  "theme": "zd",
+  "update": "2026-08-31",
+  "cells": 660,
+  "sk": "Pracovné miesta, postele v zdravotníckych zariadeniach, lekárne",
+  "en": "Working posts, beds in health facilities, pharmacies"
+ },
+ "zo0001ms": {
+  "theme": "zo",
+  "update": "2026-09-08",
+  "cells": 1768,
+  "sk": "Zahraničný obchod podľa mesiacov",
+  "en": "Foreign trade by months"
+ },
+ "zo0010ms": {
+  "theme": "zo",
+  "update": "2026-09-08",
+  "cells": 4704,
+  "sk": "Zahraničný obchod podľa kapitol Harmonizovaného systému",
+  "en": "Foreign trade by Chapters in Harmonised System"
+ },
+ "zo0011ms": {
+  "theme": "zo",
+  "update": "2026-09-08",
+  "cells": 12096,
+  "sk": "Zahraničný obchod podľa krajín, kontinentov a ekonomických zoskupení",
+  "en": "Foreign trade by countries, continents and economic groupings"
+ },
+ "zp1005rs": {
+  "theme": "zp",
+  "update": "2025-10-15",
+  "cells": 1260,
+  "sk": "Množstvo komunálneho odpadu podľa spôsobu nakladania (v tonách)",
+  "en": "Municipal waste and small construction waste from municipalities according to the waste treatment categories (in Tonnes)"
+ },
+ "zp3803rs": {
+  "theme": "zp",
+  "update": "2025-10-31",
+  "cells": 3760,
+  "sk": "Emisie základných znečisťujúcich látok",
+  "en": "Emissions of basic pollutants"
+ }
+}

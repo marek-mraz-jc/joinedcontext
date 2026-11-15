@@ -1,0 +1,20 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage -> stateless broker pods
+# - [ ] 2+ Replicas or HorizontalPodAutoscaler -> one process per database, see below
+# - [ ] Rolling updates maxUnavailable: 0 -> Recreate, one process per database (T-5311, base-values)
+# - [ ] PodDisruptionBudget -> a single-replica PDB would block every node drain
+
+# Stays at one: ANTARES_BUS=local (see base-values) allows exactly one broker process
+# per database. Raising this needs a NATS bus first.
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: '2'
+    memory: 1Gi

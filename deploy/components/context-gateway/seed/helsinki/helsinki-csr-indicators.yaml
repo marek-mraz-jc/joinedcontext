@@ -1,0 +1,18 @@
+# The indicators the pipelines compute, as the hub's second member. A different space and a
+# different broker tenant to the buses above, which is what makes a read over this hub a
+# distributed operation rather than one tenant with two types in it (EP-70).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: indicators
+  namespace: helsinki
+  title: { en: Helsinki indicators }
+spec:
+  contextSpaceRef: helsinki-hub
+  endpointRef: { kind: Endpoint, name: helsinki-kpi }
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+  federation:
+    identity: serviceAccount
+    serviceAccountRef: { kind: ServiceAccount, name: hub-reader }

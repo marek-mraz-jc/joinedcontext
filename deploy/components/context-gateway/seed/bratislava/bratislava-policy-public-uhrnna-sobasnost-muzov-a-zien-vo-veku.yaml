@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-uhrnna-sobasnost-muzov-a-zien-vo-veku
+  namespace: bratislava
+  title:
+    sk: 'Verejné čítanie: Úhrnná sobášnosť mužov a žien vo veku 16 - 49 rokov v BA a na SR v rokoch 2000 - 2021'
+    en: 'Public read: Total marriage rate of men and women aged 16-49 in Bratislava and Slovakia, 2000-2021'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  # Read only, the rows of this one hub dataset (CC BY 4.0, nothing about a person); discovery
+  # beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:uhrnna-sobasnost-muzov-a-zien-vo-veku[.][a-z0-9.-]+$

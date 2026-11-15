@@ -1,0 +1,65 @@
+# The EEA's hourly PM10 and PM2.5 of station SK0263A into `ovzdusie` through `public-air`, so the
+# city's open air-quality dataset carries the real reading (T-3120, PL-18). The same two files
+# feed `banskabystrica-verejne` (pipelines ovzdusie-pm10/pm25); each space keeps its own copy.
+#
+# One pipeline over both files (PL-52, PL-53), because it is the space's only writer and so may
+# expire it (PL-64): a reading no source renews for seven days is deleted by the runner's hourly
+# sweep, as the pipelines account through `public-air`. That is how the 13 seeded test stations
+# leave the dataset; the hourly upserts keep SK0263A's modifiedAt fresh.
+#
+# The decoding is ovzdusie-pm10's (pipeline-ovzdusie-pm10-bento.yaml): Parquet INT96 times in
+# UTC+1, validity 1 to 3, the latest valid hour. Which attribute a file fills is read from the
+# file itself, its `Pollutant` code (EEA vocabulary: 5 is PM10, 6001 is PM2.5), so the merged
+# stream needs no label of where a message came from. The entity carries the attributes of the
+# space's model `bb-air-quality` and nothing else (DM-61).
+apiVersion: joinedcontext.com/v1alpha2
+kind: Pipeline
+metadata:
+  name: public-air
+  namespace: banskabystrica
+  title:
+    sk: PM10 a PM2.5 na stanici SK0263A do datasetu Kvalita ovzdušia
+    en: PM10 and PM2.5 at station SK0263A into the Air quality dataset
+spec:
+  class: auto
+  # Five minutes after the verejne streams read the same files (PL-26).
+  period: 1h
+  schedule: '45 * * * *'
+  sources:
+    - dataSourceRef: { kind: DataSource, name: eea-sk0263a-pm10 }
+    - dataSourceRef: { kind: DataSource, name: eea-sk0263a-pm25 }
+  steps:
+    - processor:
+        parquet_decode: {}
+    - processor:
+        archive: { format: json_array }
+    - kind: bloblang
+      bloblang: |
+        let station = "SK0263A"
+        map instant {
+          root = ((this.index(2) - 2440588) * 86400 + ((this.index(1) * 4294967296 + this.index(0)) / 1000000000).floor() - 3600).ts_format("2006-01-02T15:04:05Z07:00", "UTC")
+        }
+        let rows = content().parse_json().or([])
+        let attribute = match $rows.index(0).Pollutant.catch(null) {
+          5 => "pm10"
+          6001 => "pm25"
+          _ => null
+        }
+        let valid = $rows.filter(r -> [1, 2, 3].contains(r.Validity) && r.End.type() == "array" && r.End.length() == 3 && r.Value.number().catch(-1) >= 0)
+        let latest = $valid.sort_by(r -> r.End.index(2) * 86400 + (r.End.index(1) * 4294967296 + r.End.index(0)) / 1000000000).slice(-1).index(0).catch(null)
+        root = if $attribute == null || $latest == null { [] } else { [{
+          "id": "urn:ngsi-ld:%v:%v:%v:eea-%v".format("AirQualityObserved", "banskabystrica.sk", env("JC_SPACE"), $station),
+          "type": "AirQualityObserved",
+          "name": { "type": "LanguageProperty", "languageMap": { "sk": "Stanica SK0263A, mestské pozadie", "en": "Station SK0263A, urban background" } },
+          $attribute: { "type": "Property", "value": $latest.Value.number(), "unitCode": "GQ", "observedAt": $latest.End.apply("instant") },
+          "dateObserved": { "type": "Property", "value": $latest.End.apply("instant") },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [19.115268, 48.733256] } }
+        }] }
+  outputs:
+    - targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:public-air
+      type: AirQualityObserved
+      mode: upsert
+  expiry:
+    after: 7d
+    types: [AirQualityObserved]
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

@@ -1,0 +1,160 @@
+---
+# The Job does the same work in every profile: it either finds the repository or creates it.
+# What differs between installations is the repository's name, and that is global.configRepo.
+
+
+# The Helsinki seed, committed where the Portal reads it (T-0478): the same files the gateway
+# mounts, so the Portal's store and the gateway's table cannot disagree. The index maps each
+# file to its repository path; `/` becomes `__` because a ConfigMap key cannot hold a slash and
+# the Job turns it back.
+#
+# Every file of the seed goes in, the DataSource, Pipeline and CkanInstance manifests included:
+# the Portal image of portal 47a97de carries jc-core 0.7.1 and knows every kind. (The image
+# before it refused the whole repository over one manifest of a kind it did not know, which
+# is why T-0479 held those eight files back for a day.)
+# Only the organization's files are here; each project's are the ConfigMaps gitea-seed-s<n>-<part>
+# of the releases gitea-seed .. gitea-seed-16 (values/seed, T-3998, T-4431), which read the same indexes.
+# The bootstrap outgrew Helm's 1 MiB Secret with every project in it (T-3175, T-3998).
+{{- $projects := dict }}
+seed:
+{{- range $file, $path := readFile "../../../context-gateway/seed/helsinki/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/helsinki/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+  # The pipeline that reads the demo NATS feed (T-2960), only where that feed runs: a broker
+  # that is not there would keep the pipeline in error. The DataSource's address names the
+  # component's namespace, which this installation decides.
+{{- if has "demo-feeds" .Values.components }}
+{{- $demoNs := index .Values "demo-feeds" "nats" "namespace" }}
+{{- range $file, $path := readFile "../../../context-gateway/seed/helsinki-demo-feeds/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/helsinki-demo-feeds/%s" $file) | replace "DEMO_FEEDS_NAMESPACE" $demoNs | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}
+  # The conformance project (`ovzdusie`, its public endpoint, the two policies, the writing
+  # account and the published model with its artifacts): what the gateway's own ConfigMap
+  # carried until the checkout replaced it (T-0278). The smoke run and the ETSI suite write
+  # through this endpoint.
+{{- range $file, $path := readFile "../../../context-gateway/seed/banskabystrica/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/banskabystrica/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+  # The region (T-2305): its own project, its raw space of published cube rows, its indicator
+  # space, and the reference that lets its application read the city's indicators without
+  # being able to write them. Two publishers, two projects, one organization.
+{{- range $file, $path := readFile "../../../context-gateway/seed/bbsk/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/bbsk/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+  # Prague (T-2785): its own project of the same organization, one space of the city's open
+  # data and its one public endpoint.
+{{- range $file, $path := readFile "../../../context-gateway/seed/praha/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/praha/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+  # Žilina (T-3137): the city and its university as one project of the same organization, four
+  # spaces of one model each, built on national open data and the university's own repository.
+{{- range $file, $path := readFile "../../../context-gateway/seed/zilina/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/zilina/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+  # Barcelona (T-5260): Ajuntament de Barcelona's Organization, its bindings and its project of
+  # one space of Open Data BCN.
+{{- range $file, $path := readFile "../../../context-gateway/seed/barcelona/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/barcelona/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+  # Bratislava (T-5271): Hlavné mesto SR Bratislava's Organization, its bindings and its project of
+  # one space of data.bratislava.sk.
+{{- range $file, $path := readFile "../../../context-gateway/seed/bratislava/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/bratislava/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+  # Slovakia (T-4340): national open data as one project of the same organization, its first
+  # space the air quality of every Slovak station.
+{{- range $file, $path := readFile "../../../context-gateway/seed/slovensko/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/slovensko/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+{{- if eq .Values.global.profile "development" }}
+  # The App sharing matrix (T-4911): its test people's bindings and the roles App's default group,
+  # development profile only, like the people themselves (components/keycloak/demo-users.yaml).
+{{- range $file, $path := readFile "../../../context-gateway/seed/sharing/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../context-gateway/seed/sharing/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if has "agent-runner" .Values.components }}
+  # The builder profile the Portal loads for every agent run (AG-26): organization scope,
+  # so it is committed by the forge seed and not by the gateway's own table.
+{{- range $file, $path := readFile "../../../agent-runner/seed/index.yaml" | fromYaml }}
+{{- if regexMatch "^projects/[^/]+/." $path }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ else }}
+  {{ $path | replace "/" "__" }}: |
+{{ readFile (printf "../../../agent-runner/seed/%s" $file) | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- /* The ConfigMaps values/seed renders, named by the same layout (values/seed-layout.tpl, T-4431). */}}
+{{- $sources := list "context-gateway/seed/helsinki" "context-gateway/seed/banskabystrica" "context-gateway/seed/bbsk" "context-gateway/seed/praha" "context-gateway/seed/zilina" "context-gateway/seed/barcelona" "context-gateway/seed/bratislava" "context-gateway/seed/slovensko" }}
+{{- if has "agent-runner" .Values.components }}{{ $sources = append $sources "agent-runner/seed" }}{{ end }}
+{{- /* The platform's own Decidim, its harvester and its assistant (T-6449). */}}
+{{- if has "decidim" .Values.components }}{{ $sources = append $sources "decidim/seed" }}{{ end }}
+{{- if eq .Values.global.profile "development" }}{{ $sources = append $sources "context-gateway/seed/sharing" }}{{ end }}
+{{- /* Seed folders one environment adds under components/ (extraSeeds; T-6545: stage registers prod). */}}
+{{- range $dir := index .Values "extraSeeds" | default list }}{{ $sources = append $sources $dir }}{{ end }}
+{{- $assistants := tpl (printf "%s{{ include \"gitea.catalogueAssistants\" . }}" (readFile "../seed-layout.tpl")) (dict "values" .Values) | fromJson }}
+{{- /* Encrypted files a private environment adds (encryptedSeedFiles: repository path -> text,
+       T-6982): a sops file never lives in a public seed folder. They are laid out and seeded as
+       the files an index names. */}}
+{{- range $path, $text := index .Values "encryptedSeedFiles" | default dict }}{{ $_ := set $assistants $path $text }}{{ end }}
+{{- range $path, $_ := $assistants }}{{ $_ := set $projects (index (splitList "/" $path) 1) true }}{{ end }}
+{{- $layout := tpl (printf "%s{{ include \"gitea.seedLayout\" . }}" (readFile "../seed-layout.tpl")) (dict "sources" $sources "extra" $assistants) | fromJson }}
+{{- $parts := list }}
+{{- range $project := keys $projects | sortAlpha }}
+{{- range $i := until (index $layout.count $project | default 1 | int) }}
+{{- $part := ternary $project (printf "%s--%d" $project (add1 $i)) (eq $i 0) }}
+{{- $parts = append $parts (printf "s%d-%s" (index $layout.parts $part | default 1 | int) $part) }}
+{{- end }}
+{{- end }}
+seedProjects: {{ $parts | toJson }}
+
+# The sample applications (T-2599, AP-75): each one its own private repository on the forge,
+# pushed from components/gitea/apps/<name>/ (vendored from a portal commit by
+# scripts/vendor-sample-apps.py), and its App manifest committed into the project with
+# `source.git` pinned to that repository's commit. JSON strings, not block scalars: a block
+# scalar rewrites trailing newlines, and a file the seed changed on the way would never match the
+# blob already on the forge, so every run would commit again.
+# The files themselves are the releases gitea-sample-apps, -2 and -3 (values/sample-apps, T-3175,
+# T-3333); the Job reads them from their ConfigMaps and needs only their names here.
+sampleApps:
+  configMaps: gitea-sample-apps
+  project: helsinki
+  publicBase: "https://{{ .Values.global.domain }}/git"
+  apps:
+{{- $apps := readFile "../../apps/index.yaml" | fromYaml }}
+{{- range $app, $files := $apps.apps }}
+    {{ $app }}:
+{{- range $files }}
+      {{ . | replace "/" "__" | quote }}: ""
+{{- end }}
+{{- end }}

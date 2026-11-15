@@ -1,0 +1,44 @@
+# New, returning and unconnected Free Wifi VisitBratislava users, per day: one public dataset of the hub (T-5673), item 94d40e2e8e8e4fb8abfda1ca7168ed2a, written by the statistics-denne pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-free-wifi-novi-a-vracajuci-sa
+  namespace: bratislava
+  title:
+    sk: Počet nových, vracajúcich sa a nepripojených užívateľov Free Wifi VisitBratislava
+    en: New, returning and unconnected Free Wifi VisitBratislava users, per day
+  description:
+    sk: 'Ukazovatele tabuľky „Počet nových, vracajúcich sa a nepripojených užívateľov Free Wifi VisitBratislava“ z data.bratislava.sk, za mesto ako celok, jeden na deň a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “New, returning and unconnected Free Wifi VisitBratislava users, per day”, for the city as a whole, one per day and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: poxt7rrpd5e5l6rg4k5kijsfttdzzmnw
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-free-wifi-novi-a-vracajuci-sa
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [TECH]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/94d40e2e8e8e4fb8abfda1ca7168ed2a
+        title:
+          sk: Počet nových, vracajúcich sa a nepripojených užívateľov Free Wifi VisitBratislava
+          en: New, returning and unconnected Free Wifi VisitBratislava users, per day
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet nových, vracajúcich sa a nepripojených užívateľov Free Wifi VisitBratislava. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: New, returning and unconnected Free Wifi VisitBratislava users, per day. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-denne }

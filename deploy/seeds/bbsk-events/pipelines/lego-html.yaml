@@ -1,0 +1,44 @@
+# Lego CMS (the `bundles/kalendar` module), the town-site CMS of many Slovak municipalities (T-5047): the
+# source's events list page links each event under its own path as `<slug>-<id>[_<page>]<lang>.html`; the event page marks its time
+# machine-readably (`data-date-start="20261018T150000"`, `data-date-end`) and its place as `<h2 class="venue">`.
+# Each page of the source's own host is read once, 3 seconds apart: the CMS's robots.txt asks Crawl-Delay 3.
+- mapping: |
+    let paths = content().string().re_find_all_object("href=\"(?:__HOST_RE__)?(?P<p>__LIST_PATH_RE__[A-Za-z0-9._~%/-]{1,300}-[0-9]{1,9}(?:_[0-9]{1,9})?[a-z]{2}\\.html)\"").map_each(m -> m.p).unique()
+    root = $paths.map_each(p -> { "url": "__HOST__" + p, "path": p, "sourceId": p })
+- unarchive:
+    format: json_array
+- branch:
+    # Only a page of the source's own host: the path is checked before the request and the host is fixed in
+    # the url below, so an item can never send the run to another host.
+    request_map: |
+      root = if this.path.contains("..") { deleted() } else { "" }
+      meta event_path = this.path.trim_prefix("/")
+    processors:
+      - sleep:
+          duration: 3s
+      - http:
+          url: __HOST__/${! @event_path }
+          verb: GET
+          headers:
+            User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public events)
+            Accept: text/html
+          timeout: 20s
+          retries: 1
+    result_map: |
+      # 20261018T150000 is Bratislava's wall time; 20261018 alone a whole day.
+      map at {
+        let m = this.or("").re_find_object("^(?P<d>[0-9]{8})(T(?P<t>[0-9]{4}))?")
+        let day = if $m.d.or(null) == null { null } else { "%s-%s-%s".format($m.d.slice(0, 4), $m.d.slice(4, 6), $m.d.slice(6, 8)) }
+        let local = if $day != null && $m.t.or("") != "" { "%sT%s:%s:00".format($day, $m.t.slice(0, 2), $m.t.slice(2, 4)) } else { null }
+        root = if $local != null { $local + ($local + "Z").ts_format("-07:00", "Europe/Bratislava") } else { $day }
+      }
+      let page = content().string()
+      let when = $page.re_find_object("data-date-start=\"(?P<s>[0-9T]*)\" data-date-end=\"(?P<e>[0-9T]*)\"")
+      root.name = $page.re_find_object("<h1[^>]*>(?P<v>[^<]{1,500})</h1>").v.or(null)
+      root.start = $when.s.or(null).apply("at")
+      root.end = $when.e.or(null).apply("at")
+      root.venue = $page.re_find_object("class=\"venue\">(?:<i[^>]*></i>)?(?:<span[^>]*>[^<]*</span>)?(?P<v>[^<]{1,300})</h2>").v.or(null)
+      root.category = $page.re_find_object("Typ akcie:(?P<v>[^<]{1,200})<").v.or(null)
+      root.description = $page.re_find_object("<p id=\"action-detail\">(?P<v>[\\s\\S]*?)</p>").v.or(null)
+- archive:
+    format: json_array

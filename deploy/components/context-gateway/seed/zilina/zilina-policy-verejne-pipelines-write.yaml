@@ -1,0 +1,18 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: verejne-pipelines-write
+  namespace: zilina
+  title: { sk: Kanály zapisujú priestor zilina-verejne, en: The pipelines write zilina-verejne }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-verejne }
+  assigner: did:web:zilina.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  operations: [upsertBatch, createBatch, queryBatch, queryEntity]
+  information:
+    - entities:
+        - type: AirQualityObserved
+    - entities:
+        - type: PointOfInterest
+    - entities:
+        - type: GtfsStop

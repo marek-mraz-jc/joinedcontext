@@ -1,0 +1,64 @@
+{{- $proxy := .Values.jc.metricsProxy }}
+{{- $images := index .Values.images "jc" "metricsProxy" }}
+{{- if and $proxy.enabled (not $proxy.upstream) }}
+{{- fail "jc.metricsProxy.upstream: name the Prometheus this instance reads (http://<service>.<namespace>.svc.cluster.local:9090)" }}
+{{- end }}
+# Checklist:
+# - [x] Non-root (the image's nobody), read-only root, no capabilities, no API token
+# - [x] One flag pins the label: every query, series, labels and label-values call gets
+#       namespace="<this namespace>"; a query naming another namespace is rewritten to this one
+# - [x] Reached only by this instance's jc (NetworkPolicy in the environment), no route, no ingress
+# - [x] Named port http (8080)
+
+fullnameOverride: jc-metrics-proxy
+nameOverride: jc-metrics-proxy
+
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+args:
+  - --insecure-listen-address=0.0.0.0:8080
+  - --upstream={{ $proxy.upstream }}
+  - --label=namespace
+  - --label-value={{ $proxy.namespace }}
+  - --enable-label-apis
+
+containerPort: 8080
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  name: http
+
+probes:
+  readiness:
+    path: /healthz
+  liveness:
+    path: /healthz
+
+replicaCount: 1
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+# Meshed: only jc's own ServiceAccount may call the proxy (Linkerd AuthorizationPolicy).
+meshAuthorization:
+  port: 8080
+  clients:
+    - serviceAccount: jc
+      namespace: {{ $proxy.namespace }}
+
+serviceMesh:
+  enabled: {{ and (.Values.global.serviceMesh.enable | default false) (eq (.Values.global.serviceMesh.type | default "") "linkerd") }}

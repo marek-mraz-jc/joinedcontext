@@ -1,0 +1,18 @@
+# One KeyPerformanceIndicator per territory per year from the ŠÚ SR resident-population cube. Writes through the space's one Endpoint with the runner's service account, so the Policy applies to it as to anybody (PL-18, PF-39).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: obyvatelstvo
+  namespace: bbsk
+  title: { sk: Stav obyvateľstva kraja a okresov, en: Population of the region and its districts }
+spec:
+  class: auto
+  # Annual data. Polling it weekly is already ten times more often than it changes, and it is
+  # the publisher's bandwidth being spent (PL-26, PL-27).
+  period: 168h
+  schedule: '13 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: susr-om7102rr }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

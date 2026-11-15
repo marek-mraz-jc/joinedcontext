@@ -1,0 +1,17 @@
+# One BikeHireDockingStation per Slovnaft BAjk station of `nextbike-stations` (T-5273).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: bike-stations
+  namespace: bratislava
+  title: { sk: Stanice Slovnaft BAjk, en: Slovnaft BAjk stations }
+spec:
+  class: auto
+  # Stations move a few times a season; a nightly read is enough.
+  period: 24h
+  schedule: '15 3 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: nextbike-stations }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: BikeHireDockingStation, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

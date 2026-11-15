@@ -1,0 +1,7 @@
+---
+component: model-tools
+parts:
+  # The stateless generator image behind the LinkML editor (DM-18, DM-19): the Portal posts a
+  # LinkML source, a Smart Data Models import or a sample file and takes the answer; nothing
+  # here holds a credential or reaches the platform's state (Architecture/14 §Model Tools).
+  - name: tools

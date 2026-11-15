@@ -1,0 +1,44 @@
+# Outward foreign direct investment of the Bratislava region in selected years: one public dataset of the hub (T-5676), item 1e4423aaeb0c47da9d39bd140d7a27ec, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pzi-v-zahranici
+  namespace: bratislava
+  title:
+    sk: Objem priamych zahraničných investícií v zahraničí vo vybraných rokoch
+    en: Outward foreign direct investment of the Bratislava region in selected years
+  description:
+    sk: 'Ukazovatele tabuľky „Objem priamych zahraničných investícií v zahraničí vo vybraných rokoch“ z data.bratislava.sk, jeden na údaj, členenie a obdobie, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table "Outward foreign direct investment of the Bratislava region in selected years", one per figure, breakdown and period, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: zo7srj3lig36huqvcxudl2dpqb5vuz4u
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pzi-v-zahranici
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ECON]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/1e4423aaeb0c47da9d39bd140d7a27ec
+        title:
+          sk: Objem priamych zahraničných investícií v zahraničí vo vybraných rokoch
+          en: Outward foreign direct investment of the Bratislava region in selected years
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Objem priamych zahraničných investícií v zahraničí vo vybraných rokoch. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Outward foreign direct investment of the Bratislava region in selected years. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

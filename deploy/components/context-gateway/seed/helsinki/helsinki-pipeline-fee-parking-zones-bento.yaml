@@ -1,0 +1,32 @@
+# The mapping of the parking-fee-zones pipeline (PL-03): one OnStreetParking (feeCharged, T-4329) per parking fee zone of
+# the city, from the open WFS layer `Pysakoinnin_maksuvyohykkeet_alue`, keyed by the zone number
+# the signs show. The zone's rules, the hourly fee among them, are the register's own words.
+
+pipeline:
+  processors:
+    - mapping: |
+        # The WFS writes a field it has no value for as the string "None"; a link comes without
+        # its scheme.
+        map text {
+          root = if this == null || this.string().trim() == "" || this.string() == "None" { null } else { this.string().trim() }
+        }
+        root = this.features.or([]).filter(f -> f.geometry.or(null) != null && f.properties.vyohykkeen_nro.or("").string().re_match("^[0-9A-Za-z]{1,3}$")).map_each(f -> {
+          "code": f.properties.vyohykkeen_nro.string(),
+          "name": f.properties.nimi.apply("text"),
+          "rules": f.properties.lisatiedot.or("").apply("text"),
+          "link": f.properties.linkki.apply("text"),
+          "geometry": f.geometry
+        }).map_each(z -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:fee-zone-%v".format("OnStreetParking", env("JC_ORG_DOMAIN"), env("JC_SPACE"), z.code.lowercase()),
+          "type": "OnStreetParking",
+          "name": if z.name == null { null } else { { "type": "LanguageProperty", "languageMap": { "fi": z.name } } },
+          "category": { "type": "Property", "value": ["feeCharged"] },
+          "zoneCode": { "type": "Property", "value": z.code },
+          "description": if z.rules == null { null } else { { "type": "LanguageProperty", "languageMap": { "fi": z.rules } } },
+          # One address or none: a register value with two links or a space is no IRI, and the
+          # broker refuses the whole zone over it (F-BNT3-018, the T-4011 culture rule).
+          "url": z.link.or("").string().trim().(l -> if l.has_prefix("http") { l } else { "https://" + l }).(u -> if u.re_match("^https?://[^\\s/]+\\.[^\\s]+$") { { "type": "Property", "value": u } } else { null }),
+          "location": { "type": "GeoProperty", "value": z.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, parking" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Pysakoinnin_maksuvyohykkeet_alue" }
+        }.filter(entry -> entry.value != null))

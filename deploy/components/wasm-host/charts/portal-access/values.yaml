@@ -1,0 +1,5 @@
+# How many shards the host runs: the Role names each shard's two objects.
+shards: 2
+portal:
+  serviceAccount: portal
+  namespace: ""

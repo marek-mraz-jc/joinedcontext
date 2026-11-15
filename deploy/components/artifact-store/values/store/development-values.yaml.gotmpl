@@ -1,0 +1,23 @@
+---
+# Checklist:
+# - [x] Minimal Resources
+# - [x] Minimal storage -> 10Gi, the default: a development instance renders a handful of
+#       schemas and caches a few downloads
+# - [x] 1 Replica -> one node, one volume
+
+resources:
+  requests:
+    cpu: 100m
+    # T-4473: dev, kubectl top 2026-10-17 21:22-22:22Z: median 96, peak 105Mi. T-5897: dev working set 2026-10-25..28 (Prometheus, 3 days, supervisor):
+    # 694Mi since the WAL archive grew (T-5772), + 20 %: the request says what it holds.
+    # T-5926 (dev 2026-10-29, Prometheus): 24 h max 729Mi (the 10-28 WAL purge); at 10:00Z working
+    # set 624Mi of which RSS 395Mi, the rest page cache of written objects the kernel reclaims at
+    # the limit. RSS follows the object count (~8,700 WAL segments a day, retention 2d) and RustFS
+    # 1.0.4 offers no setting that bounds it: RUSTFS_OBJECT_DATA_CACHE_ENABLE=false, allocator
+    # reclaim, reclaim-on-write and direct-IO writes changed nothing in a local A/B. A burst of
+    # 80 x 16 MiB WAL + a 256 MiB base peaks at 380-445Mi and falls back to ~180Mi in 3 min.
+    # Fewer objects (less WAL, T-5772) is what lowers it.
+    memory: 832Mi
+  limits:
+    cpu: 1000m
+    memory: 1024Mi

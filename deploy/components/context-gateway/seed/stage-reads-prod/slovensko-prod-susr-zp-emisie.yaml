@@ -1,0 +1,16 @@
+# Stage reads prod's public Endpoint susr-zp-emisie for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-susr-zp-emisie
+  namespace: slovensko
+  title: Prod susr-zp-emisie
+spec:
+  contextSpaceRef: susr-zp-emisie
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/vbcinyfdvxajvzifutmvdjyz37wehhju
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

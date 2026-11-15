@@ -1,0 +1,38 @@
+{{/*
+  What provision.sh hands to Grafana per project (T-6504): the organization's folder, one
+  datasource per Endpoint and the dashboard. A file name carries the project, because the hook
+  has no JSON parser. No key here holds a token: a datasource forwards the signed-in person's own.
+*/}}
+{{- if .Values.projects }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.projectsConfigMapName }}
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: dashboards
+data:
+  provision.sh: |
+{{ .Files.Get "provision.sh" | indent 4 }}
+{{- range $project := .Values.projects }}
+  {{- $dashboard := $.Files.Get (printf "projects/%s.json" $project.name) }}
+  {{- if not $dashboard }}
+  {{- fail (printf "grafana: project %s has no charts/dashboards/projects/%s.json" $project.name $project.name) }}
+  {{- end }}
+  {{ $project.name }}.folder.json: {{ dict "uid" (printf "project-%s" $project.name) "title" $project.title | toJson | quote }}
+  {{ $project.name }}.dashboard.json: |
+    {"folderUid": {{ printf "project-%s" $project.name | quote }}, "overwrite": true, "dashboard":
+{{ $dashboard | indent 4 }}
+    }
+  {{- range $endpoint := $project.endpoints }}
+  {{ $project.name }}.datasource.{{ $endpoint.name }}.json: {{ dict
+      "uid" $endpoint.name
+      "name" $endpoint.name
+      "type" "ngsild-grafana-datasource"
+      "access" "proxy"
+      "url" (printf "%s/api/endpoint/%s" $.Values.gatewayUrl $endpoint.slug)
+      "jsonData" (dict "oauthPassThru" true "pageSize" 1000)
+      | toJson | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

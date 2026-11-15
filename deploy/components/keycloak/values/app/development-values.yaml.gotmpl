@@ -1,0 +1,19 @@
+---
+{{- $this := .Values.keycloak.app }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Minimal Resources
+# - [x] Minimal storage -> not applicable, uses external database
+# - [x] 1 Replica
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: "500m"
+    # T-5282: 739Mi on dev, 767Mi on prod (2026-10-22 20:40Z), + 20 %; heap 146 of 250 MB used,
+    # metaspace 178 MB (jcmd GC.heap_info, VM.metaspace).
+    memory: "928Mi"
+  limits:
+    cpu: "1000m"
+    memory: "2048Mi"

@@ -1,0 +1,819 @@
+---
+context-space:
+  name: context-space
+  description: Context space direct NGSI-LD surface
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/cs/*'
+  # Bound to the apex host: without it this route also matches idm.<domain> and,
+  # with a higher priority than the identity route, would swallow the login pages.
+  host: '{{ .Values.global.domain }}'
+  priority: 15
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  # APISIX defaults to the same 320, but a long-lived streaming upstream is the one place
+  # where the pool size is a deliberate capacity decision rather than a default.
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+
+# The context space surface for GET and HEAD, above context-space in priority so the reads count a bucket of their own:
+# the Organization sets reads (dataRead) and writes (dataWrite) apart (ADR-N-035, T-2892). The
+# chain is context-space's; only its limit-count is replaced, and the Portal writes the count.
+context-space-read:
+  name: context-space-read
+  description: The context space surface, reads
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/cs/*'
+  host: '{{ .Values.global.domain }}'
+  priority: 16
+  methods: [GET, HEAD]
+  pluginConfig: context-space
+  rateClass: dataRead
+  plugins:
+    limit-count:
+      count: 1200
+      time_window: 60
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+
+# The same surface on the Portal host. The Portal UI reads a space from its own origin —
+# `sdk/src/grid/source.ts` builds `/cs/{space}/ngsi-ld/v1` as a relative URL — and with the route
+# bound to the apex alone that fetch fell through to portal-ui, which answers the SPA shell with
+# a 200. Every space page's "Data" section therefore read as "no grant on this space" over a full
+# space, and the live journey that walks the demonstration parsed `<!doctype html>` as NGSI-LD
+# (T-2454). The edge session becomes `Authorization: Bearer` here exactly as it does for
+# context-endpoint-portal; an anonymous visitor stays anonymous and a presented bearer is left
+# alone, and the gateway's PEP decides either way.
+context-space-portal:
+  name: context-space-portal
+  description: Context space NGSI-LD surface on the Portal host, edge session as bearer
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/cs/*'
+  subDomain: portal
+  priority: 15
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  # APISIX defaults to the same 320, but a long-lived streaming upstream is the one place
+  # where the pool size is a deliberate capacity decision rather than a default.
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+
+# The context space surface on the Portal host for GET and HEAD, above context-space-portal in priority so the reads count a bucket of their own:
+# the Organization sets reads (dataRead) and writes (dataWrite) apart (ADR-N-035, T-2892). The
+# chain is context-space-portal's; only its limit-count is replaced, and the Portal writes the count.
+context-space-portal-read:
+  name: context-space-portal-read
+  description: The context space surface on the Portal host, reads
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/cs/*'
+  subDomain: portal
+  priority: 16
+  methods: [GET, HEAD]
+  pluginConfig: context-space-portal
+  rateClass: dataRead
+  plugins:
+    limit-count:
+      count: 1200
+      time_window: 60
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+
+# The organization's DCAT-AP catalogue for harvesters (EP-84): `/catalog.jsonld` and
+# `/catalog.ttl` on the apex, anonymous, and each publisher's own (EP-127):
+# `/catalog/{project}.jsonld|.ttl`. The gateway reads no token on them and lists public
+# Endpoints only; any other name under the prefix is the gateway's 404.
+catalog-feed:
+  name: catalog-feed
+  description: The DCAT-AP catalogue feed, anonymous
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/catalog*'
+  host: '{{ .Values.global.domain }}'
+  priority: 20
+  methods: [GET, HEAD]
+
+context-endpoint:
+  name: context-endpoint
+  description: Shared context endpoint representation surface
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  # The apex is the canonical host (the DCAT record names it); a caller here is anonymous
+  # or carries its own bearer. The Portal host serves the same surface through
+  # context-endpoint-portal below, with the edge session turned into the bearer.
+  host: '{{ .Values.global.domain }}'
+  priority: 20
+  # The plain reads and writes (T-4903): the gateway ends a read at 10 s and waits up to 10 s
+  # for write room, so 60 s is margin, never a read the broker spends minutes on. The WebSocket
+  # (`-ws`) and the bulk exports (`-bulk`) have routes of their own with 300 s.
+  timeout:
+    connect: 6
+    send: 60
+    read: 60
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+# The MCP hub (EP-87, ADR-N-025): one connector over every Endpoint a token reaches, the
+# Endpoint named on each call. `/api/mcp` and its protected-resource metadata; the gateway
+# answers 404 to anything else under the prefix. Apex only, like the Endpoint URLs a connector
+# is given, and the Endpoint surface's plugin chain: forged headers stripped, the same limits.
+# The gateway verifies the bearer and decides each call as the named Endpoint's own.
+context-mcp-hub:
+  name: context-mcp-hub
+  description: The MCP hub over the Endpoints a token reaches
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp*'
+  host: '{{ .Values.global.domain }}'
+  priority: 20
+  pluginConfig: context-endpoint
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+# The hub on the Portal host, where the Endpoints view shows its URL beside the per-Endpoint
+# ones: the edge session becomes the bearer and a presented bearer passes as it is, exactly as on
+# context-endpoint-portal, whose plugin chain it shares.
+context-mcp-hub-portal:
+  name: context-mcp-hub-portal
+  description: The MCP hub on the Portal host, edge session as bearer
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp*'
+  subDomain: portal
+  priority: 20
+  pluginConfig: context-endpoint-portal
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+# The named MCP servers (`/api/mcp/{project}/{name}`, ADR-N-043) for a caller without a bearer:
+# the public connectors any AI client is handed (T-4141). The hub's chain, with its 5,000 per
+# minute replaced by 60 per client IP (`remote_addr` is the ingress's X-Real-IP, never a client
+# header), so one anonymous client cannot spend the members' capacity. `vars` matches a missing
+# or empty Authorization only; a bearer of any kind takes the routes above, and a forged one is
+# refused by the gateway, never served as anonymous.
+context-mcp-named:
+  name: context-mcp-named
+  description: Named MCP servers, anonymous callers, counted per client IP
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp/*'
+  host: '{{ .Values.global.domain }}'
+  priority: 21
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"]]
+  pluginConfig: context-endpoint
+  plugins:
+    limit-count:
+      count: 60
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    # An MCP call is a JSON POST, which the chain's GET-only CORS refuses at the preflight: the
+    # Portal's public /connect page asks the server for its tools from portal.{domain} (T-4949).
+    # The same origins as the chain, never `*`; the route takes no bearer, so nothing a cookie or
+    # token could carry is shared.
+    cors:
+      allow_origins_by_regex:
+        - '^https://[^@/]+\.${DOMAIN_RE}$'
+      allow_methods: 'POST,OPTIONS'
+      allow_headers: 'Content-Type,Accept,Mcp-Protocol-Version,Mcp-Session-Id'
+      expose_headers: 'Mcp-Session-Id,Retry-After'
+      max_age: 600
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+# The same on the Portal host, so the anonymous limit is not one hostname away.
+context-mcp-named-portal:
+  name: context-mcp-named-portal
+  description: Named MCP servers on the Portal host, anonymous callers, counted per client IP
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp/*'
+  subDomain: portal
+  priority: 21
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"]]
+  pluginConfig: context-endpoint-portal
+  plugins:
+    limit-count:
+      count: 60
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+# The same surface on the Portal host: the Portal UI fetches an endpoint's access and samples
+# from its own origin, and a preview's form writes through the page that framed it (AP-63).
+# Without this route those paths fall through to portal-ui, a login redirect and the Portal's
+# 404. The edge session becomes `Authorization: Bearer` here (the gateway verifies bearers
+# itself and reads no edge header), an anonymous visitor passes as anonymous, and a bearer a
+# script presents is left as it is.
+context-endpoint-portal:
+  name: context-endpoint-portal
+  description: Context endpoint surface on the Portal host, edge session as bearer
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  subDomain: portal
+  priority: 20
+  # The plain reads and writes (T-4903): the gateway ends a read at 10 s and waits up to 10 s
+  # for write room, so 60 s is margin, never a read the broker spends minutes on. The WebSocket
+  # (`-ws`) and the bulk exports (`-bulk`) have routes of their own with 300 s.
+  timeout:
+    connect: 6
+    send: 60
+    read: 60
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+
+# The public data host (ADR-N-052 §2.1, EP-128, T-4630): `api.{domain}` serves the four surfaces
+# that hand data to the outside, each on the apex route's own plugin chain, so its sanitising,
+# limits and CORS are the apex's. Each `subDomain: api` also puts the host on the edge
+# certificate (one SAN, HTTP-01, never a wildcard) and on the ingress. The apex routes above stay
+# for a caller with a bearer, which a redirect would strip; an anonymous one is sent here (below).
+api-context-space:
+  name: api-context-space
+  description: Context space direct NGSI-LD surface on the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/cs/*'
+  subDomain: api
+  priority: 15
+  pluginConfig: context-space
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+
+api-context-space-read:
+  name: api-context-space-read
+  description: The context space surface on the data host, reads
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/cs/*'
+  subDomain: api
+  priority: 16
+  methods: [GET, HEAD]
+  pluginConfig: context-space
+  rateClass: dataRead
+  plugins:
+    limit-count:
+      count: 1200
+      time_window: 60
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+
+# T-4873: `{endpoint}/ws` holds its connection for up to 24 h, so the upgrade count per minute
+# bounds no idle-socket flood. 50 open sockets per client address, before the gateway's own 10
+# per caller (API/07 §3) costs a token check: one address with many tokens (an office behind
+# NAT) gets 50, an abuser with 10,000 sockets gets 429 at the edge. Only here, as the bulk
+# routes: the surface's other reads keep their count. The parent route's chain, plus this plugin.
+context-endpoint-ws:
+  name: context-endpoint-ws
+  description: Endpoint WebSockets of the apex surface, 50 at once per client address
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  vars: [["uri", "~~", "^/api/endpoint/[^/]+/ws$"]]
+  host: '{{ .Values.global.domain }}'
+  priority: 21
+  pluginConfig: context-endpoint
+  websocket: true
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  # APISIX defaults to the same 320, but a long-lived streaming upstream is the one place
+  # where the pool size is a deliberate capacity decision rather than a default.
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+  plugins:
+    limit-conn:
+      conn: 50
+      burst: 0
+      default_conn_delay: 0.1
+      key_type: var_combination
+      key: '$remote_addr'
+      rejected_code: 429
+
+# T-4873: `{endpoint}/ws` holds its connection for up to 24 h, so the upgrade count per minute
+# bounds no idle-socket flood. 50 open sockets per client address, before the gateway's own 10
+# per caller (API/07 §3) costs a token check: one address with many tokens (an office behind
+# NAT) gets 50, an abuser with 10,000 sockets gets 429 at the edge. Only here, as the bulk
+# routes: the surface's other reads keep their count. The parent route's chain, plus this plugin.
+api-context-endpoint-ws:
+  name: api-context-endpoint-ws
+  description: Endpoint WebSockets of the data host's surface, 50 at once per client address
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  vars: [["uri", "~~", "^/api/endpoint/[^/]+/ws$"]]
+  subDomain: api
+  priority: 21
+  pluginConfig: context-endpoint
+  websocket: true
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  # APISIX defaults to the same 320, but a long-lived streaming upstream is the one place
+  # where the pool size is a deliberate capacity decision rather than a default.
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+  plugins:
+    limit-conn:
+      conn: 50
+      burst: 0
+      default_conn_delay: 0.1
+      key_type: var_combination
+      key: '$remote_addr'
+      rejected_code: 429
+
+# T-4873: `{endpoint}/ws` holds its connection for up to 24 h, so the upgrade count per minute
+# bounds no idle-socket flood. 50 open sockets per client address, before the gateway's own 10
+# per caller (API/07 §3) costs a token check: one address with many tokens (an office behind
+# NAT) gets 50, an abuser with 10,000 sockets gets 429 at the edge. Only here, as the bulk
+# routes: the surface's other reads keep their count. The parent route's chain, plus this plugin.
+context-endpoint-portal-ws:
+  name: context-endpoint-portal-ws
+  description: Endpoint WebSockets on the Portal host, 50 at once per client address
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  vars: [["uri", "~~", "^/api/endpoint/[^/]+/ws$"]]
+  subDomain: portal
+  priority: 21
+  pluginConfig: context-endpoint-portal
+  websocket: true
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  # APISIX defaults to the same 320, but a long-lived streaming upstream is the one place
+  # where the pool size is a deliberate capacity decision rather than a default.
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+  plugins:
+    limit-conn:
+      conn: 50
+      burst: 0
+      default_conn_delay: 0.1
+      key_type: var_combination
+      key: '$remote_addr'
+      rejected_code: 429
+
+api-catalog-feed:
+  name: api-catalog-feed
+  description: The DCAT-AP catalogue feed on the data host, anonymous
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/catalog*'
+  subDomain: api
+  priority: 20
+  methods: [GET, HEAD]
+  pluginConfig: catalog-feed
+
+api-context-endpoint:
+  name: api-context-endpoint
+  description: Context endpoint representation surface on the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  subDomain: api
+  priority: 20
+  pluginConfig: context-endpoint
+  # As context-endpoint: the plain reads and writes (T-4903): the gateway ends a read at 10 s and waits up to 10 s
+  # for write room, so 60 s is margin, never a read the broker spends minutes on. The WebSocket
+  # (`-ws`) and the bulk exports (`-bulk`) have routes of their own with 300 s.
+  timeout:
+    connect: 6
+    send: 60
+    read: 60
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+  # The edge cache of anonymous reads (T-5900): the data host is where anonymous traffic lands.
+  # APISIX keeps only an answer the gateway marks `public, max-age=N` (cache_control: true honours
+  # it and never stores `private` or `no-store`); the gateway marks only a 200 to a GET or HEAD of
+  # data sent with neither Authorization nor Cookie, and only while JC_GATEWAY_PUBLIC_MAX_AGE is
+  # set. A request with either header neither reads nor fills the cache, nor does one with a
+  # header that shapes the answer outside the key (Link names the @context of a compacted answer,
+  # Prefer, NGSILD-Tenant; the gateway keeps those answers private too). The key carries the other
+  # request headers the gateway's `Vary` names. The client gets the gateway's own
+  # `public, max-age=N` too (context-endpoint's response-rewrite sets no Cache-Control), so a
+  # browser may reuse an anonymous public answer for the same N seconds the edge does. The zone
+  # must be one the APISIX chart's config.yaml declares, and chart 2.15 declares only
+  # `disk_cache_one` (on the pod's /tmp): a route naming another zone is dropped whole, and every
+  # read of the data host answered the edge's 404 on dev (2026-10-28, `memory_cache`).
+  plugins:
+    # context-endpoint turns nginx buffering off for SSE and exports, and an unbuffered answer
+    # never enters proxy_cache (APISIX execs its @disable_proxy_buffering location): the cache
+    # stored nothing on dev until this route plugin replaced the chain's (T-6185, 2026-10-31).
+    proxy-buffering:
+      disable_proxy_buffering: false
+    proxy-cache:
+      cache_strategy: disk
+      cache_zone: disk_cache_one
+      cache_key: ["$host", "$request_uri", "$http_accept", "$http_accept_language", "$http_accept_encoding", "$http_ngsild_results_restricted"] # yamllint disable-line rule:line-length
+      cache_bypass: ["$http_cookie", "$http_authorization", "$http_link", "$http_prefer", "$http_ngsild_tenant"] # yamllint disable-line rule:line-length
+      no_cache: ["$http_cookie", "$http_authorization", "$http_link", "$http_prefer", "$http_ngsild_tenant"] # yamllint disable-line rule:line-length
+      cache_method: ["GET", "HEAD"]
+      cache_http_status: [200]
+      cache_control: true
+      cache_ttl: 5
+      hide_cache_headers: false
+
+# T-6185 review: api-context-endpoint buffers for its cache, and nginx then holds an SSE answer
+# until it ends. `{endpoint}/mcp` is the one path of the surface the gateway may answer as
+# `text/event-stream` (Streamable HTTP, platform mcp/endpoint.rs), and the gateway sets no
+# `X-Accel-Buffering`, so it keeps a route of its own on the plain chain: unbuffered, as the
+# chain's comment wants SSE, and never cached. The rest of api-context-endpoint, limits and
+# timeouts included.
+api-context-endpoint-mcp:
+  name: api-context-endpoint-mcp
+  description: Endpoint MCP of the data host's surface, streamed unbuffered and never cached
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  vars: [["uri", "~~", "^/api/endpoint/[^/]+/mcp$"]]
+  subDomain: api
+  priority: 21
+  pluginConfig: context-endpoint
+  timeout:
+    connect: 6
+    send: 60
+    read: 60
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+
+# T-6507: nginx drops If-None-Match on the way to the upstream in a location with proxy_cache, so
+# on api-context-endpoint a schema artifact's reader never got the gateway's 304 (EP-51) and
+# downloaded it again. A schema answer is `private, no-cache`, never stored at the edge, so
+# `{endpoint}/schema/*` loses nothing on the plain chain: APISIX serves an unbuffered route from
+# @disable_proxy_buffering, which carries no proxy_cache. The rest of api-context-endpoint, limits
+# and timeouts included.
+api-context-endpoint-schema:
+  name: api-context-endpoint-schema
+  description: Schema artifacts of the data host's surface, revalidated by the gateway and never cached
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  vars: [["uri", "~~", "^/api/endpoint/[^/]+/schema/"]]
+  subDomain: api
+  priority: 21
+  pluginConfig: context-endpoint
+  timeout:
+    connect: 6
+    send: 60
+    read: 60
+  keepalivePool:
+    size: 320
+    idleTimeout: 60
+    requests: 1000
+
+api-mcp-hub:
+  name: api-mcp-hub
+  description: The MCP hub on the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp*'
+  subDomain: api
+  priority: 20
+  pluginConfig: context-endpoint
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+
+api-mcp-named:
+  name: api-mcp-named
+  description: Named MCP servers on the data host, anonymous callers, counted per client IP
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp/*'
+  subDomain: api
+  priority: 21
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"]]
+  pluginConfig: context-endpoint
+  plugins:
+    limit-count:
+      count: 60
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    # An MCP call is a JSON POST, which the chain's GET-only CORS refuses at the preflight: the
+    # Portal's public /connect page asks the server for its tools from portal.{domain} (T-4949).
+    # The same origins as the chain, never `*`; the route takes no bearer, so nothing a cookie or
+    # token could carry is shared.
+    cors:
+      allow_origins_by_regex:
+        - '^https://[^@/]+\.${DOMAIN_RE}$'
+      allow_methods: 'POST,OPTIONS'
+      allow_headers: 'Content-Type,Accept,Mcp-Protocol-Version,Mcp-Session-Id'
+      expose_headers: 'Mcp-Session-Id,Retry-After'
+      max_age: 600
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+
+# The gateway's stateless OAuth server for anonymous MCP (ADR-N-052 §2.2, platform T-4631):
+# registration, authorize, token, and the RFC 8414 and RFC 9728 documents at the host's root.
+# Nothing behind it is stored, so what an abuser can spend is minting; 30 a minute per client
+# address (`remote_addr`, never a client header) is a few connector setups and no flood.
+api-oauth:
+  name: api-oauth
+  description: The anonymous OAuth server on the data host, counted per client IP
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/oauth/*'
+  subDomain: api
+  priority: 20
+  methods: [GET, POST]
+  pluginConfig: context-endpoint
+  plugins:
+    limit-count:
+      count: 30
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+  timeout:
+    connect: 6
+    send: 30
+    read: 30
+
+api-oauth-metadata:
+  name: api-oauth-metadata
+  description: The OAuth server and protected-resource documents on the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/.well-known/oauth-*'
+  subDomain: api
+  priority: 20
+  methods: [GET, HEAD]
+  pluginConfig: context-endpoint
+
+# The addresses people copied before the move (ADR-N-052 §2.1.3): an anonymous request for one
+# of the four surfaces on the apex or the Portal host is a 308 to the same path and query on the
+# data host, so a connector, a GIS layer or a harvester keeps working. A request with a bearer is
+# still served where it is: a client drops `Authorization` on a redirect to another host, so
+# redirecting it would only refuse it. On the Portal host the edge session cookie, which is
+# host-only, keeps the Portal's own screens served there. The Portal host never served the feed,
+# and `/catalog*` there would take its own `/catalogue` page, so the feed moves from the apex
+# alone. Removed in release v0.2.0.
+api-moved-endpoint:
+  name: api-moved-endpoint
+  description: /api/endpoint/* on the apex, anonymous, moved to the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  host: '{{ .Values.global.domain }}'
+  priority: 30
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"]]
+  pluginConfig: api-moved
+api-moved-portal-endpoint:
+  name: api-moved-portal-endpoint
+  description: /api/endpoint/* on the Portal host, anonymous and with no edge session, moved to the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  subDomain: portal
+  priority: 30
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"], ["cookie___Host-jc_edge", "!", "~~", "."]]
+  pluginConfig: api-moved
+api-moved-mcp:
+  name: api-moved-mcp
+  description: /api/mcp* on the apex, anonymous, moved to the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp*'
+  host: '{{ .Values.global.domain }}'
+  priority: 30
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"]]
+  pluginConfig: api-moved
+api-moved-portal-mcp:
+  name: api-moved-portal-mcp
+  description: /api/mcp* on the Portal host, anonymous and with no edge session, moved to the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp*'
+  subDomain: portal
+  priority: 30
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"], ["cookie___Host-jc_edge", "!", "~~", "."]]
+  pluginConfig: api-moved
+# The radix tree matches the longest prefix before priority: `/api/mcp/*` (context-mcp-named)
+# outranked `/api/mcp*` above, so the hub's metadata and the named servers stayed on the old host.
+api-moved-mcp-named:
+  name: api-moved-mcp-named
+  description: /api/mcp/* (the hub metadata, the named servers) on the apex, anonymous, moved to the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp/*'
+  host: '{{ .Values.global.domain }}'
+  priority: 31
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"]]
+  pluginConfig: api-moved
+api-moved-portal-mcp-named:
+  name: api-moved-portal-mcp-named
+  description: /api/mcp/* (the hub metadata, the named servers) on the Portal host, anonymous and with no edge session, moved to the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/mcp/*'
+  subDomain: portal
+  priority: 31
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"], ["cookie___Host-jc_edge", "!", "~~", "."]]
+  pluginConfig: api-moved
+api-moved-cs:
+  name: api-moved-cs
+  description: /cs/* on the apex, anonymous, moved to the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/cs/*'
+  host: '{{ .Values.global.domain }}'
+  priority: 30
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"]]
+  pluginConfig: api-moved
+api-moved-portal-cs:
+  name: api-moved-portal-cs
+  description: /cs/* on the Portal host, anonymous and with no edge session, moved to the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/cs/*'
+  subDomain: portal
+  priority: 30
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"], ["cookie___Host-jc_edge", "!", "~~", "."]]
+  pluginConfig: api-moved
+api-moved-catalog:
+  name: api-moved-catalog
+  description: /catalog* on the apex, anonymous, moved to the data host
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/catalog*'
+  host: '{{ .Values.global.domain }}'
+  priority: 30
+  vars: [["http_authorization", "!", "~*", "^bearer\\s+\\S"]]
+  pluginConfig: api-moved
+
+# Class 4 (T-4717): the bulk exports, `{endpoint}/file.*` and the temporal history, hold their
+# connection for minutes, so 10 at once per address and bearer bounds them where a count per
+# minute does not. Only here: a limit-conn on the whole surface held every WebSocket and every
+# quick read to the same 10 (T-4714). The parent route's chain, plus this one plugin.
+context-endpoint-bulk:
+  name: context-endpoint-bulk
+  description: Bulk exports of the apex Endpoint surface, 10 at once per client
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  vars: [["uri", "~~", "^/api/endpoint/[^/]+/(file\\.|ngsi-ld/v1/temporal/)"]]
+  host: '{{ .Values.global.domain }}'
+  priority: 21
+  pluginConfig: context-endpoint
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  plugins:
+    limit-conn:
+      conn: 10
+      burst: 0
+      default_conn_delay: 0.1
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+
+# Class 4 (T-4717): the bulk exports, `{endpoint}/file.*` and the temporal history, hold their
+# connection for minutes, so 10 at once per address and bearer bounds them where a count per
+# minute does not. Only here: a limit-conn on the whole surface held every WebSocket and every
+# quick read to the same 10 (T-4714). The parent route's chain, plus this one plugin.
+api-context-endpoint-bulk:
+  name: api-context-endpoint-bulk
+  description: Bulk exports of the data host's Endpoint surface, 10 at once per client
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  vars: [["uri", "~~", "^/api/endpoint/[^/]+/(file\\.|ngsi-ld/v1/temporal/)"]]
+  subDomain: api
+  priority: 21
+  pluginConfig: context-endpoint
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  plugins:
+    limit-conn:
+      conn: 10
+      burst: 0
+      default_conn_delay: 0.1
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+
+# T-6185: the temporal history of the data host, split off api-context-endpoint-bulk so the edge
+# keeps an anonymous history read as api-context-endpoint keeps the other reads (the same
+# proxy-cache block, read its comment there). The chart host starts each window on the whole hour,
+# so one hour's views of a chart ask one URL and only the first reaches the broker. The `file.*`
+# exports stay on the bulk route without a cache: the gateway marks them public too, and a many-MB
+# export would push every history read out of the disk zone. The same 10 at once per address and
+# bearer as the bulk route, counted apart (APISIX counts per route): history and exports hold 10
+# each, and the gateway's own 10 per caller (API/07 §3) still bounds both together.
+api-context-endpoint-history:
+  name: api-context-endpoint-history
+  description: Temporal history reads of the data host's Endpoint surface, 10 at once per client, anonymous answers kept at the edge
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  vars: [["uri", "~~", "^/api/endpoint/[^/]+/ngsi-ld/v1/temporal/"]]
+  subDomain: api
+  priority: 22
+  pluginConfig: context-endpoint
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  plugins:
+    limit-conn:
+      conn: 10
+      burst: 0
+      default_conn_delay: 0.1
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+    # Buffered, or proxy-cache stores nothing: read the reads route's comment.
+    proxy-buffering:
+      disable_proxy_buffering: false
+    proxy-cache:
+      cache_strategy: disk
+      cache_zone: disk_cache_one
+      cache_key: ["$host", "$request_uri", "$http_accept", "$http_accept_language", "$http_accept_encoding", "$http_ngsild_results_restricted"] # yamllint disable-line rule:line-length
+      cache_bypass: ["$http_cookie", "$http_authorization", "$http_link", "$http_prefer", "$http_ngsild_tenant"] # yamllint disable-line rule:line-length
+      no_cache: ["$http_cookie", "$http_authorization", "$http_link", "$http_prefer", "$http_ngsild_tenant"] # yamllint disable-line rule:line-length
+      cache_method: ["GET", "HEAD"]
+      cache_http_status: [200]
+      cache_control: true
+      cache_ttl: 5
+      hide_cache_headers: false
+
+# Class 4 (T-4717): the bulk exports, `{endpoint}/file.*` and the temporal history, hold their
+# connection for minutes, so 10 at once per address and bearer bounds them where a count per
+# minute does not. Only here: a limit-conn on the whole surface held every WebSocket and every
+# quick read to the same 10 (T-4714). The parent route's chain, plus this one plugin.
+context-endpoint-portal-bulk:
+  name: context-endpoint-portal-bulk
+  description: Bulk exports of the Endpoint surface on the Portal host, 10 at once per client
+  upstream: context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/endpoint/*'
+  vars: [["uri", "~~", "^/api/endpoint/[^/]+/(file\\.|ngsi-ld/v1/temporal/)"]]
+  subDomain: portal
+  priority: 21
+  pluginConfig: context-endpoint-portal
+  timeout:
+    connect: 6
+    send: 60
+    read: 300
+  plugins:
+    limit-conn:
+      conn: 10
+      burst: 0
+      default_conn_delay: 0.1
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429

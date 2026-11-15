@@ -1,0 +1,91 @@
+{{- $ns := include "preview.namespace" . }}
+{{- $dev := .Values.devNamespace }}
+{{- /*
+  Default deny both ways, then the few paths a Portal preview needs (Deployment/17 section 6).
+  dev's gateway, broker and Portal are not among them, nor is the internet: the preview's one
+  way out of the cluster is the edge's ingress controller, for OIDC discovery at the public
+  issuer, where it meets dev's public surface like any other client. Linkerd's inbound port
+  4143 sits beside each meshed port, the proxy's control plane beside the rest.
+*/}}
+{{- $traefik := dict "namespaceSelector" (dict "matchExpressions" (list (dict "key" "kubernetes.io/metadata.name" "operator" "In" "values" (list "traefik" "kube-system")))) "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "traefik")) }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns }}
+  labels:
+    {{- include "preview.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: preview
+  namespace: {{ $ns }}
+  labels:
+    {{- include "preview.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # The browser, through the cluster's ingress controller; the Ingress names the Portal alone.
+    - from:
+        - {{ toJson $traefik }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 4143 }
+    # The Portal reads its UI bundle from portal-ui; the isolation Job's pod is a third.
+    - from:
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 4143 }
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 4143 }
+    # OIDC discovery and the browser's issuer: idm.{domain} resolves to the node, which kube-proxy
+    # rewrites to the controller's pod, so this rule sees its container port 8443 (the Portal's
+    # own policy, components/portal/networkpolicies.yaml, says how that was found).
+    - to:
+        - {{ toJson $traefik }}
+      ports:
+        - { protocol: TCP, port: 8443 }
+    # Token calls to the realm `preview` on the Keycloak Service (JC_KEYCLOAK_ADMIN_URL).
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ $dev }} }
+          podSelector:
+            matchLabels: { app.kubernetes.io/instance: keycloak-app }
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 4143 }
+    # The preview's own database; pg_hba refuses its role on every other one.
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ $dev }} }
+          podSelector:
+            matchLabels: { cnpg.io/cluster: postgres-cluster }
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 4143 }
+    # The proxy's identity, destination and policy controllers.
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: linkerd }
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8086 }
+        - { protocol: TCP, port: 8090 }

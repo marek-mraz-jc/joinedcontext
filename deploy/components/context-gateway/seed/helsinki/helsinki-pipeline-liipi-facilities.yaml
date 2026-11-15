@@ -1,0 +1,18 @@
+# One OffStreetParking per LIIPI facility of the HSL area, daily after the GTFS stations are read
+# (04:20), with its nearest station within 500 m (T-3894).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: liipi-facilities
+  namespace: helsinki
+  title:
+    en: Park and ride sites into the space, daily
+spec:
+  class: auto
+  period: 24h
+  schedule: '40 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: liipi-facilities }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: OffStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 250 }

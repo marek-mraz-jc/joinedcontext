@@ -1,0 +1,8 @@
+---
+# Changes here will be overwritten by Copier.
+_commit: 388311f
+_src_path: ..
+componentName: Apisix
+componentSlug: apisix
+releases: apisix,configuration
+shortDescription: Central API Gateway of the platform

@@ -1,0 +1,51 @@
+# The university's openly licensed works, open to anyone, each carrying its own licence.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-uniza
+  namespace: zilina
+  title:
+    sk: Žilinská univerzita — výskum
+    en: University of Žilina, research
+  description:
+    sk: 'Otvorene licencované práce Digitálneho repozitára Žilinskej univerzity (DREPO): názov, druh, rok, zbierka, vydavateľ, licencia a trvalý odkaz, bez mien autorov.'
+    en: "The openly licensed works of the University of Žilina's digital repository (DREPO): title, kind, year, collection, publisher, licence and persistent handle, without author names."
+spec:
+  contextSpaceRef: zilina-uniza
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-uniza:app-zilina-vyskum-1
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-uniza:uniza-pipelines-write
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-uniza:uniza-read
+  slug: os4quyrmvhijr3x7x4fno2jicej4ifv5
+  audience: public
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: zilina }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { sk: Žilinská univerzita v Žiline, en: University of Žilina }
+      uri: https://www.uniza.sk/
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Žilinská univerzita v Žiline, DREPO; každá práca pod licenciou, ktorú uvádza (CC BY 4.0)'
+      en: 'Source: University of Žilina, DREPO; each work under the licence it states (CC BY 4.0)'
+    themes: [EDUC, TECH]
+    keywords:
+      sk: [výskum, publikácie, otvorený prístup, univerzita, Žilina]
+      en: [research, publications, open access, university, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: WEEKLY
+    source:
+      - url: https://dspace.uniza.sk/server/api/discover/search/objects?dsoType=ITEM
+        title:
+          sk: DREPO, digitálna knižnica UNIZA
+          en: DREPO, the University of Žilina's digital library
+        description:
+          sk: DSpace 7 REST; len položky s otvorenou licenciou v dc.rights.uri.
+          en: DSpace 7 REST; only the items with an open licence in dc.rights.uri.
+    pipelineRef: { kind: Pipeline, name: drepo }

@@ -1,0 +1,538 @@
+{
+  "gateway": [
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "GtfsStop",
+        "offset": "0"
+      },
+      "file": "host-test/stops.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "PublicTransportRoute",
+        "offset": "0"
+      },
+      "file": "host-test/routes.json"
+    }
+  ],
+  "steps": [
+    {
+      "call": "GET /api/network",
+      "status": 404
+    },
+    {
+      "call": "GET /api/reach?stop=urn:ngsi-ld:GtfsStop:HSL:1",
+      "status": 409
+    },
+    {
+      "call": "GET /api/reach?stop=urn:ngsi-ld:Vehicle:1",
+      "status": 400
+    },
+    {
+      "call": "GET /api/reach?stop=urn:ngsi-ld:GtfsStop:a%2F..%2Fb",
+      "status": 400
+    },
+    {
+      "call": "POST /api/network",
+      "status": 200,
+      "expect": {
+        "/stops": 3,
+        "/routes": 2,
+        "/changed": true
+      }
+    },
+    {
+      "call": "POST /api/network",
+      "status": 200,
+      "expect": {
+        "/changed": false
+      }
+    },
+    {
+      "call": "GET /api/network",
+      "status": 200,
+      "expect": {
+        "/stops": 3,
+        "/routes": 2,
+        "/stale": false
+      }
+    },
+    {
+      "call": "GET /api/reach?stop=urn:ngsi-ld:GtfsStop:HSL:1",
+      "status": 200,
+      "expect": {
+        "/cached": false,
+        "/name": "Rautatientori",
+        "/code": "H2001",
+        "/bands/0/minutes": 10.0,
+        "/bands/2/minutes": 30.0
+      },
+      "length": {
+        "/bands": 3
+      },
+      "download": "/url",
+      "downloaded": "\"type\":\"FeatureCollection\""
+    },
+    {
+      "call": "GET /api/reach?stop=urn:ngsi-ld:GtfsStop:HSL:1",
+      "status": 200,
+      "expect": {
+        "/cached": true
+      },
+      "length": {
+        "/bands": 3
+      },
+      "download": "/url",
+      "downloaded": "\"type\":\"Polygon\""
+    },
+    {
+      "call": "GET /api/reach?stop=urn:ngsi-ld:GtfsStop:HSL:99",
+      "status": 404
+    },
+    {
+      "call": "GET /api/network",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "GET /api/reach?stop=urn:ngsi-ld:GtfsStop:HSL:1",
+      "as": "second",
+      "status": 409
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "steward+viewer",
+      "status": 200,
+      "expect": {
+        "/id": "u-steward",
+        "/roles": [
+          "steward",
+          "viewer"
+        ]
+      }
+    },
+    {
+      "call": "GET /api/origins",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "POST /api/origins",
+      "caller": "anonymous",
+      "body": {
+        "name": "Kamppi",
+        "lon": 24.9314,
+        "lat": 60.1688,
+        "source": "network",
+        "bands": [
+          {
+            "minutes": 10,
+            "areaKm2": 1.5,
+            "stops": 4
+          },
+          {
+            "minutes": 20,
+            "areaKm2": 6.25,
+            "stops": 12
+          },
+          {
+            "minutes": 30,
+            "areaKm2": 14.0,
+            "stops": 30
+          }
+        ]
+      },
+      "status": 401,
+      "rows": {
+        "origins": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/origins",
+      "caller": "viewer",
+      "body": {
+        "name": "   ",
+        "lon": 24.9314,
+        "lat": 60.1688,
+        "source": "network",
+        "bands": [
+          {
+            "minutes": 10,
+            "areaKm2": 1.5,
+            "stops": 4
+          },
+          {
+            "minutes": 20,
+            "areaKm2": 6.25,
+            "stops": 12
+          },
+          {
+            "minutes": 30,
+            "areaKm2": 14.0,
+            "stops": 30
+          }
+        ]
+      },
+      "status": 400,
+      "rows": {
+        "origins": 0
+      }
+    },
+    {
+      "call": "POST /api/origins",
+      "caller": "viewer",
+      "body": {
+        "name": "Tallinn",
+        "lon": 24.75,
+        "lat": 59.44,
+        "source": "network",
+        "bands": [
+          {
+            "minutes": 10,
+            "areaKm2": 1.5,
+            "stops": 4
+          },
+          {
+            "minutes": 20,
+            "areaKm2": 6.25,
+            "stops": 12
+          },
+          {
+            "minutes": 30,
+            "areaKm2": 14.0,
+            "stops": 30
+          }
+        ]
+      },
+      "status": 400,
+      "rows": {
+        "origins": 0
+      }
+    },
+    {
+      "call": "POST /api/origins",
+      "caller": "viewer",
+      "body": {
+        "name": "Kamppi",
+        "lon": 24.9314,
+        "lat": 60.1688,
+        "source": "network",
+        "bands": [
+          {
+            "minutes": 10,
+            "areaKm2": 1.5,
+            "stops": 4
+          },
+          {
+            "minutes": 20,
+            "areaKm2": 6.25,
+            "stops": 12
+          },
+          {
+            "minutes": 30,
+            "areaKm2": 14.0,
+            "stops": 30
+          }
+        ],
+        "owner_id": "u-steward"
+      },
+      "status": 400,
+      "rows": {
+        "origins": 0
+      }
+    },
+    {
+      "call": "POST /api/origins",
+      "caller": "viewer",
+      "body": {
+        "name": "Kamppi",
+        "lon": 24.9314,
+        "lat": 60.1688,
+        "source": "network",
+        "bands": [
+          {
+            "minutes": 10,
+            "areaKm2": 1.5,
+            "stops": 4
+          },
+          {
+            "minutes": 20,
+            "areaKm2": 6.25,
+            "stops": 12
+          }
+        ]
+      },
+      "status": 400,
+      "rows": {
+        "origins": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/origins",
+      "caller": "viewer",
+      "body": {
+        "name": "  Kamppi  ",
+        "lon": 24.9314,
+        "lat": 60.1688,
+        "source": "network",
+        "bands": [
+          {
+            "minutes": 10,
+            "areaKm2": 1.5,
+            "stops": 4
+          },
+          {
+            "minutes": 20,
+            "areaKm2": 6.25,
+            "stops": 12
+          },
+          {
+            "minutes": 30,
+            "areaKm2": 14.0,
+            "stops": 30
+          }
+        ]
+      },
+      "status": 201,
+      "expect": {
+        "/name": "Kamppi",
+        "/mine": true,
+        "/published": false,
+        "/bands/2/areaKm2": 14.0
+      },
+      "save": {
+        "mine": "/id"
+      },
+      "rows": {
+        "origins": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "GET /api/origins",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/name": "Kamppi",
+        "/0/mine": true,
+        "/0/lon": 24.9314,
+        "/0/bands/1/stops": 12
+      }
+    },
+    {
+      "call": "GET /api/origins",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/origins",
+      "caller": "steward+viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/mine": false
+      }
+    },
+    {
+      "call": "PUT /api/origins/{mine}",
+      "caller": "viewer@u-2",
+      "body": {
+        "name": "Mine now"
+      },
+      "status": 404,
+      "rows": {
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "DELETE /api/origins/{mine}",
+      "caller": "viewer@u-2",
+      "status": 404,
+      "rows": {
+        "origins": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "PUT /api/origins/{mine}",
+      "caller": "viewer",
+      "body": {
+        "name": ""
+      },
+      "status": 400
+    },
+    {
+      "call": "PUT /api/origins/{mine}",
+      "caller": "viewer",
+      "body": {
+        "name": "Kamppi centre"
+      },
+      "status": 204,
+      "rows": {
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "PUT /api/origins/{mine}/published",
+      "caller": "viewer",
+      "body": {
+        "published": true
+      },
+      "status": 403,
+      "rows": {
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "PUT /api/origins/{mine}/published",
+      "caller": "anonymous",
+      "body": {
+        "published": true
+      },
+      "status": 401
+    },
+    {
+      "call": "GET /api/origins",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "PUT /api/origins/{mine}/published",
+      "caller": "steward+viewer",
+      "body": {
+        "published": true
+      },
+      "status": 204,
+      "rows": {
+        "app_audit": 3
+      }
+    },
+    {
+      "call": "PUT /api/origins/9999/published",
+      "caller": "steward+viewer",
+      "body": {
+        "published": true
+      },
+      "status": 404
+    },
+    {
+      "call": "PUT /api/origins/abc",
+      "caller": "steward+viewer",
+      "body": {
+        "name": "x"
+      },
+      "status": 404
+    },
+    {
+      "call": "GET /api/origins",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/name": "Kamppi centre",
+        "/0/published": true,
+        "/0/mine": false
+      }
+    },
+    {
+      "call": "GET /api/origins",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 1
+      }
+    },
+    {
+      "call": "GET /api/origins",
+      "as": "second",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 2
+      },
+      "expect": {
+        "/0/action": "update",
+        "/0/summary": "renamed an origin to Kamppi centre",
+        "/1/action": "insert"
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "steward+viewer",
+      "status": 200,
+      "length": {
+        "": 3
+      },
+      "expect": {
+        "/0/summary": "published an origin",
+        "/0/actorName": "Person u-steward"
+      }
+    },
+    {
+      "call": "DELETE /api/origins/{mine}",
+      "caller": "viewer",
+      "status": 204,
+      "rows": {
+        "origins": 0,
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "DELETE /api/origins/{mine}",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "app_audit": 4
+      }
+    }
+  ]
+}

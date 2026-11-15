@@ -1,0 +1,26 @@
+# Dopravný podnik Bratislava's MHD timetable as GTFS (hub item aba12fd2cbac4843bc7406151bc66106,
+# CC BY 4.0, no key): 1 agency, 91 lines and 1,378 stop platforms on 2026-10-24. The runner reads
+# the zip's directory and then these three members by their byte ranges (PL-72), never the 6.2 MB
+# archive with its 45 MB stop_times.txt. T-5273.
+#
+# maxBytes bounds each member inflated: the runner reads a deflated member only when 1032 times its
+# packed size fits (T-3951). stops.txt is 34 kB packed (111 kB inflated), so 64 MiB holds until it
+# passes 65 kB packed.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: dpb-gtfs
+  namespace: bratislava
+  title:
+    sk: Cestovné poriadky MHD (DPB, GTFS)
+    en: Bratislava public transport timetable (DPB, GTFS)
+spec:
+  type: http
+  http:
+    url: https://www.arcgis.com/sharing/rest/content/items/aba12fd2cbac4843bc7406151bc66106/data
+    verb: GET
+    timeout: 60s
+    archive:
+      format: zip
+      members: [agency.txt, routes.txt, stops.txt]
+      maxBytes: 67108864

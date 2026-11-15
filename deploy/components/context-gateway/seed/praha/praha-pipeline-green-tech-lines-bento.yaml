@@ -1,0 +1,159 @@
+# The mapping of the green-tech-lines pipeline (T-5682, PL-03): one GreenAsset per place of the IPR layer
+# Sdílená data o zeleni – technické prvky – linie (1,068 records of 990 lines on 2026-10-25).
+# The IPR layers without a name field share this mapping: the memorials and war graves, the post
+# offices and the three layers of technical elements of the shared green register (benches, fences,
+# paths, paved areas); only the lets of the first step differ.
+#
+# Read in pages, as the green register pipelines read theirs: the DataSource reads the layer's
+# description, whose coded-value domains turn the numeric codes into IPR's own words; a count
+# query sizes the run and each page of 2000 records is one request to the layer's FeatureServer
+# and one write. Every request goes to mp.iprpraha.cz; the path comes from the lets below.
+#
+# Ids: urn:ngsi-ld:{type}:{org}:{space}:{prefix}-{set}-{h}, h the SHA-1 of the geometry in the shape of a
+# UUID. A record carries no name, address or other key than its GUID, and the layers keep several
+# records at one place (5,931 memorial records stand at 1,197 points; the green register keeps each
+# saved version of an element as a record of its own GUID), so the geometry is the identity: the
+# records of one place are one entity. Pages are read oldest edit first where the layer dates its
+# records, so the newest version is the one written last.
+#
+# Name (generated, the layers publish none): the kind of element in IPR's words (Technický prvek,
+# Lavička, Oplocení; the point layers' own kind, Pošta or Pietní místo) and, where the register names
+# a city district as the element's manager, that district: "Lavička – MČ Praha 6". Read beside it:
+# the kind (facilityType), the construction material, the surface, the care regime, the manager
+# (areaServed) and the last edit. The point layers publish only the GUID and IPR's provider number
+# beside the point, so their places carry the category, the name and the point. Nothing else is read.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a GUID or a geometry, or whose first
+# vertex is outside Prague's box (the city plus about 1 km) is dropped, and so is a second record
+# of one GUID or of one geometry in the page (the newest edit kept); an edit date before 1990 or
+# after today is left out. The log line counts each reason per page. A layer that answers no field
+# list, a count of none or over the cap, a page that is not a feature list, or a page where fewer
+# than half the records have a GUID and a geometry in Prague (a projection or schema change) fails
+# the run, so what is written stays instead of being thinned out.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let set = "tech-lines"
+            let prefix = "green"
+            let type = "GreenAsset"
+            let category = null
+            let kind = "Technický prvek"
+            let item = "d187ec184f6e4cd0b55e040df4bd717d"
+            let service = "OPK_CUR_OPK_SMZ_TP_L"
+            let where = "1%3D1"
+            let fields = "globalid,kod_tp,kod_sk_tp,kod_povrch,kod_k_mat,kod_r_pece,kod_sprav,aktualizace"
+            let order = "aktualizace,objectid"
+            let cap = 5000
+            let described = this.fields.catch(null)
+            root = if content().length() > 1048576 || $described.type() != "array" {
+              throw("IPR layer %v did not answer its field list".format($service))
+            } else {
+              { "set": $set, "prefix": $prefix, "type": $type, "category": $category, "kind": $kind, "item": $item, "service": $service, "where": $where, "fields": $fields, "order": $order, "cap": $cap,
+                "codes": $described.filter(f -> f.domain.type.catch("") == "codedValue").fold({}, t -> t.tally.merge({ (t.value.name): t.value.domain.codedValues.fold({}, c -> c.tally.merge({ (c.value.code.string()): c.value.name })) })) }
+            }
+        - mapping: |
+            meta layer = this.string()
+            meta path = "%v/FeatureServer/0/query?where=%v&returnCountOnly=true&f=json".format(this.service, this.where)
+            root = ""
+        - http:
+            url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/${! @path }
+            verb: GET
+            headers: { Accept: application/json }
+            timeout: 60s
+            retries: 2
+            rate_limit: pipeline_egress
+        - mapping: |
+            let layer = @layer.parse_json()
+            let count = this.count.catch(null)
+            root = if $count.type() != "number" || $count < 1 {
+              throw("IPR layer %v counted no record; the layer is never empty, so the query failed".format($layer.service))
+            } else if $count > $layer.cap {
+              throw("IPR layer %v counted %v records, more than the %v this pipeline reads".format($layer.service, $count, $layer.cap))
+            } else {
+              range(0, ($count / 2000).ceil().int64()).map_each(i -> { "offset": i * 2000 })
+            }
+        - unarchive: { format: json_array }
+    # One page at a time, so a run holds one page in memory, not the layer.
+    - split: { size: 1 }
+    - try:
+        - mapping: |
+            let layer = @layer.parse_json()
+            meta path = "%v/FeatureServer/0/query?where=%v&outFields=%v&orderByFields=%v&resultOffset=%v&resultRecordCount=2000&outSR=4326&geometryPrecision=6&f=geojson".format($layer.service, $layer.where, $layer.fields, $layer.order, this.offset)
+            root = ""
+        - http:
+            url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/${! @path }
+            verb: GET
+            headers: { Accept: application/geo+json }
+            timeout: 60s
+            retries: 2
+            rate_limit: pipeline_egress
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes for one page; more than 16 MiB is not a page of 2000 records".format(content().length())) } else { this }
+        - mapping: |
+            let layer = @layer.parse_json()
+            map first {
+              root = if this.type() == "array" && this.length() > 0 && this.index(0).type() == "array" { this.index(0).apply("first") } else { this }
+            }
+            map geometry {
+              root = if this.type.catch("") == "MultiPoint" && this.coordinates.catch([]).length() == 1 { { "type": "Point", "coordinates": this.coordinates.index(0).slice(0, 2) } } else if this.type.catch("") == "Point" && this.coordinates.catch([]).length() >= 2 { { "type": "Point", "coordinates": this.coordinates.slice(0, 2) } } else if ["LineString", "MultiLineString", "Polygon", "MultiPolygon"].contains(this.type.catch("")) { this } else { null }
+            }
+            let features = this.features.catch(null)
+            let rows = if $features.type() != "array" {
+              throw("IPR layer %v did not answer a feature list at %v".format($layer.service, @path))
+            } else {
+              $features.map_each(f -> {
+                "g": f.geometry.catch(null).apply("geometry"),
+                "p": f.properties.catch({}),
+                "key": f.properties.globalid.catch("").string().re_replace_all("[{}]", "").lowercase()
+              }).map_each(r -> r.merge({ "v": if r.g == null { null } else { r.g.coordinates.apply("first") } }))
+            }
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") && r.g != null)
+            let inside = $usable.filter(r -> r.v.type() == "array" && r.v.length() >= 2 && r.v.index(0).type() == "number" && r.v.index(1).type() == "number" && r.v.index(0) >= 14.2 && r.v.index(0) <= 14.75 && r.v.index(1) >= 49.9 && r.v.index(1) <= 50.2)
+            let unique = $inside.sort_by(r -> 0 - r.p.aktualizace.catch(0).number().catch(0)).unique(r -> r.key).map_each(r -> r.merge({ "h": r.g.format_json(no_indent: true).hash("sha1").encode("hex") })).unique(r -> r.h)
+            let now = now().ts_unix_milli()
+            let dated = $unique.map_each(r -> r.merge({ "edited": r.p.aktualizace.catch(null) })).map_each(r -> r.merge({ "late": r.edited.type() == "number" && (r.edited < 631152000000 || r.edited > $now + 86400000) }))
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta undated = $dated.filter(r -> r.late).length()
+            meta set = $layer.set
+            root = if $inside.length() * 2 < $rows.length() {
+              throw("IPR layer %v: only %v of %v records at %v have a GUID and a geometry in Prague".format($layer.service, $inside.length(), $rows.length(), @path))
+            } else { { "layer": $layer, "rows": $dated } }
+        - log:
+            level: INFO
+            message: '${! meta("set") }: read ${! meta("read") }, dropped ${! meta("unusable") } without GUID or geometry, ${! meta("outside") } outside Prague, ${! meta("duplicate") } duplicates; ${! meta("undated") } edit dates out of range left out'
+        - mapping: |
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            let layer = this.layer
+            let codes = $layer.codes
+            let source = "https://geoportalpraha.cz/data-a-sluzby/" + $layer.item
+            root = this.rows.map_each(r -> {
+              "r": r,
+              "element": [$codes.kod_tp.catch({}).get(r.p.kod_tp.catch("").string()).catch(null), $codes.kod_sk_tp.catch({}).get(r.p.kod_sk_tp.catch("").string()).catch(null), $layer.kind].map_each(t -> t.apply("words")).filter(t -> t != "").append("").index(0),
+              "material": $codes.kod_k_mat.catch({}).get(r.p.kod_k_mat.catch("").string()).catch(null).apply("words"),
+              "surface": $codes.kod_povrch.catch({}).get(r.p.kod_povrch.catch("").string()).catch(null).apply("words"),
+              "care": $codes.kod_r_pece.catch({}).get(r.p.kod_r_pece.catch("").string()).catch(null).apply("words"),
+              "manager": $codes.kod_sprav.catch({}).get(r.p.kod_sprav.catch("").string()).catch(null).apply("words")
+            }).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:%v-%v-%v".format($layer.type, env("JC_ORG_DOMAIN"), env("JC_SPACE"), $layer.prefix, $layer.set, "%v-%v-%v-%v-%v".format(v.r.h.slice(0, 8), v.r.h.slice(8, 12), v.r.h.slice(12, 16), v.r.h.slice(16, 20), v.r.h.slice(20, 32))),
+              "type": $layer.type,
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": if v.manager.has_prefix("MČ ") { "%v – %v".format(v.element, v.manager) } else { v.element } } },
+              "serviceCategory": if $layer.category != null { { "type": "Property", "value": $layer.category } } else { null },
+              "facilityType": if $layer.type == "GreenAsset" { { "type": "Property", "value": v.element } } else { null },
+              "constructionMaterial": if v.material != "" { { "type": "Property", "value": v.material } } else { null },
+              "surfaceType": if v.surface != "" { { "type": "Property", "value": v.surface } } else { null },
+              "careRegime": if v.care != "" { { "type": "Property", "value": v.care } } else { null },
+              "areaServed": if v.manager != "" && v.manager != "nespecifikovaný" { { "type": "Property", "value": v.manager } } else { null },
+              "dateModified": if v.r.edited.type() == "number" && !v.r.late { { "type": "Property", "value": (v.r.edited / 1000).ts_format("2006-01-02T15:04:05Z", "UTC") } } else { null },
+              "location": { "type": "GeoProperty", "value": v.r.g },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+              "source": { "type": "Property", "value": $source },
+              # The id is a hash of the geometry, so a redrawn outline is a new entity: the old one
+              # leaves four weekly runs after its last write, as the waste containers do (F-BNT3-019).
+              "expiresAt": (now().ts_unix() + 2419200).ts_format("2006-01-02T15:04:05Z", "UTC")
+            }.filter(kv -> kv.value != null))

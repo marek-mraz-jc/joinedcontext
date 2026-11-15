@@ -1,0 +1,25 @@
+{% ckan_extends %}
+
+{#
+  The resource page's list of the dataset's resources (T-3048, T-4333), in the dataset page's
+  sections (files, APIs, the data model), each named as a reader reads it with its format on a
+  chip: no name cut at 25 characters, no entity type repeated on every entry.
+#}
+{% block resources_list %}
+  {% for section in h.jc_resource_sections(pkg) %}
+    <h3 class="jc-nav-group" id="jc-nav-{{ section.key }}">{{ section.title }}</h3>
+    <ul class="list-unstyled nav nav-simple jc-resource-nav" aria-labelledby="jc-nav-{{ section.key }}">
+      {% for item in section['items'] %}
+        {% set resource = item.resource %}
+        {% set label = h.jc_resource_label(resource, pkg) %}
+        {% set url = h.url_for('%s_resource.read' % pkg.type, id=pkg.name, resource_id=resource.id) %}
+        <li class="nav-item{% if active == resource.id %} active{% endif %}">
+          <a href="{{ url }}"{% if active == resource.id %} aria-current="page"{% endif %}><span class="jc-chip">{{ item.format }}</span> <span>{{ label }}</span></a>
+          {% if can_edit %}
+            <a class="jc-resource-edit" href="{{ h.url_for(pkg.type ~ '_resource.edit', id=pkg.name, resource_id=resource.id) }}">{{ _('Edit') }}<span class="visually-hidden"> {{ label }}</span></a>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endfor %}
+{% endblock %}

@@ -1,0 +1,70 @@
+---
+artifact-store-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/component: store
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# Both pods declare egress, so both need the control plane: identity (8080), destination
+# (8086) and policy (8090). Without it the proxy answers the kubelet probe with 403 and the
+# pod never becomes ready.
+artifact-store-linkerd-control:
+  podSelector:
+    app.kubernetes.io/component: store
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+artifact-store-bucket-linkerd:
+  podSelector:
+    app.kubernetes.io/component: bucket
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 4143

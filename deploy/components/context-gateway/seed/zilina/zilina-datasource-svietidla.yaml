@@ -1,0 +1,18 @@
+# Every street light the city's lighting system knows (about 9,250 on 2026-10-22, 1.3 MB), from
+# the city's open data portal, dataset 102 "Zoznam pouličných svietidiel". POST without a body
+# answers the whole register; no key. ODbL, credited "Mesto Žilina" (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: zilina-opendata-svietidla
+  namespace: zilina
+  title: { sk: Pouličné svietidlá (opendata.zilina.sk), en: Street lights (opendata.zilina.sk) }
+spec:
+  type: http
+  http:
+    url: https://opendata.zilina.sk/api/datasets/v2/street-lights/items
+    verb: POST
+    headers:
+      Accept: application/json
+      User-Agent: joinedcontext-zilina/1.0 (+https://dev.joinedcontext.com)
+    timeout: 30s

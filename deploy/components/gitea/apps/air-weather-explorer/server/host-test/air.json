@@ -1,0 +1,40 @@
+[
+ {
+  "id": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+  "type": "AirQualityObserved",
+  "pm25": {
+   "type": "Property",
+   "values": [
+    [
+     4,
+     "2030-01-01T00:10:00Z"
+    ],
+    [
+     6,
+     "2030-01-01T00:40:00Z"
+    ],
+    [
+     7,
+     "2030-01-01T01:20:00Z"
+    ],
+    [
+     9,
+     "2030-01-01T02:05:00Z"
+    ]
+   ]
+  },
+  "airQualityIndex": {
+   "type": "Property",
+   "values": [
+    [
+     2,
+     "2030-01-01T00:00:00Z"
+    ],
+    [
+     "n/a",
+     "2030-01-01T01:00:00Z"
+    ]
+   ]
+  }
+ }
+]

@@ -1,0 +1,18 @@
+# One KeyPerformanceIndicator per HSL stop of `hsl-stop-boardings` (average weekday boardings, November
+# 2016), written into the indicator space (T-5254).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: stop-boardings
+  namespace: helsinki
+  title: { en: HSL boardings by stop }
+spec:
+  class: auto
+  # A count HSL published once; daily, so a republished file arrives within a day.
+  period: 24h
+  schedule: '45 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hsl-stop-boardings }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki-kpi:helsinki-kpi
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

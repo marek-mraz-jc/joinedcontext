@@ -1,0 +1,19 @@
+# The first of the station files the ovzdusie pipeline reads (T-4340): the run starts on its fetch,
+# and the mapping then reads every station's file itself (scripts/air-sk/generate.py). Up-to-date
+# (E2a) hourly PM10 of sampling point SPO-SK0001A_00005_100, as the EEA download service's
+# ParquetFile/urls call names it. No key. CC BY 4.0, copyright holder EEA.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: eea-sk-stations
+  namespace: slovensko
+  title:
+    sk: Kvalita ovzdušia, stanice SR
+    en: Air quality, Slovak stations
+spec:
+  type: http
+  http:
+    url: https://eeadmz1batchservice02.blob.core.windows.net/airquality-p/SK/SPO-SK0001A_00005_100.parquet
+    verb: GET
+    headers: { Accept: application/octet-stream }
+    timeout: 60s

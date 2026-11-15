@@ -1,0 +1,17 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: slovensko-podujatia
+  namespace: slovensko
+  title: { sk: Podujatia, en: Events }
+spec:
+  contextSpaceRef: slovensko-podujatia
+  linkml: ./slovensko-podujatia.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [Event, PointOfInterest]
+  artifacts:
+    jsonSchema: ./slovensko-podujatia.v1.schema.json
+    context: ./slovensko-podujatia.v1.context.jsonld
+    docs: ./slovensko-podujatia.v1.md
+    example: ./slovensko-podujatia.v1.example.jsonld

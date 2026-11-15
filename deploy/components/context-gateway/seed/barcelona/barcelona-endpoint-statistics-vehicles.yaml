@@ -1,0 +1,107 @@
+# Barcelona statistics, vehicle register (T-5266): the KeyPerformanceIndicator entities of the
+# statistics pipeline whose id carries the theme `vehicles`, one per indicator and area, the newest
+# period as the value and every period since the first run in the history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: statistics-vehicles
+  namespace: barcelona
+  title:
+    ca: Parc de vehicles — estadístiques de Barcelona
+    es: Parque de vehículos — estadísticas de Barcelona
+    en: Vehicle register — Barcelona statistics
+  description:
+    ca: 'Vehicles del padró municipal de vehicles per barri, districte i ciutat: total, tipologia, tipus de propulsió, servei i tipus de propietari, de cada any. Un KeyPerformanceIndicator dels Smart Data Models per indicador i àrea. Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0.'
+    es: 'Vehículos del padrón municipal de vehículos por barrio, distrito y ciudad: total, tipología, tipo de propulsión, servicio y tipo de propietario, de cada año. Un KeyPerformanceIndicator de los Smart Data Models por indicador y área. Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0.'
+    en: "Vehicles of the municipal vehicle register by barri, district and city: total, kind, propulsion, service and owner type, each year. One Smart Data Models KeyPerformanceIndicator per indicator and area, the newest period as kpiValue and the earlier periods in its history. Properties beyond the model: districtCode (the city's two-digit code of the district or barri), divisionLevel (city, district or neighbourhood), refArea (the AdministrativeArea), statisticsTable and dimensionKey (the source dataset and breakdown). Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0."
+spec:
+  contextSpaceRef: barcelona
+  slug: kmcoidsrupr62o5jfbwugynnhvms4tcr
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-statistics-vehicles
+  # The NGSI-LD door also answers the temporal API, the series per indicator. An indicator has
+  # no geometry of its own: OGC API Features serves it as a feature without one.
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [TRAN, REGI]
+    keywords:
+      ca: [vehicles, parc de vehicles, mobilitat, estadística]
+      es: [vehículos, parque de vehículos, movilidad, estadística]
+      en: [vehicles, vehicle fleet, mobility, statistics]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: ANNUAL
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/est-vehicles-tipologia-parc-vehicles
+        title:
+          ca: Open Data BCN est-vehicles-tipologia-parc-vehicles
+          en: Open Data BCN dataset est-vehicles-tipologia-parc-vehicles
+        description:
+          ca: Conjunt de dades est-vehicles-tipologia-parc-vehicles de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset est-vehicles-tipologia-parc-vehicles on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/est_vehicles_propulsio
+        title:
+          ca: Open Data BCN est_vehicles_propulsio
+          en: Open Data BCN dataset est_vehicles_propulsio
+        description:
+          ca: Conjunt de dades est_vehicles_propulsio de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset est_vehicles_propulsio on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/est_vehicles_servei
+        title:
+          ca: Open Data BCN est_vehicles_servei
+          en: Open Data BCN dataset est_vehicles_servei
+        description:
+          ca: Conjunt de dades est_vehicles_servei de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset est_vehicles_servei on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/est_vehicles_evolucio_total
+        title:
+          ca: Open Data BCN est_vehicles_evolucio_total
+          en: Open Data BCN dataset est_vehicles_evolucio_total
+        description:
+          ca: Conjunt de dades est_vehicles_evolucio_total de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset est_vehicles_evolucio_total on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/est-vehicles-tipus-propietari
+        title:
+          ca: Open Data BCN est-vehicles-tipus-propietari
+          en: Open Data BCN dataset est-vehicles-tipus-propietari
+        description:
+          ca: Conjunt de dades est-vehicles-tipus-propietari de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset est-vehicles-tipus-propietari on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/est-vehicles-cilindrada-motos
+        title:
+          ca: Open Data BCN est-vehicles-cilindrada-motos
+          en: Open Data BCN dataset est-vehicles-cilindrada-motos
+        description:
+          ca: Conjunt de dades est-vehicles-cilindrada-motos de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset est-vehicles-cilindrada-motos on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/est-vehicles-nacionalitat-propietari
+        title:
+          ca: Open Data BCN est-vehicles-nacionalitat-propietari
+          en: Open Data BCN dataset est-vehicles-nacionalitat-propietari
+        description:
+          ca: Conjunt de dades est-vehicles-nacionalitat-propietari de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset est-vehicles-nacionalitat-propietari on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/est-vehicles-potencia-fiscal-turismes
+        title:
+          ca: Open Data BCN est-vehicles-potencia-fiscal-turismes
+          en: Open Data BCN dataset est-vehicles-potencia-fiscal-turismes
+        description:
+          ca: Conjunt de dades est-vehicles-potencia-fiscal-turismes de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset est-vehicles-potencia-fiscal-turismes on its open data portal Open Data BCN. Licence CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: statistics }

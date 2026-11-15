@@ -1,0 +1,41 @@
+# Helmfile for Kyverno installation inside vcluster
+# Usage: helmfile -f ci/kyverno/helmfile.yaml.gotmpl sync
+#
+# Installs Kyverno admission controller for policy enforcement in ephemeral
+# vcluster smoke-test environments. No external certificates required —
+# Kyverno manages its own webhook TLS.
+
+repositories:
+  - name: kyverno
+    url: https://kyverno.github.io/kyverno/
+
+releases:
+  - name: kyverno
+    namespace: kyverno
+    createNamespace: true
+    chart: kyverno/kyverno
+    version: 3.8.1
+    # helm 4's watcher treats a CustomResourceDefinition as "InProgress" until it is
+    # Established and fails --wait on the race (k3d-deploy, ci-full 34786322385); the
+    # hook below waits for the same convergence with kubectl instead. It waits on every CRD, not
+    # a label: the chart labels its CRDs part-of=<release>-crds or not at all (ci-full 36096043398).
+    wait: false
+    waitForJobs: false
+    hooks:
+      - events: ["postsync"]
+        showlogs: true
+        command: sh
+        args:
+          - -ec
+          - |
+            kubectl wait --for=condition=Established crd --all --timeout=180s
+            kubectl -n kyverno rollout status deployment --timeout=300s
+    values:
+      - admissionController:
+          replicas: 1
+        backgroundController:
+          replicas: 1
+        cleanupController:
+          replicas: 1
+        reportsController:
+          replicas: 1

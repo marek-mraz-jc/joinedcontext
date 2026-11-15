@@ -1,0 +1,57 @@
+{{- /*
+  The identity workers read a cluster with to find faults themselves (T-6546, owner 2026-11-03).
+  The built-in `view` ClusterRole, bound cluster-wide: get, list and watch on the namespaced kinds
+  including pods/log and, through metrics-server's aggregated role, pod metrics. `view` holds no
+  Secret, no exec, attach or port-forward and no write verb. jc-agent-reader-nodes adds nodes and
+  node metrics only (`kubectl top nodes`). Its token is a bound one the deployer mints (`kubectl create token
+  --duration`) into a kubeconfig handed over outside the repository; no token Secret is stored,
+  and deleting the ServiceAccount revokes it. On only
+  where global.runtimePolicies.agentReader is true (dev, stage), never on production, whose logs
+  can hold personal data.
+*/}}
+{{- if .Values.agentReader.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-reader
+  namespace: {{ .Release.Namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: jc-agent-reader-nodes
+rules:
+  - apiGroups: ['']
+    resources: [nodes]
+    verbs: [get, list]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jc-agent-reader-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: agent-reader
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jc-agent-reader-nodes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: jc-agent-reader-nodes
+subjects:
+  - kind: ServiceAccount
+    name: agent-reader
+    namespace: {{ .Release.Namespace }}
+{{- end }}

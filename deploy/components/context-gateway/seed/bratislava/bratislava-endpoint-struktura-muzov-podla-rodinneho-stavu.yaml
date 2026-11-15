@@ -1,0 +1,44 @@
+# Men aged 15 and over by marital status in Bratislava's city districts (2021 census): one public dataset of the hub (T-5274), item ee1cedb128cb4023adbe0bdcdbb04b06, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-struktura-muzov-podla-rodinneho-stavu
+  namespace: bratislava
+  title:
+    sk: Štruktúra mužov podľa rodinného stavu vo veku 15 a viac v mestských častiach BA (SODB 2021
+    en: Men aged 15 and over by marital status in Bratislava's city districts (2021 census)
+  description:
+    sk: 'Ukazovatele tabuľky „Štruktúra mužov podľa rodinného stavu vo veku 15 a viac v mestských častiach BA (SODB 2021“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Men aged 15 and over by marital status in Bratislava's city districts (2021 census)”, one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: ahgejhnsfnjiard4zcmsdcfubrtfarl3
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-struktura-muzov-podla-rodinneho-stavu
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/ee1cedb128cb4023adbe0bdcdbb04b06
+        title:
+          sk: Štruktúra mužov podľa rodinného stavu vo veku 15 a viac v mestských častiach BA (SODB 2021
+          en: Men aged 15 and over by marital status in Bratislava's city districts (2021 census)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Štruktúra mužov podľa rodinného stavu vo veku 15 a viac v mestských častiach BA (SODB 2021. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Men aged 15 and over by marital status in Bratislava's city districts (2021 census). Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics }

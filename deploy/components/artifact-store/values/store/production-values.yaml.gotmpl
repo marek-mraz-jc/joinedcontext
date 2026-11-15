@@ -1,0 +1,17 @@
+---
+# Checklist:
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage -> set `artifact-store.store.storage.size` per instance; dumps and app
+#       builds are what grows, and both are reproducible from Git (Architecture/17 §4)
+# - [ ] 2+ Replicas or HorizontalPodAutoscaler -> a single-node store is one process over one
+#       volume; more replicas need an erasure-coded pool, not a replica count
+# - [ ] Rolling updates -> a StatefulSet with one volume rolls one pod at a time
+# - [ ] PodDisruptionBudget
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2048Mi

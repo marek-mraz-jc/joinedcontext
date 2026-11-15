@@ -1,0 +1,52 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resources
+  annotations:
+    policies.kyverno.io/title: Require CPU and Memory Requests and Limits
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/minversion: 1.8.0
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/scored: 'true'
+    policies.kyverno.io/description: >-
+      CPU and memory requests and limits must be defined for all containers and init
+      containers in production workloads. Requests allow the scheduler to place pods
+      on nodes with sufficient capacity; limits prevent a single container from
+      exhausting node resources. Ephemeral containers are excluded as they are used
+      for debugging and are not subject to production resource requirements.
+spec:
+  background: true
+  rules:
+    - name: validate-resources
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      preconditions:
+        all:
+          - key: "{{ request.operation || 'BACKGROUND' }}"
+            operator: NotEquals
+            value: DELETE
+      validate:
+        failureAction: Audit
+        message: 'All containers must have CPU and memory requests and limits defined.'
+        foreach:
+          - list: request.object.spec.[initContainers, containers][]
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.resources.requests.cpu || '' }}"
+                    operator: Equals
+                    value: ''
+                  - key: "{{ element.resources.requests.memory || '' }}"
+                    operator: Equals
+                    value: ''
+                  - key: "{{ element.resources.limits.cpu || '' }}"
+                    operator: Equals
+                    value: ''
+                  - key: "{{ element.resources.limits.memory || '' }}"
+                    operator: Equals
+                    value: ''

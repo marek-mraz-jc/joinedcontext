@@ -1,0 +1,9 @@
+---
+# Changes here will be overwritten by Copier.
+_commit: a97b3de
+_src_path: ..
+componentName: Postgres
+componentSlug: postgres
+componentVariableName: postgres
+releases: operator, cluster
+shortDescription: Central managed PostgreSQL database for the joinedcontext platform

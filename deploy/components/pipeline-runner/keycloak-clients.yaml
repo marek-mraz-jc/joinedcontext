@@ -1,0 +1,385 @@
+---
+# The ingestion pipelines' identity on the endpoint surface (PF-45, PF-46). A workload never
+# gets a static key: it is a confidential client with a service account, and the gateway maps
+# the token's `azp` to the ServiceAccount manifest of the same name (`{project}-{name}`, so
+# `helsinki-pipelines` is the account `pipelines` of project `helsinki` in the development
+# seed, components/context-gateway/seed/helsinki). The audience mappers bind every token to the
+# endpoints the streams write through, `helsinki-all` (the space) and `helsinki-kpi` (the
+# indicator space the KPI pipelines write, PL-45): the gateway accepts it there and on no other
+# slug. The slugs are the endpoint manifests'; the runner's values name the first once more.
+helsinki-pipelines:
+  # An account of the demo seed: rendered by the development profile only (T-1720, CC-73).
+  profiles: [development]
+  name: Helsinki ingestion pipelines
+  description: Service account of the Bento streams of the Helsinki demo; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - pipeline-runner
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: helsinki-all-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: si6epqkx364lprho5uaigutk274r5grb
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: portal-internal-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        # The capture route of the Portal's internal listener, which the pipeline-test harness posts
+        # to with this client's own token (T-2271, AG-52): the test's 130-bit id stays a capability
+        # and the caller is named as well.
+        config:
+          included.custom.audience: portal-internal
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-kpi-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: kpi4h6q2wz7xr3nv5tj6pb3mydk2s4fa
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# The city's ingestion pipelines (T-2384). Until now every stream of every project presented
+# `helsinki-pipelines`, so the gateway refused each write to a Banská Bystrica endpoint with
+# `token is not bound to this resource` — about 1900 refusals in 45 minutes on dev. The client id
+# is what `jc_core::kinds::service_account::keycloak_client_id` yields for the `pipelines`
+# ServiceAccount of this project (components/context-gateway/seed/banskabystrica/
+# serviceaccount-pipelines.yaml), which is what the Portal's reconciler renders into each stream
+# and what the gateway resolves the token's `azp` to.
+#
+# The audiences are the four endpoints its streams write through and read back, and no others:
+# `banskabystrica-mesto` (the published rows, written by `obyvatelia` and `voda` and read by
+# `ukazovatele-mesto`), `banskabystrica-kpi` (the indicators), `banskabystrica-verejne` (the
+# city's open data, T-2781) and `public-air` (the EEA readings and their expiry sweep, T-3120).
+# `public-air` is public, so a stream that only reads it sends no token at all.
+banskabystrica-pipelines:
+  # An account of the demo seed: rendered by the development profile only (T-1720, CC-73).
+  profiles: [development]
+  name: Banská Bystrica ingestion pipelines
+  description: Service account of the Bento streams of the city demo; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - pipeline-runner
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-internal-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        # The Portal's internal listener: the streams' outcome, rejected and samples sinks post
+        # with this client's own token, admitted for this project's pipelines only (T-3193, T-4038).
+        config:
+          included.custom.audience: portal-internal
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: banskabystrica-mesto-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: ovr4ttzywhad2oiogf67n7zyn2g2elfc
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: banskabystrica-kpi-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: y4royli3pip6yrhv3olxxf2522b3dovt
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: banskabystrica-verejne-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: rpfqszwlbp5bonvg7kckhdsne5qedjor
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: public-air-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: mluyob4nz52lok3ssk7pgn5vwt
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# The region's ingestion pipelines (T-2384), the same rule for project `bbsk`: `bbsk-kraj` is
+# written by the ŠÚ SR cube streams and read back by `ukazovatele`, which writes `bbsk-kpi`; the
+# register streams write `bbsk-registre` (T-2783).
+bbsk-pipelines:
+  # An account of the demo seed: rendered by the development profile only (T-1720, CC-73).
+  profiles: [development]
+  name: Banskobystrický kraj ingestion pipelines
+  description: Service account of the Bento streams of the regional demo; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - pipeline-runner
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-internal-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        # The Portal's internal listener: the streams' outcome, rejected and samples sinks post
+        # with this client's own token, admitted for this project's pipelines only (T-3193, T-4038).
+        config:
+          included.custom.audience: portal-internal
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: bbsk-kraj-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: 7u4ns3cdg2mqlx5gmxhk7rqai6pmokdj
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: bbsk-kpi-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: qfhhh5no5wz4lk3rfjisdtx3chiyfig3
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: bbsk-registre-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: lws6dd7o56veegwxsjtvak3goeta4mfn
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# Prague's ingestion pipelines (T-2785), the same rule for project `praha`: its eleven streams
+# write the one space `praha-mesto` through its endpoint of the same name, and read nothing back.
+praha-pipelines:
+  # An account of the demo seed: rendered by the development profile only (T-1720, CC-73).
+  profiles: [development]
+  name: Prague ingestion pipelines
+  description: Service account of the Bento streams of the Prague project; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - pipeline-runner
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-internal-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        # The Portal's internal listener: the streams' outcome, rejected and samples sinks post
+        # with this client's own token, admitted for this project's pipelines only (T-3193, T-4038).
+        config:
+          included.custom.audience: portal-internal
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: praha-mesto-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: jw7tffshzip7igmzcszgffkkkuetnc6v
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# The Slovakia project's ingestion pipelines (T-4340), the same rule for project `slovensko`: its one
+# stream writes the space `ovzdusie-sk` through its endpoint of the same name.
+slovensko-pipelines:
+  # An account of the demo seed: rendered by the development profile only (T-1720, CC-73).
+  profiles: [development]
+  name: Slovakia ingestion pipelines
+  description: Service account of the Bento streams of the Slovakia project; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - pipeline-runner
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-internal-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        # The Portal's internal listener: the streams' outcome, rejected and samples sinks post
+        # with this client's own token, admitted for this project's pipelines only (T-3193, T-4038).
+        config:
+          included.custom.audience: portal-internal
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: ovzdusie-sk-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: wtvuppkop6y3qv7bnvzqwifv4uts4e2k
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# The Žilina project's ingestion pipelines (T-3138), the same rule for project `zilina`: the ŠÚ SR
+# cube streams write `zilina-mesto`, the air-quality, monument and station streams `zilina-verejne`,
+# the repository stream `zilina-uniza`, and `ukazovatele` reads `zilina-mesto` and writes `zilina-kpi`.
+zilina-pipelines:
+  # An account of the demo seed: rendered by the development profile only (T-1720, CC-73).
+  profiles: [development]
+  name: Žilina ingestion pipelines
+  description: Service account of the Bento streams of the Žilina project; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - pipeline-runner
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-internal-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        # The Portal's internal listener: the streams' outcome, rejected and samples sinks post
+        # with this client's own token, admitted for this project's pipelines only (T-3193, T-4038).
+        config:
+          included.custom.audience: portal-internal
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: zilina-mesto-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: 6cm7hh73b7igmmekf3a5ucwmjyqspf62
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: zilina-verejne-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: zhu42lbyivllciy7pluenlhxmqn5hi7c
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: zilina-uniza-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: os4quyrmvhijr3x7x4fno2jicej4ifv5
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: zilina-kpi-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: ricvfpfxtaxeyzf5c3b3es7ymc6unh3o
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# Barcelona's ingestion pipelines (T-5262), the same rule for project `barcelona`: the Open Data
+# BCN streams write the one space `barcelona` through its door of the same name.
+barcelona-pipelines:
+  # An account of the demo seed: rendered by the development profile only (T-1720, CC-73).
+  profiles: [development]
+  name: Barcelona ingestion pipelines
+  description: Service account of the Bento streams of the Barcelona project; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - pipeline-runner
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-internal-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        # The Portal's internal listener: the streams' outcome, rejected and samples sinks post
+        # with this client's own token, admitted for this project's pipelines only (T-3193, T-4038).
+        config:
+          included.custom.audience: portal-internal
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: barcelona-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: pbyqbuyoeikryocvqb5uev7nxbx5mr4a
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+bratislava-pipelines:
+  # An account of the demo seed: rendered by the development profile only (T-1720, CC-73).
+  profiles: [development]
+  name: Bratislava ingestion pipelines
+  description: Service account of the Bento streams of the Bratislava project; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - pipeline-runner
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-internal-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        # The Portal's internal listener: the streams' outcome, rejected and samples sinks post
+        # with this client's own token, admitted for this project's pipelines only (T-3193, T-4038).
+        config:
+          included.custom.audience: portal-internal
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: bratislava-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: rbamgl4sqke6y5gws3mdgj3qe2zhw7ev
+          access.token.claim: 'true'
+          id.token.claim: 'false'

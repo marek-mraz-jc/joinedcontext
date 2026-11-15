@@ -1,0 +1,47 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-district-compare-1
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-district-compare
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  information:
+  - entities:
+    - type: AdministrativeArea
+    - type: Event
+    - type: BikeHireDockingStation
+    - type: Alert
+    - type: AirQualityObserved
+    propertyNames:
+    - name
+    - districtCode
+    - divisionLevel
+    - location
+    - startDate
+    - totalSlotNumber
+    - validFrom
+    - pm25
+    - airQualityIndex
+    - dateObserved
+    relationshipNames:
+    - name
+    - districtCode
+    - divisionLevel
+    - location
+    - startDate
+    - totalSlotNumber
+    - validFrom
+    - pm25
+    - airQualityIndex
+    - dateObserved
+  operations:
+  - queryEntity
+  - retrieveEntity

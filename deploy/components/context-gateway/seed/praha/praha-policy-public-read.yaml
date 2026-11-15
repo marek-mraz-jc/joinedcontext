@@ -1,0 +1,58 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-read
+  namespace: praha
+  title: { cs: Veřejné čtení, en: Public read }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # Discovery beside the reads (T-4258, EP-116): which types and attributes the Endpoint holds,
+  # narrowed to this grant (EP-26), so an anonymous MCP client finds them before it queries.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  # Every type of the space: each is open data, and no mapping writes a person's name or contact.
+  information:
+    - entities:
+        - type: BikeHireDockingStation
+        - type: AirQualityObserved
+        - type: PointOfInterest
+        - type: WasteContainerIsle
+        - type: WasteContainer
+        - type: OffStreetParking
+        - type: AdministrativeArea
+        - type: BudgetLine
+        - type: Vehicle
+        - type: TrafficFlowObserved
+        - type: EmissionSource
+        - type: RadonRiskArea
+        - type: FloodZone
+        - type: FloodDefence
+        - type: NoiseZone
+        - type: WeatherObserved
+        - type: PublicTransportRoute
+        - type: GtfsStop
+        - type: GtfsAccessPoint
+        - type: FareZone
+        - type: Garden
+        - type: Tree
+        - type: OnStreetParking
+        - type: ParkingGroup
+        - type: RestrictedTrafficArea
+        - type: FareCollectionSystem
+        - type: BikeLane
+        - type: RoadSegment
+        - type: GreenAsset
+        - type: KeyPerformanceIndicator
+        - type: CityWork

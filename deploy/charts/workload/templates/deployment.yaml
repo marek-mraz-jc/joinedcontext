@@ -1,0 +1,260 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workload.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "workload.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    {{- if eq (.Values.updateStrategy | default "RollingUpdate") "Recreate" }}
+    # One process per database (the broker with an in-process bus): the old pod stops before the
+    # new one starts, so a boot migration gets its exclusive lock and no two writers overlap (T-5311).
+    type: Recreate
+    {{- else }}
+    type: RollingUpdate
+    rollingUpdate:
+      # Never take a pod away before its replacement is serving: the platform stays up through
+      # a rollout, which is what OPS-07 asks of every stateless service. The surge is a share
+      # rather than a count, so a service that scales out rolls proportionally instead of one
+      # pod at a time.
+      maxUnavailable: 0
+      maxSurge: {{ .Values.maxSurge | default "25%" | quote }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "workload.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- $pause := int (.Values.preStopSleepSeconds | default 0) }}
+      {{- $proxyWait := add $pause (int (.Values.meshDrainSeconds | default 0)) }}
+      {{- if and $pause (le (int .Values.terminationGracePeriodSeconds) (int $proxyWait)) }}
+      {{- fail (printf "terminationGracePeriodSeconds (%v) must be longer than preStopSleepSeconds + meshDrainSeconds (%v), or the kubelet kills the pod before it drains" .Values.terminationGracePeriodSeconds $proxyWait) }}
+      {{- end }}
+      {{- $hasAnnotations := or .Values.serviceMesh.enabled .Values.configMap.enabled .Values.podAnnotations }}
+      {{- if $hasAnnotations }}
+      annotations:
+        {{- if .Values.serviceMesh.enabled }}
+        linkerd.io/inject: enabled
+        {{- if $pause }}
+        # The proxy is told to stop at the same instant as the app and refuses new connections
+        # from then on; it waits out the app's pause and its drain first (T-3008).
+        config.alpha.linkerd.io/proxy-wait-before-exit-seconds: {{ $proxyWait | quote }}
+        {{- end }}
+        {{- end }}
+        {{- if .Values.configMap.enabled }}
+        checksum/config: {{ .Values.configMap.data | toYaml | sha256sum }}
+        {{- with .Values.configMap.binaryData }}
+        checksum/binary: {{ . | toYaml | sha256sum }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      labels:
+        {{- include "workload.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "workload.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      enableServiceLinks: {{ .Values.enableServiceLinks }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) }}
+      # Spread the replicas over the nodes, so draining one node never takes them all (T-5128).
+      # ScheduleAnyway keeps a one-node cluster schedulable.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "workload.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.extraInitContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "workload.name" . }}
+          image: {{ include "workload.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if $pause }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ $pause }}
+          {{- end }}
+          ports:
+            - name: {{ .Values.service.name | default "http" }}
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: {{ .Values.metrics.name | default "metrics" }}
+              containerPort: {{ .Values.metrics.port | default 4195 }}
+              protocol: TCP
+            {{- end }}
+          {{- if .Values.probes.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path | default "/" }}
+              port: {{ .Values.containerPort }}
+              {{- with .Values.probes.readiness.host }}
+              # A server that routes by Host (jc in host mode) answers the probe only on its name.
+              httpHeaders:
+                - { name: Host, value: {{ . | quote }} }
+              {{- end }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds | default 5 }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold | default 3 }}
+          {{- with .Values.probes.startup }}
+          # Holds liveness off while the process prepares before it listens (a migration on boot).
+          # It asks what liveness asks, a command where liveness runs one (T-6218).
+          startupProbe:
+            {{- with $.Values.probes.liveness.exec }}
+            exec:
+              command: {{- toYaml . | nindent 16 }}
+            {{- else }}
+            httpGet:
+              path: {{ $.Values.probes.liveness.path | default "/" }}
+              port: {{ $.Values.containerPort }}
+              {{- with $.Values.probes.liveness.host }}
+              httpHeaders:
+                - { name: Host, value: {{ . | quote }} }
+              {{- end }}
+            {{- end }}
+            periodSeconds: {{ .periodSeconds | default 15 }}
+            timeoutSeconds: {{ .timeoutSeconds | default 3 }}
+            failureThreshold: {{ .failureThreshold }}
+          {{- end }}
+          livenessProbe:
+            {{- with .Values.probes.liveness.exec }}
+            # A command judges liveness where an answer to HTTP does not prove it
+            # (components/pipeline-runner: a stream whose stop never ends, T-5370).
+            exec:
+              command: {{- toYaml . | nindent 16 }}
+            {{- else }}
+            httpGet:
+              path: {{ .Values.probes.liveness.path | default "/" }}
+              port: {{ .Values.containerPort }}
+              {{- with .Values.probes.liveness.host }}
+              httpHeaders:
+                - { name: Host, value: {{ . | quote }} }
+              {{- end }}
+            {{- end }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds | default 15 }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold | default 3 }}
+            {{- if .Values.probes.liveness.initialDelaySeconds }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            {{- end }}
+          {{- else if .Values.probes.readinessExec }}
+          # No HTTP to probe: readiness from a command, and no liveness, whose restart would
+          # lose what the process read once at start (components/gitea-runner).
+          readinessProbe:
+            exec:
+              command: {{- toYaml .Values.probes.readinessExec | nindent 16 }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds | default 5 }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold | default 3 }}
+          {{- end }}
+          {{- if or .Values.envSecret .Values.env .Values.goMemLimitPercent }}
+          env:
+            {{- if .Values.goMemLimitPercent }}
+            - name: GOMEMLIMIT
+              value: {{ include "workload.goMemLimit" . | quote }}
+            {{- end }}
+            {{- range $key, $sec := .Values.envSecret }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $sec.secret | quote }}
+                  key: {{ $sec.key | quote }}
+                  {{- if $sec.optional }}
+                  optional: true
+                  {{- end }}
+            {{- end }}
+            {{- range $key, $val := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu | quote }}
+              memory: {{ .Values.resources.limits.memory | quote }}
+          {{- $hasMounts := or .Values.tmpDir .Values.configMap.enabled .Values.extraVolumeMounts .Values.persistence.enabled }}
+          {{- if $hasMounts }}
+          volumeMounts:
+            {{- if .Values.tmpDir }}
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: files
+              mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
+            {{- if .Values.configMap.enabled }}
+            - name: config
+              mountPath: {{ .Values.configMap.mountPath }}
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+        {{- with .Values.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- $hasVolumes := or .Values.tmpDir .Values.configMap.enabled .Values.extraVolumes .Values.persistence.enabled }}
+      {{- if $hasVolumes }}
+      volumes:
+        {{- if .Values.tmpDir }}
+        - name: tmp
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: files
+          persistentVolumeClaim:
+            claimName: {{ include "workload.fullname" . }}-files
+        {{- end }}
+        {{- if .Values.configMap.enabled }}
+        - name: config
+          configMap:
+            name: {{ default (include "workload.fullname" .) .Values.configMap.name }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}

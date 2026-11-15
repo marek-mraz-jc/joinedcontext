@@ -1,0 +1,187 @@
+{
+  "features": [
+    {
+      "geometry": {
+        "coordinates": [
+          14.3986383,
+          50.0718897
+        ],
+        "type": "Point"
+      },
+      "properties": {
+        "directions": [
+          {
+            "id": "camea-BC_AL-PL",
+            "name": "Plzeňská (z centra)"
+          },
+          {
+            "id": "camea-BC_AL-ST",
+            "name": "Štefánikova (centrum)"
+          }
+        ],
+        "id": "camea-BC_AL-STPL",
+        "name": "Anděl (Plzeňská)",
+        "route": "A14",
+        "updated_at": "2026-10-25T15:25:00.643Z"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          14.3785794,
+          50.0793736
+        ],
+        "type": "Point"
+      },
+      "properties": {
+        "directions": [
+          {
+            "id": "camea-BC_AT-LA",
+            "name": "Ladronka"
+          },
+          {
+            "id": "camea-BC_AT-ST",
+            "name": "Strahov"
+          }
+        ],
+        "id": "camea-BC_AT-STLA",
+        "name": "Atletická",
+        "route": "A140",
+        "updated_at": "2026-10-25T15:25:00.643Z"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          14.432982,
+          50.0973149
+        ],
+        "type": "Point"
+      },
+      "properties": {
+        "directions": [
+          {
+            "id": "camea-BC_DS-VL",
+            "name": "z centra"
+          },
+          {
+            "id": "camea-BC_DS-KJ",
+            "name": "centrum"
+          }
+        ],
+        "id": "camea-BC_DS-KJVL",
+        "name": "Dukelských hrdinů",
+        "route": "A 310",
+        "updated_at": "2026-10-25T15:25:00.644Z"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          14.594435691833,
+          50.059714879868
+        ],
+        "type": "Point"
+      },
+      "properties": {
+        "directions": [
+          {
+            "id": "camea-DU-KR",
+            "name": "Uhříněves (Netluky)"
+          },
+          {
+            "id": "camea-DU-ST",
+            "name": "Štěrboholy (Běchovice)"
+          }
+        ],
+        "id": "camea-BC_DU-KRST",
+        "name": "Dubeč",
+        "route": "A 24",
+        "updated_at": "2026-10-25T15:25:00.644Z"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          14.44444,
+          50.086846
+        ],
+        "type": "Point"
+      },
+      "properties": {
+        "directions": [
+          {
+            "id": "camea-BC_VK-SE",
+            "name": "Seifertova"
+          },
+          {
+            "id": "camea-BC_VK-HR",
+            "name": "Hrdlořezy"
+          },
+          {
+            "id": "camea-BC_VK-UP",
+            "name": "Seifertova"
+          }
+        ],
+        "id": "camea-BC_VK-HRUP",
+        "name": "Drážní stezka - Vítkov",
+        "route": "A 25",
+        "updated_at": "2026-10-25T15:25:00.644Z"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          14.3857008,
+          50.0704264
+        ],
+        "type": "Point"
+      },
+      "properties": {
+        "directions": [
+          {
+            "id": "camea-BC_VS-CE",
+            "name": "centrum"
+          }
+        ],
+        "id": "camea-BC_VS-CE",
+        "name": "Košíře",
+        "route": "A 14",
+        "updated_at": "2026-10-25T15:25:00.644Z"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          14.419192187464143,
+          50.05949686563836
+        ],
+        "type": "Point"
+      },
+      "properties": {
+        "directions": [
+          {
+            "id": "ecoCounter-104047647",
+            "name": "Praha Cyklisté z centra"
+          },
+          {
+            "id": "ecoCounter-103047647",
+            "name": "Praha Cyklisté do centra"
+          }
+        ],
+        "id": "ecoCounter-100047647",
+        "name": "Praha - Podolí",
+        "route": null,
+        "updated_at": "2026-07-06T13:00:01.986Z"
+      },
+      "type": "Feature"
+    }
+  ],
+  "type": "FeatureCollection"
+}

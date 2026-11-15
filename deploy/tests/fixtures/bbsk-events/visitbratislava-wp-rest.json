@@ -1,0 +1,70 @@
+[
+ {
+  "id": 381795,
+  "modified_gmt": "2026-10-25T09:26:44",
+  "link": "https://www.visitbratislava.com/events/bratislavske-jazzove-dni-2026/",
+  "title": {
+   "rendered": "Bratislavské jazzové dni 2026"
+  },
+  "excerpt": {
+   "rendered": "<p>Bratislava Jazz Days is celebrating its 51st anniversary. After last year&#8217;s jubilee edition, the festival returns to the Incheba Expo Arena from October 23 to 25. Jazzáky will bring three days of unforgettable atmosphere filled with great music, featuring the best of the world jazz scene. The ticket price for this event cannot be paid [&hellip;]</p>\n",
+   "protected": false
+  },
+  "acf": [],
+  "event_date": {
+   "start_date": 1792713600,
+   "end_date": 1792886400
+  }
+ },
+ {
+  "id": 466968,
+  "modified_gmt": "2026-10-25T09:25:33",
+  "link": "https://www.visitbratislava.com/events/bratislava-design-weekend-2026/",
+  "title": {
+   "rendered": "Bratislava Design Weekend 2026"
+  },
+  "excerpt": {
+   "rendered": "",
+   "protected": false
+  },
+  "acf": [],
+  "event_date": {
+   "start_date": 1792713600,
+   "end_date": 1792886400
+  }
+ },
+ {
+  "id": 465790,
+  "modified_gmt": "2026-10-25T09:26:45",
+  "link": "https://www.visitbratislava.com/events/maugli-17/",
+  "title": {
+   "rendered": "Mauglí"
+  },
+  "excerpt": {
+   "rendered": "",
+   "protected": false
+  },
+  "acf": [],
+  "event_date": {
+   "start_date": 1792886400,
+   "end_date": 1792886400
+  }
+ },
+ {
+  "id": 466983,
+  "modified_gmt": "2026-10-25T09:26:44",
+  "link": "https://www.visitbratislava.com/events/architektonicka-prehliadka-budovy-druzstevny-dom-racan-2/",
+  "title": {
+   "rendered": "Architektonická prehliadka budovy Družstevný dom Račan"
+  },
+  "excerpt": {
+   "rendered": "<p>The former Račan Cooperative Building is arguably the most significant work of postwar modernism in all of Rača. It was designed by Vladimír Dedeček, the architect behind many significant buildings of this period, such as the bridge connecting the Slovak National Gallery and the campus of the University of Agriculture. A guided tour will explain [&hellip;]</p>\n",
+   "protected": false
+  },
+  "acf": [],
+  "event_date": {
+   "start_date": 1792886400,
+   "end_date": 1792886400
+  }
+ }
+]

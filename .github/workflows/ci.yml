@@ -51,6 +51,7 @@ jobs:
       workflows: ${{ steps.paths.outputs.workflows }}
       image: ${{ steps.paths.outputs.image }}
       dockerfiles: ${{ steps.paths.outputs.dockerfiles }}
+      deploy: ${{ steps.paths.outputs.deploy }}
       ship: ${{ steps.paths.outputs.ship }}
       release: ${{ steps.release.outputs.release }}
     steps:
@@ -79,6 +80,10 @@ jobs:
           BEFORE: ${{ github.event.before }}
           BRANCH: ${{ github.ref_name }}
         run: sh .github/scripts/gitleaks.sh
+      # The second line behind the board's pre-push public check (docs/Deployment/01-repository-layout.md
+      # §4): no server address, age recipient, sops value or tfvars file in the deployment code.
+      - if: steps.paths.outputs.deploy == 'true'
+        run: python3 deploy/ci/public-check.py deploy .gitleaksignore
       # The T-6676 R cleanup tool's selftests against a stub gateway (stdlib, seconds).
       - run: python3 -m unittest discover -s bins/jc/deploy/minted-cleanup
       # Every security-review row and every threat-model STRIDE row names a test that exists
@@ -97,6 +102,235 @@ jobs:
           python3 scripts/ci/check-dockerfile-members.py --selftest
           python3 scripts/ci/check-dockerfile-members.py
           python3 scripts/ci/check-dockerfile-members.py --apps Dockerfile ../../bins/jc/Dockerfile
+  # The deployment code in deploy/ (T-6986, docs/Deployment/01-repository-layout.md), ported from the
+  # deployment repository's ci.yml: deploy-changes picks the tests that read the changed files and the
+  # environments to render (deploy/scripts/ci/changes.py), deploy-render renders and gates them,
+  # deploy-tests runs the picked test files in shards. Public examples only: this repository and its
+  # logs are public, so the private environments render and run their tests on the host (the board's
+  # branch check and the deployer's apply), never here.
+  deploy-changes:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults: { run: { working-directory: deploy } }
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      tests: ${{ steps.scope.outputs.tests }}
+      envs: ${{ steps.scope.outputs.envs }}
+      pins: ${{ steps.scope.outputs.pins }}
+      cluster: ${{ steps.scope.outputs.cluster }}
+      shards: ${{ steps.scope.outputs.shards }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      - id: scope
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/ci/changes.py "$BASE" "$GITHUB_SHA" | tee -a "$GITHUB_OUTPUT"
+  deploy-render:
+    needs: deploy-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults: { run: { working-directory: deploy } }
+    env:
+      RENDER_ENVS: ${{ needs.deploy-changes.outputs.envs }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/deploy-tools
+      - name: kubeconform, conftest, gitleaks
+        run: |
+          set -eu
+          curl --fail --retry 3 --retry-all-errors -sSLo kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_CHECKSUM}  kubeconform.tar.gz" | sha256sum --check --status
+          tar xzf kubeconform.tar.gz kubeconform
+          curl --fail --retry 3 --retry-all-errors -sSLo conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          echo "${CONFTEST_CHECKSUM}  conftest.tar.gz" | sha256sum --check --status
+          tar xzf conftest.tar.gz conftest
+          curl --fail --retry 3 --retry-all-errors -sSLo gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_CHECKSUM}  gitleaks.tar.gz" | sha256sum --check --status
+          tar xzf gitleaks.tar.gz gitleaks
+          rm -f kubeconform.tar.gz conftest.tar.gz gitleaks.tar.gz
+      - name: helm lint every local chart
+        # T-4956: lint plus values.schema.json against the chart's defaults, with its
+        # ci/lint-values.yaml where the bare chart needs one; a chart vendored under another
+        # chart's charts/ is upstream's and left out.
+        run: |
+          set -eu
+          git ls-files '*Chart.yaml' | awk -F/ '{n=0; for (i=1;i<=NF;i++) if ($i=="charts") n++; if (n<=1) print}' \
+            | xargs -n1 dirname | while read -r chart; do
+                if [ -f "${chart}/ci/lint-values.yaml" ]; then helm lint --quiet "${chart}" -f "${chart}/ci/lint-values.yaml"
+                else helm lint --quiet "${chart}"; fi
+              done
+      - run: just _dev-assemble
+      - name: render every environment
+        # Three at a time (T-5552); the secret gates first, because the renders leave this job as
+        # the shards' artifact: what leaves holds only generated values, no plaintext secret.
+        run: |
+          set -eu
+          mkdir -p /tmp/scan
+          # R1/R2: every remote chart pinned exactly in the file a reader sees, no helmfile.lock.
+          python3 scripts/ci/check-chart-pins.py --no-lock .
+          helmfile -f ci/kyverno/helmfile.yaml.gotmpl list --output json | python3 scripts/ci/check-chart-pins.py -
+          read -ra environments <<< "${RENDER_ENVS:-$(tr '\n' ' ' < ci/golden/ENVIRONMENTS)}"
+          echo "::group::render ${environments[*]}"
+          RENDER_JOBS=3 scripts/render-all.sh rendered "${environments[@]}"
+          echo "::endgroup::"
+          for env in "${environments[@]}"; do
+            python3 scripts/check-rendered-secrets.py "rendered/${env}.yaml" /tmp/scan/rendered.yaml
+            ./gitleaks detect --no-git --source /tmp/scan --config ci/gitleaks-rendered.toml --redact --exit-code 1
+            python3 scripts/check-secrets.py "rendered/${env}.yaml"
+          done
+          printf '%s\n' "${GITHUB_SHA}" > rendered/COMMIT
+      # The test shards read these instead of rendering the same environments again (T-6111).
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deploy-base-renders
+          path: |
+            deploy/rendered/*.yaml
+            deploy/rendered/COMMIT
+          retention-days: 1
+      - name: gate every environment
+        # Per environment: every chart pinned, kubeconform -strict against the CRDs catalog pinned to one
+        # commit, every container by digest (OPS-28), the Rego policies (TS-18, TS-19, CC-12), no legacy
+        # name, and the objects of ci/golden/<env>.txt (T-4956).
+        run: |
+          set -eu
+          golden_red=""
+          read -ra environments <<< "${RENDER_ENVS:-$(tr '\n' ' ' < ci/golden/ENVIRONMENTS)}"
+          for env in "${environments[@]}"; do
+            echo "::group::${env}"
+            cat "rendered/${env}.log"
+            helmfile -f deployment/helmfile.yaml -e "${env}" list --output json | python3 scripts/ci/check-chart-pins.py -
+            ./kubeconform -strict -kubernetes-version "${KUBERNETES_VERSION}" -skip CustomResourceDefinition -schema-location default -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/${CRDS_CATALOG_COMMIT}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -summary "rendered/${env}.yaml"
+            python3 scripts/ci/check-image-digests.py "rendered/${env}.yaml"
+            ./conftest test --all-namespaces -p policies "rendered/${env}.yaml"
+            # `! grep` alone never failed the step (errexit ignores a negated command).
+            if grep -i -E 'civitas' "rendered/${env}.yaml"; then echo "::error::${env} renders the legacy name civitas"; exit 1; fi
+            python3 ci/golden/list-objects.py "rendered/${env}.yaml" | diff -u "ci/golden/${env}.txt" - || golden_red="${golden_red} ${env}"
+            echo "::endgroup::"
+          done
+          if [ -n "${golden_red}" ]; then
+            echo "::error::the rendered objects of${golden_red} changed. Review the diff above and run 'just golden-update' in deploy/."
+            exit 1
+          fi
+  deploy-cluster-hetzner:
+    # T-6444: the one kube-hetzner module, without a token: nothing reads a Hetzner project.
+    needs: deploy-changes
+    if: needs.deploy-changes.outputs.cluster == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults: { run: { working-directory: deploy } }
+    env:
+      TF_IN_AUTOMATION: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/deploy-tools
+        with: { helmfile: "false" }
+      - name: terraform
+        run: |
+          curl --fail --retry 3 --retry-all-errors -sSLo terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          echo "${TERRAFORM_CHECKSUM}  terraform.zip" | sha256sum --check --status
+          unzip -q terraform.zip terraform
+          sudo install -m 0755 terraform /usr/local/bin/terraform
+          rm -f terraform.zip terraform
+      - run: terraform fmt -check -recursive cluster/hetzner
+      - run: terraform -chdir=cluster/hetzner/module init -backend=false -input=false -lockfile=readonly
+      - run: terraform -chdir=cluster/hetzner/module validate
+  deploy-tests:
+    needs: deploy-changes
+    if: needs.deploy-changes.outputs.full == 'true' || needs.deploy-changes.outputs.tests != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # actions: read lets a shard download this run's deploy-base-renders artifact (T-6111).
+    permissions: { contents: read, actions: read }
+    strategy: { fail-fast: false, matrix: { shard: "${{ fromJSON(needs.deploy-changes.outputs.shards) }}" } }
+    name: deploy-tests (${{ needs.deploy-changes.outputs.full == 'true' && 'full' || 'scoped' }} ${{ matrix.shard }}/${{ strategy.job-total }})
+    defaults: { run: { working-directory: deploy } }
+    env:
+      # `*` in the full set: every test file (scripts/ci/test-shard.py files)
+      JC_TEST_FILES: ${{ needs.deploy-changes.outputs.full == 'true' && '*' || needs.deploy-changes.outputs.tests }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/deploy-tools
+      - name: kyverno, sops, age, gitleaks, conftest
+        # tests/test_secrets.py round-trips a SOPS-encrypted secret and the policy tests run the Rego
+        # gate and the secret ruleset: without these binaries those tests would skip.
+        run: |
+          set -eu
+          curl --fail --retry 3 --retry-all-errors -sSLo kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          echo "${KYVERNO_CHECKSUM}  kyverno.tar.gz" | sha256sum --check --status
+          tar xzf kyverno.tar.gz kyverno && sudo install -m 0755 kyverno /usr/local/bin/kyverno
+          curl --fail --retry 3 --retry-all-errors -sSL -o sops "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64"
+          echo "${SOPS_CHECKSUM}  sops" | sha256sum --check --status
+          sudo install -m 0755 sops /usr/local/bin/sops
+          curl --fail --retry 3 --retry-all-errors -sSLo age.tar.gz "https://github.com/FiloSottile/age/releases/download/${AGE_VERSION}/age-${AGE_VERSION}-linux-amd64.tar.gz"
+          echo "${AGE_CHECKSUM}  age.tar.gz" | sha256sum --check --status
+          tar xzf age.tar.gz && sudo install -m 0755 age/age age/age-keygen /usr/local/bin/
+          curl --fail --retry 3 --retry-all-errors -sSLo gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_CHECKSUM}  gitleaks.tar.gz" | sha256sum --check --status
+          tar xzf gitleaks.tar.gz gitleaks && sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          curl --fail --retry 3 --retry-all-errors -sSLo conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          echo "${CONFTEST_CHECKSUM}  conftest.tar.gz" | sha256sum --check --status
+          tar xzf conftest.tar.gz conftest && sudo install -m 0755 conftest /usr/local/bin/conftest
+          rm -rf kyverno.tar.gz kyverno sops age.tar.gz age gitleaks.tar.gz gitleaks conftest.tar.gz conftest
+      - run: pip install --quiet --require-hashes --no-deps -r ci/requirements-tests.txt
+      - name: assemble deployment dir and add the chart repos
+        run: |
+          just _dev-assemble
+          helmfile -f deployment/helmfile.yaml -e local repos
+          helmfile -f deployment/helmfile.yaml -e production repos
+          helmfile -f deployment/helmfile.yaml -e addons repos
+      # T-4694, T-5357: the platform commit components/ai/bundle.lock names, the Portal and gateway
+      # pins' commits and platform main, for the tests that rebuild the assistant bundle and hold the
+      # seed manifests to those commits' jc-core schemas.
+      - name: the platform commits of the ai bundle, the Portal and gateway pins and platform main
+        run: |
+          set -euo pipefail
+          sha=$(sed -n 's/^platform: //p' components/ai/bundle.lock)
+          portal=$(yq '.portal.portal.commit' components/portal/images.yaml)
+          git init -q "$RUNNER_TEMP/portal"
+          git -C "$RUNNER_TEMP/portal" fetch -q --depth 1 https://github.com/marek-mraz-jc/joinedcontext-portal "$portal"
+          jc_core=$(git -C "$RUNNER_TEMP/portal" show "$portal:Cargo.toml" | sed -n 's/^jc-core = {.*rev = "\([0-9a-f]\{40\}\)".*/\1/p')
+          gateway=$(yq '.["context-gateway"].gateway.commit' components/context-gateway/images.yaml)
+          git init -q "$RUNNER_TEMP/platform"
+          git -C "$RUNNER_TEMP/platform" fetch -q --depth 1 https://github.com/marek-mraz-jc/joinedcontext-platform \
+            "$sha" "$jc_core" "$gateway" 5a24c4298689bd21e842511bda8fbf21157b1580 +main:refs/remotes/origin/main
+          echo "JC_PLATFORM_DIR=$RUNNER_TEMP/platform" >> "$GITHUB_ENV"
+          echo "JC_PORTAL_DIR=$RUNNER_TEMP/portal" >> "$GITHUB_ENV"
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - name: the pinned images carry our workflows' signatures (T-5564)
+        if: needs.deploy-changes.outputs.pins == 'true' && matrix.shard == 1
+        run: scripts/verify-pinned-images.py production
+      - name: kyverno policy unit tests
+        if: matrix.shard == 1
+        run: kyverno test ci/policies
+      - name: the render job's renders
+        # deploy-render uploads them about two minutes in; a shard waits up to four minutes and then
+        # renders for itself (tests/conftest.py).
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          set -u
+          dir="$RUNNER_TEMP/base-renders"
+          for _ in $(seq 1 24); do
+            if gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n deploy-base-renders -D "$dir" 2>/dev/null; then break; fi
+            rm -rf "$dir"
+            sleep 10
+          done
+          if [ -f "$dir/COMMIT" ] && [ "$(cat "$dir/COMMIT")" = "$GITHUB_SHA" ]; then
+            echo "JC_RENDERED_DIR=$dir" >> "$GITHUB_ENV"
+          else
+            echo "::warning::no base renders from deploy-render; this shard renders its own"
+          fi
+      - name: pytest
+        env:
+          JC_TEST_SHARD: ${{ format('{0}/{1}', matrix.shard, strategy.job-total) }}
+        run: |
+          files=$(python3 scripts/ci/test-shard.py "${{ matrix.shard }}" "${{ strategy.job-total }}")
+          # an empty list would run every file of tests/
+          if [ -z "$files" ]; then echo "no test file for this shard (scripts/ci/changes.py, test-shard.py)"; exit 0; fi
+          # shellcheck disable=SC2086 # one word per test file
+          pytest -q -n auto --dist loadgroup --durations=30 $files
   # The root workspace: every module crate and bins/jc, which links Antares, ekiben and the Portal
   # by path, so a change in any of them reaches it.
   root-clippy:

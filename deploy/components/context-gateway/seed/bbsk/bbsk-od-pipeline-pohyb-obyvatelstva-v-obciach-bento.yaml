@@ -1,0 +1,198 @@
+# The mapping of the od-pohyb-obyvatelstva-v-obciach pipeline, generated from the T-4254 mapping: one KeyPerformanceIndicator per row of
+# "Pohyb obyvateľstva v obciach (1996 - 2024)" (https://opendata.dev.joinedcontext.com/dataset/bbsk-pohyb-obyvatelstva-v-obciach-1996-2024-919463). Do not edit: change the mapping and run scripts/open-data/generate.py.
+
+pipeline:
+  processors:
+    # A layer that answers an error or no feature list is the service failing, so the run fails
+    # where it can be seen rather than writing nothing.
+    - mapping: |
+        root = if this.error.or(null) != null || this.features.or(null) == null { throw("the layer answered no features: %v".format(this.error.message.or(""))) } else { this }
+    # Page 0 as it came. When the layer says there is more, it is asked how many rows it holds and
+    # every further page of them is read (T-5288), one page at a time: the runner fetches, maps and
+    # writes a page before the next, so a layer of any size runs in a page's memory (jc-ekiben-paging).
+    - branch:
+        request_map: |
+          root = if this.properties.exceededTransferLimit.or(false) { "" } else { deleted() }
+        processors:
+          - http:
+              url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/pohyb_view/FeatureServer/0/query?where=1%3D1&returnCountOnly=true&f=json"
+              verb: GET
+              headers:
+                Accept: application/json
+              timeout: 60s
+              retries: 2
+              rate_limit: pipeline_egress
+        result_map: |
+          root.rowCount = this.count.or(this.error.message.or("no count"))
+    - mapping: |
+        let rows = this.rowCount.or(null)
+        root = if !this.properties.exceededTransferLimit.or(false) { [this] } else if errored() || $rows.type() != "number" { [{ "problem": "the layer did not say how many rows it holds: %v".format(error().or($rows)) }] } else if this.features.length() < [1000, $rows].min() { [{ "problem": "the layer answered %v rows where 1000 were asked, so its pages would skip rows".format(this.features.length()) }] } else if $rows <= 1000 { [this] } else { [this].concat(range(1, (($rows + 999) / 1000).floor()).map_each(p -> { "offset": p * 1000, "rowCount": $rows })) }
+    - unarchive:
+        format: json_array
+    # Each page its own batch: fetched, mapped and written before the next is read.
+    - split:
+        size: 1
+    - switch:
+        - check: this.offset.or(null) != null
+          processors:
+            - mapping: |
+                meta offset = this.offset
+                meta rows = this.rowCount
+                root = ""
+            - http:
+                url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/pohyb_view/FeatureServer/0/query?where=1%3D1&outFields=DOW,FACC,IDN4,NM4,IDN3,NM3,IDN2,NM2,VYMERA,NUTS1,NUTS1_CODE,NUTS2,NUTS2_CODE,NUTS3,NUTS3_CODE,LAU1,LAU1_CODE,LAU2,LAU2_CODE,Obec_ID,Obec_n%C3%A1zov_dlh%C3%BD,Obec_n%C3%A1zov_kr%C3%A1tky,Okres_ID,Okres_dlh%C3%BD_n%C3%A1zov,Kraj_ID,Kraj_dlh%C3%BD_n%C3%A1zov,rok,Stav_trvale_b%C3%BDvaj%C3%BAceho_obyvate%C4%BE,Stav_trvale_b%C3%BDvaj%C3%BAceho_obyvat_1,Stav_trvale_b%C3%BDvaj%C3%BAceho_obyvat_2,Naroden%C3%AD__Osoba_,Hrub%C3%A1_miera_%C5%BEivorodenosti__Prom,Potraty__Po%C4%8Det_v_jednotk%C3%A1ch_,Hrub%C3%A1_miera_potratovosti__Promi,Index_potratovosti__Percento_,Ukon%C4%8Den%C3%A9_tehotenstv%C3%A1__Po%C4%8Det_v_j,Hrub%C3%A1_miera_ukon%C4%8Den%C3%BDch_tehotens,Zomret%C3%AD__Osoba_,Hrub%C3%A1_miera_%C3%BAmrtnosti__Promile_,Doj%C4%8Densk%C3%A1_%C3%BAmrtnos%C5%A5__Osoba_,Miera_doj%C4%8Denskej_%C3%BAmrtnosti__Pro,Novorodeneck%C3%A1_%C3%BAmrtnos%C5%A5__Osoba_,Miera_novorodeneckej_%C3%BAmrtnosti_,Perinat%C3%A1lna_%C3%BAmrtnos%C5%A5__Osoba_,Miera_perinat%C3%A1lnej_%C3%BAmrtnosti__P,%C5%A0tandardn%C3%A1_doj%C4%8Densk%C3%A1_%C3%BAmrtnos%C5%A5__,%C5%A0tandardn%C3%A1_novorodeneck%C3%A1_%C3%BAmrtno,Sob%C3%A1%C5%A1e__Po%C4%8Det_v_jednotk%C3%A1ch_,Hrub%C3%A1_miera_sob%C3%A1%C5%A1nosti__Promile,Rozvody__Po%C4%8Det_v_jednotk%C3%A1ch_,Hrub%C3%A1_miera_rozvodovosti__Promi,Index_rozvodovosti__Percento_,Prirodzen%C3%BD_pr%C3%ADrastok_obyvate%C4%BEst,Hrub%C3%A1_miera_prirodzen%C3%A9ho_pr%C3%ADras,Pris%C5%A5ahovan%C3%AD_na_trval%C3%BD_pobyt__O,Vys%C5%A5ahovan%C3%AD_z_trval%C3%A9ho_pobytu__,Migra%C4%8Dn%C3%A9_saldo__Osoba_,Hrub%C3%A1_miera_migra%C4%8Dn%C3%A9ho_salda__P,Celkov%C3%BD_pr%C3%ADrastok_obyvate%C4%BEstva_,Hrub%C3%A1_miera_celkov%C3%A9ho_pr%C3%ADrastku,%C5%BDivonaroden%C3%AD__Osoba_&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=${! @offset }&resultRecordCount=1000&orderByFields=ObjectId"
+                verb: GET
+                headers:
+                  Accept: application/geo+json
+                timeout: 60s
+                retries: 2
+                rate_limit: pipeline_egress
+            - mapping: |
+                root = if errored() { throw("the page at %v did not come: %v".format(@offset, error())) } else if this.features.or(null) == null { { "problem": "the page at %v answered no features: %v".format(@offset, this.error.message.or("")) } } else if this.features.length() < [1000, @rows - @offset].min() { { "problem": "the page at %v answered %v rows where %v were due".format(@offset, this.features.length(), [1000, @rows - @offset].min()) } } else { this }
+    # A refusal above fails the run and writes none of its page's rows; earlier pages stay written
+    # and the failed run deletes nothing (sourceDeletes waits for a finished run).
+    - mapping: |
+        root = if this.problem.or(null) != null { throw(this.problem) } else { this }
+    - mapping: |
+        root = this.features.or([])
+    - unarchive:
+        format: json_array
+    - mapping: |
+        # Slovak notation: a space (or a no-break one) between thousands, a comma before the decimals, so
+        # "10 700,01" is 10700.01 (T-4324); a text without a comma keeps its dot, "1.5" is one and a half.
+        map number {
+          let s = this.string().re_replace_all("[ 	  ]", "")
+          let t = if $s.contains(",") { $s.replace_all(".", "").replace_all(",", ".") } else { $s }
+          root = $t.number().catch(null)
+        }
+        map integer {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v.round().int64() } }
+        }
+        map float {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        map string {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": $v } }
+        }
+        map string_list {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": [$v] } }
+        }
+        map uri {
+          root = this.apply("string")
+        }
+        # An Esri date is milliseconds since the epoch; a WordPress one is text.
+        # `match` rebinds `this` to what it matches, so the value is named first.
+        map datetime {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02T15:04:05Z", "UTC").catch(null),
+            "string" => $x.ts_parse("2006-01-02T15:04:05").ts_format("2006-01-02T15:04:05Z", "UTC").catch($x.ts_format("2006-01-02T15:04:05Z", "UTC").catch(null)),
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        # The instant a row was observed, from its `observedAt` column: a bare year is its first instant,
+        # anything else reads as a datetime (T-4288).
+        map observed {
+          let x = this
+          root = if $x == null { null } else if $x.string().re_match("^[0-9]{4}$") { $x.string() + "-01-01T00:00:00Z" } else {
+            $x.apply("datetime").value.catch(null)
+          }
+        }
+        # A measured Property with the instant it holds, so SensorThings charts it (T-4288).
+        map stamped {
+          root = if this.p == null || this.at == null { this.p } else { this.p.merge({ "observedAt": this.at }) }
+        }
+        map date {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02", "UTC").catch(null),
+            # ISO, or the Slovak "29.08.2026" and "1. 3. 2024".
+            "string" => if $x.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}") { $x.slice(0, 10) } else {
+              $x.re_replace_all("[.] +", ".").trim().ts_parse("2.1.2006").ts_format("2006-01-02", "UTC").catch(null)
+            },
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        let local = "pohyb-obyvatelstva-v-obciach-" + [this.properties."IDN4", this.properties."rok"].map_each(v -> v.string()).join("-").re_replace_all("[^A-Za-z0-9._~-]", "-").slice(0, 80)
+        let at = this.properties."rok".apply("observed")
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", "bbsk.sk", env("JC_SPACE"), $local),
+          "type": "KeyPerformanceIndicator",
+          "dOW": this.properties."DOW".apply("datetime"),
+          "fACC": this.properties."FACC".apply("string"),
+          "iDN4": {"p": this.properties."IDN4".apply("integer"), "at": $at}.apply("stamped"),
+          "nM4": this.properties."NM4".apply("string"),
+          "iDN3": {"p": this.properties."IDN3".apply("integer"), "at": $at}.apply("stamped"),
+          "nM3": this.properties."NM3".apply("string"),
+          "iDN2": {"p": this.properties."IDN2".apply("integer"), "at": $at}.apply("stamped"),
+          "nM2": this.properties."NM2".apply("string"),
+          "vYMERA": {"p": this.properties."VYMERA".apply("float"), "at": $at}.apply("stamped"),
+          "nUTS1": this.properties."NUTS1".apply("string"),
+          "nUTS1CODE": this.properties."NUTS1_CODE".apply("string"),
+          "nUTS2": this.properties."NUTS2".apply("string"),
+          "nUTS2CODE": this.properties."NUTS2_CODE".apply("string"),
+          "nUTS3": this.properties."NUTS3".apply("string"),
+          "nUTS3CODE": this.properties."NUTS3_CODE".apply("string"),
+          "lAU1": this.properties."LAU1".apply("string"),
+          "lAU1CODE": this.properties."LAU1_CODE".apply("string"),
+          "lAU2": this.properties."LAU2".apply("string"),
+          "lAU2CODE": this.properties."LAU2_CODE".apply("string"),
+          "obecID": this.properties."Obec_ID".apply("string"),
+          "obecNazovDlhy": this.properties."Obec_názov_dlhý".apply("string"),
+          "obecNazovKratky": this.properties."Obec_názov_krátky".apply("string"),
+          "okresID": this.properties."Okres_ID".apply("string"),
+          "okresDlhyNazov": this.properties."Okres_dlhý_názov".apply("string"),
+          "krajID": this.properties."Kraj_ID".apply("string"),
+          "krajDlhyNazov": this.properties."Kraj_dlhý_názov".apply("string"),
+          "rok": this.properties."rok".apply("string"),
+          "stavTrvaleByvajucehoObyvatel": {"p": this.properties."Stav_trvale_bývajúceho_obyvateľ".apply("float"), "at": $at}.apply("stamped"),
+          "stavTrvaleByvajucehoObyvat1": {"p": this.properties."Stav_trvale_bývajúceho_obyvat_1".apply("float"), "at": $at}.apply("stamped"),
+          "stavTrvaleByvajucehoObyvat2": {"p": this.properties."Stav_trvale_bývajúceho_obyvat_2".apply("float"), "at": $at}.apply("stamped"),
+          "narodeniOsoba": {"p": this.properties."Narodení__Osoba_".apply("float"), "at": $at}.apply("stamped"),
+          "hrubaMieraZivorodenostiProm": {"p": this.properties."Hrubá_miera_živorodenosti__Prom".apply("float"), "at": $at}.apply("stamped"),
+          "potratyPocetVJednotkach": {"p": this.properties."Potraty__Počet_v_jednotkách_".apply("float"), "at": $at}.apply("stamped"),
+          "hrubaMieraPotratovostiPromi": {"p": this.properties."Hrubá_miera_potratovosti__Promi".apply("float"), "at": $at}.apply("stamped"),
+          "indexPotratovostiPercento": {"p": this.properties."Index_potratovosti__Percento_".apply("float"), "at": $at}.apply("stamped"),
+          "ukonceneTehotenstvaPocetVJ": {"p": this.properties."Ukončené_tehotenstvá__Počet_v_j".apply("float"), "at": $at}.apply("stamped"),
+          "hrubaMieraUkoncenychTehotens": {"p": this.properties."Hrubá_miera_ukončených_tehotens".apply("float"), "at": $at}.apply("stamped"),
+          "zomretiOsoba": {"p": this.properties."Zomretí__Osoba_".apply("float"), "at": $at}.apply("stamped"),
+          "hrubaMieraUmrtnostiPromile": {"p": this.properties."Hrubá_miera_úmrtnosti__Promile_".apply("float"), "at": $at}.apply("stamped"),
+          "dojcenskaUmrtnostOsoba": {"p": this.properties."Dojčenská_úmrtnosť__Osoba_".apply("float"), "at": $at}.apply("stamped"),
+          "mieraDojcenskejUmrtnostiPro": {"p": this.properties."Miera_dojčenskej_úmrtnosti__Pro".apply("float"), "at": $at}.apply("stamped"),
+          "novorodeneckaUmrtnostOsoba": {"p": this.properties."Novorodenecká_úmrtnosť__Osoba_".apply("float"), "at": $at}.apply("stamped"),
+          "mieraNovorodeneckejUmrtnosti": {"p": this.properties."Miera_novorodeneckej_úmrtnosti_".apply("float"), "at": $at}.apply("stamped"),
+          "perinatalnaUmrtnostOsoba": {"p": this.properties."Perinatálna_úmrtnosť__Osoba_".apply("float"), "at": $at}.apply("stamped"),
+          "mieraPerinatalnejUmrtnostiP": {"p": this.properties."Miera_perinatálnej_úmrtnosti__P".apply("float"), "at": $at}.apply("stamped"),
+          "standardnaDojcenskaUmrtnost": {"p": this.properties."Štandardná_dojčenská_úmrtnosť__".apply("float"), "at": $at}.apply("stamped"),
+          "standardnaNovorodeneckaUmrtno": {"p": this.properties."Štandardná_novorodenecká_úmrtno".apply("float"), "at": $at}.apply("stamped"),
+          "sobasePocetVJednotkach": {"p": this.properties."Sobáše__Počet_v_jednotkách_".apply("float"), "at": $at}.apply("stamped"),
+          "hrubaMieraSobasnostiPromile": {"p": this.properties."Hrubá_miera_sobášnosti__Promile".apply("float"), "at": $at}.apply("stamped"),
+          "rozvodyPocetVJednotkach": {"p": this.properties."Rozvody__Počet_v_jednotkách_".apply("float"), "at": $at}.apply("stamped"),
+          "hrubaMieraRozvodovostiPromi": {"p": this.properties."Hrubá_miera_rozvodovosti__Promi".apply("float"), "at": $at}.apply("stamped"),
+          "indexRozvodovostiPercento": {"p": this.properties."Index_rozvodovosti__Percento_".apply("float"), "at": $at}.apply("stamped"),
+          "prirodzenyPrirastokObyvatelst": {"p": this.properties."Prirodzený_prírastok_obyvateľst".apply("float"), "at": $at}.apply("stamped"),
+          "hrubaMieraPrirodzenehoPriras": {"p": this.properties."Hrubá_miera_prirodzeného_príras".apply("float"), "at": $at}.apply("stamped"),
+          "pristahovaniNaTrvalyPobytO": {"p": this.properties."Prisťahovaní_na_trvalý_pobyt__O".apply("float"), "at": $at}.apply("stamped"),
+          "vystahovaniZTrvalehoPobytu": {"p": this.properties."Vysťahovaní_z_trvalého_pobytu__".apply("float"), "at": $at}.apply("stamped"),
+          "migracneSaldoOsoba": {"p": this.properties."Migračné_saldo__Osoba_".apply("float"), "at": $at}.apply("stamped"),
+          "hrubaMieraMigracnehoSaldaP": {"p": this.properties."Hrubá_miera_migračného_salda__P".apply("float"), "at": $at}.apply("stamped"),
+          "celkovyPrirastokObyvatelstva": {"p": this.properties."Celkový_prírastok_obyvateľstva_".apply("float"), "at": $at}.apply("stamped"),
+          "hrubaMieraCelkovehoPrirastku": {"p": this.properties."Hrubá_miera_celkového_prírastku".apply("float"), "at": $at}.apply("stamped"),
+          "zivonarodeniOsoba": {"p": this.properties."Živonarodení__Osoba_".apply("float"), "at": $at}.apply("stamped"),
+          "location": if this.geometry.or(null) == null { null } else { { "type": "GeoProperty", "value": this.geometry } },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/pohyb_view/FeatureServer/0/query?where=1%3D1&outFields=DOW,FACC,IDN4,NM4,IDN3,NM3,IDN2,NM2,VYMERA,NUTS1,NUTS1_CODE,NUTS2,NUTS2_CODE,NUTS3,NUTS3_CODE,LAU1,LAU1_CODE,LAU2,LAU2_CODE,Obec_ID,Obec_n%C3%A1zov_dlh%C3%BD,Obec_n%C3%A1zov_kr%C3%A1tky,Okres_ID,Okres_dlh%C3%BD_n%C3%A1zov,Kraj_ID,Kraj_dlh%C3%BD_n%C3%A1zov,rok,Stav_trvale_b%C3%BDvaj%C3%BAceho_obyvate%C4%BE,Stav_trvale_b%C3%BDvaj%C3%BAceho_obyvat_1,Stav_trvale_b%C3%BDvaj%C3%BAceho_obyvat_2,Naroden%C3%AD__Osoba_,Hrub%C3%A1_miera_%C5%BEivorodenosti__Prom,Potraty__Po%C4%8Det_v_jednotk%C3%A1ch_,Hrub%C3%A1_miera_potratovosti__Promi,Index_potratovosti__Percento_,Ukon%C4%8Den%C3%A9_tehotenstv%C3%A1__Po%C4%8Det_v_j,Hrub%C3%A1_miera_ukon%C4%8Den%C3%BDch_tehotens,Zomret%C3%AD__Osoba_,Hrub%C3%A1_miera_%C3%BAmrtnosti__Promile_,Doj%C4%8Densk%C3%A1_%C3%BAmrtnos%C5%A5__Osoba_,Miera_doj%C4%8Denskej_%C3%BAmrtnosti__Pro,Novorodeneck%C3%A1_%C3%BAmrtnos%C5%A5__Osoba_,Miera_novorodeneckej_%C3%BAmrtnosti_,Perinat%C3%A1lna_%C3%BAmrtnos%C5%A5__Osoba_,Miera_perinat%C3%A1lnej_%C3%BAmrtnosti__P,%C5%A0tandardn%C3%A1_doj%C4%8Densk%C3%A1_%C3%BAmrtnos%C5%A5__,%C5%A0tandardn%C3%A1_novorodeneck%C3%A1_%C3%BAmrtno,Sob%C3%A1%C5%A1e__Po%C4%8Det_v_jednotk%C3%A1ch_,Hrub%C3%A1_miera_sob%C3%A1%C5%A1nosti__Promile,Rozvody__Po%C4%8Det_v_jednotk%C3%A1ch_,Hrub%C3%A1_miera_rozvodovosti__Promi,Index_rozvodovosti__Percento_,Prirodzen%C3%BD_pr%C3%ADrastok_obyvate%C4%BEst,Hrub%C3%A1_miera_prirodzen%C3%A9ho_pr%C3%ADras,Pris%C5%A5ahovan%C3%AD_na_trval%C3%BD_pobyt__O,Vys%C5%A5ahovan%C3%AD_z_trval%C3%A9ho_pobytu__,Migra%C4%8Dn%C3%A9_saldo__Osoba_,Hrub%C3%A1_miera_migra%C4%8Dn%C3%A9ho_salda__P,Celkov%C3%BD_pr%C3%ADrastok_obyvate%C4%BEstva_,Hrub%C3%A1_miera_celkov%C3%A9ho_pr%C3%ADrastku,%C5%BDivonaroden%C3%AD__Osoba_&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=0&resultRecordCount=1000&orderByFields=ObjectId" },
+          "isPartOf": { "type": "Property", "value": "https://opendata.dev.joinedcontext.com/dataset/bbsk-pohyb-obyvatelstva-v-obciach-1996-2024-919463" }
+        }.filter(entry -> entry.value != null)
+    # One request per run's batch rather than one per row.
+    - split:
+        size: 1000
+        byte_size: 2097152
+    - archive:
+        format: json_array

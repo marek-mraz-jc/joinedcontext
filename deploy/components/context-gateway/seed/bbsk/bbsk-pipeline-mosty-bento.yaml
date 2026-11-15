@@ -1,0 +1,49 @@
+# The mapping of the mosty pipeline (PL-03): one Bridge per bridge of the road network in the
+# region, 1 651 of them, keyed by its number in the national road databank (ID_mosta). The line
+# is the bridge's axis as the region's layer draws it.
+
+pipeline:
+  processors:
+    - mapping: |
+        map road_class {
+          root = match this {
+            "diaľnica" => "motorway",
+            "cesta I. triedy" => "firstClass",
+            "cesta II. triedy" => "secondClass",
+            "cesta III. triedy" => "thirdClass",
+            "miestna neurčená" => "local",
+            this.has_prefix("účelová cesta") => "service",
+            _ => null,
+          }
+        }
+        map heritage {
+          root = match this {
+            "most, ktorý nie je pamiatka" => "notListed",
+            "kultúrna pamiatka" => "cultural",
+            "kultúrna + technická pamiatka" => "culturalAndTechnical",
+            _ => null,
+          }
+        }
+        map text {
+          root = if this.or("").string().trim() == "" { null } else { { "type": "Property", "value": this.string().trim() } }
+        }
+        root = this.features.or([]).filter(f -> f.properties.ID_mosta.or("").string().re_match("^M[0-9]+$") && f.geometry.or(null) != null).map_each(f -> f.properties.assign({ "_geometry": f.geometry })).map_each(p -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("Bridge", "bbsk.sk", env("JC_SPACE"), p.ID_mosta),
+          "type": "Bridge",
+          # A bridge the register names with a blank is named by its id (M1020 on dev, T-4745).
+          "name": { "type": "Property", "value": if p."Názov_mosta".or("").string().trim() == "" { p.ID_mosta.string() } else { p."Názov_mosta".string().trim() } },
+          "bridgeCode": { "type": "Property", "value": p.ID_mosta },
+          "roadClass": if p.Trieda_PK.or("").apply("road_class") == null { null } else { { "type": "Property", "value": p.Trieda_PK.apply("road_class") } },
+          "roadNumber": p."Číslo_PK".apply("text"),
+          "yearBuilt": if p.Rok_postavenia.type() == "number" && p.Rok_postavenia >= 1000 { { "type": "Property", "value": p.Rok_postavenia.int64() } } else { null },
+          "spanCount": if p."Počet_otvorov".type() == "number" && p."Počet_otvorov" >= 0 { { "type": "Property", "value": p."Počet_otvorov".int64() } } else { null },
+          "bridgedLength": if p."Dĺžka_premostenia___m".type() == "number" && p."Dĺžka_premostenia___m" >= 0 { { "type": "Property", "value": p."Dĺžka_premostenia___m", "unitCode": "MTR" } } else { null },
+          "structureMaterial": p.materialText.apply("text"),
+          "structureKind": p.druhKonstrukcieText.apply("text"),
+          "heritageStatus": if p.mostAkoPamiatkaText.or("").apply("heritage") == null { null } else { { "type": "Property", "value": p.mostAkoPamiatkaText.apply("heritage") } },
+          "managerName": p."Správca_mostu".apply("text"),
+          "districtName": p.Okres.apply("text"),
+          "location": { "type": "GeoProperty", "value": p._geometry },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj, opendata.bbsk.sk (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata.bbsk.sk/" }
+        }.filter(entry -> entry.value != null))

@@ -1,0 +1,121 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: AgentProfile
+metadata:
+  name: chat
+  namespace: org
+  title: { en: "Assistant conversations" }
+spec:
+  # The Portal's assistant conversations run on this profile (T-2770, AG-72): no workspace, no
+  # coding tools and no internet, so a steward; the run is the Portal's own model calls.
+  role: steward
+  # Required by the kind and never started: a conversation runs in the Portal (AP-56).
+  runtime:
+    image: ghcr.io/all-hands-ai/agent-server
+    digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+  # Gemini 3.8 Flash at `low`: measured through OpenRouter on 2026-09-25, `low` answers with no
+  # reasoning tokens (1.8 s) where no setting thinks 135 tokens (2.1 s), and `none` is refused
+  # ("Reasoning is mandatory for this endpoint", HTTP 400). A build keeps app-builder's `medium`.
+  # The budget is a long conversation's, a quarter of a build's.
+  model:
+    provider: openai-compatible
+    name: google/gemini-3.8-flash
+    maxTokensPerRun: 500000
+    reasoningEffort: low
+  # A pool of its own: a build or a test on app-builder never queues a person's chat.
+  limits:
+    stepsPerRun: 200
+    wallClock: PT1H
+    concurrentRunsPerOrganization: 10
+    requestsPerMinute: 60
+    maxResponseBytes: 2097152
+  # No host at all: a conversation reads through the endpoints, never the internet (AG-50).
+  egress: {}
+  tools: []
+  # What an assistant run may call, intersected with the person who starts it (AG-70): the
+  # catalog search, the share and KPI steps, space completion, opening a change or a removal of
+  # any project resource and a grant of a role for the person to propose (AG-77). Read and propose
+  # only: the run never approves and never removes, the person does, and a grant never exceeds
+  # what that person holds (PF-52). Without this block a run gets read-only operations only.
+  access:
+    # Everything that reads or proposes; a person's own grants narrow each call and a person
+    # approves. Never here: approvals, deletions, service-account keys, project create, delete,
+    # import and export, jc_flow_start, jc_draft_drop, jc_workspace_discard, jc_workspace_propose
+    # (AG-11, AG-82, T-1475).
+    operations:
+      - jc_catalog_search
+      - jc_endpoint_propose
+      - jc_kpi_compute
+      - jc_space_complete
+      - jc_pipeline_test
+      - jc_pipeline_sample_source
+      - jc_pipeline_try_mapping
+      - jc_pipeline_validate
+      - jc_resource_propose
+      - jc_resource_list
+      - jc_resource_get
+      - jc_project_get
+      - jc_project_revisions
+      - jc_endpoint_list_all
+      - jc_federation_graph
+      - jc_activity_list
+      - jc_change_list
+      - jc_change_get
+      - jc_draft_list
+      - jc_draft_get
+      - jc_draft_put
+      - jc_manifest_dry_run
+      - jc_datasource_check
+      - jc_model_infer
+      - jc_model_source_get
+      - jc_pipeline_metrics
+      - jc_pipeline_logs
+      - jc_pipeline_inspect
+      - jc_pipeline_run
+      - jc_syncsource_status
+      - jc_syncsource_pause
+      - jc_member_list
+      - jc_ckan_status
+      - jc_run_list
+      - jc_run_get
+      - jc_workspace_open
+      - jc_workspace_list
+      - jc_workspace_get
+      - jc_workspace_compare
+      - jc_workspace_update_from_main
+      - jc_workspace_preview_start
+      - jc_workspace_preview_get
+      - jc_workspace_preview_stop
+    kinds:
+      - kind: ContextSpace
+        verbs: [read, propose]
+      - kind: Endpoint
+        verbs: [read, propose]
+      - kind: SharedSpaceReference
+        verbs: [read, propose]
+      - kind: DataSource
+        verbs: [read, propose]
+      - kind: Pipeline
+        verbs: [read, propose]
+      - kind: Policy
+        verbs: [read, propose]
+      - kind: Dashboard
+        verbs: [read, propose]
+      - kind: Layer
+        verbs: [read, propose]
+      - kind: App
+        verbs: [read, propose]
+      - kind: SyncSource
+        verbs: [read, propose]
+      - kind: ContextSourceRegistration
+        verbs: [read, propose]
+      - kind: CkanInstance
+        verbs: [read, propose]
+      - kind: ServiceAccount
+        verbs: [read, propose]
+      - kind: DataModel
+        verbs: [read, propose]
+      - kind: RoleBinding
+        verbs: [read, propose]
+      - kind: Role
+        verbs: [read, propose]
+  workspace: { cpu: "100m", memory: 128Mi, ephemeralStorage: 64Mi }

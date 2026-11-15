@@ -1,0 +1,44 @@
+# Users of the VisitBratislava free Wi-Fi by location: one public dataset of the hub (T-5676), item 44deb37ca534488a956af5164d33ce6f, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-wifi-pouzivatelia
+  namespace: bratislava
+  title:
+    sk: Počet užívateľov Free Wifi VisitBratislava podľa lokality
+    en: Users of the VisitBratislava free Wi-Fi by location
+  description:
+    sk: 'Ukazovatele tabuľky „Počet užívateľov Free Wifi VisitBratislava podľa lokality“ z data.bratislava.sk, jeden na údaj, členenie a obdobie, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table "Users of the VisitBratislava free Wi-Fi by location", one per figure, breakdown and period, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: v5p6ry6u5qwwk3yc7kckicifvrdudw7e
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-wifi-pouzivatelia
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [TECH]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/44deb37ca534488a956af5164d33ce6f
+        title:
+          sk: Počet užívateľov Free Wifi VisitBratislava podľa lokality
+          en: Users of the VisitBratislava free Wi-Fi by location
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet užívateľov Free Wifi VisitBratislava podľa lokality. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Users of the VisitBratislava free Wi-Fi by location. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

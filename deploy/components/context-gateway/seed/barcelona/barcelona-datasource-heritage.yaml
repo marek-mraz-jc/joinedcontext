@@ -1,0 +1,36 @@
+# Barcelona's protected architectural heritage as Wikidata lists it (CC0): every item with a code of
+# the Generalitat's Inventari del Patrimoni Arquitectònic de Catalunya (IPAC, P1600) inside the
+# municipality (P131+ Q1492) and with a point (P625), one SPARQL row per building: its Catalan,
+# Spanish and English names, a street address where Wikidata has one, and its heritage designations
+# (P1435: BCIN, BCIL, BPCC, urban protection...). 1,484 buildings, about 1.2 MB on 2026-11-03; no
+# credential. The city's own catalogue (patrimoni-arquitectonic-protegit) publishes only a zipped
+# Shapefile in ETRS89 UTM 31N with no address, which a pipeline cannot read (T-6570). The query,
+# readable, as the URL encodes it:
+#   SELECT ?item (SAMPLE(?ipac) AS ?ipac) (SAMPLE(?coord) AS ?coord) (SAMPLE(?ca) AS ?ca)
+#     (SAMPLE(?es) AS ?es) (SAMPLE(?en) AS ?en) (SAMPLE(?street) AS ?street)
+#     (GROUP_CONCAT(DISTINCT STRAFTER(STR(?h), "entity/"); separator=" ") AS ?heritage) WHERE {
+#     ?item wdt:P1600 ?ipac ; wdt:P131+ wd:Q1492 ; wdt:P625 ?coord .
+#     OPTIONAL { ?item wdt:P1435 ?h }
+#     OPTIONAL { ?item rdfs:label ?ca FILTER(LANG(?ca) = "ca") }
+#     OPTIONAL { ?item rdfs:label ?es FILTER(LANG(?es) = "es") }
+#     OPTIONAL { ?item rdfs:label ?en FILTER(LANG(?en) = "en") }
+#     OPTIONAL { ?item wdt:P6375 ?street }
+#   } GROUP BY ?item LIMIT 5000
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-heritage
+  namespace: barcelona
+  title:
+    ca: Patrimoni arquitectònic de Barcelona (Wikidata)
+    es: Patrimonio arquitectónico de Barcelona (Wikidata)
+    en: Barcelona architectural heritage (Wikidata)
+spec:
+  type: http
+  http:
+    url: https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fitem%20%28SAMPLE%28%3Fipac%29%20AS%20%3Fipac%29%20%28SAMPLE%28%3Fcoord%29%20AS%20%3Fcoord%29%20%28SAMPLE%28%3Fca%29%20AS%20%3Fca%29%20%28SAMPLE%28%3Fes%29%20AS%20%3Fes%29%20%28SAMPLE%28%3Fen%29%20AS%20%3Fen%29%20%28SAMPLE%28%3Fstreet%29%20AS%20%3Fstreet%29%20%28GROUP_CONCAT%28DISTINCT%20STRAFTER%28STR%28%3Fh%29%2C%20%22entity%2F%22%29%3B%20separator%3D%22%20%22%29%20AS%20%3Fheritage%29%20WHERE%20%7B%20%3Fitem%20wdt%3AP1600%20%3Fipac%20%3B%20wdt%3AP131%2B%20wd%3AQ1492%20%3B%20wdt%3AP625%20%3Fcoord%20.%20OPTIONAL%20%7B%20%3Fitem%20wdt%3AP1435%20%3Fh%20%7D%20OPTIONAL%20%7B%20%3Fitem%20rdfs%3Alabel%20%3Fca%20FILTER%28LANG%28%3Fca%29%20%3D%20%22ca%22%29%20%7D%20OPTIONAL%20%7B%20%3Fitem%20rdfs%3Alabel%20%3Fes%20FILTER%28LANG%28%3Fes%29%20%3D%20%22es%22%29%20%7D%20OPTIONAL%20%7B%20%3Fitem%20rdfs%3Alabel%20%3Fen%20FILTER%28LANG%28%3Fen%29%20%3D%20%22en%22%29%20%7D%20OPTIONAL%20%7B%20%3Fitem%20wdt%3AP6375%20%3Fstreet%20%7D%20%7D%20GROUP%20BY%20%3Fitem%20LIMIT%205000
+    verb: GET
+    headers:
+      Accept: application/sparql-results+json
+      User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+    timeout: 60s

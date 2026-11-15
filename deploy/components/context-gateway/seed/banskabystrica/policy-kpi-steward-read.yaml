@@ -1,0 +1,33 @@
+# The person who keeps the city's data reads the indicators computed from it (EP-14, T-2456).
+# The space had two grants and neither was a human's: the pipelines' service account writes and
+# the region's group reads through the share. So the city's own steward opened
+# `/projects/banskabystrica/spaces/banskabystrica-kpi` in the Portal, saw the type the space
+# holds, and got `403` for every row under it — the one body that owns these numbers was the one
+# body that could not see them.
+#
+# Read only, the indicator type only, and the person rather than a role, for the reasons spelled
+# out in `policy-mesto-steward-read.yaml` beside this file. It grants the city's steward no more
+# than the region already has through `kpi-shared-read`.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: kpi-steward-read
+  namespace: banskabystrica
+  title:
+    sk: Správca údajov číta ukazovatele mesta
+    en: The data steward reads the city's indicators
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: banskabystrica-kpi }
+  assigner: did:web:banskabystrica.sk
+  assignee:
+    kind: user
+    id: de300000-0000-4000-8000-000000000001 # demo.steward
+  operations:
+    - retrieveOps
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator

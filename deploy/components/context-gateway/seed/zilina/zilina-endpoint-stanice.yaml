@@ -1,0 +1,40 @@
+# One Smart Data Model type per catalogue dataset (T-4344): GtfsStop of the space
+# zilina-verejne, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-zeleznicne-stanice
+  namespace: zilina
+  title: { sk: Železničné stanice — Žilina, en: Railway stations — Žilina }
+  description:
+    sk: 'Železničné stanice mesta s počtom odchodov vlakov v daný deň. Zdroj: ŽSR, grafikon vlakovej dopravy GTFS, CC0.'
+    en: "The city's railway stations with the trains leaving each that day. Source: ŽSR, train timetable GTFS, CC0."
+spec:
+  contextSpaceRef: zilina-verejne
+  slug: 5kcqu4qq5b4ejd3dvfu27svfpm7kd67u
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:stanice-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: zilina }
+      license: cc-zero
+  catalog:
+    publisher:
+      name:
+        sk: Projekt Žilina, platforma joinedcontext
+        en: The Žilina project, joinedcontext platform
+      uri: https://dev.joinedcontext.com/
+    license: CC0
+    attribution:
+      sk: 'Zdroj: ŽSR, grafikon vlakovej dopravy GTFS, CC0'
+      en: 'Source: ŽSR, train timetable GTFS, CC0'
+    themes: [TRAN]
+    keywords:
+      sk: [železničné stanice, vlaky, GTFS, Žilina]
+      en: [railway stations, trains, GTFS, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: DAILY
+    pipelineRef: { kind: Pipeline, name: vlaky }

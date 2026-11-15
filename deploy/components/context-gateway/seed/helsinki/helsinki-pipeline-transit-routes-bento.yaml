@@ -1,0 +1,45 @@
+# The mapping of the transit-routes pipeline (PL-03, T-3356): one PublicTransportRoute per line variant
+# of HSL's "stops by line" register, its stops in the order the line serves them and the line
+# through them. The register has one row per stop of a variant, so the rows are split, grouped
+# by variant and gathered back into one entity each; a variant's rows arrive in no set order.
+#
+# route_type is GTFS's extended code: 0 and 900 run on rails in the street, 1 is the metro, 109
+# the commuter train, 4 a ferry, 3 and the 700s buses.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.features.or([]).filter(f -> f.properties.route_vari.or("").string().trim() != "" && f.properties.stop_id.or("").string().trim() != "" && f.properties.stop_seque.type() == "number" && f.geometry.type.or("") == "Point")
+    - unarchive: { format: json_array }
+    - group_by_value:
+        value: ${! json("properties.route_vari") }
+    - archive: { format: json_array }
+    - mapping: |
+        map mode {
+          root = match this.string() {
+            "0" => "tram",
+            "900" => "tram",
+            "1" => "metro",
+            "109" => "train",
+            "4" => "ferry",
+            _ => "bus",
+          }
+        }
+        let rows = this.sort_by(r -> r.properties.stop_seque)
+        let first = $rows.index(0).properties
+        let path = $rows.map_each(r -> r.geometry.coordinates)
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("PublicTransportRoute", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $first.route_vari.string().trim().re_replace_all("[^A-Za-z0-9-]", "-")),
+          "type": "PublicTransportRoute",
+          "name": if $first.route_long.or("").trim() != "" { { "type": "LanguageProperty", "languageMap": { "fi": $first.route_long.trim() } } },
+          "route": { "type": "Property", "value": $first.route_id.string() },
+          "routeShortName": if $first.route_shor.or("").string().trim() != "" { { "type": "Property", "value": $first.route_shor.string().trim() } },
+          "headsign": if $first.stop_heads.or("").trim() != "" { { "type": "Property", "value": $first.stop_heads.trim() } },
+          "directionId": if [1, 2].contains($first.direction_) { { "type": "Property", "value": $first.direction_ } },
+          "transportMode": { "type": "Property", "value": $first.route_type.or("3").apply("mode") },
+          "transportationType": { "type": "Property", "value": {"tram": 0, "metro": 1, "train": 2, "ferry": 4}.get($first.route_type.or("3").apply("mode")).or(3) },
+          "stopSequence": { "type": "Property", "value": $rows.map_each(r -> r.properties.stop_id.string().trim()) },
+          "location": { "type": "GeoProperty", "value": if $path.length() > 1 { { "type": "LineString", "coordinates": $path } } else { { "type": "Point", "coordinates": $path.index(0) } } },
+          "dataProvider": { "type": "Property", "value": "Helsinki Region Transport (HSL), stops by line" },
+          "source": { "type": "Property", "value": "https://hri.fi/data/fi/dataset/hsl-n-pysakit-linjoittain" }
+        }.filter(entry -> entry.value != null)

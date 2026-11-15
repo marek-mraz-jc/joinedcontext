@@ -1,0 +1,5 @@
+apiVersion: v2
+name: keycloak-admin-permissions
+description: Narrows the Portal's client administration to the clients it manages, with Keycloak's fine-grained admin permissions (T-2725)
+type: application
+version: 0.1.0

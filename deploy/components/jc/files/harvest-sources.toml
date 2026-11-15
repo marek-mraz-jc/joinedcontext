@@ -1,0 +1,69 @@
+# prod's two catalogue harvests (joinedcontext-deployment release,
+# components/ckan/values/catalogue/development-values.yaml.gotmpl:96-140, charts/ckan/values.yaml:160),
+# as jc.toml `[[dataroom.harvest]]` entries. dataroom runs each on `schedule` (UTC) as the
+# catalogue's harvest principal; a run fetches only from `allowed_hosts`. prod's lists leave out
+# the source's own host (its scripts fetched it unchecked): data.slovensko.sk and
+# opendata.bbsk.sk are listed here so the guard admits them.
+# Each source keeps only the datasets prod converted (`od-datasets.json` beside jc.toml: a copy of
+# bins/jc/docs/od-datasets.json, which is release 23a43801 charts/ckan/files/od-datasets.json
+# byte for byte), with its Endpoint's doors and model files as distributions. No `gateway`: the
+# Endpoints are read on this instance's own gateway, as prod's CronJobs read prod's. A source
+# runs once when jc starts, then on its schedule.
+
+# The city's datasets in the national catalogue (NKOD SPARQL), T-4151.
+[[dataroom.harvest]]
+name = "nkod-banskabystrica"
+kind = "nkod-sparql"
+url = "https://data.slovensko.sk/api/sparql"
+publisher = "banskabystrica"
+publisher_title = "Mesto Banská Bystrica"
+publisher_uri = "https://data.gov.sk/id/legal-subject/00313271"
+spatial_uri = "http://data.europa.eu/nuts/code/SK032"
+name_prefix = "bb-"
+allowed_hosts = ["data.slovensko.sk", "egov.banskabystrica.sk", "dtm-banskabystrica.tmapserver.sk", "www.banskabystrica.sk"]
+rewrite_hosts = { "banskabystrica.sk" = "www.banskabystrica.sk" }
+schedule = "23 3 * * *"
+converted_file = "od-datasets.json"
+datasets_base = "https://opendata.dev.joinedcontext.com/"
+
+[dataroom.harvest.skip]
+"Ulice" = "not ingested, link points to Počet občanov podľa dňa narodenia (732 rows of Deň, Pohlavie, Počet)"
+"Počet občanov podľa mena" = "not ingested, link points to Počet občanov podľa veku (105 rows of ages)"
+"Členovia orgánov samosprávy" = "not ingested, link points to Evidencia psov (3 299 dog records)"
+"Počet občanov podľa ulíc BB" = "not ingested, link points to Prírastky a úbytky občanov za jednotlivé roky (27 rows of years)"
+"Evidencia psov" = "not ingested, street, house, flat and floor of each dog owner (Open data integration rules §1)"
+
+[dataroom.harvest.require_column]
+"Zmluvy BB" = "Zmluvné_strany_s_údajom_IČO"
+"Objednávky BB" = "IČO"
+"Dotácie" = "IČO_žiadateľa"
+
+# The region's ArcGIS Hub, T-4152.
+[[dataroom.harvest]]
+name = "hub-bbsk"
+kind = "arcgis-hub"
+url = "https://opendata.bbsk.sk"
+publisher = "bbsk"
+publisher_title = "Banskobystrický samosprávny kraj"
+publisher_uri = "https://data.gov.sk/id/legal-subject/37828100"
+publisher_description = "Otvorené údaje Banskobystrického samosprávneho kraja (IČO 37828100) z opendata.bbsk.sk, prevzaté a opravené."
+spatial_uri = "http://data.europa.eu/nuts/code/SK032"
+allowed_hosts = ["opendata.bbsk.sk", "services-eu1.arcgis.com", "www.arcgis.com"]
+schedule = "23 3 * * *"
+converted_file = "od-datasets.json"
+datasets_base = "https://opendata.dev.joinedcontext.com/"
+
+[dataroom.harvest.skip]
+"b5486911cb0342e48d475130d1d5e960" = "personal data (section 8), a count per okres at most"
+
+[dataroom.harvest.spelling]
+"Bystrinská" = "Bystrianska"
+
+[dataroom.harvest.titles]
+"c0f097d92ceb4a90b006fdee8af6da1d" = "Obyvateľstvo podľa materinského jazyka (2011), obce"
+"59064392c3e248d39199c0376ba56d22" = "Obyvateľstvo podľa materinského jazyka (2011), okresy"
+"fc02ff58590647ed98f1df29d18e617f" = "Obyvateľstvo podľa materinského jazyka (2021), obce"
+"404a3d55408b439891269e5985056db9" = "Obyvateľstvo podľa materinského jazyka (2021), okresy"
+"81576bdd05ea48a6b660a217a61097c8" = "Obyvateľstvo podľa náboženského vyznania (2011), obce"
+"3844c8ed6ade4c2e96e547005c5f2178" = "Obyvateľstvo podľa náboženského vyznania (2011), okresy"
+"4d7df96609bd49deabf028eca4fdf301" = "Obyvateľstvo podľa náboženského vyznania (2021), okresy"

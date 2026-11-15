@@ -1,0 +1,18 @@
+# IPR Praha's geoportal item 98b5292d85404383a6b5d526fa0e752c (Letní údržba komunikací TSK), 6,402 street areas on 2026-10-26:
+# the layer's description on IPR's ArcGIS server, whose field list the mapping checks before it pages through
+# the layer's FeatureServer. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5677).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-tsk-letni
+  namespace: praha
+  title:
+    en: TSK summer street cleaning dates (IPR Praha)
+    cs: Letní údržba komunikací TSK (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_TSK_LU_TERMINY_P/FeatureServer/0?f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

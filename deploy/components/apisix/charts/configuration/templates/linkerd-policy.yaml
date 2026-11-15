@@ -1,0 +1,68 @@
+{{- /*
+  Linkerd `Server` scoping the APISIX data-plane edge.
+
+  End-user traffic enters via the cluster's ingress controller. With a
+  mandatory `config.linkerd.io/default-inbound-policy` on the application
+  namespace, inbound traffic on the data-plane port would be rejected unless it
+  carries a valid mesh identity. This `Server` scopes that public port; its
+  `accessPolicy` is driven by `serviceMesh.allowUnauthenticatedIngress`:
+
+    true  -> `all-unauthenticated`: plaintext from an UNMESHED ingress
+             controller is accepted (the ingress edge is authorized explicitly).
+    false -> `all-authenticated`: only authenticated mesh identities may connect,
+             i.e. the ingress controller must itself be meshed (mTLS).
+
+  All other APISIX ports (admin 9180, control 9090, ...) remain governed by the
+  namespace default policy, i.e. mandatory mTLS.
+
+  Equivalent in spirit to the NiFi `Server` resources in
+  components/nifi/charts/nifi-bootstrap/templates/linkerd-server.yaml.
+
+  `with` guards a missing `serviceMesh` value so the chart renders cleanly even
+  when linted/templated in isolation; the inner `default`s keep the resource
+  valid if only `enabled` is supplied.
+*/}}
+{{- with .Values.serviceMesh }}
+{{- if .enabled }}
+{{- /* Resolve the bool explicitly: a numeric/`default` fallback would mishandle
+       an intentional `false` (Helm treats false as empty), so read the merged
+       value via hasKey. Falls back to the secure `false` when unset. */}}
+{{- $allowUnauthenticated := false }}
+{{- if hasKey . "allowUnauthenticatedIngress" }}{{- $allowUnauthenticated = .allowUnauthenticatedIngress }}{{- end }}
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: {{ include "configuration.fullname" $ }}-apisix-gateway
+  labels:
+    {{- include "configuration.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml (.podSelector | default (dict "app.kubernetes.io/name" "apisix")) | nindent 6 }}
+  port: {{ .dataPlanePort | default 9080 }}
+  proxyProtocol: HTTP/1
+  accessPolicy: {{ if $allowUnauthenticated }}all-unauthenticated{{ else }}all-authenticated{{ end }}
+---
+{{- /*
+  The cert-manager HTTP-01 solver pod is Linkerd-injected like everything else in
+  this namespace, so the namespace's mandatory-mTLS default policy would reject the
+  challenge request coming from the (unmeshed) ingress controller and the
+  certificate would never be issued. The challenge is a public, unauthenticated
+  HTTP GET of one random token, so this port is `all-unauthenticated` regardless of
+  how the ingress edge is meshed.
+*/}}
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: {{ include "configuration.fullname" $ }}-acme-http01-solver
+  labels:
+    {{- include "configuration.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  port: 8089
+  proxyProtocol: HTTP/1
+  accessPolicy: all-unauthenticated
+{{- end }}
+{{- end }}

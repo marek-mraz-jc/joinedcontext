@@ -1,0 +1,14 @@
+schedule: "40 1 * * *"
+image: {}
+env: []
+podSecurityContext: {}
+securityContext: {}
+serviceMesh:
+  enabled: false
+resources:
+  requests:
+    cpu: 50m
+    memory: 384Mi
+  limits:
+    cpu: '1'
+    memory: 768Mi

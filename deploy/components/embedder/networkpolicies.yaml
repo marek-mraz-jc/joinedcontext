@@ -1,0 +1,71 @@
+---
+# jc-embedder takes calls on 8089 from the jc pods of its caller namespaces and from nobody else
+# (networkpolicies.yaml.gotmpl, embedder.server.callerNamespaces); jc-egress-to-embedder is the
+# caller's half in jc's namespace of this environment, and components/jc renders it for a jc of
+# another environment (jc.server.embedder). It reads each calling deployment's JWKS at the URL
+# its config names: through the
+# cluster ingress on 443 for an in-cluster kaisatsu at its public issuer, or a public address on
+# 443 for a deployment elsewhere; plus DNS. It calls nothing else and stores nothing. A caller in
+# another cluster needs an edge route first (README.md section 3).
+embedder-server:
+  podSelector:
+    app.kubernetes.io/name: embedder-server
+    app.kubernetes.io/instance: embedder-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values:
+                  - traefik
+                  - kube-system
+                  - ingress-nginx
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - traefik
+                  - ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+jc-egress-to-embedder:
+  componentNamespace: jc
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: embedder-server
+              app.kubernetes.io/instance: embedder-server
+          componentNamespace: embedder
+      ports:
+        - protocol: TCP
+          port: 8089

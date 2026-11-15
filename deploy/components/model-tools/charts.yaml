@@ -1,0 +1,4 @@
+---
+model-tools:
+  tools:
+    chart: ../../charts/workload

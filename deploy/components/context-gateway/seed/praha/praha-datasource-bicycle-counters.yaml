@@ -1,0 +1,28 @@
+# Golemio's cycle counters in Prague (Operátor ICT, a.s., counters by Camea): 40 counters with 79
+# counted directions on 2026-10-25, 39 of them reporting every five minutes; the ecoCounter at
+# Podolí has been silent since 2026-07-06. This read is the counter list (12 KB): each counter's
+# name, place and directions. The counts of the last hour come from a second, keyed call of the
+# pipeline's mapping (praha-pipeline-bicycle-counters-bento.yaml). The key travels as the
+# X-Access-Token header from the secret `golemio`, never as a value here (CC-06, MF-35).
+#
+# Terms (Golemio API Keys Management, Licence 4.3, T-5268): republishing is allowed, with no right
+# to sublicense; credited as "Golemio, Operátor ICT, a.s.", no licence claimed. A key is limited
+# to 20 requests per 8 seconds; this pipeline makes two requests every five minutes.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: golemio-bicycle-counters
+  namespace: praha
+  title: { en: Cycle counters (Golemio), cs: Sčítače cyklistů (Golemio) }
+spec:
+  type: http
+  http:
+    url: https://api.golemio.cz/v2/bicyclecounters
+    verb: GET
+    headers: { Accept: application/json }
+    authorization:
+      header: X-Access-Token
+      headerRef: { name: golemio, key: token }
+    timeout: 30s
+    # the runner caps the body at its default (32 MiB on platform main); `maxBytes` waits for the
+    # Portal and gateway pins to read it (tests/test_portal_pin_reads_the_seed.py)

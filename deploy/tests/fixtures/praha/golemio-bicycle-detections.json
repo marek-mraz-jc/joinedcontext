@@ -1,0 +1,812 @@
+[
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:15:00.000Z",
+    "measured_to": "2026-10-25T15:20:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:10:00.000Z",
+    "measured_to": "2026-10-25T15:15:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:05:00.000Z",
+    "measured_to": "2026-10-25T15:10:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:00:00.000Z",
+    "measured_to": "2026-10-25T15:05:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:55:00.000Z",
+    "measured_to": "2026-10-25T15:00:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:50:00.000Z",
+    "measured_to": "2026-10-25T14:55:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:45:00.000Z",
+    "measured_to": "2026-10-25T14:50:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:40:00.000Z",
+    "measured_to": "2026-10-25T14:45:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:35:00.000Z",
+    "measured_to": "2026-10-25T14:40:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VS-CE",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:30:00.000Z",
+    "measured_to": "2026-10-25T14:35:00.000Z",
+    "locations_id": "camea-BC_VS-CE",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 4,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:15:00.000Z",
+    "measured_to": "2026-10-25T15:20:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:10:00.000Z",
+    "measured_to": "2026-10-25T15:15:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:05:00.000Z",
+    "measured_to": "2026-10-25T15:10:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:00:00.000Z",
+    "measured_to": "2026-10-25T15:05:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 1,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:55:00.000Z",
+    "measured_to": "2026-10-25T15:00:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:50:00.000Z",
+    "measured_to": "2026-10-25T14:55:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:45:00.000Z",
+    "measured_to": "2026-10-25T14:50:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:40:00.000Z",
+    "measured_to": "2026-10-25T14:45:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:35:00.000Z",
+    "measured_to": "2026-10-25T14:40:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-UP",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:30:00.000Z",
+    "measured_to": "2026-10-25T14:35:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:15:00.000Z",
+    "measured_to": "2026-10-25T15:20:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:10:00.000Z",
+    "measured_to": "2026-10-25T15:15:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:05:00.000Z",
+    "measured_to": "2026-10-25T15:10:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:00:00.000Z",
+    "measured_to": "2026-10-25T15:05:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:55:00.000Z",
+    "measured_to": "2026-10-25T15:00:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 1,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:50:00.000Z",
+    "measured_to": "2026-10-25T14:55:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:45:00.000Z",
+    "measured_to": "2026-10-25T14:50:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:40:00.000Z",
+    "measured_to": "2026-10-25T14:45:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:35:00.000Z",
+    "measured_to": "2026-10-25T14:40:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_VK-HR",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:30:00.000Z",
+    "measured_to": "2026-10-25T14:35:00.000Z",
+    "locations_id": "camea-BC_VK-HRUP",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:15:00.000Z",
+    "measured_to": "2026-10-25T15:20:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:10:00.000Z",
+    "measured_to": "2026-10-25T15:15:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:05:00.000Z",
+    "measured_to": "2026-10-25T15:10:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:00:00.000Z",
+    "measured_to": "2026-10-25T15:05:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:55:00.000Z",
+    "measured_to": "2026-10-25T15:00:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:50:00.000Z",
+    "measured_to": "2026-10-25T14:55:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:45:00.000Z",
+    "measured_to": "2026-10-25T14:50:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:40:00.000Z",
+    "measured_to": "2026-10-25T14:45:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:35:00.000Z",
+    "measured_to": "2026-10-25T14:40:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-VL",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:30:00.000Z",
+    "measured_to": "2026-10-25T14:35:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:15:00.000Z",
+    "measured_to": "2026-10-25T15:20:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:10:00.000Z",
+    "measured_to": "2026-10-25T15:15:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:05:00.000Z",
+    "measured_to": "2026-10-25T15:10:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:00:00.000Z",
+    "measured_to": "2026-10-25T15:05:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:55:00.000Z",
+    "measured_to": "2026-10-25T15:00:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:50:00.000Z",
+    "measured_to": "2026-10-25T14:55:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:45:00.000Z",
+    "measured_to": "2026-10-25T14:50:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:40:00.000Z",
+    "measured_to": "2026-10-25T14:45:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:35:00.000Z",
+    "measured_to": "2026-10-25T14:40:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_DS-KJ",
+    "value": null,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:30:00.000Z",
+    "measured_to": "2026-10-25T14:35:00.000Z",
+    "locations_id": "camea-BC_DS-KJVL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:15:00.000Z",
+    "measured_to": "2026-10-25T15:20:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:10:00.000Z",
+    "measured_to": "2026-10-25T15:15:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:05:00.000Z",
+    "measured_to": "2026-10-25T15:10:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:00:00.000Z",
+    "measured_to": "2026-10-25T15:05:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:55:00.000Z",
+    "measured_to": "2026-10-25T15:00:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:50:00.000Z",
+    "measured_to": "2026-10-25T14:55:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:45:00.000Z",
+    "measured_to": "2026-10-25T14:50:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:40:00.000Z",
+    "measured_to": "2026-10-25T14:45:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:35:00.000Z",
+    "measured_to": "2026-10-25T14:40:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-ST",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:30:00.000Z",
+    "measured_to": "2026-10-25T14:35:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:15:00.000Z",
+    "measured_to": "2026-10-25T15:20:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:10:00.000Z",
+    "measured_to": "2026-10-25T15:15:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:05:00.000Z",
+    "measured_to": "2026-10-25T15:10:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:00:00.000Z",
+    "measured_to": "2026-10-25T15:05:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:55:00.000Z",
+    "measured_to": "2026-10-25T15:00:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:50:00.000Z",
+    "measured_to": "2026-10-25T14:55:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:45:00.000Z",
+    "measured_to": "2026-10-25T14:50:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:40:00.000Z",
+    "measured_to": "2026-10-25T14:45:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:35:00.000Z",
+    "measured_to": "2026-10-25T14:40:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AT-LA",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:30:00.000Z",
+    "measured_to": "2026-10-25T14:35:00.000Z",
+    "locations_id": "camea-BC_AT-STLA",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 2,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:15:00.000Z",
+    "measured_to": "2026-10-25T15:20:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 2,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:10:00.000Z",
+    "measured_to": "2026-10-25T15:15:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 4,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:05:00.000Z",
+    "measured_to": "2026-10-25T15:10:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 5,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:00:00.000Z",
+    "measured_to": "2026-10-25T15:05:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 1,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:55:00.000Z",
+    "measured_to": "2026-10-25T15:00:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 4,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:50:00.000Z",
+    "measured_to": "2026-10-25T14:55:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 3,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:45:00.000Z",
+    "measured_to": "2026-10-25T14:50:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 3,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:40:00.000Z",
+    "measured_to": "2026-10-25T14:45:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 2,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:35:00.000Z",
+    "measured_to": "2026-10-25T14:40:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-ST",
+    "value": 1,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:30:00.000Z",
+    "measured_to": "2026-10-25T14:35:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 3,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:15:00.000Z",
+    "measured_to": "2026-10-25T15:20:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 1,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:10:00.000Z",
+    "measured_to": "2026-10-25T15:15:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:05:00.000Z",
+    "measured_to": "2026-10-25T15:10:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 0,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T15:00:00.000Z",
+    "measured_to": "2026-10-25T15:05:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 1,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:55:00.000Z",
+    "measured_to": "2026-10-25T15:00:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 2,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:50:00.000Z",
+    "measured_to": "2026-10-25T14:55:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 1,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:45:00.000Z",
+    "measured_to": "2026-10-25T14:50:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 3,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:40:00.000Z",
+    "measured_to": "2026-10-25T14:45:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 1,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:35:00.000Z",
+    "measured_to": "2026-10-25T14:40:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  },
+  {
+    "id": "camea-BC_AL-PL",
+    "value": 1,
+    "value_pedestrians": null,
+    "measured_from": "2026-10-25T14:30:00.000Z",
+    "measured_to": "2026-10-25T14:35:00.000Z",
+    "locations_id": "camea-BC_AL-STPL",
+    "measurement_count": 1
+  }
+]

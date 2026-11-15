@@ -1,0 +1,67 @@
+---
+{{- $this := .Values.postgres.databases -}}
+{{- $global := .Values.global }}
+{{- $images := index .Values.images "postgres" }}
+
+cluster:
+  name: {{ .Values.postgres.cluster.name }}
+
+roleJob:
+  image: {{ index $images "roleJob" "repository" }}@{{ index $images "roleJob" "digest" }}
+
+# The role-setup Job is a workload like any other and the cluster's Kyverno policies judge it:
+# drop-all-capabilities, require-ro-rootfs and require-run-as-nonroot all refused it while it
+# carried no securityContext, and `dev-apply` failed on the post-upgrade hook (T-0419).
+securityDefaults:
+  podSecurityContext:
+    {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 4 }}
+  securityContext:
+    {{ .Values.securityDefaults.securityContext | toYaml | nindent 4 }}
+
+# The stat-statements Job waits for the library when the cluster preloads it: CNPG preloads
+# pg_stat_statements when any pg_stat_statements.* parameter is set (T-4904).
+{{- $params := dig "rawValues" "cluster" "postgresql" "parameters" dict .Values.postgres.cluster }}
+{{- $preload := false }}
+{{- range $key, $_ := $params }}{{ if hasPrefix "pg_stat_statements." $key }}{{ $preload = true }}{{ end }}{{ end }}
+statStatements:
+  preloaded: {{ $preload }}
+
+localBackup:
+  {{- $this.localBackup | toYaml | nindent 2 }}
+
+{{- $backups := deepCopy (.Values.postgres.cluster.backups | default dict) }}
+{{- /* `target: artifact-store` archives to the platform's own store (T-5289): its address, the
+backup bucket (unless destinationPath names a path in it) and the key the store's bucket Job makes for that bucket alone, with no SSE (the
+store has no KMS). Keep in step with the other postgres values file. */}}
+{{- if eq ($backups.target | default "") "artifact-store" }}
+{{- if not (has "artifact-store" .Values.components) }}
+{{- fail "postgres.cluster.backups.target is 'artifact-store' but the environment does not deploy the artifact-store component: add it to components, or set target '' and name an external store" }}
+{{- end }}
+{{- $store := index .Values "artifact-store" "store" }}
+{{- $_ := set $backups "endpointURL" (printf "http://artifact-store.%s.svc.cluster.local:9000" $store.namespace) }}
+{{- $_ := set $backups "destinationPath" ($backups.destinationPath | default (printf "s3://%s/" ($store.backupBucket | default dict).name)) }}
+{{- $_ := set $backups "existingSecret" "postgres-backup-artifact-store" }}
+{{- $_ := set $backups "encryption" "" }}
+{{- end }}
+drDrill:
+  {{- $this.drDrill | toYaml | nindent 2 }}
+  image: {{ index $images "drDrill" "repository" }}@{{ index $images "drDrill" "digest" }}
+  clusterImage: {{ index $images "cluster" "repository" }}@{{ index $images "cluster" "digest" }}
+  storageClass: {{ $global.storage.storageClass.rwo | default "" | quote }}
+  serviceMesh: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+  backups:
+    enabled: {{ $backups.enabled | default false }}
+    destinationPath: {{ $backups.destinationPath | default "" | quote }}
+    endpointURL: {{ $backups.endpointURL | default "" | quote }}
+    existingSecret: {{ $backups.existingSecret | default "postgres-backup-s3" | quote }}
+
+databases:
+{{- range $component, $config := .Values.databases }}
+  {{- if eq $config.embedded true }}
+  {{ $component }}:
+    name: "{{ $config.name }}"
+    user: "{{ $config.user }}"
+    extensions: {{ index $config "extensions" | toYaml | nindent 6 }}
+    additionalRoles: {{ index $config "additionalRoles" | toYaml | nindent 6 }}
+  {{- end }}
+{{- end }}

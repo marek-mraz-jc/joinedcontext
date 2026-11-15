@@ -1,0 +1,18 @@
+# One PointOfInterest per social service and facility address in Prague, from RPSS, geocoded at
+# ČÚZK's RÚIAN service (T-5691).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: rpss-social-services
+  namespace: praha
+  title: { en: Social services, cs: Sociální služby }
+spec:
+  class: auto
+  # MPSV renews the register daily; services open and close over weeks, so one read a week keeps up.
+  period: 168h
+  schedule: '30 3 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: rpss-social-services }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

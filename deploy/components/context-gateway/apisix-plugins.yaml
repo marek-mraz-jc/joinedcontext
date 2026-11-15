@@ -1,0 +1,588 @@
+---
+context-space:
+  name: context-space
+  description: Context space direct NGSI-LD security and filtering
+  # Every method but GET and HEAD, which the -read route counts apart: the Organization's
+  # spec.limits.edge.requestsPerMinute.dataWrite replaces the count below (ADR-N-035).
+  rateClass: dataWrite
+  plugins:
+    request-id:
+      include_in_response: true
+    # SSE and large GeoJSON/CSV exports must reach the client as they are produced; with
+    # nginx buffering on, a 300 s read timeout only means the client waits 300 s for the
+    # first byte.
+    proxy-buffering:
+      disable_proxy_buffering: true
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+        - >-
+          return function()
+            local forged = {
+              "NGSILD-Tenant", "X-Userinfo", "X-Access-Token", "X-Allowed-Scope-Ids",
+              "X-Endpoint-Slug", "X-Consumer-Identity", "X-Forwarded-User",
+              "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+              "X-Forwarded-Prefix", "X-Forwarded-Server", "X-Real-IP", "JC-Read-Versions",
+            }
+            for _, header in ipairs(forged) do
+              ngx.req.clear_header(header)
+              ngx.req.clear_header((header:gsub("%-", "_")))
+            end
+            local presented = ngx.req.get_headers()["Authorization"]
+            if type(presented) == "table"
+              or (presented and not ngx.re.find(presented, [[^[Bb]earer\s+\S]], "jo")) then
+              ngx.req.clear_header("Authorization")
+            end
+            for name in pairs(ngx.req.get_headers(0)) do
+              local key = name:lower():gsub("_", "-")
+              for _, prefix in ipairs({ "x-jc-", "jc-provenance-", "l5d-" }) do
+                if key:sub(1, #prefix) == prefix and key ~= "x-jc-visitor" then
+                  ngx.req.clear_header(name)
+                end
+              end
+            end
+          end
+    # Class 2 (authenticated API): 1,200 requests per minute per client identity and address.
+    # The bearer alone let a caller with a fresh made-up bearer per request open a fresh bucket
+    # each time (F-R2DEP2-003); the address keeps that caller to one bucket per bearer it sends.
+    limit-count:
+      count: 1200
+      time_window: 60
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    # No openid-connect here: the realm signs ES256 only (TR-03187 AR-11) and the plugin
+    # (lua-resty-openidc) verifies RS/HS signatures only, so it would refuse every token.
+    # The upstream verifies the bearer token itself (docs Deployment/10 §4, OPS-33).
+    proxy-rewrite:
+      headers:
+        set:
+          X-Forwarded-Proto: https
+          X-Forwarded-Port: '443'
+    # No Cache-Control here: the gateway says `private, no-store` on every answer itself and
+    # `private, no-cache` with a strong ETag on the schema artifacts it wants revalidated (T-2261,
+    # EP-51). `set` replaced that with `no-store`, so no client could keep an artifact and every
+    # page load downloaded all of them again instead of a 304 (T-2262).
+    response-rewrite:
+      headers:
+        set:
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "DENY"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+    # OPS-34: the upstream owns the Content Security Policy (the Portal's, each App's, AP-12,
+    # AP-122), so the edge sets none over it and adds this baseline only to an answer that
+    # carries none, its own refusals included. `frame-ancestors` says what X-Frame-Options
+    # says. It runs after `response-rewrite`, whose `add` of an App's frame-ancestors counts.
+    serverless-post-function:
+      phase: header_filter
+      functions:
+        - >-
+          return function()
+            if ngx.header["Content-Security-Policy"] == nil then
+              ngx.header["Content-Security-Policy"] =
+                "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+            end
+          end
+
+catalog-feed:
+  name: catalog-feed
+  description: The DCAT-AP catalogue feeds, anonymous (EP-84, EP-127)
+  plugins:
+    request-id:
+      include_in_response: true
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+        - >-
+          return function()
+            local forged = {
+              "NGSILD-Tenant", "X-Userinfo", "X-Access-Token", "X-Allowed-Scope-Ids",
+              "X-Endpoint-Slug", "X-Consumer-Identity", "X-Forwarded-User",
+              "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+              "X-Forwarded-Prefix", "X-Forwarded-Server", "X-Real-IP", "JC-Read-Versions",
+            }
+            for _, header in ipairs(forged) do
+              ngx.req.clear_header(header)
+              ngx.req.clear_header((header:gsub("%-", "_")))
+            end
+            local presented = ngx.req.get_headers()["Authorization"]
+            if type(presented) == "table"
+              or (presented and not ngx.re.find(presented, [[^[Bb]earer\s+\S]], "jo")) then
+              ngx.req.clear_header("Authorization")
+            end
+            for name in pairs(ngx.req.get_headers(0)) do
+              local key = name:lower():gsub("_", "-")
+              for _, prefix in ipairs({ "x-jc-", "jc-provenance-", "l5d-" }) do
+                if key:sub(1, #prefix) == prefix and key ~= "x-jc-visitor" then
+                  ngx.req.clear_header(name)
+                end
+              end
+            end
+          end
+    # Class 1 (standard web): 300 requests per minute per IP; a harvester reads the feed a few
+    # times a day. No openid-connect: the feed reads no token.
+    limit-count:
+      count: 300
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    proxy-rewrite:
+      headers:
+        set:
+          X-Forwarded-Proto: https
+          X-Forwarded-Port: '443'
+    # No Cache-Control here: the gateway says `private, no-store` on every answer itself and
+    # `private, no-cache` with a strong ETag on the schema artifacts it wants revalidated (T-2261,
+    # EP-51). `set` replaced that with `no-store`, so no client could keep an artifact and every
+    # page load downloaded all of them again instead of a 304 (T-2262).
+    response-rewrite:
+      headers:
+        set:
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "DENY"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+    # OPS-34: the upstream owns the Content Security Policy (the Portal's, each App's, AP-12,
+    # AP-122), so the edge sets none over it and adds this baseline only to an answer that
+    # carries none, its own refusals included. `frame-ancestors` says what X-Frame-Options
+    # says. It runs after `response-rewrite`, whose `add` of an App's frame-ancestors counts.
+    serverless-post-function:
+      phase: header_filter
+      functions:
+        - >-
+          return function()
+            if ngx.header["Content-Security-Policy"] == nil then
+              ngx.header["Content-Security-Policy"] =
+                "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+            end
+          end
+
+context-space-portal:
+  name: context-space-portal
+  description: Context space NGSI-LD surface on the Portal host, the edge session as the bearer
+  # Every method but GET and HEAD, which the -read route counts apart: the Organization's
+  # spec.limits.edge.requestsPerMinute.dataWrite replaces the count below (ADR-N-035).
+  rateClass: dataWrite
+  plugins:
+    request-id:
+      include_in_response: true
+    # SSE and large GeoJSON/CSV exports must reach the client as they are produced; with
+    # nginx buffering on, a 300 s read timeout only means the client waits 300 s for the
+    # first byte.
+    proxy-buffering:
+      disable_proxy_buffering: true
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+        - >-
+          return function()
+            local forged = {
+              "NGSILD-Tenant", "X-Userinfo", "X-Access-Token", "X-Allowed-Scope-Ids",
+              "X-Endpoint-Slug", "X-Consumer-Identity", "X-Forwarded-User",
+              "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+              "X-Forwarded-Prefix", "X-Forwarded-Server", "X-Real-IP", "JC-Read-Versions",
+            }
+            for _, header in ipairs(forged) do
+              ngx.req.clear_header(header)
+              ngx.req.clear_header((header:gsub("%-", "_")))
+            end
+            local presented = ngx.req.get_headers()["Authorization"]
+            if type(presented) == "table"
+              or (presented and not ngx.re.find(presented, [[^[Bb]earer\s+\S]], "jo")) then
+              ngx.req.clear_header("Authorization")
+            end
+            for name in pairs(ngx.req.get_headers(0)) do
+              local key = name:lower():gsub("_", "-")
+              for _, prefix in ipairs({ "x-jc-", "jc-provenance-", "l5d-" }) do
+                if key:sub(1, #prefix) == prefix and key ~= "x-jc-visitor" then
+                  ngx.req.clear_header(name)
+                end
+              end
+            end
+          end
+    # Class 2 (authenticated API): 1,200 requests per minute per client identity and address,
+    # as on context-space (F-R2DEP2-003).
+    limit-count:
+      count: 1200
+      time_window: 60
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    cors:
+      # A browser may call the endpoint surface from any app served under this platform's
+      # domain, and from nowhere else. `allow_origins: '*'` would also hand the response to
+      # a page on an attacker's host.
+      allow_origins_by_regex:
+        # `${DOMAIN_RE}` and not `${DOMAIN}`: the dots of the domain are escaped by the
+        # ConfigMap template, because an unescaped one matches any character and would admit
+        # `https://evil.platform-example.org` as if it were ours (T-1679).
+        - '^https://[^@/]+\.${DOMAIN_RE}$'
+      allow_methods: 'GET,HEAD,OPTIONS'
+      allow_headers: 'Authorization,Content-Type'
+      allow_credential: false
+    # The edge session as the bearer the gateway verifies (ADR-N-019, AP-62): `pass` leaves an
+    # anonymous visitor anonymous and a presented bearer untouched, like portal-api.
+    openid-connect:
+      client_id: edge
+      client_secret: ${EDGE_CLIENT_SECRET}
+      discovery: https://idm.${DOMAIN}/realms/${REALM}/.well-known/openid-configuration
+      bearer_only: false
+      use_jwks: false
+      use_pkce: true
+      ssl_verify: true
+      unauth_action: pass
+      redirect_uri: https://portal.${DOMAIN}/callback
+      logout_path: /logout
+      post_logout_redirect_uri: https://portal.${DOMAIN}/
+      set_userinfo_header: false
+      set_access_token_header: true
+      access_token_in_authorization_header: true
+      set_id_token_header: false
+      set_refresh_token_header: false
+      session:
+        secret: ${OIDC_SESSION_SECRET}
+        cookie_name: __Host-jc_edge
+        cookie_path: /
+        cookie_secure: true
+        cookie_http_only: true
+        cookie_same_site: Lax
+        idling_timeout: 3600
+        rolling_timeout: 3600
+        absolute_timeout: 36000
+    proxy-rewrite:
+      headers:
+        set:
+          X-Forwarded-Proto: https
+          X-Forwarded-Port: '443'
+    response-rewrite:
+      headers:
+        set:
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "DENY"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+    # OPS-34: the upstream owns the Content Security Policy (the Portal's, each App's, AP-12,
+    # AP-122), so the edge sets none over it and adds this baseline only to an answer that
+    # carries none, its own refusals included. `frame-ancestors` says what X-Frame-Options
+    # says. It runs after `response-rewrite`, whose `add` of an App's frame-ancestors counts.
+    serverless-post-function:
+      phase: header_filter
+      functions:
+        - >-
+          return function()
+            if ngx.header["Content-Security-Policy"] == nil then
+              ngx.header["Content-Security-Policy"] =
+                "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+            end
+          end
+
+context-endpoint:
+  name: context-endpoint
+  description: Context endpoint representation surface filtering
+  # The Organization's spec.limits.edge.requestsPerMinute.publicEndpoint replaces the count below (ADR-N-035).
+  rateClass: publicEndpoint
+  plugins:
+    request-id:
+      include_in_response: true
+    # SSE and large GeoJSON/CSV exports must reach the client as they are produced; with
+    # nginx buffering on, a 300 s read timeout only means the client waits 300 s for the
+    # first byte.
+    proxy-buffering:
+      disable_proxy_buffering: true
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+        - >-
+          return function()
+            local forged = {
+              "NGSILD-Tenant", "X-Userinfo", "X-Access-Token", "X-Allowed-Scope-Ids",
+              "X-Endpoint-Slug", "X-Consumer-Identity", "X-Forwarded-User",
+              "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+              "X-Forwarded-Prefix", "X-Forwarded-Server", "X-Real-IP", "JC-Read-Versions",
+            }
+            for _, header in ipairs(forged) do
+              ngx.req.clear_header(header)
+              ngx.req.clear_header((header:gsub("%-", "_")))
+            end
+            local presented = ngx.req.get_headers()["Authorization"]
+            if type(presented) == "table"
+              or (presented and not ngx.re.find(presented, [[^[Bb]earer\s+\S]], "jo")) then
+              ngx.req.clear_header("Authorization")
+            end
+            for name in pairs(ngx.req.get_headers(0)) do
+              local key = name:lower():gsub("_", "-")
+              for _, prefix in ipairs({ "x-jc-", "jc-provenance-", "l5d-" }) do
+                if key:sub(1, #prefix) == prefix and key ~= "x-jc-visitor" then
+                  ngx.req.clear_header(name)
+                end
+              end
+            end
+          end
+    # Class 3 (data APIs, T-4717): 600 requests a minute, 10 a second, per client address and
+    # bearer. A bot reads a whole catalogue at that rate and only that bot gets 429; the edge
+    # sees real addresses since T-4717 step 1, and the pipeline runners write in-cluster, not
+    # here. Class 4 (bulk exports, 10 at once) is the `*-bulk` routes' own limit-conn.
+    limit-count:
+      count: 600
+      time_window: 60
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    # No openid-connect here: the realm signs ES256 only (TR-03187 AR-11) and the plugin
+    # (lua-resty-openidc) verifies RS/HS signatures only, so it would refuse every token.
+    # Anonymous and bearer requests both reach the gateway PEP, which verifies the token itself and decides between a public representation and 401 (docs Deployment/10 §4, OPS-33).
+    cors:
+      # A browser may call the endpoint surface from any app served under this platform's
+      # domain, and from nowhere else. `allow_origins: '*'` would also hand the response to
+      # a page on an attacker's host.
+      allow_origins_by_regex:
+        # `${DOMAIN_RE}` and not `${DOMAIN}`: the dots of the domain are escaped by the
+        # ConfigMap template, because an unescaped one matches any character and would admit
+        # `https://evil.platform-example.org` as if it were ours (T-1679).
+        - '^https://[^@/]+\.${DOMAIN_RE}$'
+      allow_methods: 'GET,HEAD,OPTIONS'
+      allow_headers: 'Authorization,Content-Type'
+      # A browser page reads how many entities a query matched, as the catalogue's resource
+      # page counts its records (T-4333), and where a cut temporal answer continues (Link
+      # rel="intervalafter", Content-Range), as a catalogue chart reads its whole window
+      # (T-5414). Counts, ranges and Endpoint URLs are no credential and no row.
+      expose_headers: 'NGSILD-Results-Count,Content-Range,Link'
+      allow_credential: false
+    proxy-rewrite:
+      headers:
+        set:
+          X-Forwarded-Proto: https
+          X-Forwarded-Port: '443'
+    response-rewrite:
+      headers:
+        set:
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "DENY"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+    # OPS-34: the upstream owns the Content Security Policy (the Portal's, each App's, AP-12,
+    # AP-122), so the edge sets none over it and adds this baseline only to an answer that
+    # carries none, its own refusals included. `frame-ancestors` says what X-Frame-Options
+    # says. It runs after `response-rewrite`, whose `add` of an App's frame-ancestors counts.
+    serverless-post-function:
+      phase: header_filter
+      functions:
+        - >-
+          return function()
+            if ngx.header["Content-Security-Policy"] == nil then
+              ngx.header["Content-Security-Policy"] =
+                "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+            end
+          end
+
+context-endpoint-portal:
+  name: context-endpoint-portal
+  description: Context endpoint surface on the Portal host, the edge session as the bearer
+  # The Organization's spec.limits.edge.requestsPerMinute.publicEndpoint replaces the count below (ADR-N-035).
+  rateClass: publicEndpoint
+  plugins:
+    request-id:
+      include_in_response: true
+    # SSE and large GeoJSON/CSV exports must reach the client as they are produced; with
+    # nginx buffering on, a 300 s read timeout only means the client waits 300 s for the
+    # first byte.
+    proxy-buffering:
+      disable_proxy_buffering: true
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+        - >-
+          return function()
+            local forged = {
+              "NGSILD-Tenant", "X-Userinfo", "X-Access-Token", "X-Allowed-Scope-Ids",
+              "X-Endpoint-Slug", "X-Consumer-Identity", "X-Forwarded-User",
+              "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+              "X-Forwarded-Prefix", "X-Forwarded-Server", "X-Real-IP", "JC-Read-Versions",
+            }
+            for _, header in ipairs(forged) do
+              ngx.req.clear_header(header)
+              ngx.req.clear_header((header:gsub("%-", "_")))
+            end
+            local presented = ngx.req.get_headers()["Authorization"]
+            if type(presented) == "table"
+              or (presented and not ngx.re.find(presented, [[^[Bb]earer\s+\S]], "jo")) then
+              ngx.req.clear_header("Authorization")
+            end
+            for name in pairs(ngx.req.get_headers(0)) do
+              local key = name:lower():gsub("_", "-")
+              for _, prefix in ipairs({ "x-jc-", "jc-provenance-", "l5d-" }) do
+                if key:sub(1, #prefix) == prefix and key ~= "x-jc-visitor" then
+                  ngx.req.clear_header(name)
+                end
+              end
+            end
+          end
+    # Class 3 (data APIs, T-4717): 600 requests a minute, 10 a second, per client address and
+    # bearer. A bot reads a whole catalogue at that rate and only that bot gets 429; the edge
+    # sees real addresses since T-4717 step 1, and the pipeline runners write in-cluster, not
+    # here. Class 4 (bulk exports, 10 at once) is the `*-bulk` routes' own limit-conn.
+    limit-count:
+      count: 600
+      time_window: 60
+      key_type: var_combination
+      key: '$http_authorization $remote_addr'
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    # No openid-connect here: the realm signs ES256 only (TR-03187 AR-11) and the plugin
+    # (lua-resty-openidc) verifies RS/HS signatures only, so it would refuse every token.
+    # Anonymous and bearer requests both reach the gateway PEP, which verifies the token itself and decides between a public representation and 401 (docs Deployment/10 §4, OPS-33).
+    cors:
+      # A browser may call the endpoint surface from any app served under this platform's
+      # domain, and from nowhere else. `allow_origins: '*'` would also hand the response to
+      # a page on an attacker's host.
+      allow_origins_by_regex:
+        # `${DOMAIN_RE}` and not `${DOMAIN}`: the dots of the domain are escaped by the
+        # ConfigMap template, because an unescaped one matches any character and would admit
+        # `https://evil.platform-example.org` as if it were ours (T-1679).
+        - '^https://[^@/]+\.${DOMAIN_RE}$'
+      allow_methods: 'GET,HEAD,OPTIONS'
+      allow_headers: 'Authorization,Content-Type'
+      # A browser page reads how many entities a query matched, as the catalogue's resource
+      # page counts its records (T-4333), and where a cut temporal answer continues (Link
+      # rel="intervalafter", Content-Range), as a catalogue chart reads its whole window
+      # (T-5414). Counts, ranges and Endpoint URLs are no credential and no row.
+      expose_headers: 'NGSILD-Results-Count,Content-Range,Link'
+      allow_credential: false
+    # The edge session as the bearer the gateway verifies (ADR-N-019, AP-62): `pass` leaves an
+    # anonymous visitor anonymous and a presented bearer untouched, like portal-api.
+    openid-connect:
+      client_id: edge
+      client_secret: ${EDGE_CLIENT_SECRET}
+      discovery: https://idm.${DOMAIN}/realms/${REALM}/.well-known/openid-configuration
+      bearer_only: false
+      use_jwks: false
+      use_pkce: true
+      ssl_verify: true
+      unauth_action: pass
+      redirect_uri: https://portal.${DOMAIN}/callback
+      logout_path: /logout
+      post_logout_redirect_uri: https://portal.${DOMAIN}/
+      set_userinfo_header: false
+      set_access_token_header: true
+      access_token_in_authorization_header: true
+      set_id_token_header: false
+      set_refresh_token_header: false
+      session:
+        secret: ${OIDC_SESSION_SECRET}
+        cookie_name: __Host-jc_edge
+        cookie_path: /
+        cookie_secure: true
+        cookie_http_only: true
+        cookie_same_site: Lax
+        idling_timeout: 3600
+        rolling_timeout: 3600
+        absolute_timeout: 36000
+    proxy-rewrite:
+      headers:
+        set:
+          X-Forwarded-Proto: https
+          X-Forwarded-Port: '443'
+    response-rewrite:
+      headers:
+        set:
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "DENY"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+    # OPS-34: the upstream owns the Content Security Policy (the Portal's, each App's, AP-12,
+    # AP-122), so the edge sets none over it and adds this baseline only to an answer that
+    # carries none, its own refusals included. `frame-ancestors` says what X-Frame-Options
+    # says. It runs after `response-rewrite`, whose `add` of an App's frame-ancestors counts.
+    serverless-post-function:
+      phase: header_filter
+      functions:
+        - >-
+          return function()
+            if ngx.header["Content-Security-Policy"] == nil then
+              ngx.header["Content-Security-Policy"] =
+                "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+            end
+          end
+
+
+# The four public data surfaces moved to `api.{domain}` (ADR-N-052 §2.1.3, EP-128, T-4630): an
+# anonymous request on the apex or the Portal host answers 308 to the same path and query there,
+# so the method and body of an MCP POST survive the move. The route terminates in the rewrite
+# phase and never dials its upstream; the sanitising and the headers of every other route apply.
+api-moved:
+  name: api-moved
+  description: Send a public data surface to the data host
+  plugins:
+    request-id:
+      include_in_response: true
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+        - >-
+          return function()
+            local forged = {
+              "NGSILD-Tenant", "X-Userinfo", "X-Access-Token", "X-Allowed-Scope-Ids",
+              "X-Endpoint-Slug", "X-Consumer-Identity", "X-Forwarded-User",
+              "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+              "X-Forwarded-Prefix", "X-Forwarded-Server", "X-Real-IP", "JC-Read-Versions",
+            }
+            for _, header in ipairs(forged) do
+              ngx.req.clear_header(header)
+              ngx.req.clear_header((header:gsub("%-", "_")))
+            end
+            local presented = ngx.req.get_headers()["Authorization"]
+            if type(presented) == "table"
+              or (presented and not ngx.re.find(presented, [[^[Bb]earer\s+\S]], "jo")) then
+              ngx.req.clear_header("Authorization")
+            end
+            for name in pairs(ngx.req.get_headers(0)) do
+              local key = name:lower():gsub("_", "-")
+              for _, prefix in ipairs({ "x-jc-", "jc-provenance-", "l5d-" }) do
+                if key:sub(1, #prefix) == prefix and key ~= "x-jc-visitor" then
+                  ngx.req.clear_header(name)
+                end
+              end
+            end
+          end
+    # Class 1 (standard web), as the CKAN redirect: a redirect costs the edge nothing more.
+    limit-count:
+      count: 300
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    redirect:
+      uri: "https://api.${DOMAIN}$request_uri"
+      ret_code: 308
+    response-rewrite:
+      headers:
+        set:
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "DENY"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+          Cache-Control: "no-store, no-cache, must-revalidate"
+    # OPS-34: the 308 carries no policy of its own, so the edge adds the DENY baseline.
+    serverless-post-function:
+      phase: header_filter
+      functions:
+        - >-
+          return function()
+            if ngx.header["Content-Security-Policy"] == nil then
+              ngx.header["Content-Security-Policy"] =
+                "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+            end
+          end

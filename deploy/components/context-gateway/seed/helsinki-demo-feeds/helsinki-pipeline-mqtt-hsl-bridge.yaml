@@ -1,0 +1,18 @@
+# The bridged trams into the test space (T-5883): the hsl-hfp-vehicles mapping byte for byte
+# (bento.yaml beside it; tests/test_mqtt_demo_seed.py holds them equal), its source the broker
+# hsl-bridge instead of mqtt.hsl.fi.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: mqtt-hsl-bridge
+  namespace: helsinki
+  title: { en: HSL trams through the broker hsl-bridge into the test space }
+spec:
+  class: auto
+  source:
+    dataSourceRef: { kind: DataSource, name: mqtt-hsl-bridge }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:hsl-mqtt-test:hsl-mqtt-test
+  quotas: { maxMemoryMb: 128, cpuMillicores: 250 }
+  lifetime:
+    - type: Vehicle
+      entity: { from: observedAt, plus: PT5M }

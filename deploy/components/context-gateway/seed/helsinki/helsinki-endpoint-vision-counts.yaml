@@ -1,0 +1,102 @@
+# The machine vision counting pilot at Ratapihantie in spring 2023, one TrafficFlowObserved per lane,
+# vehicle class and day (T-5669), read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-vision-counts
+  namespace: helsinki
+  title:
+    fi: Konenäön liikennelaskenta, Ratapihantie 2023 — Helsinki
+    en: Machine vision traffic counts, Ratapihantie 2023 — Helsinki
+  description:
+    fi: >-
+      Ajoneuvot, jotka yksi kamera laski konenäöllä Ratapihantien ja Rautatieläisenkadun risteyksessä 4.4.-6.6.2023
+      (Wapice Oy:n tiedonkeruupilotti), kaistoittain, ajoneuvoluokittain ja päivittäin. Smart Data Models -tyyppi
+      TrafficFlowObserved (intensity, vehicleType: car, bus, tram, motorcycle, bicycle, lorry); oma ominaisuus
+      trafficDirection kertoo kulkusuunnan (north, south). Jalankulkijat ja sähköpotkulaudat eivät ole Smart Data
+      Models -ajoneuvoluokkia, joten ne jätetään pois, samoin pilotin viimeinen vajaa päivä. Pilotin laatua ei ole
+      tarkastettu käsin laskien. Lähde: Forum Virium Helsinki, CC BY 4.0.
+    en: >-
+      The vehicles one camera counted by machine vision at the Ratapihantie / Rautatieläisenkatu junction from
+      2023-04-04 to 2023-06-06 (Wapice Oy's data collection pilot), per lane, vehicle class and day. Smart Data Models
+      type TrafficFlowObserved (intensity, vehicleType: car, bus, tram, motorcycle, bicycle, lorry); the custom
+      property trafficDirection names the direction of travel (north, south). Pedestrians and e-scooters are no Smart
+      Data Models vehicle class and are left out, as is the pilot's last, partial day. The pilot's counts were not
+      checked against manual counts. Source: Forum Virium Helsinki, CC BY 4.0.
+spec:
+  contextSpaceRef: helsinki
+  slug: q7gad2u6qwo6rbewizbknihhu2dt4yvd
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-vision-counts
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata, sta]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Forum Virium Helsinki, sv: Forum Virium Helsinki, en: Forum Virium Helsinki }
+      uri: https://forumvirium.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Forum Virium Helsinki, CC BY 4.0'
+      sv: 'Källa: Forum Virium Helsinki, CC BY 4.0'
+      en: 'Source: Forum Virium Helsinki, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      fi: [liikennelaskenta, konenäkö, pyöräily]
+      sv: [trafikräkning, maskinseende, cykling]
+      en: [traffic counting, machine vision, cycling]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: NEVER
+    source:
+      - url: https://dl.fvh.fi/sbox_public/liidi2/Wapice_traffic_counts/wapice_traffic_counts.json
+        title:
+          fi: Ratapihantien liikennelaskennat keväällä 2023
+          en: Ratapihantie traffic counts, spring 2023
+        description:
+          fi: Datankeruukokeilu Helsingissä, liikennelaskenta konenäön avulla (HRI), CC BY 4.0.
+          en: Data gathering pilot in Helsinki, traffic counting using machine vision (HRI), CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: vision-counts }
+    # Declared charts replace the automatic ones (T-5432): the machine vision pilot ran in spring
+    # 2023; no 7-day history window reaches it, so each day is drawn from its own record.
+    visualizations:
+      - name: counts-per-day
+        title: { fi: Laskettu vuorokaudessa, sk: Spočítané za deň, en: Counted per day }
+        description:
+          fi: Kaikkien laskentapisteiden summa päivittäin kulkumuodoittain.
+          sk: Súčet všetkých miest za deň podľa druhu dopravy.
+          en: Every counting point summed per day, by kind of traffic.
+        data:
+          source: odata
+          entitySet: TrafficFlowObserved
+          $select: dateObserved,intensity,vehicleType
+        spec:
+          $schema: https://vega.github.io/schema/vega-lite/v5.json
+          data: { name: source }
+          mark: { type: line, point: true }
+          encoding:
+            x:
+              field: dateObserved
+              type: temporal
+              title: null
+              timeUnit: yearmonthdate
+            'y':
+              aggregate: sum
+              field: intensity
+              type: quantitative
+              title: null
+            color: { field: vehicleType, type: nominal, title: null }
+            tooltip:
+              - field: dateObserved
+                type: temporal
+                title: null
+                timeUnit: yearmonthdate
+              - aggregate: sum
+                field: intensity
+                type: quantitative
+                format: ',d'
+              - field: vehicleType
+                type: nominal

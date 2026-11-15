@@ -1,0 +1,26 @@
+{
+  "dataProvider": "dataProvider",
+  "datumVystavenia": "datumVystavenia",
+  "datumZverejnenia": "datumZverejnenia",
+  "dodavatel": "dodavatel",
+  "iCO": "iCO",
+  "id": "urn:ngsi-ld:PurchaseOrder:joinedcontext.com:example:1",
+  "identifier": "identifier",
+  "isPartOf": "https://example.org/isPartOf",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "mena": "mena",
+  "objednavkaSpolu": "objednavkaSpolu",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "predmetObjednavky": "predmetObjednavky",
+  "rok": "rok",
+  "source": "https://example.org/source",
+  "suma": 0.0,
+  "textObjednavky": "textObjednavky",
+  "type": "PurchaseOrder"
+}

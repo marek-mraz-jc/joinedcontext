@@ -1,0 +1,19 @@
+# The history of verejne-read's types that keep one (T-4372): the same entities and Attributes, read
+# over time as far back as the space keeps them. The space's other types keep no history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: verejne-read-history
+  namespace: zilina
+  title:
+    sk: Verejné čítanie verejných údajov mesta (história)
+    en: "Public read: the city's open data (history)"
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-verejne }
+  assigner: did:web:zilina.sk
+  assignee: { kind: role, id: public }
+  operations: [queryTemporal, retrieveTemporal]
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: AirQualityObserved

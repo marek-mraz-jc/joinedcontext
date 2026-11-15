@@ -1,0 +1,84 @@
+# The mapping of the waste-containers pipeline (T-5427, PL-03): one WasteContainer per container
+# without a sensor that Golemio lists at a sorted-waste collection point (20 627 of 28 025 on
+# 2026-10-25), with what it takes, its next collection day and the collection point it stands at.
+# The monitored containers are the `waste-fill` pipeline's, which writes them hourly with their fill
+# level under the same ids (ksnko-{register number}), so the two pipelines never write one entity.
+# These carry no dateModified, the time of a sensor reading: the collection desk (praha-odpad) asks
+# for containers with one, so it keeps reading only the sensor containers.
+#
+# nextActuationDeadline is the end of the next collection day in Prague time (next_pick, a date):
+# the collection happens during that day. The offset is the one in force at noon UTC that day, which
+# is the one at 23:59 local on a day the clocks change too (they change at 01:00 UTC).
+#
+# Plausibility: a container without a register number or with a waste type the register does not
+# sort (`neznámý`, 40 on 2026-10-25), a point without a position or outside Prague's box (the city
+# plus about 1 km) and a second listing of one register number are dropped; the log line counts
+# each. A next_pick that is not a calendar date is left out, the container still lands. An answer
+# that is not a feature list, an empty one, or one where fewer than half of the containers survive
+# fails the run, so the containers already written stay instead of being thinned out. A container
+# that leaves the list goes a week after its last write (expiresAt), as waste-fill's do.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let size = content().length()
+            let kinds = { "1": "colouredGlass", "2": "electronics", "3": "metal", "4": "beverageCartons", "5": "paper", "6": "plastic", "7": "clearGlass", "8": "edibleOil", "9": "mixedRecyclables" }
+            map station {
+              root = this.or("").string().trim().lowercase().replace_all("/ ", "-").replace_all("/-", "--")
+            }
+            let features = this.features.catch(null)
+            root = if $size > 33554432 {
+              throw("Golemio answered %v bytes; more than 32 MiB is not the collection point list".format($size))
+            } else if $features.type() != "array" {
+              throw("Golemio /v2/sortedwastestations did not answer a feature list")
+            } else if $features.length() == 0 {
+              throw("Golemio listed no collection point; the city always has some, so the download failed")
+            } else {
+              $features.map_each(f -> f.properties.containers.catch([]).or([]).filter(c -> c.is_monitored.catch(false) != true).map_each(c -> {
+                "c": f.geometry.coordinates.catch(null),
+                "station": f.properties.station_number.apply("station"),
+                "place": f.properties.name.catch("").or("").string().trim(),
+                "key": c.ksnko_id.catch("").or("").string(),
+                "kind": $kinds.get(c.trash_type.id.catch("").or("").string()),
+                "what": c.trash_type.description.catch("").or("").string().trim(),
+                "next": c.cleaning_frequency.next_pick.catch("").or("").string()
+              })).flatten()
+            }
+        - mapping: |
+            let rows = this
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9]+$") && r.kind != null && r.station.re_match("^[0-9a-z-]+$"))
+            let inside = $usable.filter(r -> r.c.type() == "array" && r.c.length() >= 2 && r.c.index(0).type() == "number" && r.c.index(1).type() == "number" && r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let unique = $inside.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("Golemio: only %v of %v containers without a sensor have a register number, a waste type and a point in Prague".format($unique.length(), $rows.length()))
+            } else { $unique }
+        - log:
+            level: INFO
+            message: 'waste-containers: read ${! meta("read") }, dropped ${! meta("unusable") } without register number or waste type, ${! meta("outside") } without a point in Prague, ${! meta("duplicate") } duplicates'
+        - unarchive: { format: json_array }
+        - mapping: |
+            map deadline {
+              let noon = (this + "T12:00:00Z").ts_parse("2006-01-02T15:04:05Z").catch(null)
+              root = if !this.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") || $noon == null { null } else {
+                this + "T23:59:59" + $noon.ts_format("-07:00", "Europe/Prague")
+              }
+            }
+            let r = this
+            let deadline = $r.next.apply("deadline")
+            root = {
+              "id": "urn:ngsi-ld:%v:%v:%v:ksnko-%v".format("WasteContainer", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $r.key),
+              "type": "WasteContainer",
+              "name": if $r.place == "" { null } else { { "type": "LanguageProperty", "languageMap": { "cs": [$r.place, $r.what].filter(t -> t != "").join(", ") } } },
+              "containerCode": { "type": "Property", "value": $r.key },
+              "wasteKind": { "type": "Property", "value": $r.kind },
+              "nextActuationDeadline": if $deadline == null { null } else { { "type": "Property", "value": $deadline } },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": $r.c.slice(0, 2) } },
+              "refWasteContainerIsle": { "type": "Relationship", "object": "urn:ngsi-ld:%v:%v:%v:station-%v".format("WasteContainerIsle", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $r.station) },
+              "dataProvider": { "type": "Property", "value": "Golemio, Operátor ICT" },
+              "source": { "type": "Property", "value": "https://api.golemio.cz/v2/sortedwastestations" },
+              "expiresAt": (now().ts_unix() + 604800).ts_format("2006-01-02T15:04:05Z", "UTC")
+            }.filter(entry -> entry.value != null)

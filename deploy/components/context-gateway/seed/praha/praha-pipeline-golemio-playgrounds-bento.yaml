@@ -1,0 +1,112 @@
+# The mapping of the golemio-playgrounds pipeline (T-5276, PL-03): one PointOfInterest per children's playground in
+# Golemio's /v2/playgrounds (Operátor ICT, a.s.), 153 records on 2026-10-22. The six Golemio place feeds of the
+# space (police stations, libraries, municipal offices, gardens, playgrounds, waste collection yards)
+# share this mapping; only the four lets of the first step differ.
+#
+# Ids: urn:ngsi-ld:PointOfInterest:{org}:{space}:golemio-playgrounds-{Golemio id}. The prefix keeps them apart
+# from the IPR and ROPID places, which the CC BY dataset praha-mista publishes (its Policy names them by
+# idPattern); these carry no licence, only Golemio's attribution (T-5268 terms).
+#
+# Plausibility (owner 2026-10-22T18:10Z): a place outside Prague's box (the city plus about 1 km) or at
+# 0,0, or one without a name, is dropped; Golemio lists some places twice (the Municipal Library under an
+# old numeric id and its slug, 46 pairs on 2026-10-22): two records of one name in one 0.0002° cell
+# (about 15 m) keep the newer. Opening hours are the default staffed ones: a library's self-service
+# hours and one-day closures stay out. A web address that is no http(s) URL leaves the place without `url`.
+# An answer that is not a feature list, an empty one or one whose newest record is older than
+# 100 days fails the run, so the places already written stay instead of being emptied.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("Golemio answered %v bytes; more than 16 MiB is not the place list".format(content().length())) } else { this }
+        - mapping: |
+            let set = "playgrounds"
+            let category = "playground"
+            let path = "/v2/playgrounds"
+            let max_days = 100
+            map at {
+              root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            let features = this.features.catch(null)
+            let n = if $features.type() == "array" { $features.length() } else { -1 }
+            let newest = if $n > 0 { $features.map_each(f -> f.properties.updated_at.apply("at").catch("")).sort().index(-1) } else { "" }
+            root = if $n < 0 {
+              throw("Golemio's %v answer is not a feature list".format($path))
+            } else if $n == 0 {
+              throw("Golemio's %v listed no place; the register is never empty, so the feed failed".format($path))
+            } else if $newest == "" || $newest.ts_parse("2006-01-02T15:04:05Z").ts_unix() < now().ts_unix() - $max_days * 86400 {
+              throw("Golemio's newest %v record (%v) is older than %v days".format($path, $newest, $max_days))
+            } else { { "set": $set, "category": $category, "path": $path, "features": $features } }
+        - mapping: |
+            map at {
+              root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            map slug {
+              root = this.string().lowercase().replace_all_many([
+                "á", "a", "č", "c", "ď", "d", "é", "e", "ě", "e", "í", "i", "ň", "n", "ó", "o",
+                "ř", "r", "š", "s", "ť", "t", "ú", "u", "ů", "u", "ý", "y", "ž", "z"
+              ]).re_replace_all("[^a-z0-9]+", "-").trim("-")
+            }
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            # Only a police desk is named after its unit when the record has no name of its own.
+            let set = this.set
+            let rows = this.features.map_each(f -> {
+              "c": f.geometry.coordinates.catch(null),
+              "p": f.properties.catch({}),
+              "key": f.properties.id.catch("").string().apply("slug"),
+              "at": f.properties.updated_at.apply("at").catch("")
+            }).map_each(r -> r.assign({
+              "name": if r.p.name.apply("words") != "" { r.p.name.apply("words") } else if $set == "police" && r.p.note.apply("words") != "" {
+                "Městská policie Praha: %v%v".format(r.p.note.apply("words"), if r.p.address.street_address.apply("words") != "" { ", " + r.p.address.street_address.apply("words") } else { "" })
+              } else { "" }
+            }))
+            let usable = $rows.filter(r -> r.key != "" && r.name != "" && r.at != "")
+            let located = $usable.filter(r -> r.c.type() == "array" && r.c.length() == 2 && r.c.index(0).type() == "number" && r.c.index(1).type() == "number")
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let newer_first = $inside.sort_by(r -> 0 - r.at.ts_parse("2006-01-02T15:04:05Z").ts_unix())
+            let unique = $newer_first.unique(r -> r.key).unique(r -> "%v|%v|%v".format(r.name.lowercase(), (r.c.index(0) / 0.0002).floor(), (r.c.index(1) / 0.0002).floor()))
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta set = this.set
+            root = this.without("features").assign({ "rows": $unique })
+        - log:
+            level: INFO
+            message: 'golemio-${! meta("set") }: read ${! meta("read") }, dropped ${! meta("unusable") } without id, name or date, ${! meta("outside") } outside Prague, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            let abbr = ["po", "út", "st", "čt", "pá", "so", "ne"]
+            let set = this.set
+            let category = this.category
+            let source = "https://api.golemio.cz" + this.path
+            root = this.rows.map_each(r -> {
+              "r": r,
+              "web": [r.p.web.catch(null), r.p.url.catch(null)].flatten().filter(w -> w.type() == "string" && w.trim() != "").map_each(w -> if w.trim().re_match("^https?://") { w.trim() } else { "https://" + w.trim() }).filter(w -> w.re_match("^https?://[^\\s/]+\\.[^\\s]+$")),
+              "street": if r.p.address.street_address.type() == "string" && r.p.address.street_address.trim() != "" { r.p.address.street_address.trim() } else { r.p.address.address_formatted.or("").re_replace_all(", Česko$", "").trim() },
+              "hours": if r.p.operating_hours.type() == "string" { r.p.operating_hours.trim().re_replace_all("\\s+", " ") } else {
+                [0, 1, 2, 3, 4, 5, 6].map_each(i -> {
+                  "i": i,
+                  "t": r.p.opening_hours.or([]).filter(h -> h.day_of_week.or("") == $days.index(i) && h.is_default.or(true) != false && h.type.or("standard") == "standard" && h.opens.type() == "string" && h.closes.type() == "string").map_each(h -> "%v-%v".format(h.opens, h.closes)).sort().join(", ")
+                }).filter(d -> d.t != "").fold([], acc -> if acc.tally.length() > 0 && acc.tally.index(-1).t == acc.value.t && acc.tally.index(-1).last == acc.value.i - 1 {
+                  acc.tally.slice(0, -1).append(acc.tally.index(-1).assign({ "last": acc.value.i }))
+                } else {
+                  acc.tally.append({ "first": acc.value.i, "last": acc.value.i, "t": acc.value.t })
+                }).map_each(g -> "%v%v %v".format($abbr.index(g.first), if g.last > g.first { "–" + $abbr.index(g.last) } else { "" }, g.t)).join("\n")
+              }
+            }).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:golemio-%v-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $set, v.r.key),
+              "type": "PointOfInterest",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": v.r.name } },
+              "serviceCategory": { "type": "Property", "value": $category },
+              "facilityType": if v.r.p.type.description.type() == "string" && v.r.p.type.description.trim() != "" { { "type": "Property", "value": v.r.p.type.description.trim() } } else if v.r.p.note.type() == "string" && v.r.p.note.trim() != "" { { "type": "Property", "value": v.r.p.note.trim() } } else { null },
+              "address": if v.street != "" { { "type": "Property", "value": { "streetAddress": v.street, "addressLocality": "Praha", "addressCountry": "CZ" } } } else { null },
+              "url": if v.web.length() > 0 { { "type": "Property", "value": v.web.index(0) } } else { null },
+              "openingHours": if v.hours != "" { { "type": "LanguageProperty", "languageMap": { "cs": v.hours } } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": v.r.c } },
+              "dateModified": { "type": "Property", "value": v.r.at },
+              "dataProvider": { "type": "Property", "value": "Golemio, Operátor ICT, a.s." },
+              "source": { "type": "Property", "value": $source }
+            }.filter(kv -> kv.value != null))

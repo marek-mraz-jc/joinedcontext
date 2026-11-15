@@ -1,0 +1,41 @@
+# Public events of the Banská Bystrica Region's towns, municipalities and cultural bodies (T-4895). Since T-5047
+# (owner 2026-10-21) the region keeps its own sources here and the national store is slovensko-podujatia in the
+# Slovakia project. The pipelines of seeds/bbsk-events/generate.py write it; nobody else does.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: bbsk-podujatia
+  namespace: bbsk
+  title: { sk: Podujatia v Banskobystrickom kraji, en: Events in the Banská Bystrica Region }
+  description:
+    sk: >-
+      Nadchádzajúce verejné podujatia miest, obcí a kultúrnych inštitúcií Banskobystrického kraja s časom a miestom
+      konania (GPS). Každé podujatie má rozsah /SK/{kraj}/{obec}, napríklad /SK/BB/banska_bystrica,
+      a zostáva v priestore do svojho konca. Zdroj: webové stránky a kanály, ktoré podujatie zverejnili.
+    en: >-
+      Upcoming public events of the Banská Bystrica Region's towns, municipalities and cultural bodies with their time
+      and place (GPS). Each event carries the scope /SK/{region}/{municipality}, for example
+      /SK/BB/banska_bystrica, and stays in the space until it ends. Source: the web sites and feeds
+      that announced it.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: bbsk-podujatia
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: bbsk-podujatia }
+  defaultLocale: sk
+  # Current state only (DM-82): an event's past versions help nobody, and it leaves the space at
+  # its end through the expiresAt its pipeline writes (T-4838).
+  retention:
+    - entityType: Event
+      history: 'off'
+    # Venues change rarely; the daily miesta-podujati upsert would write one history row per attribute per day.
+    - entityType: PointOfInterest
+      history: 'off'
+  # Slovakia with a margin: a point outside it is flagged (DM-87); the pipelines refuse it first.
+  quality:
+    - name: in-slovakia
+      entityType: Event
+      kind: area
+      attribute: location
+      bbox: [16.8, 47.7, 22.6, 49.7]

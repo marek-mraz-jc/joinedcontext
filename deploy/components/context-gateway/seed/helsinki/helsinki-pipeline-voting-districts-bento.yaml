@@ -1,0 +1,17 @@
+# The mapping of the voting-districts pipeline (PL-03): one AdministrativeArea per voting district
+# (äänestysalue) of Helsinki, from the open WFS layer `Halke_aanestysalue`. The code is the one the
+# voting card prints: the district number and a letter (049A, Laajasalo A).
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.features.or([]).filter(f -> f.properties.kunta.or("") == "091" && f.properties.tunnus.or("").string().re_match("^[0-9]{3}[A-Z]$") && f.geometry.or(null) != null).map_each(f -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:voting-district-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.tunnus.string()),
+          "type": "AdministrativeArea",
+          "name": { "type": "LanguageProperty", "languageMap": { "fi": f.properties.nimi_fi.or(""), "sv": f.properties.nimi_se.or("") }.filter(entry -> entry.value.string().trim() != "" && entry.value != "None") },
+          "districtCode": { "type": "Property", "value": f.properties.tunnus.string() },
+          "divisionLevel": { "type": "Property", "value": "votingDistrict" },
+          "location": { "type": "GeoProperty", "value": f.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Kami voting district division" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Halke_aanestysalue" }
+        }.filter(entry -> entry.value != null))

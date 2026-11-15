@@ -1,0 +1,29 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: mhd-read
+  namespace: zilina
+  title:
+    sk: 'Verejné čítanie: vozidlá mhd a meškanie'
+    en: 'Public read: public transport vehicles and delay'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-doprava }
+  assigner: did:web:zilina.sk
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint zilina-mhd, and only
+  # its type (T-4344).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Vehicle

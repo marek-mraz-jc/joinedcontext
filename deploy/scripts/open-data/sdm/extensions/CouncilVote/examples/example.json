@@ -1,0 +1,24 @@
+{
+  "dataProvider": "dataProvider",
+  "datum": "2026-01-01T00:00:00Z",
+  "hlas": "hlas",
+  "iCOSamospravy": "iCOSamospravy",
+  "id": "urn:ngsi-ld:CouncilVote:joinedcontext.com:example:1",
+  "isPartOf": "https://example.org/isPartOf",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": "name",
+  "nazovSamospravy": "nazovSamospravy",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "organSamospravy": "organSamospravy",
+  "poslanec": "poslanec",
+  "source": "https://example.org/source",
+  "type": "CouncilVote",
+  "volebneObdobie": 0,
+  "zasadnutie": "zasadnutie"
+}

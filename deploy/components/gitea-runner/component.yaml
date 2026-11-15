@@ -1,0 +1,15 @@
+---
+component: gitea-runner
+parts:
+  # The forge's Actions runner (ADR-N-028, AP-80, AP-81): builds the application repositories
+  # from the workflow the Portal commits into each of them.
+  - name: runner
+  # The second runner, for fullstack Apps (AP-105, AP-106): the rust-1.90 builder image under
+  # the label its workflow asks for, with a job memory limit sized for a release link. The same
+  # values as `runner`, read per part.
+  - name: rust
+    valuesFrom: runner
+  # What an App's build pod needs here (AP-130, AP-131): the runner configuration per build
+  # class and the Portal's Role, which lets it start one Job per queued App build with that
+  # App's own cache claim. The pods themselves are the Portal's (src/apps/build_pods.rs).
+  - name: build-pods

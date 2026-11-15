@@ -1,0 +1,18 @@
+# The city's autumn traffic volume table: every counting point's motor vehicles per direction and
+# time slot on one autumn weekday a year since 2010, one CSV of 5 MB rewritten once a year. No key.
+# CC BY 4.0, read from the HRI catalogue (package liikennemaarat-helsingissa, T-5669).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-traffic-volumes
+  namespace: helsinki
+  title:
+    en: Autumn traffic volumes (City of Helsinki, CSV)
+    fi: Liikennemäärät taulukkomuodossa (Helsingin kaupunki, CSV)
+spec:
+  type: http
+  http:
+    url: https://www.hel.fi/static/avoindata/kymp/hki_liikennemaarat.csv
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 60s

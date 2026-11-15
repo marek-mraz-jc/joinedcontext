@@ -1,0 +1,18 @@
+# The site register of the City of Helsinki's web analytics (Matomo): every tracked site with its id,
+# name and address, the first read of the service-usage pipeline (T-5258, T-5667). The pipeline then
+# reads the month's export, whose file name changes every month; this file stays at one address.
+# 214 KB in October 2026. No key. CC-BY-4.0, read from the HRI catalogue (package
+# helsingin-kaupungin-verkkosivustojen-kavijaanalytiikka).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-web-analytics-sites
+  namespace: helsinki
+  title: { en: City web analytics site register, fi: Verkkoanalytiikan sivustoluettelo }
+spec:
+  type: http
+  http:
+    url: https://www.hel.fi/static/avoindata/kanslia/ID_lista_Matomo.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

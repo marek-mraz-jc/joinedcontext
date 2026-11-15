@@ -1,0 +1,54 @@
+{
+ "b5486911cb0342e48d475130d1d5e960": [
+  {
+   "id": 0,
+   "name": "Poskytovatelia",
+   "geometryType": null
+  }
+ ],
+ "40138c783eaa46cd8cd3c8e09ab67127": [
+  {
+   "id": 0,
+   "name": "Mapa_SODB_2021_rodinný_stav",
+   "geometryType": "esriGeometryPolygon"
+  }
+ ],
+ "04e229d8b39b415497081c63a74c94f9": [
+  {
+   "id": 0,
+   "name": "Mapa_SODB_2021_rodinný_stav_okres",
+   "geometryType": "esriGeometryPolygon"
+  }
+ ],
+ "2f936202febe4340a72c1b7224a664d9": [
+  {
+   "id": 7,
+   "name": "Kultúrne inštitúcie",
+   "geometryType": "esriGeometryPoint"
+  },
+  {
+   "id": 8,
+   "name": "Pobočky KI body",
+   "geometryType": "esriGeometryPoint"
+  },
+  {
+   "id": 9,
+   "name": "Pobočky KI polygóny",
+   "geometryType": "esriGeometryPolygon"
+  }
+ ],
+ "123122d1040a48e68eefc10016fb262b": [
+  {
+   "id": 0,
+   "name": "Usek_len_BBSK_dissolved_cis_cesty",
+   "geometryType": "esriGeometryPolyline"
+  }
+ ],
+ "825cd0cb3b0f46759d14f3bb0d328b59": [
+  {
+   "id": 0,
+   "name": "Hárok1",
+   "geometryType": null
+  }
+ ]
+}

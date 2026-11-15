@@ -1,0 +1,6 @@
+---
+component: functions
+parts:
+  # jc-functions (Architecture/20 §3, SDK-21…SDK-23): the QuickJS runtime of the functions a
+  # generated application ships, called by the Portal alone.
+  - name: runtime

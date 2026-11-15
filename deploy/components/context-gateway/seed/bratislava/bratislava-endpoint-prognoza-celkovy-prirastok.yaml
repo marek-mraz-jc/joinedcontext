@@ -1,0 +1,44 @@
+# Forecast population growth by city district of Bratislava: one public dataset of the hub (T-5274), item da8cd2a844a2498db96236ef8925cd2b, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-prognoza-celkovy-prirastok
+  namespace: bratislava
+  title:
+    sk: Prognóza celkového prírastku obyvateľov v mestských častiach Bratislavy
+    en: Forecast population growth by city district of Bratislava
+  description:
+    sk: 'Ukazovatele tabuľky „Prognóza celkového prírastku obyvateľov v mestských častiach Bratislavy“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table on forecast population growth by city district of Bratislava, one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: xadzd5tbpkihtpfaedj3lhzvynrnvhki
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-prognoza-celkovy-prirastok
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/da8cd2a844a2498db96236ef8925cd2b
+        title:
+          sk: Prognóza celkového prírastku obyvateľov v mestských častiach Bratislavy
+          en: Forecast population growth by city district of Bratislava
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Prognóza celkového prírastku obyvateľov v mestských častiach Bratislavy. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Forecast population growth by city district of Bratislava. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics }

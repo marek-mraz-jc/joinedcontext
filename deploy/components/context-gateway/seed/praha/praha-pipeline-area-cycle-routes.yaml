@@ -1,0 +1,18 @@
+# One BikeLane per record of the IPR layer Cyklistické trasy into the city space (T-5426).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: area-cycle-routes
+  namespace: praha
+  title: { en: Cycle routes, cs: Cyklistické trasy }
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '0 3 * * 5'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-area-cycle-routes }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: BikeLane, mode: upsert }
+  # 5142187 bytes on 2026-10-25.
+  quotas: { maxMemoryMb: 384, cpuMillicores: 100 }

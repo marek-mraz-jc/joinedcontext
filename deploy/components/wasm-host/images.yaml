@@ -1,0 +1,19 @@
+---
+# The platform image carries jc-wasm-host beside the gateway (its Dockerfile); a shard runs it by
+# `command`. The same pin as components/context-gateway/images.yaml, re-pinned with it.
+wasm-host:
+  shard-0:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-platform'
+    tag: 'main'
+    digest: 'sha256:a43cb1a1dca5a1e2de60f586341b2b66a8d9d07c66af6ea50e5a52510cd5dbe8'
+  shard-1:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-platform'
+    tag: 'main'
+    digest: 'sha256:a43cb1a1dca5a1e2de60f586341b2b66a8d9d07c66af6ea50e5a52510cd5dbe8'
+  # The platform image's `jc-token-sidecar` with `JC_SIDECAR_IDENTITY=appjob` (T-3372): pin one
+  # built from a commit that carries it before `tokens.enabled` is set; an older binary refuses
+  # to start without JC_PIPELINE_NAMESPACE.
+  tokens:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-platform'
+    tag: 'main'
+    digest: 'sha256:a43cb1a1dca5a1e2de60f586341b2b66a8d9d07c66af6ea50e5a52510cd5dbe8'

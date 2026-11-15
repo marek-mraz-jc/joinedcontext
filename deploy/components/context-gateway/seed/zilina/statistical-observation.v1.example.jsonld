@@ -1,0 +1,21 @@
+{
+  "@context": [
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld",
+    "statistical-observation.v1.context.jsonld"
+  ],
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:zilina.sk:zilina-mesto:om7101qr-SK031B517402-2026Q2-IN010115-SPOLU",
+  "type": "KeyPerformanceIndicator",
+  "dataSet": { "type": "Property", "value": "om7101qr" },
+  "indicator": { "type": "Property", "value": "IN010115" },
+  "refArea": { "type": "Property", "value": "SK031B517402" },
+  "refPeriod": { "type": "Property", "value": "2026Q2" },
+  "dimensionKey": { "type": "Property", "value": "SPOLU" },
+  "kpiValue": { "type": "Property", "value": 79617, "unitCode": "C62" },
+  "unitText": { "type": "Property", "value": "osoba" },
+  "source": {
+    "type": "Property",
+    "value": "https://data.statistics.sk/api/v2/dataset/om7101qr/SK031B517402/2026Q2/IN010115/SPOLU?lang=sk&type=json"
+  },
+  "dateObserved": { "type": "Property", "value": "2026-08-31T00:00:00Z" },
+  "observedAt": { "type": "Property", "value": "2026-08-31T00:00:00Z" }
+}

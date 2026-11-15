@@ -1,0 +1,45 @@
+{{- /* Who may call the embedder: jc's pods in each namespace of embedder.server.callerNamespaces
+       (one shared embedder, several deployments on this cluster: jc-prod and jc-dev), else
+       jc's own namespace in this environment. Each caller still needs its kaisatsu's token
+       (embedder.server.deployments); this is the network's half. Meshed, the Linkerd inbound
+       port 4143 and the proxy's admin ports get the same callers (T-5314). */}}
+{{- /* Values files load before the components' defaults reach .Values (components/prometheus says
+       the same): the list is read from the environment's global.yaml.gotmpl, and jc's own
+       namespace from jc's default-environment, rendered the way components-defaults does. */}}
+{{- $defaults := include "jc.configFiles" (dict "components" (list "jc") "file" "default-environment.yaml.gotmpl" "global" $) | fromYaml }}
+{{- $own := dig "jc" "server" "namespace" "" $defaults }}
+{{- $callers := dig "embedder" "server" "callerNamespaces" (list) .Values | default (list $own) | compact | uniq }}
+{{- if not $callers }}
+{{- fail "embedder: name the caller namespaces in embedder.server.callerNamespaces, or deploy jc in this environment" }}
+{{- end }}
+{{- $peer := dict "namespaceSelector" (dict "matchExpressions" (list (dict "key" "kubernetes.io/metadata.name" "operator" "In" "values" $callers))) "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "jc-server" "app.kubernetes.io/instance" "jc-server")) }}
+embedder-server-callers:
+  podSelector:
+    app.kubernetes.io/name: embedder-server
+    app.kubernetes.io/instance: embedder-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - {{ $peer | toJson }}
+      ports:
+        - protocol: TCP
+          port: 8089
+{{- if and (dig "global" "serviceMesh" "enable" false .Values) (eq (dig "global" "serviceMesh" "type" "" .Values) "linkerd") }}
+embedder-server-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: embedder-server
+    app.kubernetes.io/instance: embedder-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - {{ $peer | toJson }}
+      ports:
+        - protocol: TCP
+          port: 4143
+        - protocol: TCP
+          port: 4190
+        - protocol: TCP
+          port: 4191
+{{- end }}

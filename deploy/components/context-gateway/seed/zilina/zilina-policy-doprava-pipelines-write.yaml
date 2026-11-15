@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: doprava-pipelines-write
+  namespace: zilina
+  title: { sk: Kanály zapisujú priestor zilina-doprava, en: The pipelines write zilina-doprava }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-doprava }
+  assigner: did:web:zilina.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is each read; no delete: a vehicle out of service expires by its own expiresAt and a
+  # light the portal stops listing stays until a person removes it.
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: OffStreetParking
+        - type: Vehicle
+        - type: TrafficFlowObserved
+        - type: Streetlight

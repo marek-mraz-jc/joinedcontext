@@ -1,0 +1,20 @@
+# Open Data BCN `accidents-gu-bcn` (CC BY 4.0): the accidents the Guàrdia Urbana handled, one CSV
+# per year (2010..2025 on 2026-10-23, the newest 1.26 MB, 7,741 accidents). The DataSource reads
+# the dataset's CKAN record (about 30 kB); the mapping picks the newest year's CSV from it, so the
+# file of a new year is read the week the city adds it. No key.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-accidents
+  namespace: barcelona
+  title:
+    ca: Accidents gestionats per la Guàrdia Urbana (Open Data BCN)
+    es: Accidentes gestionados por la Guardia Urbana (Open Data BCN)
+    en: Accidents handled by the local police (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/package_show?id=accidents-gu-bcn
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

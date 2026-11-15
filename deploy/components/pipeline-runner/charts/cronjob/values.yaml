@@ -1,0 +1,58 @@
+---
+# The project that owns these pipelines. It names the objects and scopes the ServiceAccount,
+# because a scheduled pod may never reach another project's data (PL-10).
+project: ''
+
+image:
+  repository: ghcr.io/warpstreamlabs/bento
+  tag: ''
+  digest: ''
+  pullPolicy: IfNotPresent
+
+# The scheduled pipelines, keyed by name. Each one becomes a ConfigMap with the Bento
+# configuration and a CronJob that runs it:
+#
+#   pipelines:
+#     air-quality-batch:
+#       periodSeconds: 45     # how often the pipeline should fetch (PL-26, PL-27)
+#       schedule: ''          # a cron expression instead, for a period of a minute or more
+#       config:               # native Bento, WITHOUT `input`: the chart renders the trigger
+#         pipeline:
+#           processors: [...]
+#         output: {...}
+#
+# `periodSeconds` under 60 renders `* * * * *` with `input.generate.interval` set to the
+# period and `count` to floor(60 / period), so one pod covers the whole minute (PL-27).
+pipelines: {}
+
+serviceAccount:
+  create: true
+  name: ''
+  automountServiceAccountToken: false
+
+# A run that outlives this many seconds is killed: a scheduled pipeline is a fetch, not a
+# resident process, and a hung HTTP read must not hold a pod until the next tick (PL-10).
+activeDeadlineSeconds: 300
+# A failed run is not retried inside the same tick; the next tick is the retry, and a
+# pipeline that fails every time should be visible as failed jobs rather than as a
+# retry storm.
+backoffLimit: 0
+successfulJobsHistoryLimit: 1
+failedJobsHistoryLimit: 3
+
+env: {}
+envSecret: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+
+podSecurityContext: {}
+securityContext: {}
+
+serviceMesh:
+  enabled: false

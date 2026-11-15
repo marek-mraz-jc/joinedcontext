@@ -1,0 +1,16 @@
+# Grammar schools in the city: schools, pupils, classes and teachers, 1996 on. No key, CC-BY-SA-4.0.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-sv5003rr
+  namespace: zilina
+  title:
+    sk: Gymnáziá (ŠÚ SR, sv5003rr)
+    en: Grammar schools (ŠÚ SR, sv5003rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/sv5003rr/SK031B517402/*/*?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

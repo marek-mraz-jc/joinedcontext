@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF 
+ xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+ xmlns="http://purl.org/rss/1.0/"
+ xmlns:dc="http://purl.org/dc/elements/1.1/"
+ xmlns:sy="http://purl.org/rss/1.0/modules/syndication/"
+>
+	<channel rdf:about="https://www.zvolen.sk">
+		<title>Zvolen</title>
+		<description>Zvolen - Kultúra a šport</description>
+		<link>https://www.zvolen.sk</link>
+		<sy:updatePeriod>hourly</sy:updatePeriod>
+		<sy:updateFrequency>5</sy:updateFrequency>
+		<sy:updateBase>2026-10-20T23:43:40+02:00</sy:updateBase>
+		<items>
+			<rdf:Seq>
+				<rdf:li resource="https://www.zvolen.sk/akcia/38--vikend-atraktivneho-divadla.html"/>
+				<rdf:li resource="https://www.zvolen.sk/akcia/sarkaniada-3.html"/>
+				<rdf:li resource="https://www.zvolen.sk/akcia/carodejnik-z-krajiny-oz.html"/>
+				<rdf:li resource="https://www.zvolen.sk/akcia/lampionovy-sprievod-m--r--stefanika-0.html"/>
+				<rdf:li resource="https://www.zvolen.sk/akcia/pravda-v-haji.html"/>
+				<rdf:li resource="https://www.zvolen.sk/akcia/hauerland-4.html"/>
+				<rdf:li resource="https://www.zvolen.sk/akcia/tatiana-harachova-0.html"/>
+				<rdf:li resource="https://www.zvolen.sk/akcia/po-stopach-pribehov-z-hronseka.html"/>
+				<rdf:li resource="https://www.zvolen.sk/akcia/mohac-500-sk-obraz-osmanskej-pritomnosti-sprievodne-programy-na-vystave-0.html"/>
+				<rdf:li resource="https://www.zvolen.sk/akcia/katarina-nadaska-stridzie-dni--advent-a-vianoce.html"/>
+			</rdf:Seq>
+		</items>
+	</channel>
+	<item rdf:about="https://www.zvolen.sk/akcia/38--vikend-atraktivneho-divadla.html">
+		<title>38. Víkend atraktívneho divadla</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/38--vikend-atraktivneho-divadla.html</link>
+		<description>Program 38. VAD vo ZvoleneŠtvrtok 12. 11.• 17:00 Divadelná reštaurácia: Máš, čo nemáš – spomienkový večer na Karola Chmela,...</description>
+		<dc:date>2026-10-20T14:23:10+02:00</dc:date>
+	</item>
+	<item rdf:about="https://www.zvolen.sk/akcia/sarkaniada-3.html">
+		<title>Šarkaniáda</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/sarkaniada-3.html</link>
+		<description>Šarkaniáda</description>
+		<dc:date>2026-10-19T12:12:16+02:00</dc:date>
+	</item>
+	<item rdf:about="https://www.zvolen.sk/akcia/carodejnik-z-krajiny-oz.html">
+		<title>Čarodejník z krajiny Oz</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/carodejnik-z-krajiny-oz.html</link>
+		<description>Čarodejník z krajiny Oz mieri na zvolenský ľadLegendárny rozprávkový príbeh ožije na Zimnom štadióne vo Zvolene...</description>
+		<dc:date>2026-10-08T12:54:58+02:00</dc:date>
+	</item>
+	<item rdf:about="https://www.zvolen.sk/akcia/lampionovy-sprievod-m--r--stefanika-0.html">
+		<title>Lampiónový sprievod M. R. Štefánika</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/lampionovy-sprievod-m--r--stefanika-0.html</link>
+		<description>POZVÁNKA NA LAMPIÓNOVÝ SPRIEVODO pár dní centrum mesta rozsvieti lampiónový sprievod, ktorý prinesie jesenný podvečer plný svetiel, hudb...</description>
+		<dc:date>2026-10-08T10:35:27+02:00</dc:date>
+	</item>
+	<item rdf:about="https://www.zvolen.sk/akcia/pravda-v-haji.html">
+		<title>Pravda v háji</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/pravda-v-haji.html</link>
+		<description>"Na východe krajiny sa niečo deje. V rodine podnikateľa Romana , jeho znudenej ale energicke manželky Zuzky a voľnomyšlienkárskej dcéry Grétky nikt...</description>
+		<dc:date>2026-10-07T14:05:56+02:00</dc:date>
+	</item>
+	<item rdf:about="https://www.zvolen.sk/akcia/hauerland-4.html">
+		<title>HAUERLAND</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/hauerland-4.html</link>
+		<description>Fiktívny príbeh inšpirovaný skutočnými osobami i udalosťami začína v lete roku 1933, keď sa v Nemecku dáva do pohybu nacistický „pekelný stroj“. Ne...</description>
+		<dc:date>2026-10-05T18:24:07+02:00</dc:date>
+	</item>
+	<item rdf:about="https://www.zvolen.sk/akcia/tatiana-harachova-0.html">
+		<title>Tatiana Harachová</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/tatiana-harachova-0.html</link>
+		<description>Tatiana Harachová</description>
+		<dc:date>2026-10-12T11:08:24+02:00</dc:date>
+	</item>
+	<item rdf:about="https://www.zvolen.sk/akcia/po-stopach-pribehov-z-hronseka.html">
+		<title>Po stopách príbehov z Hronseka</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/po-stopach-pribehov-z-hronseka.html</link>
+		<description>Po stopách príbehov z Hronseka</description>
+		<dc:date>2026-09-28T14:21:36+02:00</dc:date>
+	</item>
+	<item rdf:about="https://www.zvolen.sk/akcia/mohac-500-sk-obraz-osmanskej-pritomnosti-sprievodne-programy-na-vystave-0.html">
+		<title>MOHÁČ 500 SK - Obraz osmanskej prítomnosti - sprievodné programy na výstave</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/mohac-500-sk-obraz-osmanskej-pritomnosti-sprievodne-programy-na-vystave-0.html</link>
+		<description>MOHÁČ 500 SK - Obraz osmanskej prítomnosti - sprievodné programy na výstave</description>
+		<dc:date>2026-10-13T08:13:23+02:00</dc:date>
+	</item>
+	<item rdf:about="https://www.zvolen.sk/akcia/katarina-nadaska-stridzie-dni--advent-a-vianoce.html">
+		<title>Katarína Nádaská - Stridžie dni, Advent a Vianoce</title>
+		<link>https://www.zvolen.sk/kultura-a-sport/katarina-nadaska-stridzie-dni--advent-a-vianoce.html</link>
+		<description>Dňa 21.11.2026 o 18:00 hod. sa v Dome kultúry Podborová Zvolen uskutoční podujatie pod názvom “Večer s Katarínou Nádaskou”, ktorého súčasťou je:...</description>
+		<dc:date>2026-09-25T09:53:27+02:00</dc:date>
+	</item>
+</rdf:RDF>

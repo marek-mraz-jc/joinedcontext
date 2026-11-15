@@ -1,0 +1,86 @@
+{
+ "type": "FeatureCollection",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "EPSG:4326"
+  }
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     20.102394,
+     48.828733
+    ]
+   },
+   "properties": {
+    "GPS_Šírka": 48.8287333,
+    "GPS_Dĺžka": 20.1023944,
+    "Číslo_nehody": "560306-25-00009",
+    "Dátum_a_čas": 1739170800000,
+    "Povrch_vozovky": "živica",
+    "Smerové_pomery": "priamy úsek",
+    "Druh_komunikácie": "Cesta I. triedy",
+    "Hlavný_vinník": "vodič",
+    "Ľahko_zranení": 0,
+    "Ťažko_zranení": 0,
+    "Usmrtení": 0,
+    "Príčiny": "porušenie povinnosti vodiča",
+    "Škoda_v_EUR": 600
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     19.608869,
+     48.859619
+    ]
+   },
+   "properties": {
+    "GPS_Šírka": 48.8596194,
+    "GPS_Dĺžka": 19.6088694,
+    "Číslo_nehody": "560306-25-00010",
+    "Dátum_a_čas": 1739550600000,
+    "Povrch_vozovky": "živica",
+    "Smerové_pomery": "priamy úsek pre prejazd zákrutou (do vzdialenosti cca 100m od optického konca zákruty)",
+    "Druh_komunikácie": "Cesta II. triedy",
+    "Hlavný_vinník": "vodič",
+    "Ľahko_zranení": 0,
+    "Ťažko_zranení": 1,
+    "Usmrtení": 0,
+    "Príčiny": "porušenie povinnosti vodiča",
+    "Škoda_v_EUR": 15000
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     19.912206,
+     48.848278
+    ]
+   },
+   "properties": {
+    "GPS_Šírka": 48.8482778,
+    "GPS_Dĺžka": 19.9122056,
+    "Číslo_nehody": "560306-25-00011",
+    "Dátum_a_čas": 1739892600000,
+    "Povrch_vozovky": "živica",
+    "Smerové_pomery": "priamy úsek",
+    "Druh_komunikácie": "Komunikácia nesledovaná",
+    "Hlavný_vinník": "vodič",
+    "Ľahko_zranení": 0,
+    "Ťažko_zranení": 0,
+    "Usmrtení": 0,
+    "Príčiny": "porušenie povinnosti vodiča",
+    "Škoda_v_EUR": 500
+   }
+  }
+ ]
+}

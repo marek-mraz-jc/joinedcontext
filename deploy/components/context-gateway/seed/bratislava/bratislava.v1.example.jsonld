@@ -1,0 +1,15 @@
+{
+  "dateObserved": "2026-01-01T00:00:00Z",
+  "id": "urn:ngsi-ld:AirQualityObserved:joinedcontext.com:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": "name",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "pm10": 0.0,
+  "type": "AirQualityObserved"
+}

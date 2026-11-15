@@ -1,0 +1,40 @@
+# The mapping of the citybikes-gbfs pipeline, native Bento beside its manifest (PL-03). No
+# `input` and no `output`: the reconciler renders the poll of the hsl-citybikes-gbfs DataSource
+# in front of these processors and the upsert through the target endpoint after them (PL-39,
+# PL-16). Name and position are the static half and come from citybikes-gbfs-info once a day;
+# both pipelines update the same entity.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.data.stations
+    - unarchive: { format: json_array }
+
+    # A station that is not installed is a station the operator has taken out of the ground.
+    - mapping: |
+        root = if this.is_installed { this } else { deleted() }
+
+    - mapping: |
+        let domain = env("JC_ORG_DOMAIN")
+        let id = "urn:ngsi-ld:%v:%v:%v:%v".format(
+          "BikeHireDockingStation", $domain, env("JC_SPACE"), this.station_id)
+        let seen = this.last_reported.number().ts_format("2006-01-02T15:04:05Z")
+        let bikes = this.num_bikes_available.number()
+        let docks = this.num_docks_available.number()
+        root = {
+          "id": $id,
+          "type": "BikeHireDockingStation",
+          "availableBikeNumber": { "type": "Property", "value": $bikes, "observedAt": $seen },
+          "freeSlotNumber": { "type": "Property", "value": $docks, "observedAt": $seen },
+          "totalSlotNumber": { "type": "Property", "value": $bikes + $docks, "observedAt": $seen },
+          "status": {
+            "type": "Property",
+            "value": if this.is_renting && this.is_returning { "working" } else { "outOfService" },
+            "observedAt": $seen
+          },
+          "dateModified": { "type": "Property", "value": $seen },
+          "source": { "type": "Property", "value": "https://www.hsl.fi/en/citybikes" }
+        }
+
+    # One request per run rather than one per station.
+    - archive: { format: json_array }

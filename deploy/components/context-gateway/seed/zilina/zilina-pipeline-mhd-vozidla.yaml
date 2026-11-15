@@ -1,0 +1,17 @@
+# Public transport vehicles and delay of Žilina from the city's open data portal into zilina-doprava through its one Endpoint (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: mhd-vozidla
+  namespace: zilina
+  title: { sk: Vozidlá MHD a meškanie, en: Public transport vehicles and delay }
+spec:
+  class: auto
+  # Positions every five minutes: the delay a rider waits for, without a stream of every GPS tick.
+  period: 5m
+  schedule: '*/5 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: zilina-opendata-mhd-vozidla }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-doprava:zilina-doprava
+  output: { type: Vehicle, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

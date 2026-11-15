@@ -1,0 +1,25 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: slovensko-participacia
+  namespace: slovensko
+  title: { sk: Participácia občanov, en: Citizen participation }
+spec:
+  contextSpaceRef: slovensko-participacia
+  linkml: ./slovensko-participacia.linkml.yaml
+  version: 1.2.0
+  lifecycle: published
+  classes:
+    - ParticipatoryProcess
+    - Proposal
+    - BudgetProject
+    - Result
+    - Meeting
+    - Debate
+    - Survey
+    - ProposalStatistic
+  artifacts:
+    jsonSchema: ./slovensko-participacia.v1.schema.json
+    context: ./slovensko-participacia.v1.context.jsonld
+    docs: ./slovensko-participacia.v1.md
+    example: ./slovensko-participacia.v1.example.jsonld

@@ -1,0 +1,145 @@
+# The mapping of the counters pipeline (PL-03, T-5273): one TrafficFlowObserved per counter site
+# of the city, direction and mode (cyclists, motor vehicles) with what the site counted on the
+# newest day the source has closed (Bratislava time), from the hub's two hourly Feature Service
+# tables cyklisti2_0 and vozidla_00 (data.bratislava.sk, CC BY 4.0). The Feature Service sums
+# the day per site (outStatistics), so a run reads two answers of about 25 rows.
+#
+# The closed day: the hub loads every site in one import about a day late (at 06:40 UTC on
+# 2026-10-23 the newest rows were of 2026-10-21 23:00 UTC). The newest row of any site, read by
+# the DataSource, is where the import stopped; the closed day is the newest local day that ends
+# at or before that row's hour ends. A newest day older than three days fails the run.
+#
+# Plausibility (owner 2026-10-22): a site is left out, with its reason counted in one WARN line,
+# when it has no position, lies outside Bratislava and a kilometre around it (swapped and 0,0
+# coordinates among them), or repeats an earlier site of the answer (the same number or name)
+# with more hours than one day has: the source edits a direction label now and then ("Centrum"
+# became "Centrum\n"), which splits one site in two groups, and only one of them may count the
+# day. A site whose mode counted 0 both ways all day is left out too: the hub lists every site in
+# every table, and a site without that sensor writes 0 every hour. A direction is left out when one of its hours is below 0 or above the mode's cap
+# (5,000 cyclists, 10,000 motor vehicles an hour). A site the source calls one-way ("NIE JE")
+# still counts against the one-way, written as the direction "protismer". A run that writes no
+# observation fails, so the space keeps the last counts instead of none.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = if content().length() > 1048576 { throw("the counters' newest rows are %d bytes, more than the 1 MiB read".format(content().length())) } else { this }
+
+    - mapping: |
+        let now = now().ts_unix()
+        let times = this.features.or([]).map_each(f -> f.attributes.newest.or("").string().ts_parse("2006-01-02T15:04:05Z07:00").ts_unix().catch(null)).filter(t -> t != null && t <= $now + 86400)
+        let newest = $times.fold(0, t -> if t.value > t.tally { t.value } else { t.tally })
+        let next = ($newest + 3600).ts_format("2006-01-02", "Europe/Bratislava")
+        let day = ($next + "T00:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_sub_iso8601("P1D").ts_format("2006-01-02", "UTC")
+        # Each midnight's offset is read at 00:00Z of that date: noon has the new offset on the day the
+        # clocks change (2026-10-25 would end the day at 23:00Z instead of 22:00Z, T-5489).
+        let from = (($day + "T00:00:00") + ($day + "T00:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_format("-07:00", "Europe/Bratislava")).ts_parse("2006-01-02T15:04:05Z07:00")
+        let to = (($next + "T00:00:00") + ($next + "T00:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_format("-07:00", "Europe/Bratislava")).ts_parse("2006-01-02T15:04:05Z07:00")
+        # A throw here would keep the newest rows as the message: the problem rides on it instead and
+        # fails the run at the end, after nothing was read or written.
+        root = { "day": $day, "from": $from.ts_format("2006-01-02T15:04:05Z", "UTC"), "to": $to.ts_format("2006-01-02T15:04:05Z", "UTC"),
+          "problem": if $times.length() == 0 { "the counters answered no row time" } else if $to.ts_unix() < $now - 259200 { "the newest day the counters closed, %v, is more than three days old".format($day) } else { null } }
+        meta from = $from.ts_format("2006-01-02T15:04:05", "UTC")
+        meta to = $to.ts_format("2006-01-02T15:04:05", "UTC")
+
+    - branch:
+        request_map: root = if this.problem != null { deleted() } else { "" }
+        processors:
+          - try:
+              - http:
+                  url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/cyklisti2_0/FeatureServer/0/query?where=DATUM_A_CAS%20%3E%3D%20%27${! @from }%27%20AND%20DATUM_A_CAS%20%3C%20%27${! @to }%27&groupByFieldsForStatistics=NAZOV,ZEMEPISNA_SIRKA,ZEMEPISNA_DLZKA,SMER_DO,SMER_Z&outStatistics=%5B%7B%22statisticType%22%3A%22sum%22%2C%22onStatisticField%22%3A%22POCET_DO%22%2C%22outStatisticFieldName%22%3A%22towards%22%7D%2C%7B%22statisticType%22%3A%22sum%22%2C%22onStatisticField%22%3A%22POCET_Z%22%2C%22outStatisticFieldName%22%3A%22away%22%7D%2C%7B%22statisticType%22%3A%22min%22%2C%22onStatisticField%22%3A%22POCET_DO%22%2C%22outStatisticFieldName%22%3A%22towardsMin%22%7D%2C%7B%22statisticType%22%3A%22max%22%2C%22onStatisticField%22%3A%22POCET_DO%22%2C%22outStatisticFieldName%22%3A%22towardsMax%22%7D%2C%7B%22statisticType%22%3A%22min%22%2C%22onStatisticField%22%3A%22POCET_Z%22%2C%22outStatisticFieldName%22%3A%22awayMin%22%7D%2C%7B%22statisticType%22%3A%22max%22%2C%22onStatisticField%22%3A%22POCET_Z%22%2C%22outStatisticFieldName%22%3A%22awayMax%22%7D%2C%7B%22statisticType%22%3A%22count%22%2C%22onStatisticField%22%3A%22ObjectId%22%2C%22outStatisticFieldName%22%3A%22rows%22%7D%5D&f=json
+                  verb: GET
+                  headers: { Accept: application/json }
+                  timeout: 30s
+                  retries: 1
+              # ArcGIS answers a refused query with 200 and an `error` member.
+              - mapping: |
+                  root = if content().length() > 262144 { throw("the cyclists' day is more than 256 KiB") } else if this.error.or(null) != null { throw("the cyclists' table refused the query: %v".format(this.error.message.or(""))) } else if this.exceededTransferLimit.or(false) { throw("the cyclists' day is more than one page") } else { { "rows": this.features.or([]).map_each(f -> f.attributes) } }
+          - catch:
+              - log: { level: WARN, message: 'counters: cyclists not read: ${! error() }' }
+              - mapping: 'root = { "failed": true }'
+        result_map: root.cycle = this
+
+    - branch:
+        request_map: root = if this.problem != null { deleted() } else { "" }
+        processors:
+          - try:
+              - http:
+                  url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/vozidla_00/FeatureServer/0/query?where=DATUM_A_CAS%20%3E%3D%20%27${! @from }%27%20AND%20DATUM_A_CAS%20%3C%20%27${! @to }%27&groupByFieldsForStatistics=NAZOV,ZEMEPISNA_SIRKA,ZEMEPISNA_DLZKA,SMER_DO,SMER_Z&outStatistics=%5B%7B%22statisticType%22%3A%22sum%22%2C%22onStatisticField%22%3A%22POCET_DO%22%2C%22outStatisticFieldName%22%3A%22towards%22%7D%2C%7B%22statisticType%22%3A%22sum%22%2C%22onStatisticField%22%3A%22POCET_Z%22%2C%22outStatisticFieldName%22%3A%22away%22%7D%2C%7B%22statisticType%22%3A%22min%22%2C%22onStatisticField%22%3A%22POCET_DO%22%2C%22outStatisticFieldName%22%3A%22towardsMin%22%7D%2C%7B%22statisticType%22%3A%22max%22%2C%22onStatisticField%22%3A%22POCET_DO%22%2C%22outStatisticFieldName%22%3A%22towardsMax%22%7D%2C%7B%22statisticType%22%3A%22min%22%2C%22onStatisticField%22%3A%22POCET_Z%22%2C%22outStatisticFieldName%22%3A%22awayMin%22%7D%2C%7B%22statisticType%22%3A%22max%22%2C%22onStatisticField%22%3A%22POCET_Z%22%2C%22outStatisticFieldName%22%3A%22awayMax%22%7D%2C%7B%22statisticType%22%3A%22count%22%2C%22onStatisticField%22%3A%22ObjectId%22%2C%22outStatisticFieldName%22%3A%22rows%22%7D%5D&f=json
+                  verb: GET
+                  headers: { Accept: application/json }
+                  timeout: 30s
+                  retries: 1
+              - mapping: |
+                  root = if content().length() > 262144 { throw("the vehicles' day is more than 256 KiB") } else if this.error.or(null) != null { throw("the vehicles' table refused the query: %v".format(this.error.message.or(""))) } else if this.exceededTransferLimit.or(false) { throw("the vehicles' day is more than one page") } else { { "rows": this.features.or([]).map_each(f -> f.attributes) } }
+          - catch:
+              - log: { level: WARN, message: 'counters: vehicles not read: ${! error() }' }
+              - mapping: 'root = { "failed": true }'
+        result_map: root.vehicle = this
+
+    - mapping: |
+        root = if this.problem != null { throw(this.problem) } else { this }
+    - mapping: |
+        let box = { "w": 16.93, "s": 47.99, "e": 17.3, "n": 48.28 }
+        let modes = [
+          { "mode": "cycle", "rows": this.cycle.rows.or([]), "cap": 5000, "vehicleType": "bicycle", "provider": "cyklisti2_0" },
+          { "mode": "vehicle", "rows": this.vehicle.rows.or([]), "cap": 10000, "vehicleType": null, "provider": "vozidla_00" }
+        ]
+        let day = this
+        let judged = $modes.map_each(m -> m.rows.map_each(r -> {
+          "mode": m.mode, "cap": m.cap, "vehicleType": m.vehicleType, "provider": m.provider,
+          "name": r.NAZOV.or("").string().trim(),
+          "key": r.NAZOV.or("").string().trim().re_find_all_submatch("^#([0-9]+) ").index(0).index(1).catch(r.NAZOV.or("").string().lowercase().re_replace_all("[^a-z0-9]+", "-").trim("-")),
+          "lat": r.ZEMEPISNA_SIRKA.or(null), "lon": r.ZEMEPISNA_DLZKA.or(null),
+          "towardsLabel": r.SMER_DO.or("").string().trim(), "awayLabel": r.SMER_Z.or("").string().trim().re_replace_all("^NIE JE.*", "protismer"),
+          "towards": r.towards.or(null), "away": r.away.or(null), "towardsMin": r.towardsMin.or(null), "towardsMax": r.towardsMax.or(null),
+          "awayMin": r.awayMin.or(null), "awayMax": r.awayMax.or(null), "rows": r.rows.or(0)
+        }).enumerated().map_each(e -> e.value.assign({ "reason":
+          if e.value.key == "" { "noName" }
+          else if e.value.lon.type() != "number" || e.value.lat.type() != "number" { "noLocation" }
+          else if !(e.value.lon >= $box.w && e.value.lon <= $box.e && e.value.lat >= $box.s && e.value.lat <= $box.n) {
+            if e.value.lat >= $box.w && e.value.lat <= $box.e && e.value.lon >= $box.s && e.value.lon <= $box.n { "swappedCoordinates" } else { "outsideBratislava" }
+          }
+          else { null }
+        }))).flatten()
+        let valid = $judged.filter(s -> s.reason == null)
+        let groups = $valid.enumerated().filter(e -> !$valid.slice(0, e.index).any(o -> o.mode == e.value.mode && o.key == e.value.key)).map_each(e -> e.value.assign({
+          "twins": $valid.filter(o -> o.mode == e.value.mode && o.key == e.value.key).slice(1) })).map_each(s -> s.assign({ "hours": s.twins.fold(s.rows, t -> t.tally + t.value.rows) }))
+        let merged = $groups.map_each(s -> if s.twins.length() == 0 || s.hours > 25 { s } else { s.assign({
+          "towards": s.twins.fold(s.towards, t -> t.tally + t.value.towards), "away": s.twins.fold(s.away, t -> t.tally + t.value.away),
+          "towardsMin": s.twins.fold(s.towardsMin, t -> [t.tally, t.value.towardsMin].min()), "towardsMax": s.twins.fold(s.towardsMax, t -> [t.tally, t.value.towardsMax].max()),
+          "awayMin": s.twins.fold(s.awayMin, t -> [t.tally, t.value.awayMin].min()), "awayMax": s.twins.fold(s.awayMax, t -> [t.tally, t.value.awayMax].max()) }) })
+        let duplicates = $groups.filter(s -> s.hours > 25).map_each(s -> s.twins).flatten().map_each(t -> t.assign({ "reason": "duplicate" }))
+        # A site without the mode's sensor writes 0 every hour (14 of the 19 vehicle sites and three
+        # pedestrian ones counted nothing from 2026-09-21 to 2026-10-21): a day of 0 both ways is no count.
+        let silent = $merged.filter(s -> s.towards.or(0) + s.away.or(0) == 0).map_each(s -> s.assign({ "reason": "zeroDay" }))
+        let directions = $merged.filter(s -> s.towards.or(0) + s.away.or(0) != 0).map_each(s -> [
+          s.assign({ "direction": "forward", "label": s.towardsLabel, "count": s.towards, "min": s.towardsMin, "max": s.towardsMax }),
+          s.assign({ "direction": "backward", "label": s.awayLabel, "count": s.away, "min": s.awayMin, "max": s.awayMax })
+        ]).flatten().map_each(d -> d.assign({ "reason":
+          if d.count.type() != "number" || d.min.type() != "number" || d.max.type() != "number" || d.min < 0 || d.max > d.cap { "outOfRange" } else { null } }))
+        let dropped = $judged.filter(s -> s.reason != null).concat($duplicates, $silent, $directions.filter(d -> d.reason != null)).fold({}, t -> t.tally.assign({ t.value.mode + ":" + t.value.reason: t.tally.get(t.value.mode + ":" + t.value.reason).or(0) + 1 }))
+        meta dropped = if $dropped.keys().length() > 0 { $dropped.format_json(no_indent: true) } else { "" }
+        root = $directions.filter(d -> d.reason == null).map_each(d -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v-%v-%v".format("TrafficFlowObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), d.mode, d.key, d.direction),
+          "type": "TrafficFlowObserved",
+          "name": { "type": "Property", "value": "%v (%v)".format(d.name, d.label) },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [d.lon, d.lat] } },
+          "dateObserved": { "type": "Property", "value": $day.to },
+          "dateObservedFrom": { "type": "Property", "value": $day.from },
+          "dateObservedTo": { "type": "Property", "value": $day.to },
+          "intensity": { "type": "Property", "value": d.count.round(), "observedAt": $day.to },
+          "vehicleType": if d.vehicleType == null { null } else { { "type": "Property", "value": d.vehicleType } },
+          "laneDirection": { "type": "Property", "value": d.direction },
+          "dataProvider": { "type": "Property", "value": "Hlavné mesto SR Bratislava, data.bratislava.sk (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/%v/FeatureServer/0".format(d.provider) }
+        }.filter(entry -> entry.value != null))
+
+    - switch:
+        - check: '@dropped != ""'
+          processors:
+            - log: { level: WARN, message: 'counters left out: ${! @dropped }' }
+
+    - mapping: |
+        root = if this.length() == 0 { throw("no counter site wrote a count for the closed day") } else { this }
+    - unarchive: { format: json_array }

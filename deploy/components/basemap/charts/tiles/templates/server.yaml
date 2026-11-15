@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tiles.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tiles.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "tiles.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        {{- include "tiles.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.serviceMesh.enabled }}
+        linkerd.io/inject: enabled
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: nginx
+          image: {{ include "tiles.image" .Values.images.server | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /data, readOnly: true}
+            - {name: styles, mountPath: /styles, readOnly: true}
+            - {name: config, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            - {name: cache, mountPath: /var/cache/nginx}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "tiles.fullname" . }}
+            readOnly: true
+        - name: styles
+          configMap:
+            name: {{ include "tiles.fullname" . }}-styles
+        - name: config
+          configMap:
+            name: {{ include "tiles.fullname" . }}
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tiles.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tiles.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "tiles.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

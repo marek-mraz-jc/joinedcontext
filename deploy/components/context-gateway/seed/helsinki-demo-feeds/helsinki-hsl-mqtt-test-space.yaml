@@ -1,0 +1,36 @@
+# A test space for the MQTT path (T-5883): HSL's trams as they cross the platform's own broker
+# (HSL -> bridge -> broker hsl-bridge -> pipeline), apart from the public Vehicles of the space
+# helsinki, which keep their direct source. Organization only, in no catalogue.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: hsl-mqtt-test
+  namespace: helsinki
+  title: { en: HSL trams through our MQTT broker (test) }
+  description:
+    en: 'A test of the MQTT path: HSL tram positions republished through the broker hsl-bridge. Source: Helsinki Region Transport (HSL), high-frequency positioning, CC BY 4.0.'
+spec:
+  urnSegment: hsl-mqtt-test
+  isSandbox: false
+  defaultLocale: en
+  dataModelRef: { kind: DataModel, name: hsl-mqtt-test }
+  # The space helsinki's Vehicle rule (T-5046): gone five minutes after its last report, five
+  # minutes of track; a test needs the newest positions.
+  retention:
+    - entityType: Vehicle
+      current: PT5M
+      history: PT5M
+      # Every report is a new observedAt: a row per report of what changes in it, a row per
+      # change and one a minute of what holds (the space helsinki's Vehicle rule, T-5247).
+      attributes:
+        location: { record: observed }
+        speed: { record: observed }
+        heading: { record: observed }
+        delay: { record: observed }
+        occupancy: { record: onChange, heartbeat: PT1M }
+        route: { record: onChange, heartbeat: PT1M }
+        onRoute: { record: onChange, heartbeat: PT1M }
+        nextStop: { record: onChange, heartbeat: PT1M }
+        fleetVehicleId: { record: onChange, heartbeat: PT15M }
+        transportMode: { record: onChange, heartbeat: PT15M }
+        vehicleType: { record: onChange, heartbeat: PT15M }

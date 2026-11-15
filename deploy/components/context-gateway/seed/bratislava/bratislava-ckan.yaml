@@ -1,0 +1,13 @@
+# The open-data catalogue the project's cleared Endpoints publish to (EP-62, EP-67). jcctl opens
+# the CKAN organisation `bratislava` with the first Endpoint that publishes, titled in the space's
+# language (sk) and kept in step on every run (ADR-N-058 2.6). The API token is a reference.
+apiVersion: joinedcontext.com/v1alpha1
+kind: CkanInstance
+metadata:
+  name: bratislava
+  namespace: bratislava
+  title: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+spec:
+  url: https://opendata.dev.joinedcontext.com
+  organizationDefault: bratislava
+  apiTokenRef: { name: ckan-api-token, key: token, envVar: CKAN_API_TOKEN }

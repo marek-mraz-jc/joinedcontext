@@ -1,0 +1,17 @@
+# One AdministrativeArea per record of `ipr-districts`, written into the city space (T-2785).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: districts
+  namespace: praha
+  title: { en: City districts }
+spec:
+  class: auto
+  # The division changes a few times a decade; weekly is already more than it needs.
+  period: 168h
+  schedule: '20 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-districts }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: AdministrativeArea, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

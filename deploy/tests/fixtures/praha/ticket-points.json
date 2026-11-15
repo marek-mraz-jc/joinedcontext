@@ -1,0 +1,59 @@
+[
+ {
+  "id": "dp2",
+  "type": "ticketMachine",
+  "name": "Grand Hotel International",
+  "address": "Koulova 1501/15, Dejvice, Praha 6",
+  "openingHours": [
+   {
+    "from": 0,
+    "to": 6,
+    "hours": "5:00-24:00"
+   }
+  ],
+  "lat": 50.1093445,
+  "lon": 14.3935671,
+  "services": 196608,
+  "payMethods": 1
+ },
+ {
+  "id": "cd551069",
+  "type": "trainStation",
+  "name": "Benešov u Prahy",
+  "address": "",
+  "openingHours": [
+   {
+    "from": 0,
+    "to": 5,
+    "hours": "05:50-19:05"
+   },
+   {
+    "from": 6,
+    "to": 6,
+    "hours": "06:50-19:05"
+   }
+  ],
+  "lat": 49.77969,
+  "lon": 14.6827059,
+  "services": 1253376,
+  "payMethods": 15,
+  "link": "https://www.cd.cz/stanice/5455106"
+ },
+ {
+  "id": "ro1",
+  "type": "informationCenter",
+  "name": "Anděl",
+  "address": "Vestibul stanice metra ve směru ul. Plzeňská (severní vestibul)",
+  "openingHours": [
+   {
+    "from": 0,
+    "to": 6,
+    "hours": "7:00-21:00"
+   }
+  ],
+  "lat": 50.0709038,
+  "lon": 14.4039793,
+  "services": 1257842,
+  "payMethods": 15
+ }
+]

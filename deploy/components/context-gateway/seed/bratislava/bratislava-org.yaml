@@ -1,0 +1,36 @@
+# Hlavné mesto SR Bratislava, an Organization of its own in this installation (ADR-N-058, PF-121,
+# T-5271), set up as Mesto Žilina is (T-5242). Helsinki (organizations/hel.yaml) stays the
+# installation's. A project of this Organization publishes under bratislava.sk or a subdomain of
+# it (PF-122); its Keycloak group subtree is /bratislava and its CKAN organisation `bratislava`.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Organization
+metadata:
+  name: bratislava
+  namespace: org
+  title: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+spec:
+  domain: bratislava.sk
+  locales: [sk, en]
+  defaultLocale: sk
+  dcatProfiles: [dcat-ap-sk]
+  # The publisher a project of this Organization names in its catalogue when it names none of
+  # its own (ADR-N-058 2.3, EP-127): the capital by its registry IRI (IČO 00603481).
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    contactPoint: { name: joinedcontext platform, email: hello@joinedcontext.com }
+  projects:
+    # Its people read its projects through bratislava-viewers; a project is opened by org-admin (PF-61, PF-65).
+    visibility: organization
+    creation: org-admin
+    # The demo's quota (T-2873, PF-73): the mechanism stays, nobody reaches it.
+    quota:
+      contextSpaces: 100
+      residentPipelines: 100
+      publicEndpoints: 100
+      apps: 100
+      ingestEventsPerSecond: 500
+      agentRunsPerDay: 2000
+      entitiesPerSpace: 1000000
+      requestsPerMinute: 6000

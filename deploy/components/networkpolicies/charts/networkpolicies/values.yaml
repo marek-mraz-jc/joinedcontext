@@ -1,0 +1,31 @@
+---
+# Network Policies configuration
+# This chart creates NetworkPolicy resources based on the configuration provided
+
+networkpolicies:
+  {}
+  # Example networkpolicy configuration:
+  # postgres:
+  #   podSelector:
+  #     app.kubernetes.io/name: postgres
+  #   policyTypes:
+  #     - Ingress
+  #   ingress:
+  #     - from:
+  #         - namespaceSelector: {}
+  #           podSelector:
+  #             matchLabels:
+  #               app.kubernetes.io/name: portal
+  #               app.kubernetes.io/component: backend
+  #
+  # keycloak:
+  #   podSelector:
+  #     app.kubernetes.io/name: keycloak
+  #   policyTypes:
+  #     - Ingress
+  #   ingress:
+  #     - from:
+  #         - namespaceSelector: {}
+  #           podSelector:
+  #             matchLabels:
+  #               app.kubernetes.io/name: apisix

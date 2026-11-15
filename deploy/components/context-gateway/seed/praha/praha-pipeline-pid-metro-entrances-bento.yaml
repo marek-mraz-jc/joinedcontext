@@ -1,0 +1,74 @@
+# The mapping of the pid-metro-entrances pipeline (T-5423, PL-03): one GtfsAccessPoint per entrance of
+# the IPR layer Pražská integrovaná doprava - vstupy do metra (341 on 2026-10-24).
+#
+# Ids: urn:ngsi-ld:GtfsAccessPoint:{org}:{space}:pid-entrance-{globalid}; the Policy
+# public-vstupy-metra names them.
+#
+# Read: the station and the entrance's name (uzel_nazev, vst_nazev), its sign (vst_oznac, E1), where
+# it leads (vst_popis), the metro lines behind it (vst_linka, A to C) and its point.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a GUID or a name, naming a line Prague's
+# metro does not run, without a point or outside Prague's box (the city plus about 1 km) is dropped, and
+# so is a second record of one GUID or of one name in one 0.0002° cell (about 15 m); the log line
+# counts each reason. An answer that is not a feature list, an empty one, or one where fewer than half
+# the entrances survive fails the run, so the entrances already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes; more than 16 MiB is not the metro entrance layer".format(content().length())) } else { this }
+        - mapping: |
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            let features = this.features.catch(null)
+            root = if $features.type() != "array" {
+              throw("IPR's metro entrance layer did not answer a feature list")
+            } else if $features.length() == 0 {
+              throw("IPR's metro entrance layer listed no entrance; the layer is never empty, so the download failed")
+            } else {
+              $features.map_each(f -> {
+                "p": f.properties.catch({}),
+                "key": f.properties.globalid.catch("").string().re_replace_all("[{}]", "").lowercase(),
+                "name": [f.properties.uzel_nazev.catch(null).apply("words"), f.properties.vst_nazev.catch(null).apply("words")].filter(n -> n != "").join(" – "),
+                "lines": f.properties.vst_linka.catch("").string().split(",").map_each(l -> l.trim()).filter(l -> l != ""),
+                "c": f.geometry.coordinates.catch(null)
+              })
+            }
+        - mapping: |
+            let rows = this
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") && r.name != "")
+            let lined = $usable.filter(r -> r.lines.length() > 0 && r.lines.all(l -> ["A", "B", "C", "D"].contains(l)))
+            let located = $lined.filter(r -> r.c.type() == "array" && r.c.length() >= 2 && r.c.index(0).type() == "number" && r.c.index(1).type() == "number")
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let unique = $inside.unique(r -> r.key).unique(r -> "%v|%v|%v".format(r.name.lowercase(), (r.c.index(0) / 0.0002).floor(), (r.c.index(1) / 0.0002).floor()))
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta unlined = $usable.length() - $lined.length()
+            meta outside = $lined.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("IPR's metro entrance layer: only %v of %v entrances have a GUID, a name, a metro line and a point in Prague".format($unique.length(), $rows.length()))
+            } else { $unique }
+        - log:
+            level: INFO
+            message: 'pid-metro-entrances: read ${! meta("read") }, dropped ${! meta("unusable") } without GUID or name, ${! meta("unlined") } without a metro line, ${! meta("outside") } without a point in Prague, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            root = this.map_each(r -> {
+              "r": r,
+              "sign": r.p.vst_oznac.catch(null).apply("words"),
+              "leads": r.p.vst_popis.catch(null).apply("words")
+            }).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:pid-entrance-%v".format("GtfsAccessPoint", env("JC_ORG_DOMAIN"), env("JC_SPACE"), v.r.key),
+              "type": "GtfsAccessPoint",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": v.r.name } },
+              "code": if v.sign != "" && v.sign.length() <= 10 { { "type": "Property", "value": v.sign } } else { null },
+              "description": if v.leads != "" { { "type": "Property", "value": v.leads } } else { null },
+              "servedLines": { "type": "Property", "value": v.r.lines.unique() },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": v.r.c.slice(0, 2) } },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+              "source": { "type": "Property", "value": "https://geoportalpraha.cz/data-a-sluzby/62106cae6acf4507b988c0e745f55bba" }
+            }.filter(kv -> kv.value != null))

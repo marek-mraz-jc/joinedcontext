@@ -1,0 +1,11 @@
+---
+component: portal
+parts:
+  - name: portal
+  # The UI bundle the Portal reads its pages from (T-2485, T-5297): static files behind nginx,
+  # reached by the Portal alone.
+  - name: ui
+  - name: namespaces
+  # Mailpit: keeps the mail the Portal sends where no relay is named, for a person or a test to
+  # read; off unless an environment turns it on (T-3583, AP-168).
+  - name: mail-catcher

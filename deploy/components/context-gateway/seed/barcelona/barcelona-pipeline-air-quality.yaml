@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: air-quality
+  namespace: barcelona
+  title:
+    ca: Qualitat de l'aire de Barcelona, cada hora
+    es: Calidad del aire de Barcelona, cada hora
+    en: Barcelona air quality, hourly
+spec:
+  class: auto
+  # The city rewrites the file every hour; twice an hour catches each new hour within half an hour.
+  schedule: '20,50 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-air-quality }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert, never replace: a station missing from one file keeps its last readings (T-5263).
+  output: { type: AirQualityObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

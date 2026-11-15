@@ -1,0 +1,17 @@
+---
+{{- $this := .Values.postgres.operator -}}
+{{- $global := .Values.global }}
+# - [x] Minimal Resources
+# - [x] Minimal storage -> not applicable for operator
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: "100m"
+    # T-4473: dev, kubectl top 2026-10-17 21:22-22:22Z: median 86, peak 97Mi.
+    memory: "128Mi"
+  limits:
+    cpu: "200m"
+    memory: "400Mi"

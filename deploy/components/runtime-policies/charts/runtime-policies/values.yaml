@@ -1,0 +1,77 @@
+---
+operators:
+  enabled: true
+
+# Namespaces the operators run in — used to build the full service-account
+# username (system:serviceaccount:<ns>:<name>) the reverse label-protection
+# rules pin to. Supplied by the helmfile; empty falls back to .Release.Namespace.
+cnpgOperatorNamespace: ''
+
+linkerd:
+  enabled: true
+
+# Kyverno failureAction for all policies: Audit (log only) or Enforce (block)
+failureAction: Audit
+
+# Pod Security Standards (T-0008, OPS-29, OPS-30). The policies are the vendored upstream
+# copies in files/upstream; `namespaces` is supplied by the helmfile and is every namespace
+# this deployment puts workloads in. Empty means the policies are not rendered at all —
+# a policy matching every namespace would judge the cluster distribution's own components.
+podSecurity:
+  enabled: true
+  namespaces: []
+  policies:
+    - require-drop-all
+    - require-ro-rootfs
+    - require-run-as-non-root-user
+    - require-run-as-nonroot
+    # Promoted from `staged` after dev's PolicyReports showed 254 pass, 0 fail each (T-2480,
+    # deployer 2026-10-12, deployment 2a1fa9a).
+    - disallow-privileged-containers
+    - disallow-host-path
+    - disallow-host-namespaces
+  # Admitted in Audit whatever `failureAction` says (T-2480): a rule new to the cluster first
+  # reports what it would refuse, the offenders are fixed from dev's PolicyReports, and only then
+  # does it move up to `policies` and the environment's action. A name in both fails the render.
+  staged:
+    - require-image-checksum
+    - require-pod-requests-limits
+
+# The platform's own images, signed keylessly by their repositories' workflows
+# (.github/workflows/reusable-container-sign.yml), verified at admission (T-2480). Staged like
+# the rules above: Audit, and `failurePolicy: Ignore` so an unreachable Rekor never holds a pod.
+imageSignatures:
+  enabled: true
+  failureAction: Audit
+  references:
+    - "ghcr.io/marek-mraz-jc/*"
+  issuer: https://token.actions.githubusercontent.com
+  subjectRegExp: "^https://github.com/marek-mraz-jc/"
+  # T-4721: namespaces labelled `<label>: production` admit only digests that carry promote.yml's
+  # full-tests attestation. Off until the first namespace carries the label (smartcity is tier
+  # demo): with `failurePolicy: Fail` the webhook would otherwise stand in front of every Pod, and
+  # a Kyverno outage would hold every Pod on the single node. Turn it on with that first label.
+  # T-6719: the production-shaped namespaces, held to the image workflows on main
+  # (image.yml; jc's embedder ships from image-embedder.yml, jc's App pods from image-apps.yml, as
+  # scripts/verify-pinned-images.py admits). Checked on 2026-11-11 with `cosign verify
+  # --certificate-identity-regexp` against every ghcr image jc-prod runs or scales up.
+  production:
+    namespaces: []
+    failureAction: Audit
+    subjectRegExp: "^https://github\\.com/marek-mraz-jc/[^/]+/\\.github/workflows/(image|image-embedder|image-apps)\\.yml@refs/heads/main$"
+  productionTier:
+    enabled: false
+    label: joinedcontext.com/tier
+    attestationType: https://joinedcontext.com/attestations/full-tests/v1
+    # promote.yml on main (platform, Portal); image-jc.yml on dev (the broker's nightly ETSI promote)
+    subjectRegExp: "^https://github.com/marek-mraz-jc/[^/]+/\\.github/workflows/(promote\\.yml@refs/heads/main|image-jc\\.yml@refs/heads/dev)$"
+
+# The read-only identity of the nightly drift check (T-4956): get and list, no token Secret.
+# The read-only identity workers read the cluster with (T-6546): on in dev and stage only.
+agentReader:
+  enabled: false
+driftReader:
+  enabled: true
+  # The namespaces whose Secrets the drift reader may get and list: the release namespaces,
+  # where Helm keeps its release records (the helmfile fills them in).
+  secretNamespaces: []

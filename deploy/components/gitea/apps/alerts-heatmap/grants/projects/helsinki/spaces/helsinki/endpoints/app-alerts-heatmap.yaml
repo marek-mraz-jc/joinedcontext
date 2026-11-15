@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-alerts-heatmap
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Where and when alerts happen
+    fi: Missä ja milloin häiriöitä on
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  roles:
+  - name: viewer
+    subjects:
+    - group: alerts-heatmap-viewer
+  - name: steward
+    subjects:
+    - group: alerts-heatmap-steward
+  slug: fx43ojotubeun2tyqxvhjdxwa7

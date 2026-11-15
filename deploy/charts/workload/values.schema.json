@@ -1,0 +1,409 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of workload (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "replicaCount": {
+      "type": "number"
+    },
+    "maxSurge": {
+      "type": "string"
+    },
+    "updateStrategy": {
+      "type": "string",
+      "enum": [
+        "RollingUpdate",
+        "Recreate"
+      ]
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string"
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array"
+    },
+    "command": {
+      "type": "array"
+    },
+    "args": {
+      "type": "array"
+    },
+    "env": {
+      "type": "object"
+    },
+    "envSecret": {
+      "type": "object"
+    },
+    "envFrom": {
+      "type": "array"
+    },
+    "goMemLimitPercent": {
+      "type": "number"
+    },
+    "enableServiceLinks": {
+      "type": "boolean"
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "number"
+    },
+    "hostAliases": {
+      "type": "array",
+      "description": "Extra /etc/hosts entries of the pod.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ip",
+          "hostnames"
+        ],
+        "properties": {
+          "ip": {
+            "type": "string"
+          },
+          "hostnames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "preStopSleepSeconds": {
+      "type": "number"
+    },
+    "meshDrainSeconds": {
+      "type": "number"
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean"
+        }
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "type": "array"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object"
+    },
+    "podLabels": {
+      "type": "object"
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    },
+    "resources": {
+      "type": "object"
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "type": {
+          "type": "string"
+        },
+        "port": {
+          "type": "number"
+        },
+        "targetPort": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "extraPorts": {
+          "type": "array"
+        },
+        "annotations": {
+          "type": "object"
+        }
+      }
+    },
+    "containerPort": {
+      "type": "number"
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "readinessExec": {
+          "type": "array"
+        },
+        "readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "periodSeconds": {
+              "type": "number"
+            },
+            "timeoutSeconds": {
+              "type": "number"
+            },
+            "failureThreshold": {
+              "type": "number"
+            },
+            "host": {
+              "type": "string"
+            }
+          }
+        },
+        "liveness": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "exec": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "periodSeconds": {
+              "type": "number"
+            },
+            "timeoutSeconds": {
+              "type": "number"
+            },
+            "failureThreshold": {
+              "type": "number"
+            },
+            "initialDelaySeconds": {
+              "type": "number"
+            },
+            "host": {
+              "type": "string"
+            }
+          }
+        },
+        "startup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "failureThreshold"
+          ],
+          "properties": {
+            "periodSeconds": {
+              "type": "number"
+            },
+            "timeoutSeconds": {
+              "type": "number"
+            },
+            "failureThreshold": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minReplicas": {
+          "type": "number"
+        },
+        "maxReplicas": {
+          "type": "number"
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "number"
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minAvailable": {
+          "type": "number"
+        }
+      }
+    },
+    "headlessService": {},
+    "configMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mountPath": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object"
+        },
+        "binaryData": {
+          "type": "object"
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "size": {
+          "type": "string"
+        },
+        "mountPath": {
+          "type": "string"
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "accessMode": {
+          "type": "string"
+        }
+      }
+    },
+    "extraVolumes": {
+      "type": "array"
+    },
+    "extraInitContainers": {
+      "type": "array"
+    },
+    "extraContainers": {
+      "type": "array"
+    },
+    "cronJobs": {
+      "type": "array",
+      "description": "raw CronJob specs (name, schedule, pod spec) in the workload's namespace, with its labels"
+    },
+    "extraVolumeMounts": {
+      "type": "array"
+    },
+    "tmpDir": {
+      "type": "boolean"
+    },
+    "serviceMesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "meshAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "number"
+        },
+        "clients": {
+          "type": "array"
+        },
+        "includeSelf": {
+          "type": "boolean"
+        },
+        "extraPorts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "port", "clients"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z]([-a-z0-9]*[a-z0-9])?$"
+              },
+              "port": {
+                "type": "number"
+              },
+              "clients": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "global": {
+      "type": "object"
+    }
+  }
+}

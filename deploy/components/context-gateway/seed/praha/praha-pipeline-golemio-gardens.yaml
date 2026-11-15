@@ -1,0 +1,17 @@
+# One PointOfInterest per public garden of the city from Golemio's /v2/gardens into the city space (T-5276).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: golemio-gardens
+  namespace: praha
+  title: { en: City gardens and parks, cs: Pražské zahrady a parky }
+spec:
+  class: auto
+  # Golemio last refreshed it on 2025-05-23; one read a week is one request of the key's 20 per 8 s.
+  period: 168h
+  schedule: '30 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: golemio-gardens }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

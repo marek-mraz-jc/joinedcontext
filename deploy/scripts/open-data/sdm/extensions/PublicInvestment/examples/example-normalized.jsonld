@@ -1,0 +1,322 @@
+{
+  "id": "urn:ngsi-ld:PublicInvestment:joinedcontext.com:example:1",
+  "type": "PublicInvestment",
+  "adresa": {
+    "type": "Property",
+    "value": "adresa"
+  },
+  "aktivne": {
+    "type": "Property",
+    "value": "aktivne"
+  },
+  "aktualnyStav": {
+    "type": "Property",
+    "value": "aktualnyStav"
+  },
+  "aktualnyStavUpraveny": {
+    "type": "Property",
+    "value": "aktualnyStavUpraveny"
+  },
+  "celkovaZazmluvnenaSuma": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "cerpanieSpolu": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "dOW": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "datumZaniku": {
+    "type": "Property",
+    "value": "datumZaniku"
+  },
+  "fACC": {
+    "type": "Property",
+    "value": "fACC"
+  },
+  "fLAT": {
+    "type": "Property",
+    "value": "fLAT"
+  },
+  "fLON": {
+    "type": "Property",
+    "value": "fLON"
+  },
+  "gEOMLATBACKUP": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "gEOMLONBACKUP": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "iCO": {
+    "type": "Property",
+    "value": "iCO"
+  },
+  "iCOOrganizacia": {
+    "type": "Property",
+    "value": "iCOOrganizacia"
+  },
+  "iCOPrijimatela": {
+    "type": "Property",
+    "value": "iCOPrijimatela"
+  },
+  "iDN2": {
+    "type": "Property",
+    "value": 0
+  },
+  "iDN3": {
+    "type": "Property",
+    "value": 0
+  },
+  "iDN4": {
+    "type": "Property",
+    "value": 0
+  },
+  "iDProjektu": {
+    "type": "Property",
+    "value": "iDProjektu"
+  },
+  "identifier": {
+    "type": "Property",
+    "value": "identifier"
+  },
+  "index": {
+    "type": "Property",
+    "value": "index"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "kategoria": {
+    "type": "Property",
+    "value": "kategoria"
+  },
+  "kodKraja": {
+    "type": "Property",
+    "value": "kodKraja"
+  },
+  "kodObce": {
+    "type": "Property",
+    "value": "kodObce"
+  },
+  "kodOkresuKraja": {
+    "type": "Property",
+    "value": 0
+  },
+  "lATJitter": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "lAU1": {
+    "type": "Property",
+    "value": "lAU1"
+  },
+  "lAU1CODE": {
+    "type": "Property",
+    "value": "lAU1CODE"
+  },
+  "lAU2": {
+    "type": "Property",
+    "value": "lAU2"
+  },
+  "lAU2CODE": {
+    "type": "Property",
+    "value": "lAU2CODE"
+  },
+  "lONJitter": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "miestoRealizacieProjektu": {
+    "type": "Property",
+    "value": "miestoRealizacieProjektu"
+  },
+  "miestoRealizacieProjektuKraj": {
+    "type": "Property",
+    "value": "miestoRealizacieProjektuKraj"
+  },
+  "miestoRealizacieProjektuObec": {
+    "type": "Property",
+    "value": "miestoRealizacieProjektuObec"
+  },
+  "nM2": {
+    "type": "Property",
+    "value": "nM2"
+  },
+  "nM3": {
+    "type": "Property",
+    "value": "nM3"
+  },
+  "nM4": {
+    "type": "Property",
+    "value": "nM4"
+  },
+  "nUTS1": {
+    "type": "Property",
+    "value": "nUTS1"
+  },
+  "nUTS1CODE": {
+    "type": "Property",
+    "value": "nUTS1CODE"
+  },
+  "nUTS2": {
+    "type": "Property",
+    "value": "nUTS2"
+  },
+  "nUTS2CODE": {
+    "type": "Property",
+    "value": "nUTS2CODE"
+  },
+  "nUTS3": {
+    "type": "Property",
+    "value": "nUTS3"
+  },
+  "nUTS3CODE": {
+    "type": "Property",
+    "value": "nUTS3CODE"
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "nazovKraja": {
+    "type": "Property",
+    "value": "nazovKraja"
+  },
+  "nazovPrijimatela": {
+    "type": "Property",
+    "value": "nazovPrijimatela"
+  },
+  "oBJECTID1": {
+    "type": "Property",
+    "value": 0
+  },
+  "obecNUTS": {
+    "type": "Property",
+    "value": "obecNUTS"
+  },
+  "obecNazov": {
+    "type": "Property",
+    "value": "obecNazov"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "obstaravaciaCena": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "oficialnyNazov": {
+    "type": "Property",
+    "value": "oficialnyNazov"
+  },
+  "okresKraj": {
+    "type": "Property",
+    "value": "okresKraj"
+  },
+  "okresNazov": {
+    "type": "Property",
+    "value": "okresNazov"
+  },
+  "platnostProjektuOd": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "poznamka": {
+    "type": "Property",
+    "value": "poznamka"
+  },
+  "rok": {
+    "type": "Property",
+    "value": "rok"
+  },
+  "rokText": {
+    "type": "Property",
+    "value": "rokText"
+  },
+  "rokZaradenia": {
+    "type": "Property",
+    "value": "rokZaradenia"
+  },
+  "rozpocetAktualny": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "rozsahUzemiaProjektu": {
+    "type": "Property",
+    "value": "rozsahUzemiaProjektu"
+  },
+  "sUMCerpanieSpolu": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "sektorOvZPUpraveny": {
+    "type": "Property",
+    "value": "sektorOvZPUpraveny"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "typObce": {
+    "type": "Property",
+    "value": "typObce"
+  },
+  "uradOvZPICO": {
+    "type": "Property",
+    "value": "uradOvZPICO"
+  },
+  "uradOvZPOvZP": {
+    "type": "Property",
+    "value": "uradOvZPOvZP"
+  },
+  "uroven": {
+    "type": "Property",
+    "value": "uroven"
+  },
+  "vYMERA": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "vecnaOblast": {
+    "type": "Property",
+    "value": "vecnaOblast"
+  },
+  "zauzivanyNazov": {
+    "type": "Property",
+    "value": "zauzivanyNazov"
+  },
+  "zauzivanyNazovKratky": {
+    "type": "Property",
+    "value": "zauzivanyNazovKratky"
+  },
+  "zauzivanyNazovUpraveny": {
+    "type": "Property",
+    "value": "zauzivanyNazovUpraveny"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/PublicInvestment/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

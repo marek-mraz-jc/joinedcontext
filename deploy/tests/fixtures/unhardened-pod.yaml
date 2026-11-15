@@ -1,0 +1,14 @@
+---
+# Root, every capability, a writable root filesystem: one resource that every Pod Security
+# policy in the chart has to report.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unhardened-pod
+  namespace: dev
+spec:
+  containers:
+    - name: app
+      image: nginx:1.27
+      securityContext:
+        runAsUser: 0

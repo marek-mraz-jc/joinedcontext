@@ -1,0 +1,36 @@
+{{- $part := "theme" }}
+{{/*
+`ckanext-jc_theme`, mounted rather than baked into an image.
+
+CKAN finds a plugin through a setuptools entry point, not through the import path, so the
+package alone would never load: the `dist-info` in `files/jc_theme/` is what makes an
+installed distribution out of two mounted files. It is the whole reason this extension can
+live in a ConfigMap and be rebranded by a values edit, with no image build in the loop
+(OPS-47).
+
+The theme holds no value of its own. Everything it renders comes from `branding.json`, which
+is the same block the Portal serves at `/api/v1/branding` (OPS-46). The files are read
+verbatim: they are Jinja, and Helm must not evaluate their braces.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ckan.fullname" . }}-theme
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ckan.labels" (dict "root" . "part" $part) | nindent 4 }}
+data:
+  branding.json: |
+    {{ omit .Values.branding "logoSvg" | toJson }}
+  organizations.json: |
+    {{ .Values.organizations | default dict | toJson }}
+  hidden.json: |
+    {{ .Values.hidden | default dict | toJson }}
+  {{- if and (.Values.branding.logoSvg | default "") (.Values.branding.logo | default "") }}
+  {{ .Values.branding.logo }}: |
+{{ .Values.branding.logoSvg | indent 4 }}
+  {{- end }}
+{{- range $path, $_ := .Files.Glob "files/jc_theme/*" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

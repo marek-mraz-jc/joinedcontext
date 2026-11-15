@@ -1,0 +1,19 @@
+# The conformance suite's own space (F-BNT1-002): the smoke run and the ETSI suite create and
+# delete their fixtures here, never in a space that holds real readings or is published: no
+# public Endpoint, no catalogue, no CKAN.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: conformance
+  namespace: banskabystrica
+  title: { sk: Konformančné testy, en: Conformance tests }
+spec:
+  urnSegment: conformance
+  isSandbox: false
+  # The one model (DM-61): the AirQualityObserved the suites wrote into ovzdusie before.
+  dataModelRef: { kind: DataModel, name: conformance-air-quality }
+  defaultLocale: sk
+  # A measurement keeps 30 days (T-4275), so the ETSI suite's temporal cases read back their writes.
+  retention:
+    - entityType: AirQualityObserved
+      history: P30D

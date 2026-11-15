@@ -1,0 +1,17 @@
+# One PointOfInterest per site of `hel-waterfront-sites`, written into the city space (T-5670).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: waterfront-sites
+  namespace: helsinki
+  title: { en: Shore route sites for new services }
+spec:
+  class: auto
+  # The city revises the list about once a year (2025 now); weekly is already more than it needs.
+  period: 168h
+  schedule: '30 4 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-waterfront-sites }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

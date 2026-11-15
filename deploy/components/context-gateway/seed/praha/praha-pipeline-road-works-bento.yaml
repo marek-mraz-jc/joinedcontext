@@ -1,0 +1,94 @@
+# The mapping of the road-works pipeline (T-5428, PL-03): one CityWork per work or event that occupies a
+# Prague street, as the city's opravujeme.to service lists them for drivers (LKOD 81de503f, daily,
+# no rights reserved): 1439 on 2026-10-25, 77 under way, 11 announced and 1351 finished. Finished
+# works stay, with workState completed, because the service keeps listing them and an upsert never
+# deletes; a reader asks `workState=="open"` for what restricts traffic now.
+#
+# The research matrix filed this row as IssueReporting; the export holds no citizen report, only the
+# works and closures (`/api/action`), so it is a CityWork, the Smart Data Model of works on the street.
+#
+# Read: the title, the street, start and end (local Prague time without an offset, which the mapping
+# adds for that instant), state, kind, the colour of its traffic impact, the point (lat, lon) and the
+# investor. Left out: the responsible people of the investor, the contractor and the city, their
+# phones and e-mails (personal data), the contractor (a sole trader is a person), an investor that
+# does not read as an organisation (private persons appear by name), and the free-text descriptions,
+# limitations and detours, which name contact people. A record the service marks hidden or not
+# approved is not written.
+#
+# Ids: urn:ngsi-ld:CityWork:{org}:{space}:opravujeme-{the service's numeric id}.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a numeric id, a title, a known state or
+# parsable dates, one whose point lies outside Prague's box (the city plus about 1 km) or at 0,0, one
+# ending before it starts, and a second record of one id are dropped; the log line counts each
+# reason. An answer that is not a record list, an empty one, or one where fewer than half the records
+# survive fails the run, so the works already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 33554432 { throw("opravujeme.to answered %v bytes; more than 32 MiB is not the works list".format(content().length())) } else { this }
+        - mapping: |
+            let rows = this.data.catch(null)
+            root = if $rows.type() != "array" {
+              throw("opravujeme.to did not answer a record list")
+            } else if $rows.length() == 0 {
+              throw("opravujeme.to listed no work; the list is never empty, so the download failed")
+            } else {
+              { "rows": $rows.filter(r -> r.hidden.catch(false) != true && r.approved.catch(true) != false).map_each(r -> {
+                "key": r.id.catch("").string(),
+                "name": r.name.catch("").string().trim().re_replace_all("\\s+", " "),
+                "street": r.street.catch("").string().trim().re_replace_all("\\s+", " "),
+                "start": r.start.catch("").string(),
+                "end": r.end.catch("").string(),
+                "state": { "FUTURE": "planned", "ACTIVE": "open", "DONE": "completed" }.get(r.state.catch("").string()).catch(null),
+                "kind": { "CONSTRUCTION": "construction", "CULTURAL": "cultural", "SPORT": "sport", "OTHERS": "other" }.get(r.subject.catch("").string()).catch(null),
+                "impact": { "GREEN": "minor", "YELLOW": "moderate", "RED": "severe" }.get(r.severity.catch("").string()).catch(null),
+                "c": [r.lon.catch(null), r.lat.catch(null)].map_each(x -> x.number().catch(null)),
+                "investor": r.investor.catch("").string().trim().re_replace_all("\\s+", " ")
+              }) }
+            }
+        - mapping: |
+            let local = "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$"
+            let rows = this.rows
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9]+$") && r.name != "" && r.state != null && r.start.slice(0, 19).re_match($local) && r.end.slice(0, 19).re_match($local))
+            let inside = $usable.filter(r -> r.c.index(0).type() == "number" && r.c.index(1).type() == "number" && r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let ordered = $inside.filter(r -> r.start.slice(0, 19) <= r.end.slice(0, 19))
+            let unique = $ordered.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta reversed = $inside.length() - $ordered.length()
+            meta duplicate = $ordered.length() - $unique.length()
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("opravujeme.to: only %v of %v records have an id, a title, a state, dates in order and a point in Prague".format($unique.length(), $rows.length()))
+            } else { this.assign({ "rows": $unique }) }
+        - log:
+            level: INFO
+            message: 'road-works: read ${! meta("read") }, dropped ${! meta("unusable") } without id, title, state or dates, ${! meta("outside") } without a point in Prague, ${! meta("reversed") } ending before they start, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            # The service writes Prague wall time without an offset; the offset is Prague's at that
+            # instant read as UTC, which is right except within two hours of a DST switch.
+            map prague {
+              let t = this.slice(0, 19)
+              root = $t + $t.ts_parse("2006-01-02T15:04:05").ts_format("-07:00", "Europe/Prague")
+            }
+            let organisation = "(?i)(a\\.\\s?s\\.|s\\.\\s?r\\.\\s?o|s\\.\\s?p\\.|p\\.\\s?o\\.|z\\.\\s?s\\.|z\\.\\s?ú\\.|spol\\.|k\\.\\s?s\\.|\\bSE\\b|Praha|Prahy|MČ|Městsk|Správa|Ředitelství|ŘSD|Technická|Dopravní|Úřad|Magistrát|ČEZ|PRE\\b|Vodovody|Kanalizace|TSK|ROPID|Metro|Povodí|SŽ|GasNet|CETIN|Ministerstvo|Policie|Hasič|Akademie|Univerzita|Institut|Galerie|Muzeum|Divadlo|Národní|Česk|Svaz|Sokol|Klášter|Filharmonie|Sněmovna|Televize|Rozhlas)"
+            root = this.rows.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:opravujeme-%v".format("CityWork", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.key),
+              "type": "CityWork",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": r.name } },
+              "address": if r.street != "" { { "type": "Property", "value": { "streetAddress": r.street, "addressLocality": "Praha", "addressCountry": "CZ" } } } else { null },
+              "startDate": { "type": "Property", "value": r.start.apply("prague") },
+              "endDate": { "type": "Property", "value": r.end.apply("prague") },
+              "workState": { "type": "Property", "value": r.state },
+              "workCategory": if r.kind != null { { "type": "Property", "value": r.kind } } else { null },
+              "trafficImpact": if r.impact != null { { "type": "Property", "value": r.impact } } else { null },
+              "contractingAuthority": if r.investor.re_match($organisation) { { "type": "Property", "value": r.investor } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": r.c } },
+              "dataProvider": { "type": "Property", "value": "Magistrát hl. m. Prahy, opravujeme.to (open data, no rights reserved)" },
+              "source": { "type": "Property", "value": "https://opravujeme.to/" }
+            }.filter(kv -> kv.value != null))
+        # 500 records per request to the endpoint, about 0.5 MB, far under the broker's 4 MiB body limit.
+        - unarchive: { format: json_array }
+        - split: { size: 500 }
+        - archive: { format: json_array }

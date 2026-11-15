@@ -1,0 +1,17 @@
+# One PointOfInterest per record of `hel-servicemap-units`, written into the city space (T-2787).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: services
+  namespace: helsinki
+  title: { en: City services from the Service Map }
+spec:
+  class: auto
+  # The register changes a few units a day; a nightly read keeps the opening hours current.
+  period: 24h
+  schedule: '10 3 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-servicemap-units }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

@@ -1,0 +1,9 @@
+---
+# The platform cluster's own image (components/postgres/images.yaml): one PostgreSQL 16 build to
+# patch. PostGIS is in it but no App can create an extension: none it ships is trusted, and an
+# App's roles are not superusers (ADR-N-044 §2.5).
+apps-db:
+  cluster:
+    repository: ghcr.io/cloudnative-pg/postgis
+    tag: '16-3.6-system-trixie'
+    digest: 'sha256:a08a1c1795fcbee5bfc3e935f21be68f08700e4e1e7f3b6af5e11866617d9e61'

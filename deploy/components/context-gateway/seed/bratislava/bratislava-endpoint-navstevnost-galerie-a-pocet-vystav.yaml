@@ -1,0 +1,44 @@
+# Visitors of the Bratislava City Gallery and number of exhibitions: one public dataset of the hub (T-5274), item 679b8b8e39854e0ea1c9a9d7cb934c39, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-navstevnost-galerie-a-pocet-vystav
+  namespace: bratislava
+  title:
+    sk: Návštevnosť Galérie mesta Bratislava a počet výstav
+    en: Visitors of the Bratislava City Gallery and number of exhibitions
+  description:
+    sk: 'Ukazovatele tabuľky „Návštevnosť Galérie mesta Bratislava a počet výstav“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Visitors of the Bratislava City Gallery and number of exhibitions”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: c6f6mgvetz7pr6quevhdpxhh7sg2bspb
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-navstevnost-galerie-a-pocet-vystav
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/679b8b8e39854e0ea1c9a9d7cb934c39
+        title:
+          sk: Návštevnosť Galérie mesta Bratislava a počet výstav
+          en: Visitors of the Bratislava City Gallery and number of exhibitions
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Návštevnosť Galérie mesta Bratislava a počet výstav. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Visitors of the Bratislava City Gallery and number of exhibitions. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

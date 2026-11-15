@@ -1,0 +1,14 @@
+# The build lane (AP-73, ADR-N-028 §5, T-2636): `status.build` of an App on main and nothing
+# else. The constraint names the field's writer and carries no operator; the Portal lets this
+# rule authorize that write alone, with the App's spec, labels and annotations as they are.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: build-lane
+  namespace: org
+spec:
+  rules:
+    - kinds: [App]
+      verbs: [propose]
+      constraints:
+        - field: status.build

@@ -1,0 +1,20 @@
+# The hub's daily tables of Bratislava as a whole (Free Wifi VisitBratislava, May 2018 to February
+# 2020) as KeyPerformanceIndicator, one entity per figure, breakdown and day (T-5673), with the same
+# mapping text as the statistics pipeline, apart from statistics-mesto so that each run fits its
+# quota. The hub keeps the tables as an archive; a weekly run shows a correction within a week.
+# 6 tables, 10,232 figures on 2026-10-25; the run fits 192 MiB (docker --memory: killed at 128).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: statistics-denne
+  namespace: bratislava
+  title: { sk: Denné štatistiky mesta Bratislava, en: Daily statistics of the City of Bratislava }
+spec:
+  class: auto
+  period: 168h
+  schedule: '55 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bratislava-hub }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

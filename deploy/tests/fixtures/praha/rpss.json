@@ -1,0 +1,359 @@
+{
+ "sparql": {
+  "head": {
+   "link": [],
+   "vars": [
+    "sluzba",
+    "druh",
+    "nazev",
+    "ulice",
+    "cp",
+    "co",
+    "kod",
+    "web"
+   ]
+  },
+  "results": {
+   "distinct": false,
+   "ordered": true,
+   "bindings": [
+    {
+     "sluzba": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "159"
+     },
+     "druh": {
+      "type": "literal",
+      "xml:lang": "cs",
+      "value": "odborné sociální poradenství"
+     },
+     "nazev": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Sociální poradenství pro migranty - vzdělávací oddělení"
+     },
+     "ulice": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Pernerova"
+     },
+     "cp": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "10"
+     },
+     "co": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "32"
+     },
+     "kod": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "22348603"
+     },
+     "web": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "www.cicops.cz"
+     }
+    },
+    {
+     "sluzba": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "159"
+     },
+     "druh": {
+      "type": "literal",
+      "xml:lang": "cs",
+      "value": "odborné sociální poradenství"
+     },
+     "nazev": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Sociální poradenství pro migranty"
+     },
+     "ulice": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Pernerova"
+     },
+     "cp": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "10"
+     },
+     "co": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "32"
+     },
+     "kod": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "22348603"
+     },
+     "web": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "www.cicops.cz"
+     }
+    },
+    {
+     "sluzba": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "4674"
+     },
+     "druh": {
+      "type": "literal",
+      "xml:lang": "cs",
+      "value": "domovy se zvláštním režimem"
+     },
+     "nazev": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Domov Vlčí mák - Domov se zvláštním režimem"
+     },
+     "ulice": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "U vojenské nemocnice"
+     },
+     "cp": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "1200"
+     },
+     "co": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "1"
+     },
+     "kod": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "80093344"
+     },
+     "web": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "www.uvn.cz"
+     }
+    },
+    {
+     "sluzba": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "3105"
+     },
+     "druh": {
+      "type": "literal",
+      "xml:lang": "cs",
+      "value": "denní stacionáře"
+     },
+     "nazev": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Gerontologické centrum"
+     },
+     "ulice": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Šimůnkova"
+     },
+     "cp": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "1600"
+     },
+     "co": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "5"
+     },
+     "kod": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "22373284"
+     },
+     "web": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "http://www.gerontocentrum.cz"
+     }
+    },
+    {
+     "sluzba": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "3864"
+     },
+     "druh": {
+      "type": "literal",
+      "xml:lang": "cs",
+      "value": "osobní asistence"
+     },
+     "nazev": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Gerontologické centrum"
+     },
+     "ulice": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Šimůnkova"
+     },
+     "cp": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "1600"
+     },
+     "co": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "5"
+     },
+     "kod": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "22373284"
+     },
+     "web": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "http://www.gerontocentrum.cz"
+     }
+    },
+    {
+     "sluzba": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "38"
+     },
+     "druh": {
+      "type": "literal",
+      "xml:lang": "cs",
+      "value": "odborné sociální poradenství"
+     },
+     "nazev": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "Centrum pro zdravotně postižené Středočeského kraje"
+     },
+     "ulice": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "U skládky"
+     },
+     "cp": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+      "value": "1695"
+     },
+     "co": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "4"
+     },
+     "kod": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "22499962"
+     },
+     "web": {
+      "type": "literal",
+      "datatype": "http://www.w3.org/2001/XMLSchema#string",
+      "value": "www.czpstredoceskykraj.cz"
+     }
+    }
+   ]
+  }
+ },
+ "byCode": {
+  "displayFieldName": "nespravny",
+  "fieldAliases": {
+   "kod": "Kód adresního místa"
+  },
+  "geometryType": "esriGeometryPoint",
+  "spatialReference": {
+   "wkid": 4326,
+   "latestWkid": 4326
+  },
+  "fields": [
+   {
+    "name": "kod",
+    "type": "esriFieldTypeInteger",
+    "alias": "Kód adresního místa"
+   }
+  ],
+  "features": [
+   {
+    "attributes": {
+     "kod": 22348603
+    },
+    "geometry": {
+     "x": 14.452810030175359,
+     "y": 50.090788904476014
+    }
+   },
+   {
+    "attributes": {
+     "kod": 22373284
+    },
+    "geometry": {
+     "x": 14.471252686233179,
+     "y": 50.1340901402555
+    }
+   },
+   {
+    "attributes": {
+     "kod": 22499962
+    },
+    "geometry": {
+     "x": 14.492491545256312,
+     "y": 50.10703271554343
+    }
+   }
+  ]
+ },
+ "byAddress": {
+  "displayFieldName": "nespravny",
+  "fieldAliases": {
+   "kod": "Kód adresního místa",
+   "adresa": "Adresa"
+  },
+  "geometryType": "esriGeometryPoint",
+  "spatialReference": {
+   "wkid": 4326,
+   "latestWkid": 4326
+  },
+  "fields": [
+   {
+    "name": "kod",
+    "type": "esriFieldTypeInteger",
+    "alias": "Kód adresního místa"
+   },
+   {
+    "name": "adresa",
+    "type": "esriFieldTypeString",
+    "alias": "Adresa",
+    "length": 150
+   }
+  ],
+  "features": [
+   {
+    "attributes": {
+     "kod": 85647811,
+     "adresa": "U vojenské nemocnice 1200/1, Břevnov, 16200 Praha 6"
+    },
+    "geometry": {
+     "x": 14.36324347472157,
+     "y": 50.091089890311935
+    }
+   }
+  ]
+ }
+}

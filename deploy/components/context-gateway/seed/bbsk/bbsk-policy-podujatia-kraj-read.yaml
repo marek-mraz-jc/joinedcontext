@@ -1,0 +1,29 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: podujatia-kraj-read
+  namespace: bbsk
+  title: { sk: 'Verejné čítanie: podujatia v Banskobystrickom kraji' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-podujatia }
+  assigner: did:web:bbsk.sk
+  assignee: { kind: role, id: public }
+  # The Endpoint bbsk-podujatia reads the region's events of the national space by their scope: the
+  # events exist once, the region is a view (owner 2026-10-20). Events and their venues, no entity write.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Event
+        - type: PointOfInterest
+  scopeQ: /SK/BB/#

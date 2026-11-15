@@ -1,0 +1,29 @@
+# Public read of the Endpoint bratislava-turisticke-autobusy (T-5435): these types only; the space's other types stay with their own datasets.
+# No history: the space keeps the current list only.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-turisticke-autobusy
+  namespace: bratislava
+  title:
+    sk: 'Verejné čítanie: zastávky turistických autobusov'
+    en: 'Public read: tourist coach stops'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: OnStreetParking

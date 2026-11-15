@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of preview (an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slug", "domain", "devNamespace", "ttl", "ingressClass", "clusterIssuer", "images"],
+  "properties": {
+    "slug": {
+      "description": "a DNS-1123 label of 1 to 40 characters, such as fix-login",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
+    },
+    "domain": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" },
+    "devNamespace": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" },
+    "ttl": { "type": "string", "pattern": "^[1-9][0-9]*[smhd]$" },
+    "ingressClass": { "type": "string", "minLength": 1 },
+    "clusterIssuer": { "type": "string", "minLength": 1 },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["portal", "portalUi"],
+      "properties": {
+        "portal": { "$ref": "#/definitions/pinned" },
+        "portalUi": { "$ref": "#/definitions/pinned" }
+      }
+    }
+  },
+  "definitions": {
+    "pinned": {
+      "description": "one of our signed images by digest, such as ghcr.io/marek-mraz-jc/joinedcontext-portal@sha256:<64 hex>",
+      "type": "string",
+      "pattern": "^ghcr\\.io/marek-mraz-jc/[a-z0-9./_-]+@sha256:[0-9a-f]{64}$"
+    }
+  }
+}

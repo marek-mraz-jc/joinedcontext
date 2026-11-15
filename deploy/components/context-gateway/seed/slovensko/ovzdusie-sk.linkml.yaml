@@ -1,0 +1,134 @@
+id: https://joinedcontext.com/models/slovensko/ovzdusie-sk
+name: ovzdusie-sk
+title: Air quality, Slovakia
+description: >-
+  What the national air-quality space carries (DM-01, DM-61): one entity per Slovak
+  air-quality station, its name, its place and the hourly mean of each pollutant it measures, and
+  nothing else (owner, 2026-10-16). Smart Data Models'
+  AirQualityObserved, its IRIs cited rather than minted (DM-04, DM-16).
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  sdm: https://smartdatamodels.org/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+default_prefix: sdm
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+
+slots:
+  name:
+    slot_uri: schema:name
+    description: The station's name in Slovak, its municipality, code, area and type.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov
+          cs: Název
+          en: Name
+          de: Name
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/name
+  dateObserved:
+    slot_uri: sdm:dateObserved
+    description: The end of the hour the entity's readings cover, UTC.
+    range: datetime
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Čas merania
+          cs: Čas měření
+          en: Observed at
+          de: Messzeitpunkt
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  pm10:
+    slot_uri: sdm:pm10
+    description: Particulate matter up to 10 µm, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PM10
+          cs: PM10
+          en: PM10
+          de: PM10
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  pm25:
+    slot_uri: sdm:pm25
+    description: Particulate matter up to 2.5 µm, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PM2,5
+          cs: PM2,5
+          en: PM2.5
+          de: PM2,5
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  no2:
+    slot_uri: sdm:no2
+    description: Nitrogen dioxide, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: NO₂
+          cs: NO₂
+          en: NO₂
+          de: NO₂
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  o3:
+    slot_uri: sdm:o3
+    description: Ozone, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: O₃
+          cs: O₃
+          en: O₃
+          de: O₃
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+
+classes:
+  AirQualityObserved:
+    class_uri: sdm:AirQualityObserved
+    description: One air-quality station in Slovakia and its hourly means.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+      label:
+        tag: label
+        value:
+          sk: Meranie kvality ovzdušia
+          cs: Měření kvality ovzduší
+          en: Air quality reading
+          de: Luftqualitätsmessung
+    slots: [name, dateObserved, pm10, pm25, no2, o3]

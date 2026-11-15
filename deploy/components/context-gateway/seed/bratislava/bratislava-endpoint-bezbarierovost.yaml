@@ -1,0 +1,40 @@
+# Barrier-free places in Bratislava: one public dataset of the hub (T-5274), item ccaa77c555054b60937d1c532ac85844, written by the places pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-bezbarierovost
+  namespace: bratislava
+  title: { sk: Bezbariérovosť v meste Bratislava, en: Barrier-free places in Bratislava }
+  description:
+    sk: 'Úrady, kultúra, školy, šport, parkoviská, reštaurácie a verejné priestory s popisom prístupnosti pre ľudí s obmedzenou mobilitou, zrakom alebo sluchom. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'Offices, culture, schools, sport, car parks, restaurants and public spaces with how accessible they are for people with limited mobility, sight or hearing. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 4luyffkic6zmcyveuj7uxsyn5d7m6db4
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-bezbarierovost
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: WEEKLY
+    source:
+      - url: https://data.bratislava.sk/datasets/ccaa77c555054b60937d1c532ac85844
+        title: { sk: Bezbariérovosť v meste Bratislava, en: Barrier-free places in Bratislava }
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Bezbariérovosť v meste Bratislava. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Barrier-free places in Bratislava. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: places }

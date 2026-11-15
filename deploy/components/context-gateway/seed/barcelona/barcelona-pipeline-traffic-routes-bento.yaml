@@ -1,0 +1,109 @@
+# The mapping of the traffic-routes pipeline (PL-03, T-5262): one TrafficFlowObserved per traffic
+# route of Open Data BCN `itineraris` (78 routes on 2026-10-23), its travel time now and the time
+# the city expects from its history of the same kind of day, with the lines of the route's
+# sections (`transit-relacio-trams-per-itinerari`, `transit-relacio-trams`) and its name.
+#
+# The DataSource's answer is the route file, one line per route: id#available#yyyymmddhhmmss#now#
+# usual#future#factor#trend, the time local to Barcelona, the times in seconds. A route the city
+# reports no reading for (available 0, or a time of 0) keeps its last travel time, whose observedAt
+# tells when it was read. The future, factor and trend codes (-1..2) carry no published meaning
+# and are not kept.
+#
+# Plausibility (owner 2026-10-22): a line that is not eight numeric fields, a reading outside
+# 1..7200 s (two hours across the city) or a usual time outside 0..7200 s, a time more than a day
+# ahead, a route named twice, a route with no section in the route list or no section line inside
+# Barcelona (lon 2.04..2.24, lat 41.30..41.48) is left out, each counted by its reason in the run's
+# log line. A file with no route, a file older than three periods (15 min) or a list that does not
+# answer fails the run, which writes nothing and leaves the entities as they were.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 262144 { throw("the route file is %d bytes, more than the 256 kB read".format(content().length())) } else { content().string() }
+        - mapping: |
+            let lines = content().string().split("\n").map_each(l -> l.trim()).filter(l -> l != "")
+            let rows = $lines.map_each(l -> l.split("#"))
+            let shaped = $rows.filter(r -> r.length() == 8 && r.index(0).re_match("^[0-9]{1,4}$") && r.index(1).re_match("^[01]$") && r.index(2).re_match("^[0-9]{14}$") && r.slice(3).all(v -> v.re_match("^-?[0-9]{1,6}$")))
+            let read = $shaped.map_each(r -> r.append(r.index(1) == "1" && r.index(3).number() > 0))
+            let ranged = $read.filter(r -> !r.index(8) || (r.index(3).number() <= 7200 && r.index(4).number() >= 0 && r.index(4).number() <= 7200))
+            let timed = $ranged.map_each(r -> r.append((r.index(2).slice(0, 4) + "-" + r.index(2).slice(4, 6) + "-" + r.index(2).slice(6, 8) + "T" + r.index(2).slice(8, 10) + ":" + r.index(2).slice(10, 12) + ":" + r.index(2).slice(12, 14)).(local -> (local + (local + "Z").ts_format("-07:00", "Europe/Madrid")).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix())))
+            let present = $timed.filter(r -> r.index(9) <= now().ts_unix() + 86400)
+            let first = $present.fold({}, t -> if t.tally.exists(t.value.index(0)) { t.tally } else { t.tally.merge({ t.value.index(0): t.value }) })
+            let newest = $present.fold(0, t -> if t.value.index(9) > t.tally { t.value.index(9) } else { t.tally })
+            root = if $present.length() == 0 { throw("the route file names no route") } else if $newest < now().ts_unix() - 900 { throw("the route file is from %v, older than three 5-minute periods".format($newest.ts_format("2006-01-02T15:04:05Z", "UTC"))) } else { {
+              "rows": $first.values().sort_by(r -> r.index(0).number()),
+              "dropped": {
+                "malformedLine": $rows.length() - $shaped.length(),
+                "travelTimeOutOfRange": $read.length() - $ranged.length(),
+                "timeInFuture": $timed.length() - $present.length(),
+                "duplicateRoute": $present.length() - $first.keys().length()
+              }
+            } }
+        - branch:
+            request_map: root = ""
+            processors:
+              - http:
+                  url: https://opendata-ajuntament.barcelona.cat/data/dataset/446dcd8e-445a-45eb-8979-c73376ea340e/resource/8d6239d1-995a-4e65-9fce-8b98baf693ed/download/transit_relacio_tram_per_itinerari.csv
+                  verb: GET
+                  headers:
+                    Accept: text/csv
+                    User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+                  rate_limit: barcelona_opendata
+              - mapping: |
+                  root = if content().length() > 1048576 { throw("the route list is %d bytes, more than the 1 MB read".format(content().length())) } else { content().string() }
+            result_map: root.routes = content().string()
+        - branch:
+            request_map: root = ""
+            processors:
+              - http:
+                  url: https://opendata-ajuntament.barcelona.cat/data/dataset/1090983a-1c40-4609-8620-14ad49aae3ab/resource/1d6c814c-70ef-4147-aa16-a49ddb952f72/download/transit_relacio_trams.csv
+                  verb: GET
+                  headers:
+                    Accept: text/csv
+                    User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+                  rate_limit: barcelona_opendata
+              - mapping: |
+                  root = if content().length() > 2097152 { throw("the section list is %d bytes, more than the 2 MB read".format(content().length())) } else { content().string() }
+            result_map: root.sections = content().string()
+        - mapping: |
+            let routes = this.routes.trim_prefix("﻿").parse_csv().catch([])
+            let sections = this.sections.trim_prefix("﻿").parse_csv().catch([])
+            root = if $routes.length() == 0 || !$routes.index(0).exists("Itinerari") || !$routes.index(0).exists("Tram") { throw("the route list does not have the columns Itinerari, Tram, Descripció") } else if $sections.length() == 0 || !$sections.index(0).exists("Tram") || !$sections.index(0).exists("Coordenades") { throw("the section list does not have the columns Tram, Descripció, Coordenades") } else { this }
+        - mapping: |
+            let routes = this.routes.trim_prefix("﻿").parse_csv()
+            let parsed = this.sections.trim_prefix("﻿").parse_csv().map_each(s -> s.merge({ "c": s.Coordenades.or("").split(",").map_each(v -> v.trim().number().catch(null)) }))
+            let shaped = $parsed.filter(s -> s.c.length() >= 4 && s.c.length() % 2 == 0 && s.c.all(v -> v != null))
+            let points = $shaped.map_each(s -> { "id": s.Tram.string().trim(), "line": range(0, s.c.length(), 2).map_each(i -> [s.c.index(i), s.c.index(i + 1)]) })
+            let lines = $points.filter(s -> s.line.all(p -> p.index(0) >= 2.04 && p.index(0) <= 2.24 && p.index(1) >= 41.30 && p.index(1) <= 41.48)).map_each(s -> { s.id: s.line }).squash()
+            let names = $routes.filter(r -> r.Tram.string().trim() == "0").map_each(r -> { r.Itinerari.string().trim(): r.get("Descripció").or("").trim() }).squash()
+            let members = $routes.filter(r -> r.Tram.string().trim() != "0").fold({}, t -> t.value.Itinerari.string().trim().(k -> t.tally.assign({ k: t.tally.get(k).or([]).append(t.value.Tram.string().trim()) })))
+            let drawn = this.rows.map_each(r -> r.append($members.get(r.index(0)).or([]).filter(m -> $lines.exists(m)).map_each(m -> $lines.get(m))))
+            let known = $drawn.filter(r -> r.index(10).length() > 0)
+            let entities = $known.map_each(r -> r.index(9).ts_format("2006-01-02T15:04:05Z", "UTC").(at -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:itinerari-%v".format("TrafficFlowObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.index(0)),
+              "type": "TrafficFlowObserved",
+              "name": { "type": "Property", "value": $names.get(r.index(0)).or("Itinerari %v".format(r.index(0))) },
+              "location": { "type": "GeoProperty", "value": { "type": "MultiLineString", "coordinates": r.index(10) } },
+              "dateObserved": { "type": "Property", "value": at },
+              "travelTime": if r.index(8) { { "type": "Property", "value": r.index(3).number().int64(), "unitCode": "SEC", "observedAt": at } } else { deleted() },
+              "usualTravelTime": if r.index(8) { { "type": "Property", "value": r.index(4).number().int64(), "unitCode": "SEC", "observedAt": at } } else { deleted() },
+              "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/ca/dataset/itineraris" }
+            }))
+            root = if $entities.length() == 0 { throw("no route of the route file has a section line in the section list") } else { {
+              "entities": $entities,
+              "dropped": this.dropped.merge({
+                "routeWithoutLine": this.rows.length() - $known.length(),
+                "lineMalformed": $parsed.length() - $shaped.length(),
+                "lineOutOfArea": $points.length() - $lines.keys().length()
+              })
+            } }
+        - log:
+            level: INFO
+            message: 'traffic-routes: ${! json("entities").length() } routes written, left out by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.entities
+        - unarchive: { format: json_array }

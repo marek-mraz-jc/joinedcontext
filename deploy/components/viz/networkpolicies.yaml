@@ -1,0 +1,50 @@
+---
+# The server answers the edge and dials nothing but CoreDNS (its mesh proxy resolves): it serves
+# files; the browser does every fetch.
+viz-server:
+  podSelector:
+    app.kubernetes.io/name: renderer
+    app.kubernetes.io/instance: viz-renderer
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The edge's side of the route on viz.{domain}.
+apisix-egress-to-viz:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: renderer
+          componentNamespace: viz
+      ports:
+        - protocol: TCP
+          port: 8080

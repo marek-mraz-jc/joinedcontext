@@ -1,0 +1,19 @@
+# One Garden per record of the IPR layer Sdílená data o zeleni – vegetační prvky – plocha whose objectid ends in 2, into the city space (T-5683).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: green-vegetation-areas-2
+  namespace: praha
+  title:
+    en: 'Shared green register: vegetation areas, part 3 of 10'
+    cs: Sdílená data o zeleni – vegetační prvky – plocha, část 3 z 10
+spec:
+  class: auto
+  # IPR republishes the green register every few weeks; one read a week keeps up.
+  period: 168h
+  schedule: '0 4 * * 6'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-green-vegetation-areas }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: Garden, mode: upsert }
+  quotas: { maxMemoryMb: 192, cpuMillicores: 100 }

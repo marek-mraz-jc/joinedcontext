@@ -1,0 +1,88 @@
+---
+image:
+  repository: docker.io/rustfs/rustfs
+  tag: ''
+  digest: ''
+  pullPolicy: IfNotPresent
+
+bootstrapImage:
+  repository: docker.io/amazon/aws-cli
+  tag: ''
+  digest: ''
+
+# The one bucket. Every key starts with the owning organization, so quota, audit and cascade
+# deletion work by prefix (PF-31) without a bucket per tenant.
+bucket: jc-artifacts
+region: us-east-1
+
+# The root credential of the store: the Secret the secrets component generates, with the same
+# two keys the CNPG backup credential uses.
+credentialsSecret: artifact-store-root
+accessKeyIdKey: ACCESS_KEY_ID
+secretAccessKeyKey: ACCESS_SECRET_KEY
+
+objectLock:
+  # Object lock is enabled at creation and can never be turned on later, so it is on for every
+  # bucket this chart creates (PF-33).
+  enabled: true
+  # A DEFAULT retention applies to the whole bucket, cached file downloads included, and they
+  # have to stay purgeable (Architecture/17 §2). Publishers therefore set COMPLIANCE retention
+  # per object; set this only for a store that holds published artifacts and nothing else.
+  defaultRetentionDays: 0
+
+# The server WASM Apps' bucket (ADR-N-044, AP-145, AP-150): components/, apps/<shard>/<id>/ and
+# apps/retired/<id>/<time>/, which expires. No object lock: an App's own files change.
+appsBucket:
+  enabled: false
+  name: apps
+  retiredPrefix: apps/retired/
+  retiredExpiryDays: 90
+
+# The Postgres backup bucket (OPS-09, OPS-10, T-5289): CNPG's base backups and WAL archive. No
+# object lock and no versioning: barman deletes what falls out of its retention. The Job makes a
+# user of its own for it, holding the key pair of `credentialsSecret`, whose policy reaches this
+# bucket and nothing else, so the database never holds the store's root credential.
+backupBucket:
+  enabled: false
+  name: postgres-backups
+  credentialsSecret: postgres-backup-artifact-store
+  # Further clusters archiving to the same bucket (T-5662), each under its own prefix with a user
+  # whose key reaches that prefix alone: [{prefix: apps-db, credentialsSecret: ...}]. The key
+  # above reaches the whole bucket, so it stays with the platform's own cluster.
+  prefixUsers: []
+
+fileCache:
+  # `filecache/` is the gateway's own cache of file downloads: 24 hours, then gone (PF-33).
+  prefix: filecache/
+  expiryDays: 1
+
+storage:
+  size: 10Gi
+  storageClass: ''
+
+service:
+  port: 9000
+
+console:
+  # The browser console is another way in, and every caller here is a machine.
+  enabled: false
+  port: 9001
+
+serviceAccount:
+  create: true
+  name: ''
+  automountServiceAccountToken: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+
+podSecurityContext: {}
+securityContext: {}
+
+serviceMesh:
+  enabled: false

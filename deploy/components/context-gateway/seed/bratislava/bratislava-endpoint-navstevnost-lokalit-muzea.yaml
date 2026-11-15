@@ -1,0 +1,44 @@
+# Visitors of the sites of the Bratislava City Museum: one public dataset of the hub (T-5274), item 5881348c4e7e4243b835f8a2a0dae7bb, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-navstevnost-lokalit-muzea
+  namespace: bratislava
+  title:
+    sk: Návštevnosť lokalít Múzea mesta Bratislava
+    en: Visitors of the sites of the Bratislava City Museum
+  description:
+    sk: 'Ukazovatele tabuľky „Návštevnosť lokalít Múzea mesta Bratislava“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Visitors of the sites of the Bratislava City Museum”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: jczlju6eqfs2ztz3j7aar22ir2cenelm
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-navstevnost-lokalit-muzea
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/5881348c4e7e4243b835f8a2a0dae7bb
+        title:
+          sk: Návštevnosť lokalít Múzea mesta Bratislava
+          en: Visitors of the sites of the Bratislava City Museum
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Návštevnosť lokalít Múzea mesta Bratislava. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Visitors of the sites of the Bratislava City Museum. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

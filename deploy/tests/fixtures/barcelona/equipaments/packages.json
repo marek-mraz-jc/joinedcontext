@@ -1,0 +1,98 @@
+{
+ "success": true,
+ "result": {
+  "count": 6,
+  "results": [
+   {
+    "name": "equipament-esports",
+    "resources": [
+     {
+      "id": "6409e71a-6c79-4d21-9c14-373dbd01f26d",
+      "format": "CSV",
+      "datastore_active": true
+     },
+     {
+      "id": "4d43b2c7-450a-4359-ba9c-933bd677911f",
+      "format": "JSON",
+      "datastore_active": false
+     }
+    ]
+   },
+   {
+    "name": "equipament-cultura-i-lleure",
+    "resources": [
+     {
+      "id": "f3721b17-bf9e-4bdd-853c-cb6200e1b442",
+      "format": "CSV",
+      "datastore_active": true
+     },
+     {
+      "id": "6a04b51f-9527-4e24-b7f3-3cc37a456c25",
+      "format": "JSON",
+      "datastore_active": false
+     }
+    ]
+   },
+   {
+    "name": "equipament-associacions",
+    "resources": [
+     {
+      "id": "796ee1c2-975a-4d68-8753-52df8c2fc304",
+      "format": "CSV",
+      "datastore_active": true
+     },
+     {
+      "id": "94ed8f0c-f682-46b8-b2a4-f78697b9aa96",
+      "format": "JSON",
+      "datastore_active": false
+     }
+    ]
+   },
+   {
+    "name": "equipament-sanitat",
+    "resources": [
+     {
+      "id": "2bf62aa3-63c8-4177-b57a-e32a8c7eb275",
+      "format": "CSV",
+      "datastore_active": true
+     },
+     {
+      "id": "a32e5f06-4f8c-43e5-a084-7e31d9f33540",
+      "format": "JSON",
+      "datastore_active": false
+     }
+    ]
+   },
+   {
+    "name": "equipament-administracio",
+    "resources": [
+     {
+      "id": "796a7ba1-a8c9-4b98-832b-4723136b0e82",
+      "format": "CSV",
+      "datastore_active": true
+     },
+     {
+      "id": "252feb69-48b7-4e66-b724-5844d427bf9e",
+      "format": "JSON",
+      "datastore_active": false
+     }
+    ]
+   },
+   {
+    "name": "equipament-educacio",
+    "resources": [
+     {
+      "id": "29d9ff10-6892-4f16-9012-d5c4997857e7",
+      "format": "CSV",
+      "datastore_active": true
+     },
+     {
+      "id": "d0471a29-821f-42aa-b631-19a76052bdff",
+      "format": "JSON",
+      "datastore_active": false
+     }
+    ]
+   }
+  ]
+ }
+}

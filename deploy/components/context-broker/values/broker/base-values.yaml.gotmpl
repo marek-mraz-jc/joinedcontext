@@ -1,0 +1,240 @@
+---
+{{- $global := .Values.global }}
+{{- $mesh := and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+{{- $gateway := dig "context-gateway" "gateway" dict .Values }}
+{{- $portal := dig "portal" "portal" dict .Values }}
+{{- /* The callers that may reach the broker port and speak for a person (T-4875): the gateway, which
+       verifies every token, and the Portal, which previews an Endpoint as its user. The same peers
+       as networkpolicies.yaml; the pipeline runner and every App go through the gateway. */}}
+{{- $callers := list }}
+{{- if dig "enabled" false $gateway }}
+{{- $callers = append $callers (dict "serviceAccount" "context-gateway" "namespace" $gateway.namespace) }}
+{{- end }}
+{{- if dig "enabled" false $portal }}
+{{- $callers = append $callers (dict "serviceAccount" "portal" "namespace" $portal.namespace) }}
+{{- end }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /q/ready and /q/health
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required
+# - [x] Named ports -> 9090 container mapped to 8080 service, metrics alone on 9464 (T-5095)
+# - [ ] Ingress with TLS -> not applicable, broker is cluster-internal only
+
+fullnameOverride: context-broker
+nameOverride: context-broker-broker
+
+{{- $images := index .Values.images "context-broker" "broker" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+containerPort: 9090
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 9090
+  name: http
+
+# /q/metrics on a listener of its own that serves nothing else (ANTARES_METRICS_PORT below,
+# T-5095): Prometheus is admitted to this port alone, never to the API port 9090.
+metrics:
+  enabled: true
+  port: 9464
+  name: metrics
+
+# One broker process per database (ANTARES_BUS=local, below): a surge would run a second matcher
+# beside the old one, and the old pod's writes keep a boot migration's ACCESS EXCLUSIVE lock out
+# until the startup probe gives up (dev 2026-10-19, migration 0011: three restarts in four
+# minutes). Recreate stops the old pod first; the gap is the boot time, about 47 s on dev (T-5311).
+updateStrategy: Recreate
+
+probes:
+  readiness:
+    path: /q/ready
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /q/health
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 10
+  # The broker migrates its database before it listens; 0015 rewrites the entities table, minutes on
+  # dev. Liveness waits up to an hour for the first /q/health (T-4852).
+  startup:
+    periodSeconds: 15
+    failureThreshold: 240
+
+envSecret:
+  PGPASSWORD:
+    secret: db-antares
+    key: password
+  # Subscription receiverInfo sealed at rest (T-5838, T-5839): 64 hex digits, read at boot. Never
+  # rotate it while rows are sealed under it: a sealed value read under another key is a 500.
+  ANTARES_SECRET_KEY:
+    secret: context-broker-secret-key
+    key: key
+
+# ponytail: no NATS on the cluster, so the broker runs its matcher in-process. Antares
+# refuses that combination with a postgres store unless the deployment is a single
+# process, because two matchers on one database fire every notification twice. One
+# replica is the ceiling until a NATS component lands and ANTARES_BUS becomes "nats".
+# Kubernetes expands $(VAR) references in container env definitions when the referenced variable appears earlier in the list.
+env:
+  # The Prometheus recorder and /q/metrics with it: Antares constructs neither by default, so
+  # without this the ServiceMonitor of components/monitoring scrapes a 404 (OPS-16).
+  ANTARES_TELEMETRY: "1"
+  # The API port answers /q/metrics 404 with this set; the metrics port answers nothing else.
+  ANTARES_METRICS_PORT: "9464"
+  ANTARES_STORE: "postgres"
+  ANTARES_BUS: "local"
+  ANTARES_ALLOW_SHARED_LOCAL: "1"
+  ANTARES_REQUIRE_RLS: "1"
+  ANTARES_MAX_CONNECTIONS: "512"
+  ANTARES_DATABASE_URL: "postgresql://antares:$(PGPASSWORD)@postgres-cluster-rw.{{ .Values.postgres.cluster.namespace }}.svc.cluster.local:5432/antares"
+  # The jc build's surfaces (T-3642): the endpoint views, MCP, the engine's access document, the
+  # view WebSocket and OGC API Features (T-3922; the gateway forwards /api/endpoint/{slug}/ogc/
+  # features to it since platform T-3752), each under /x/views/{view}/ and reached through the
+  # gateway hop alone, never an edge route; and the view's LinkML schema (T-3804, in the image
+  # since Antares T-3803), which the gateway serves as /api/endpoint/{slug}/schema/... (T-3645).
+  # The Portal PUTs the schema to /q/schemas/{tenant} (T-3628), which takes nothing while
+  # ANTARES_SCHEMA_MAX_BYTES is unset.
+  # `ws-views` mounts /x/views/{view}/ws, the one the gateway relays an Endpoint's /ws to; `ws`
+  # alone serves only the broker-wide /x/ws, and every Endpoint WebSocket answered 404 (T-4048).
+  # `odata` mounts /x/views/{view}/odata/v4, the OData service the gateway forwards an Endpoint's
+  # /odata/v4 to; without it Power BI and Excel got 404 on the service root and $metadata.
+  # `sta` mounts /x/views/{view}/sta/v1.1, the SensorThings surface (Antares T-4462, built in `full`)
+  # the gateway's STA becomes a forward to (T-4463).
+  # `ical` mounts /x/views/{view}/ical/v1/events.ics, the iCalendar feed of a view's Events (Antares
+  # T-4487, in the jc image's features since dev-3) that the gateway forwards an Endpoint's /ical/v1
+  # to; without it every calendar URL answered 404 (T-4895).
+  # `feed` mounts /x/views/{view}/feed/v1/{name}/{atom.xml|rss.xml|feed.json}, the Atom, RSS and
+  # JSON Feed outputs a view's representations.feed lists (Antares T-5202, off for a view with
+  # none). The broker exits on a surface its image lacks: this merges after the broker pin whose
+  # image-jc FEATURES carry `feed`.
+  ANTARES_API_SURFACES: "admin,views,mcp,access,ws,ws-views,ogc,linkml,odata,sta,ical,feed"
+  # The MCP surface answers the Host names listed here alone (rmcp's DNS-rebinding guard, MC8);
+  # unset it answers loopback only, and the gateway's hop (JC_GATEWAY_BROKER_URL, T-3647) got 403.
+  ANTARES_MCP_ALLOWED_HOSTS: "context-broker.{{ (index .Values "context-broker" "broker" "namespace") }}.svc.cluster.local:8080"
+  # The view WebSocket (T-3905, ADR-0026), bounded for the one 16 GB node: at most 200 sockets,
+  # 50 per Tenant, 16 Subscriptions and 128 queued notifications each, so a full house holds
+  # about 200 x 128 notifications (~100 MiB at 4 KiB each) where the defaults (10 000 sockets,
+  # queue 256) would hold gigabytes. Browsers reach it through the gateway alone: no Origin.
+  ANTARES_WS_MAX_CONNECTIONS: "200"
+  ANTARES_WS_MAX_CONNECTIONS_PER_TENANT: "50"
+  ANTARES_WS_MAX_SUBSCRIPTIONS: "16"
+  ANTARES_WS_QUEUE: "128"
+  # A socket's lifetime here bounds only anonymous callers on public Endpoints (24 h, platform
+  # T-4132): the gateway ends a token caller's socket at the token's 300 s itself.
+  ANTARES_WS_MAX_LIFETIME_SECS: "86400"
+  ANTARES_SCHEMA_MAX_BYTES: "1048576"
+  # The platform's history retention (owner 2026-10-18, T-4414, DM-97): an attribute instance of an
+  # Entity no historyRetention of its own, no type rule and no `*` rule of its space covers is
+  # deleted after 28 days. A type a space keeps `forever` is untouched; without this the history
+  # grew ~30 GB a week and was never deleted. ANTARES_TEMPORAL_RETENTION_DAYS stays unset: it
+  # drops whole weeks and would cut a type that keeps longer.
+  ANTARES_RETENTION_HISTORY_DEFAULT: "P28D"
+  # History is opt-in (T-5056, DM-132): a type records only when its space, type rule or Entity gives
+  # it a history duration, observed by default; spaces without retention keep none.
+  ANTARES_TEMPORAL_RECORD: "ruled"
+  # A write of an instance older than the current one goes to history only (T-5326, ADR-N-054 2.1,
+  # DM-106): the Portal's "add an old value" and a correction of a past measurement rest on it. Off,
+  # such a write would replace the current value. The ETSI suites assume off and run on their own broker.
+  ANTARES_HISTORY_BACKFILL: "on"
+  # Batch upserts commit asynchronously (T-5050, option A of T-5046): a Postgres crash can lose the
+  # last few hundred ms of batch writes, which the next run of a pipeline writes again; single writes stay durable.
+  ANTARES_PG_BATCH_ASYNC_COMMIT: "true"
+  # The broker's PostgreSQL pool (default 20). A transaction cancelled under load leaves its slot
+  # held (dev 2026-10-19: 18 of 20 slots idle on ROLLBACK for hours, every read 503 "database
+  # overloaded"); 40 stretches the time to exhaustion until Antares returns them. PostgreSQL's
+  # max_connections is 100, about 26 used by the other databases; the
+  # development profile's 2Gi Postgres holds 50 and a pool of 22 (T-4933).
+  ANTARES_PG_POOL: "40"
+  # The browser Origin the gateway forwards to the MCP surface (MC8, T-3814): rmcp refuses every
+  # request whose Origin is not listed, so unset the Portal's MCP page got 403. The Portal and
+  # the apex alone, each on 443 (an entry without a port matching any port is deprecated in rmcp).
+  ANTARES_MCP_ALLOWED_ORIGINS: "https://portal.{{ required "global.domain" $global.domain }}:443,https://{{ $global.domain }}:443"
+  # The Portal page where the person decides a broker MCP write (Antares T-5816, Portal T-5829):
+  # set, a write tool asks by URL and runs only on the decision the page recorded through
+  # PUT /q/mcp-confirmations/{id}; unset, the AI client's own accept confirmed its own write.
+  ANTARES_MCP_CONFIRM_URL: "https://portal.{{ $global.domain }}/mcp-confirmations/{id}"
+  # The verified caller the gateway forwards (platform T-3641); `x-jc-did` a data-space
+  # participant, which the gateway strips from every client request (platform T-3800, T-3816).
+  # The joinedcontext engine decides every request by them and the Portal's rule documents
+  # (T-3768): a request naming nobody is the cluster's own and is refused outside the Context
+  # Source clauses; the gateway's own hops speak as its client (T-3767). `x-jc-read-only` marks a
+  # read-only connector's token, refused every write (platform T-5955, S-49). `x-jc-member: true`
+  # marks a verified member of the Endpoint's Organization, what an `organization` assignee
+  # matches (ADR-N-067 2.3, Antares T-6419); a broker before T-6419 ignores it.
+  ANTARES_POLICY: "joinedcontext"
+  ANTARES_POLICY_SUBJECT_HEADERS: "x-jc-subject,x-jc-groups,x-jc-roles,x-jc-client,x-jc-restricted,x-jc-did,x-jc-read-only,x-jc-member"
+  {{- if and $mesh (dig "enabled" false $gateway) }}
+  # The gateway's mesh identity (Linkerd sets l5d-client-id from its mTLS certificate): the only
+  # caller whose JC-Provenance-* and X-Request-Id headers the broker stores in history
+  # (ADR-N-054 2.3, T-5361). Unset, every write was recorded as channel api with no actor.
+  ANTARES_PROVENANCE_FROM: "context-gateway.{{ $gateway.namespace }}.serviceaccount.identity.linkerd.cluster.local"
+  {{- end }}
+  {{- if and $mesh $callers }}
+  # The mesh identities whose subject headers above the broker believes (Antares T-6432), the
+  # same list as the Server below. From any other caller, the broker's own included, they are
+  # dropped and the request names nobody. Never blank: a set key naming no one is fatal at boot.
+  {{- $subjectFrom := list }}
+  {{- range $callers }}
+  {{- $subjectFrom = append $subjectFrom (printf "%s.%s.serviceaccount.identity.linkerd.cluster.local" .serviceAccount .namespace) }}
+  {{- end }}
+  ANTARES_POLICY_SUBJECT_FROM: {{ join "," $subjectFrom | quote }}
+  {{- end }}
+  ANTARES_ADMIN_TOKEN_FILE: /var/run/secrets/antares/admin/token
+  # A scraper cannot send the admin secret; the metrics carry no tenant data. Only the metrics
+  # port is open to Prometheus (networkpolicies.yaml), and that port serves no API path (T-5095).
+  ANTARES_ADMIN_METRICS: "open"
+  # Broker-initiated HTTP and MQTT reach no private address but the peers named here (T-3909,
+  # Antares T-3908): the broker's own Service, which every federation registration the
+  # reconciler writes names as its endpoint (portal src/reconciler/registrations.rs,
+  # `members_of`). Loopback and instance metadata stay refused whatever the list says; an
+  # unlisted private destination is refused at delivery.
+  ANTARES_EGRESS_ALLOW_PRIVATE: "false"
+  ANTARES_EGRESS_PRIVATE_HOSTS: "context-broker.{{ (index .Values "context-broker" "broker" "namespace") }}.svc.cluster.local"
+
+extraVolumes:
+  - name: admin-token
+    secret:
+      secretName: context-broker-admin-token
+      items:
+        - key: token
+          path: token
+
+extraVolumeMounts:
+  - name: admin-token
+    mountPath: /var/run/secrets/antares/admin
+    readOnly: true
+
+# The broker image runs as 65532; one key, merged, since a repeated YAML key is refused by
+# helmfile write-values (T-4956).
+podSecurityContext:
+  {{ merge (dict "runAsUser" 65532) .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ $mesh }}
+
+# The broker port answers the gateway and the Portal alone (T-4875). The NetworkPolicy opens the
+# proxy port (4143) to them, but with the mesh on any meshed pod's connection lands on that proxy;
+# this Server makes the proxy refuse every other identity. Probes stay authorized (no HTTPRoute).
+# The Server covers 9090 alone: a Prometheus scrape reaches /q/metrics on 9464 (T-5095).
+# The broker's own identity is admitted too: a federation registration the reconciler writes names
+# the broker's own Service, and a forward carries no subject header (Antares federation::forward).
+meshAuthorization:
+  port: 9090
+  includeSelf: true
+  clients:
+    {{- $callers | toYaml | nindent 4 }}

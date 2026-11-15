@@ -1,0 +1,38 @@
+# One Smart Data Model type per catalogue dataset (T-4344): PublicOrganization of the space
+# bbsk-registre, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bbsk-organizacie
+  namespace: bbsk
+  title:
+    sk: Organizácie kraja — Banskobystrický kraj
+    en: Regional organisations — Banská Bystrica Region
+  description:
+    sk: 'Organizácie v zriaďovateľskej pôsobnosti kraja. Zdroj: Banskobystrický samosprávny kraj, CC BY-SA 4.0.'
+    en: 'The organisations the region founded. Source: Banská Bystrica Self-Governing Region, CC BY-SA 4.0.'
+spec:
+  contextSpaceRef: bbsk-registre
+  slug: nkojudgn32ub5upzjuu74xm52svhtwpy
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:organizacie-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bbsk }
+      license: cc-by-sa
+  catalog:
+    publisher:
+      name: { sk: Banskobystrický samosprávny kraj, en: Banská Bystrica Self-Governing Region }
+      uri: https://www.bbsk.sk/
+    license: CC_BYSA_4_0
+    attribution:
+      sk: 'Zdroj: Banskobystrický samosprávny kraj, https://opendata.bbsk.sk/, CC BY-SA 4.0'
+      en: 'Source: Banská Bystrica Self-Governing Region, https://opendata.bbsk.sk/, CC BY-SA 4.0'
+    themes: [GOVE]
+    keywords:
+      sk: [organizácie kraja, verejná správa]
+      en: [regional organisations, public administration]
+    spatial: [SK032]
+    frequency: WEEKLY
+    pipelineRef: { kind: Pipeline, name: organizacie }

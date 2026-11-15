@@ -1,0 +1,285 @@
+---
+postgres:
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    # CoreDNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Streaming replication and the join/initdb jobs, which are the same pods from the
+    # other side of the ingress rule below.
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # The in-cluster artifact store, where an environment archives to it (T-5289).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Two destinations that are not pods and cannot be written as a selector.
+    #
+    # The instance manager runs a controller inside every instance pod and watches the
+    # Cluster resource, so each instance talks to the kube-apiserver. `kubernetes.default`
+    # is a ClusterIP that kube-proxy DNATs to the node's address before this filter sees the
+    # packet, so the rule has to name the port the API server really listens on — 6443 on
+    # k3s and kubeadm, 443 on most managed clusters — and cannot narrow the address.
+    #
+    # 443 also carries WAL archiving: with `backup.barmanObjectStore` set (production), the
+    # instances push every segment to the object store over HTTPS. Without this the archiver
+    # fails silently, WAL piles up on the volume and the first anyone hears of it is the
+    # disk filling.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+  ingress:
+    # CloudNativePG operator (shared operator namespace or instance namespace).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+          componentNamespace: postgres.operator
+    # Join jobs and the other cluster pods.
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/jobRole: join
+          componentNamespace: postgres
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: database
+              app.kubernetes.io/name: postgresql
+          componentNamespace: postgres
+        - podSelector:
+            matchLabels:
+              joinedcontext.com/psql-client: "true"
+              app.kubernetes.io/name: databases
+          componentNamespace: postgres
+    # Keycloak
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+              app.kubernetes.io/name: keycloakx
+          componentNamespace: keycloak
+    # The Prometheus that scrapes the instances' exporter on :9187 (cluster.monitoring.enabled, T-5125),
+    # from its own namespace only; no peer is rendered while monitoring.prometheusNamespace is empty.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 9187
+    # Platform components (Portal API, Context Gateway, jcctl) are added by their own
+    # components/<name>/networkpolicies.yaml when those components land.
+
+# Admission webhook: the kube-apiserver calls the CloudNativePG operator webhook on :9443
+# from a cluster-dependent source IP, so the port is open to any source; podSelector + port
+# keep it scoped to the operator's webhook endpoint.
+postgres-operator-webhook:
+  deployLayer: operators
+  componentNamespace: postgres.operator
+  podSelector:
+    app.kubernetes.io/name: cloudnative-pg
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 9443
+
+# The operator side. It reconciles Cluster resources against the kube-apiserver and polls
+# every instance's manager for status, so it needs the API server and the instance pods —
+# and, like every policy pinned to the shared operators namespace, it is created once per
+# cluster rather than once per instance.
+postgres-operator-egress:
+  deployLayer: operators
+  componentNamespace: postgres.operator
+  podSelector:
+    app.kubernetes.io/name: cloudnative-pg
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+        # The restore drill's copy (T-0046), managed like the cluster itself.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster-drill
+          componentNamespace: postgres
+      ports:
+        # The instance manager's status API, and postgres itself for the checks that need
+        # a connection rather than an answer from the manager.
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 5432
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+
+# The role-setup hook (a Job per `additionalRoles` entry, so it exists only in environments
+# that declare one). It connects to the -rw service with psql and exits; postgres already
+# allows it in, and without this it could not resolve the service name to try.
+database-role-setup:
+  podSelector:
+    joinedcontext.com/psql-client: "true"
+    app.kubernetes.io/name: databases
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+
+# The restore drill's throwaway copy (T-0046), `postgres-cluster-drill`: one instance that
+# reads the archive over HTTPS, talks to the API server like any instance manager, and is
+# reached by the operator alone. Nothing else connects to it.
+postgres-drill:
+  podSelector:
+    cnpg.io/cluster: postgres-cluster-drill
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The in-cluster artifact store, as in `postgres` above.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 9000
+    # The object store and the API server, as in `postgres` above.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+          componentNamespace: postgres.operator
+
+# The drill's job only talks to the API server: it counts rows through `kubectl exec`, never
+# over the database port. Its token may exec into the primary, so it reaches no internet host:
+# the API server's addresses on 6443 alone, the port the policy sees after the DNAT (F-R2DEP3-009).
+database-dr-drill:
+  podSelector:
+    app.kubernetes.io/component: database-dr-drill
+    app.kubernetes.io/name: databases
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443

@@ -1,0 +1,191 @@
+---
+{{- $thisRunner := index .Values "pipeline-runner" "runner" -}}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /ready and /ping
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required
+# - [x] Named ports -> 4195, the single port Bento serves everything on
+# - [ ] Ingress with TLS -> not applicable, internal pipeline runner
+
+fullnameOverride: pipeline-runner
+nameOverride: pipeline-runner-runner
+
+{{- $images := index .Values.images "pipeline-runner" "runner" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+command:
+  # The image's entrypoint is /bento and the root directory is not on PATH, so a bare
+  # `bento` here is "executable file not found in $PATH".
+  - /bento
+args:
+  # -w and -r are global flags, not `streams` ones, and they must come before the subcommand.
+  # -w reloads a changed stream file in place, which is what PL-09 asks for. -r loads the
+  # shared resources (caches, rate limits): streams mode rejects a `*_resources` block inside
+  # a stream file. The streams are named one by one rather than as the directory: a ConfigMap
+  # volume keeps a `..<timestamp>` copy next to the files, and the directory walk would run
+  # every stream twice. There is no shell here to expand a glob.
+  - -w
+  # Timings as histogram buckets, not per-label summaries: the summaries' quantile streams held
+  # 45 % of the runner's heap on dev (T-3537); the Portal reads p99 from the buckets (T-3625).
+  - --set
+  - metrics.prometheus.use_histogram_timing=true
+  # Per stream only the series the Portal reads (joinedcontext-portal src/api/pipelines.rs `family`:
+  # counts, errors, backlog, output latency, the writes' latency). Bento keeps a deleted stream's
+  # series until it restarts, about 900 lines per seeded pipeline, so every scheduled run's name
+  # stayed in memory: 2.7-10.6 MB each, 2.64 GiB on prod (T-5282). Kept: about 80 lines (T-5285,
+  # scripts/runner-rss-rig.py measures it). `--set` splits on commas: the lists are regexes.
+  - --set
+  - 'metrics.mapping=root = if @stream != null && !this.re_match("^(input_received|output_sent|output_error|processor_error|buffer_backlog|output_latency_ns)$") && !(this == "processor_latency_ns" && @label.or("").re_match("^(.*_)?write_[0-9]+$")) { deleted() }'
+  - -r
+  - /streams/resources.yaml
+  - streams
+{{- range $name, $_ := $thisRunner.streams | default dict }}
+  - /streams/{{ $name }}
+{{- end }}
+
+# The runner's pods by address: the gateway admits the runner's tokenless MQTT CONNECT only
+# from what this name resolves to (JC_GATEWAY_MQTT_RUNNER_HOST, PL-76, T-4004).
+headlessService:
+  name: pipeline-runner-pods
+
+configMap:
+  enabled: true
+  name: pipeline-runner-{{ required "pipeline-runner.runner.project names the project whose streams this runner carries; only the development profile falls back to the demo city (T-1720, CC-73)" $thisRunner.project }}-streams
+  mountPath: /streams
+  data:
+    {{- $thisRunner.streams | default dict | toYaml | nindent 4 }}
+
+# The files volume a `csv`, `file`, `file_tail` or `parquet` DataSource reads from (PL-50,
+# Architecture/08 §6): a manifest names paths under its project's folder /data/<project>/
+# (PL-50, T-5337), a file gets there with
+# `kubectl cp <file> -n <ns> <runner pod>:/data/<project>/` today, the Portal's upload later.
+persistence:
+  enabled: true
+  size: 1Gi
+  mountPath: /data
+  storageClass: {{ $global.storage.storageClass.rwo | quote }}
+
+# Every call the runner makes on 443 is its own TLS to a host outside the mesh: the feeds
+# and the realm's token endpoint on the cluster's public host, the hop the Portal's values
+# describe (the proxy builds an HTTP balancer for it and resets the connection). The port
+# bypasses the proxy the way the Portal's does; the gateway on 8080 stays meshed.
+podAnnotations:
+  config.linkerd.io/skip-outbound-ports: "443"
+
+containerPort: 4195
+
+# A DataSource with `mqtt.brokerRef` reads tcp://mqtt-{project}-{name}.${JC_MQTT_NAMESPACE}...
+# (PL-76): the namespace of the brokers, which the configuration repository cannot know.
+env:
+  JC_MQTT_NAMESPACE: {{ dig "mqtt-brokers" "brokers" "namespace" "" .Values | quote }}
+
+# What a Pipeline's `secretRef`s resolve to (T-0927, PL-15). The Portal's reconciler writes
+# the Secret `pipeline-secrets` into this namespace on every sync and rolls this Deployment
+# by its `joinedcontext.com/pipeline-secrets` annotation when a value changes, so nothing
+# here names a key: a stream reads `${MQTT_PASSWORD}` and the environment carries it.
+# `optional` keeps the runner starting before the first sync has written the Secret, and in
+# an environment where no pipeline asks for a credential at all.
+envFrom:
+  - secretRef:
+      name: pipeline-secrets
+      optional: true
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 4195
+  targetPort: 4195
+  name: http
+
+# Bento serves /metrics, /ready and /ping on the same 4195 port as its stream API, so the
+# workload's separate metrics port would only duplicate the container port entry.
+metrics:
+  enabled: false
+
+probes:
+  # Readiness is the process, not the sources: Bento's /ready answers 503 while any stream's
+  # input is disconnected (an upstream MQTT broker resetting connections took the whole runner
+  # off its Service for hours, and with it the metrics every pipeline's Live status reads). One
+  # stream's source is that stream's health, shown per pipeline in the Portal; /ping says the
+  # runner itself is up.
+  readiness:
+    path: /ping
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  # Liveness is a stop that ends (T-5370). A step that never returns (a recursive jq def, a
+  # range over millions) holds a core, and Bento cannot free it: DELETE /streams/{id} hangs and
+  # leaves the stream listed `"active":false` while /ping and every other stream go on
+  # (measured on 1.22.0, 2026-10-25). The Portal deletes a run past its cap and stops starting
+  # it; a stream still listed stopped ten minutes later fails this probe, and the restart frees
+  # the core. A stream is told by its id and its uptime: Bento freezes `uptime` when a stream
+  # stops and starts it again on the next run under the same id, so two runs of one frequent
+  # pipeline are two streams, while a stop that never ends keeps its uptime. The ten minutes
+  # are the Portal's slack: it deletes a finished run on its queue tick, one tick after another,
+  # and under load a finished run stayed listed past two probes a minute apart, which
+  # restarted every stream on the runner (T-6140: dev every ~40 min, every dev-smoke red). A
+  # held stream costs a core for those minutes, a restart costs every project's runs. The
+  # probe prints what it held, so the kubelet's event names the stream; a streams API that
+  # does not answer fails it too.
+  liveness:
+    exec:
+      - sh
+      - -c
+      - >-
+        l=$(wget -qO- -T 5 http://127.0.0.1:4195/streams) || { echo "the streams API did not answer"; exit 1; };
+        touch /tmp/stopped; : > /tmp/stopped.now;
+        echo "$l" | grep -o '"[^"]*":{"active":false,"uptime":[^,}]*' |
+        awk -v now="$(date +%s)" -v keep=600 'BEGIN { while ((getline line < "/tmp/stopped") > 0) { if (split(line, f, "\t") == 2) first[f[1]] = f[2] } }
+        { s = ($0 in first) ? first[$0] : now; print $0 "\t" s > "/tmp/stopped.now";
+        if (now - s >= keep) { split($0, p, "\""); u = $0; sub(/.*:/, "", u); held = held " " p[2] " (uptime " u " s, stopped " (now - s) " s)" } }
+        END { if (held != "") { print "streams stopped " keep " s or more and not deleted:" held; exit 1 } }';
+        r=$?; mv /tmp/stopped.now /tmp/stopped; exit $r
+    periodSeconds: 60
+    timeoutSeconds: 10
+    failureThreshold: 2
+    initialDelaySeconds: 10
+
+# Bento is Go: without a soft limit its heap grows to the kernel's hard one, and one OOMKill
+# stops every project's streams at once (T-3537, 3 restarts at 1536Mi with 97 streams). The
+# GC works harder from 75 % of whatever limit the environment sets: under dev-smoke's 80 % line,
+# so the runtime defends the line instead of letting a normal heap cross it (T-4036; at 85 %
+# the runner sawed between 875 and 1342 Mi of 1536 Mi). 65 since T-5797: at 75 % of dev's 3Gi
+# (2304 Mi) the 6-hour working-set floor climbed for two days toward that line (481 to 2197 Mi)
+# and peaked at 2623 Mi, 319 Mi of stacks, buffers and page cache above it and past smoke's
+# 2458 Mi. scripts/runner-rss-rig.py --runs shows no growth per run in Bento 1.22.0 (-0.015 MB
+# over 500 runs of the seeds' input kinds) and an RSS of about twice the heap in use: the floor
+# is what GOGC lets the heap keep, up to this line. 65 % is 1997 Mi, plus those 319 Mi under 2458.
+goMemLimitPercent: 65
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+
+# The streams API holds the pipeline secrets in its environment (PL-07): only the Portal, which
+# puts, deletes and scrapes the streams, may call 4195 through the mesh (T-2568). The port the
+# NetworkPolicy opens for the proxy (4143) admits any meshed pod; this is what narrows it.
+meshAuthorization:
+  port: 4195
+  clients:
+    - serviceAccount: portal
+      namespace: {{ .Values.portal.portal.namespace }}

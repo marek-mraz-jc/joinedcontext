@@ -1,0 +1,6 @@
+apiVersion: v2
+name: brokers
+description: The MQTT edge brokers of the projects, RMQTT as published, one per MqttBroker (ADR-N-048)
+type: application
+version: 0.1.0
+appVersion: '0.24.0'

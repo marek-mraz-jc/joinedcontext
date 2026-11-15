@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: uniza-read
+  namespace: zilina
+  title: { sk: Verejné čítanie prác univerzity, en: "Public read: the university's works" }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-uniza }
+  assigner: did:web:zilina.sk
+  assignee: { kind: role, id: public }
+  # Read only. Only works that carry an open licence of their own enter the space, and none carries an author.
+  # Discovery beside the reads (T-4258, EP-116): which types and attributes the Endpoint holds,
+  # narrowed to this grant (EP-26), so an anonymous MCP client finds them before it queries.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Article

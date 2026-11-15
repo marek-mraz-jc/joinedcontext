@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-stromy
+  namespace: praha
+  title: { cs: 'Veřejné čtení: stromy a stromořadí z geoportálu IPR' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-stromy, and only the
+  # trees of the green register layers (green-) (T-5425).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Tree
+          idPattern: ^urn:ngsi-ld:Tree:[a-z0-9.-]+:praha-mesto:green-[a-z-]+-[0-9a-f-]{36}$

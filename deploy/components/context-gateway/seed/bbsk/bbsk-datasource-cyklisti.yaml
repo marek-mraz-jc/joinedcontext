@@ -1,0 +1,19 @@
+# The region's bicycle counters (Ecovisio, layer "Scitace_new", table eco-counter): one row per hour since 2022-01, one
+# text column per counter. The layer cannot sum a text column, so this asks only which months it holds (rows, first and
+# last day per Rok + Mesiac) and the pipeline reads each month on its own (T-5930). Banskobystrický samosprávny kraj,
+# CC BY-SA 4.0, no key.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bbsk-scitace-cyklistov
+  namespace: bbsk
+  title:
+    sk: Cyklosčítače kraja, hodinové počty (Ecovisio)
+    en: The region's bicycle counters, hourly counts (Ecovisio)
+spec:
+  type: http
+  http:
+    url: https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Scitace_new/FeatureServer/0/query?where=1%3D1&groupByFieldsForStatistics=Rok%2CMesiac&outStatistics=%5B%7B%22statisticType%22%3A%22count%22%2C%22onStatisticField%22%3A%22FID%22%2C%22outStatisticFieldName%22%3A%22hodiny%22%7D%2C%7B%22statisticType%22%3A%22min%22%2C%22onStatisticField%22%3A%22D%C3%A1tum%22%2C%22outStatisticFieldName%22%3A%22od%22%7D%2C%7B%22statisticType%22%3A%22max%22%2C%22onStatisticField%22%3A%22D%C3%A1tum%22%2C%22outStatisticFieldName%22%3A%22do%22%7D%5D&f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

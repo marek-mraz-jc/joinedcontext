@@ -1,0 +1,130 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: justify-api-token-access
+  annotations:
+    # Evaluate the live Pod only: patching the pod template of a Deployment would
+    # rewrite an object Helm owns, and every sync would then see drift.
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: API Token Access Must Be Justified
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      A mounted service account token turns one compromised container into a
+      Kubernetes API client (BSI TR-03187 AUT-3). Most workloads never call the
+      API: they read their config from files and their peers from DNS. This
+      policy makes "no token" the default for every Pod in the namespaces this
+      deployment owns, and keeps the exceptions visible. A Pod that genuinely
+      needs the API - a controller, or an instance manager watching its own
+      custom resource - declares why in the
+      security.joinedcontext.com/api-access-reason annotation and keeps its
+      token; anything else that asks for one explicitly is refused. Upstream
+      charts that expose no automountServiceAccountToken field are why this is
+      a mutation and not only a rule: the field is set on the Pod on its way in.
+spec:
+  background: false
+  rules:
+    # The API server's ServiceAccount admission plugin runs before this webhook: a Pod that
+    # left the field unset arrives with the token already mounted (volume kube-api-access-*,
+    # mounted in every container), and setting the field below removes none of it. So the
+    # injected volume and its mounts go too, or the Pod keeps a token the field says it lacks
+    # and the projected-token check below refuses it (ci-full 41294209744: no apisix pod).
+    - name: drop-injected-api-token
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE]
+              namespaces: KYVERNO_NAMESPACES
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."security.joinedcontext.com/api-access-reason"
+              || '''' }}'
+            operator: Equals
+            value: ''
+          # Only where the plugin injected it: a Pod that asked for a token (true) is refused below.
+          - key: '{{ to_string(request.object.spec.automountServiceAccountToken) }}'
+            operator: Equals
+            value: 'null'
+      mutate:
+        foreach:
+          - list: request.object.spec.volumes[?starts_with(name, 'kube-api-access-')]
+            patchStrategicMerge:
+              spec:
+                volumes:
+                  - name: '{{ element.name }}'
+                    $patch: delete
+          - list: request.object.spec.containers
+            patchStrategicMerge:
+              spec:
+                containers:
+                  - name: '{{ element.name }}'
+                    volumeMounts:
+                      - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+                        $patch: delete
+          - list: request.object.spec.initContainers || `[]`
+            patchStrategicMerge:
+              spec:
+                initContainers:
+                  - name: '{{ element.name }}'
+                    volumeMounts:
+                      - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+                        $patch: delete
+
+    - name: default-api-token-off
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE]
+              namespaces: KYVERNO_NAMESPACES
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."security.joinedcontext.com/api-access-reason"
+              || '''' }}'
+            operator: Equals
+            value: ''
+      mutate:
+        patchStrategicMerge:
+          spec:
+            # add-if-absent: a Pod that asks for a token explicitly is left as it is,
+            # so the rule below can refuse it instead of the mutation hiding it.
+            +(automountServiceAccountToken): false
+
+    - name: api-token-needs-a-reason
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE, UPDATE]
+              namespaces: KYVERNO_NAMESPACES
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."security.joinedcontext.com/api-access-reason"
+              || '''' }}'
+            operator: Equals
+            value: ''
+      validate:
+        failureAction: KYVERNO_FAILURE_ACTION
+        message: >-
+          Pod mounts a Kubernetes API token without a justification. Set
+          spec.automountServiceAccountToken to false and project no
+          serviceAccountToken without an audience, or explain why this
+          workload must reach the API in the annotation
+          security.joinedcontext.com/api-access-reason.
+        deny:
+          conditions:
+            any:
+              - key: '{{ to_string(request.object.spec.automountServiceAccountToken) }}'
+                operator: NotEquals
+                value: 'false'
+              # The same token mounted by hand: a projected serviceAccountToken with no
+              # audience is the API server's own. A token bound to another audience (the
+              # realm's) is refused by the API server and needs no reason.
+              # ponytail: an audience naming the API server itself is not caught; list the
+              # cluster's API audiences here if a chart ever needs one.
+              - key: '{{ length((request.object.spec.volumes || `[]`)[].projected.sources[] | [?serviceAccountToken && !(serviceAccountToken.audience)]) }}'
+                operator: GreaterThan
+                value: 0

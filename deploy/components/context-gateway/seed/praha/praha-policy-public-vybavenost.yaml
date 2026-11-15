@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-vybavenost
+  namespace: praha
+  title: { cs: 'Veřejné čtení: občanská vybavenost a oázy chladu z geoportálu IPR' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-vybavenost, and only
+  # the IPR amenity layers (geo-): the other IPR and ROPID places stay with praha-mista (T-5269).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: PointOfInterest
+          idPattern: ^urn:ngsi-ld:PointOfInterest:[a-z0-9.-]+:praha-mesto:geo-[a-z-]+-[0-9a-f-]{36}$

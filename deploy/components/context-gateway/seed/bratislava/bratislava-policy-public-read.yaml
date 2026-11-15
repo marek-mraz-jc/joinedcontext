@@ -1,0 +1,35 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-read
+  namespace: bratislava
+  title: { sk: Verejné čítanie, en: Public read }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  # Read only, the types of the space: open data under CC BY 4.0 (the bike stations CC0 1.0),
+  # nothing about a person.
+  # Discovery beside the reads (T-4258, EP-116), so an anonymous MCP client finds the types first.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # As far back as the space keeps it (T-4372).
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: AirQualityObserved
+        - type: TrafficFlowObserved
+        - type: CrowdFlowObserved
+        - type: BikeHireDockingStation

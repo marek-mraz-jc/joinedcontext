@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-parkovani
+  namespace: praha
+  title: { cs: 'Veřejné čtení: parkování na ulici a vyhrazená stání z geoportálu IPR' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-parkovani: the
+  # TSK street parking layers of the IPR geoportal (T-5424), each type only by its geo- ids.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: OnStreetParking
+          idPattern: ^urn:ngsi-ld:OnStreetParking:[a-z0-9.-]+:praha-mesto:geo-(zps-sections|ztp-bays|ztp-shared|ztp-plate|delivery|special)-[0-9a-z-]+$
+        - type: ParkingGroup
+          idPattern: ^urn:ngsi-ld:ParkingGroup:[a-z0-9.-]+:praha-mesto:geo-zps-segments-[0-9a-f-]{36}$

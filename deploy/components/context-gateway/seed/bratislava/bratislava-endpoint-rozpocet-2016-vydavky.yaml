@@ -1,0 +1,44 @@
+# Expenditure budget of Bratislava in 2016: one public dataset of the hub (T-5671, Research/bratislava-open-data.md row 618), item 3bc1d6f7e6c64fbbbcb7d1aaac37fa20, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-rozpocet-2016-vydavky
+  namespace: bratislava
+  title:
+    sk: Rozpočet Bratislavy v roku 2016 - výdavky
+    en: Expenditure budget of Bratislava in 2016
+  description:
+    sk: 'Ukazovatele tabuľky „Rozpočet Bratislavy v roku 2016 - výdavky“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Ukazovatele sú súčty a počty riadkov tabuľky, ktoré vypočíta portál. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Expenditure budget of Bratislava in 2016”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. The figures are counts and sums of the table rows, computed by the hub. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: g6wktzz3s2tv7wd7cr5vuo37hwxnpl7g
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-rozpocet-2016-vydavky
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ECON]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/3bc1d6f7e6c64fbbbcb7d1aaac37fa20
+        title:
+          sk: Rozpočet Bratislavy v roku 2016 - výdavky
+          en: Expenditure budget of Bratislava in 2016
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Rozpočet Bratislavy v roku 2016 - výdavky. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Expenditure budget of Bratislava in 2016. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

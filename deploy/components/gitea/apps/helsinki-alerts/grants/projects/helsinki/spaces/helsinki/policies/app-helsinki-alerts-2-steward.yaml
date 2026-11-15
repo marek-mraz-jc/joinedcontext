@@ -1,0 +1,41 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-helsinki-alerts-2-steward
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-helsinki-alerts/steward
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  information:
+  - entities:
+    - type: Alert
+    propertyNames:
+    - name
+    - description
+    - category
+    - subCategory
+    - address
+    - dateIssued
+    - validFrom
+    - validTo
+    - location
+    relationshipNames:
+    - name
+    - description
+    - category
+    - subCategory
+    - address
+    - dateIssued
+    - validFrom
+    - validTo
+    - location
+  operations:
+  - createEntity
+  - updateAttrs

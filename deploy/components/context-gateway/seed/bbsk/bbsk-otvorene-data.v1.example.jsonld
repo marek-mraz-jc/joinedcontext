@@ -1,0 +1,37 @@
+{
+  "dOW": "2026-01-01T00:00:00Z",
+  "dataProvider": "dataProvider",
+  "fACC": "fACC",
+  "fLAT": "fLAT",
+  "fLON": "fLON",
+  "iDN2": 0,
+  "iDN3": 0,
+  "iDN4": 0,
+  "id": "urn:ngsi-ld:AdministrativeArea:joinedcontext.com:example:1",
+  "isPartOf": "isPartOf",
+  "lAU1": "lAU1",
+  "lAU1CODE": "lAU1CODE",
+  "lAU2": "lAU2",
+  "lAU2CODE": "lAU2CODE",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "nM2": "nM2",
+  "nM3": "nM3",
+  "nUTS1": "nUTS1",
+  "nUTS1CODE": "nUTS1CODE",
+  "nUTS2": "nUTS2",
+  "nUTS2CODE": "nUTS2CODE",
+  "nUTS3": "nUTS3",
+  "nUTS3CODE": "nUTS3CODE",
+  "name": "name",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "source": "source",
+  "typObce": "typObce",
+  "type": "AdministrativeArea",
+  "vYMERA": 0.0
+}

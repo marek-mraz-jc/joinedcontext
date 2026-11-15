@@ -1,0 +1,11 @@
+---
+portal:
+  name: 'portal'
+  embedded: true
+  user: 'portal'
+  secret:
+    name: 'db-portal'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432

@@ -1,0 +1,370 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "geometry": {
+    "coordinates": [
+     14.497767187186914,
+     50.1074693520369
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "id": "mr_parkit-a1a376da-9369-49ba-9bb2-207d3165e249",
+    "primary_source": "mr_parkit",
+    "primary_source_id": "a1a376da-9369-49ba-9bb2-207d3165e249",
+    "name": "Parking Rokytka - O2 arena - Piskáčkových 1024/3",
+    "valid_from": null,
+    "centroid": {
+     "type": "Point",
+     "coordinates": [
+      14.497767187186914,
+      50.1074693520369
+     ]
+    },
+    "last_updated_at": "2026-10-25T15:15:04.758Z",
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "security": null,
+    "dimensions": {
+     "max_height": 5.2,
+     "max_width": 2.2,
+     "max_length": 2.5
+    },
+    "covered": null,
+    "capacity": null,
+    "parking_policy": null,
+    "contact": null,
+    "filter": null,
+    "parking_type": "underground",
+    "opening_hours": [],
+    "entrances": {
+     "features": [],
+     "type": "FeatureCollection"
+    },
+    "payment": {
+     "web_url": null,
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "reservation": {
+     "reservation_type": "required",
+     "web_url": "https://www.mrparkit.com/",
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "parking_prohibitions": {
+     "lpg/cng": true,
+     "bus": null,
+     "truck": null,
+     "motorcycle": true,
+     "bicycle": null,
+     "trailer": null
+    },
+    "tariff": "a1a376da-9369-49ba-9bb2-207d3165e249",
+    "has_occupancy_info": false,
+    "area": 0,
+    "address": {
+     "address_country": "Česko",
+     "address_formatted": "Piskáčkových, 19000 Praha obvod Praha 9, Česko",
+     "address_locality": "Praha",
+     "address_region": "obvod Praha 9",
+     "postal_code": "19000",
+     "street_address": "Piskáčkových",
+     "house_number": "1024/3"
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "coordinates": [
+     14.4293466,
+     50.0864741
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "id": "mr_parkit-b7e3c3ea-1567-4850-b161-268d3c170975",
+    "primary_source": "mr_parkit",
+    "primary_source_id": "b7e3c3ea-1567-4850-b161-268d3c170975",
+    "name": "Senovážná 1394/8",
+    "valid_from": null,
+    "centroid": {
+     "type": "Point",
+     "coordinates": [
+      14.4293466,
+      50.0864741
+     ]
+    },
+    "last_updated_at": "2026-10-25T15:15:04.758Z",
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "security": null,
+    "dimensions": {
+     "max_height": 5.2,
+     "max_width": 2.2,
+     "max_length": 1.6
+    },
+    "covered": null,
+    "capacity": null,
+    "parking_policy": null,
+    "contact": null,
+    "filter": null,
+    "parking_type": "underground",
+    "opening_hours": [],
+    "entrances": {
+     "features": [],
+     "type": "FeatureCollection"
+    },
+    "payment": {
+     "web_url": null,
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "reservation": {
+     "reservation_type": "required",
+     "web_url": "https://www.mrparkit.com/",
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "parking_prohibitions": {
+     "lpg/cng": false,
+     "bus": null,
+     "truck": null,
+     "motorcycle": false,
+     "bicycle": null,
+     "trailer": null
+    },
+    "tariff": "b7e3c3ea-1567-4850-b161-268d3c170975",
+    "has_occupancy_info": false,
+    "area": 0,
+    "address": {
+     "address_country": "Česko",
+     "address_formatted": "Senovážná, 11000 Praha Nové Město, Česko",
+     "address_locality": "Praha",
+     "address_region": "Nové Město",
+     "postal_code": "11000",
+     "street_address": "Senovážná",
+     "house_number": "1394/8"
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "coordinates": [
+     14.345583,
+     50.056185
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "id": "mr_parkit-ac497b54-7c11-48a0-b48a-0c96efff5599",
+    "primary_source": "mr_parkit",
+    "primary_source_id": "ac497b54-7c11-48a0-b48a-0c96efff5599",
+    "name": "Aragonit - Pekařská 635/6",
+    "valid_from": null,
+    "centroid": {
+     "type": "Point",
+     "coordinates": [
+      14.345583,
+      50.056185
+     ]
+    },
+    "last_updated_at": "2026-10-25T15:15:04.758Z",
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "security": null,
+    "dimensions": {
+     "max_height": 5,
+     "max_width": 2.5,
+     "max_length": 2
+    },
+    "covered": null,
+    "capacity": null,
+    "parking_policy": null,
+    "contact": null,
+    "filter": null,
+    "parking_type": "underground",
+    "opening_hours": [],
+    "entrances": {
+     "features": [],
+     "type": "FeatureCollection"
+    },
+    "payment": {
+     "web_url": null,
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "reservation": {
+     "reservation_type": "required",
+     "web_url": "https://www.mrparkit.com/",
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "parking_prohibitions": {
+     "lpg/cng": false,
+     "bus": null,
+     "truck": null,
+     "motorcycle": true,
+     "bicycle": null,
+     "trailer": null
+    },
+    "tariff": "ac497b54-7c11-48a0-b48a-0c96efff5599",
+    "has_occupancy_info": false,
+    "area": 0,
+    "address": {
+     "address_country": "Česko",
+     "address_formatted": "Pekařská 635/6, Praha "
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "coordinates": [
+     14.428370801620279,
+     50.07525260735609
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "id": "mr_parkit-ad87218b-ecf1-4609-be04-5f2d09443713",
+    "primary_source": "mr_parkit",
+    "primary_source_id": "ad87218b-ecf1-4609-be04-5f2d09443713",
+    "name": "I. P. Pavlova - Ankora - Kateřinská 465/42",
+    "valid_from": null,
+    "centroid": {
+     "type": "Point",
+     "coordinates": [
+      14.428370801620279,
+      50.07525260735609
+     ]
+    },
+    "last_updated_at": "2026-10-25T15:15:04.758Z",
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "security": null,
+    "dimensions": {
+     "max_height": 4.9,
+     "max_width": 2.1,
+     "max_length": 1.9
+    },
+    "covered": null,
+    "capacity": null,
+    "parking_policy": null,
+    "contact": null,
+    "filter": null,
+    "parking_type": "underground",
+    "opening_hours": [],
+    "entrances": {
+     "features": [],
+     "type": "FeatureCollection"
+    },
+    "payment": {
+     "web_url": null,
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "reservation": {
+     "reservation_type": "required",
+     "web_url": "https://www.mrparkit.com/",
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "parking_prohibitions": {
+     "lpg/cng": false,
+     "bus": null,
+     "truck": null,
+     "motorcycle": true,
+     "bicycle": null,
+     "trailer": null
+    },
+    "tariff": "ad87218b-ecf1-4609-be04-5f2d09443713",
+    "has_occupancy_info": false,
+    "area": 0,
+    "address": {
+     "address_country": "Česko",
+     "address_formatted": "Kateřinská 42, Praha 120 00"
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "coordinates": [
+     15.8143778,
+     50.2150662
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "id": "mr_parkit-e7ecc064-2e77-4881-b823-036ab5ebfadd",
+    "primary_source": "mr_parkit",
+    "primary_source_id": "e7ecc064-2e77-4881-b823-036ab5ebfadd",
+    "name": "Hradec Králové - Haškova 1714/35",
+    "valid_from": null,
+    "centroid": {
+     "type": "Point",
+     "coordinates": [
+      15.8143778,
+      50.2150662
+     ]
+    },
+    "last_updated_at": "2026-10-25T15:15:04.758Z",
+    "last_modified_at_source": "2026-10-25T15:15:00.069Z",
+    "security": null,
+    "dimensions": {
+     "max_height": 5.2,
+     "max_width": 2.5,
+     "max_length": 2.1
+    },
+    "covered": null,
+    "capacity": null,
+    "parking_policy": null,
+    "contact": null,
+    "filter": null,
+    "parking_type": "underground",
+    "opening_hours": [],
+    "entrances": {
+     "features": [],
+     "type": "FeatureCollection"
+    },
+    "payment": {
+     "web_url": null,
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "reservation": {
+     "reservation_type": "required",
+     "web_url": "https://www.mrparkit.com/",
+     "android_url": null,
+     "ios_url": null,
+     "discovery_url": null
+    },
+    "parking_prohibitions": {
+     "lpg/cng": false,
+     "bus": null,
+     "truck": null,
+     "motorcycle": true,
+     "bicycle": null,
+     "trailer": null
+    },
+    "tariff": "e7ecc064-2e77-4881-b823-036ab5ebfadd",
+    "has_occupancy_info": false,
+    "area": 0,
+    "address": {
+     "address_country": "Česko",
+     "address_formatted": "Haškova 1714/35, Hradec Králové 500 03"
+    }
+   },
+   "type": "Feature"
+  }
+ ]
+}

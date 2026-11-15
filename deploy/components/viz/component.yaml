@@ -1,0 +1,6 @@
+---
+component: viz
+parts:
+  # T-4641: the chart renderer of ADR-N-053 on viz.{domain}: a static host page that reads a
+  # published CKAN view and the Endpoint's rows, and a sandboxed frame that draws them with Vega.
+  - name: renderer

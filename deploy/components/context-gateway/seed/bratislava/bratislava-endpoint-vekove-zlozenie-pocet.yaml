@@ -1,0 +1,44 @@
+# Age structure of the oldest and the youngest city district of Bratislava in 2021 (count): one public dataset of the hub (T-5676), item 9ddb4493ef6047898e378431c34d8a02, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vekove-zlozenie-pocet
+  namespace: bratislava
+  title:
+    sk: Vekové zloženie obyvateľov najstaršej a najmladšej mestskej časti Bratislavy v roku 2021 (počet)
+    en: Age structure of the oldest and the youngest city district of Bratislava in 2021 (count)
+  description:
+    sk: 'Ukazovatele tabuľky „Vekové zloženie obyvateľov najstaršej a najmladšej mestskej časti Bratislavy v roku 2021 (počet)“ z data.bratislava.sk, jeden na údaj, členenie a obdobie, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table "Age structure of the oldest and the youngest city district of Bratislava in 2021 (count)", one per figure, breakdown and period, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 64rtva2k7eivirqk2awupds7hj3ksjwd
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vekove-zlozenie-pocet
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/9ddb4493ef6047898e378431c34d8a02
+        title:
+          sk: Vekové zloženie obyvateľov najstaršej a najmladšej mestskej časti Bratislavy v roku 2021 (počet)
+          en: Age structure of the oldest and the youngest city district of Bratislava in 2021 (count)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Vekové zloženie obyvateľov najstaršej a najmladšej mestskej časti Bratislavy v roku 2021 (počet). Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Age structure of the oldest and the youngest city district of Bratislava in 2021 (count). Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics }

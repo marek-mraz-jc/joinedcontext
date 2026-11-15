@@ -1,0 +1,72 @@
+# The space's one door, public: every row is the publisher's open data under the licence its
+# `dataProvider` names. A member of the project's public MCP server, which the public assistant reads.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: banskabystrica-otvorene-data
+  namespace: banskabystrica
+  title:
+    sk: Banská Bystrica — otvorené dáta mesta
+    en: Banská Bystrica, the city's open data
+  description:
+    sk: 'Otvorené dáta mesta Banská Bystrica z katalógu: registre a tabuľky (adresy, zmluvy, objednávky, dotácie,
+      zasadnutia, zeleň, parkovanie) a správy mesta (Aktuality) ako články (Article).'
+    en: 'The open data of the city of Banská Bystrica from the catalogue: registers and tables (addresses, contracts,
+      orders, grants, council meetings, greenery, parking) and the city''s news (Aktuality) as Articles.'
+spec:
+  contextSpaceRef: banskabystrica-otvorene-data
+  policyRefs:
+  - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-otvorene-data:otvorene-data-pipelines-write
+  - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-otvorene-data:otvorene-data-read
+  - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-otvorene-data:otvorene-data-read-history
+  slug: 4ysiqy53qik5qyvawwaj7wgylpt4uoxa
+  audience: public
+  enabledRepresentations:
+  - ngsi-ld
+  - csv
+  - websocket
+  - ogc-features
+  - odata
+  - mcp
+  - feed
+  representations:
+    feed:
+    - name: news
+      title:
+        sk: 'Banská Bystrica — otvorené dáta mesta: aktuality'
+        en: 'Banská Bystrica, the city''s open data: news'
+      lang: sk
+      sources:
+      - type: Article
+        preset: article
+        mapping:
+          title: name
+          updated: modifiedGmt
+          published: dateGmt
+          content: content
+          link: url
+  catalog:
+    license: CC_BYSA_4_0
+    themes:
+    - GOVE
+    - REGI
+    frequency: DAILY
+    keywords:
+      sk:
+      - Banská Bystrica
+      - zmluvy
+      - objednávky
+      - dotácie
+      - adresy
+      - verejná zeleň
+      en:
+      - Banská Bystrica
+      - contracts
+      - orders
+      - grants
+      - addresses
+      - public greenery
+    spatial:
+    - SK032
+    - https://data.gov.sk/id/lau2/SK0321508438
+    personalData: does-not-contain

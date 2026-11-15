@@ -1,0 +1,23 @@
+# One Article per openly licensed item of DREPO, written into the university's space through
+# its one Endpoint (PL-18, T-3138).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: drepo
+  namespace: zilina
+  title: { sk: Otvorené publikácie UNIZA, en: Open works of the University of Žilina }
+spec:
+  class: scheduled
+  # The library grows by journal issue, a few a month; a weekly read keeps up.
+  schedule: '23 3 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: uniza-drepo }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-uniza:zilina-uniza
+  output: { type: Article, mode: upsert }
+  # Every run rewrites every open item, so one unseen for three weekly runs was withdrawn or lost
+  # its licence: it is removed rather than published on (PL-64). Safe here and only here: this
+  # pipeline is the one writer of zilina-uniza.
+  expiry:
+    after: 21d
+    types: [Article]
+  quotas: { maxMemoryMb: 256, cpuMillicores: 200 }

@@ -1,0 +1,422 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:CycleRoute a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "CycleRoute" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:zdroj ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:farba ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:spr ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:stav ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:layer ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typ ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:obnRok ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:povrch ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:sourceId ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nazov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:ctt ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fNazov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fName ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dlzka ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:alps ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:spravca ],
+        jc:Entity ;
+    skos:definition "A signed cycle touring route or one surface section of it." ;
+    skos:exactMatch jc:CycleRoute ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:upstream_source "https://smart-data-models.github.io/datamodel.Transportation/BikeLane/schema.json" .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:alps a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "alps" ;
+    skos:definition "The source column `alps`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:ctt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "ctt" ;
+    skos:definition "The source column `ctt`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/b83ede9d3db29be1365cc272eb535f46af83bed2/context.jsonld" .
+
+jc:date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:date_or_datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date_or_datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:decimal a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:decimal ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dlzka a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dlzka" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `dlzka`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:double a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:double ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:fName a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fName" ;
+    skos:definition "The source column `f_name`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:fNazov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fNazov" ;
+    skos:definition "The source column `f_nazov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:farba a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "farba" ;
+    skos:definition "The source column `farba`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:jsonpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:jsonpointer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpointer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:layer a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "layer" ;
+    skos:definition "The source column `layer`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The source column `name`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/b83ede9d3db29be1365cc272eb535f46af83bed2/context.jsonld" .
+
+jc:nazov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nazov" ;
+    skos:definition "The source column `nazov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:obnRok a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "obnRok" ;
+    skos:definition "The source column `obn_rok`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:povrch a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "povrch" ;
+    skos:definition "The source column `povrch`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/b83ede9d3db29be1365cc272eb535f46af83bed2/context.jsonld" .
+
+jc:sourceId a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "sourceId" ;
+    skos:definition "The source column `id`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:sparqlpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:sparqlpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:spr a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "spr" ;
+    skos:definition "The source column `spr`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:spravca a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "spravca" ;
+    skos:definition "The source column `spravca`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:stav a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "stav" ;
+    skos:definition "The source column `stav`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:time a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:time ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:typ a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typ" ;
+    skos:definition "The source column `typ`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:zdroj a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "zdroj" ;
+    skos:definition "The source column `zdroj`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CycleRoute> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+
+<https://joinedcontext.com/models/sdm/extensions/CycleRoute> a owl:Ontology ;
+    rdfs:label "CycleRoute" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "CycleRoute, an extension of dataModel.Transportation/BikeLane" ;
+    skos:definition "A signed cycle touring route or one surface section of it. Extends dataModel.Transportation/BikeLane: Transportation BikeLane is the official model of a way for bicycles; OSMCycleRoute requires osmId." .
+

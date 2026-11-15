@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: pedestrian-crossings
+  namespace: barcelona
+  title:
+    ca: Passos de vianants de Barcelona, cada setmana
+    es: Pasos de peatones de Barcelona, cada semana
+    en: Barcelona pedestrian crossings, weekly
+spec:
+  class: auto
+  # The city rewrites the file weekly (last-modified Tuesday 02:00 UTC on 2026-10-20).
+  schedule: '20 5 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-pedestrian-crossings }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert: a crossing the file drops or marks as gone leaves by its expiresAt, three weeks after
+  # its last listing (T-5264).
+  output: { type: PedestrianCrossing, mode: upsert }
+  # The whole 5.1 MB file ran in 160 MiB on 2026-10-23 (128 was too little); 192 leaves room for its growth.
+  quotas: { maxMemoryMb: 192, cpuMillicores: 200 }

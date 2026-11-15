@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of databases (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "cluster": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "roleJob": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string"
+        }
+      }
+    },
+    "localBackup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "keepDays": {
+          "type": "number"
+        },
+        "size": {
+          "type": "string"
+        },
+        "cap": {
+          "type": "string"
+        },
+        "storageClass": {
+          "type": "string",
+          "description": "the dumps' volume class, e.g. local-path-retain; empty: the cluster's default"
+        },
+        "ageRecipients": {
+          "type": "array",
+          "description": "age1... public keys the nightly dump is encrypted to besides the drill key, e.g. the operator's",
+          "items": {
+            "type": "string",
+            "pattern": "^age1[02-9ac-hj-np-z]{58}$"
+          }
+        },
+        "excludeDatabases": {
+          "type": "array",
+          "description": "databases left out of the dump and its counts, e.g. [antares]",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z_][a-z0-9_]*$"
+          }
+        }
+      }
+    },
+    "databases": {
+      "type": "object",
+      "description": "one entry per database: name, user, additionalRoles, extensions"
+    },
+    "nameOverride": {
+      "type": "string",
+      "pattern": "^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$",
+      "description": "app.kubernetes.io/name of the pods, e.g. apps-db-backup: a second release keeps out of the first one's NetworkPolicies"
+    },
+    "statStatements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preloaded": {
+          "type": "boolean"
+        }
+      }
+    },
+    "global": {
+      "type": "object"
+    },
+    "drDrill": {
+      "type": "object"
+    },
+    "securityDefaults": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+# Open Data BCN's weather forecast for Barcelonès (dataset prediccio-meteorologica-del-barcelones,
+# CC BY 4.0): Meteocat's comarcal forecast of Catalonia as one XML file the city rewrites in place
+# (datacreacio 24-10-2026 15:00:00, 34 KB on 2026-10-24); the mapping refuses more than 1 MiB and
+# keeps only comarca 13, Barcelonès. No credential. T-5413.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-weather-forecast
+  namespace: barcelona
+  title:
+    ca: Predicció meteorològica del Barcelonès (Open Data BCN)
+    es: Predicción meteorológica del Barcelonès (Open Data BCN)
+    en: Weather forecast for Barcelonès (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/dataset/081d8483-693d-4202-ada3-f655bb62b136/resource/a5a02b86-c363-49a6-bdde-c35c9318bf82/download
+    verb: GET
+    headers: { Accept: application/xml }
+    timeout: 30s

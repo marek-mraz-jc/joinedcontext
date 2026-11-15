@@ -1,0 +1,39 @@
+# T-4636: the example catalogue's production sizes, as the default instance's
+# (values/catalogue/production-values.yaml.gotmpl); its publishers as in development-values.
+
+ckan:
+  replicaCount: 1
+  storage:
+    size: 50Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: '4'
+      memory: 4Gi
+
+solr:
+  storage:
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 3Gi
+
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+organizations:
+  example-city:
+    initials: EC
+    colour: '#2b5f8a'

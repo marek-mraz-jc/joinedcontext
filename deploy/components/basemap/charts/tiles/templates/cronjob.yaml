@@ -1,0 +1,82 @@
+{{- $region := list }}
+{{- range $name, $box := .Values.regions }}
+{{- if ne (len $box) 4 }}{{ fail (printf "basemap: region %s is [west, south, east, north]" $name) }}{{ end }}
+{{- $w := index $box 0 }}{{ $s := index $box 1 }}{{ $e := index $box 2 }}{{ $n := index $box 3 }}
+{{- $region = append $region (list (list (list $w $s) (list $e $s) (list $e $n) (list $w $n) (list $w $s))) }}
+{{- end }}
+# The monthly refresh (files/refresh.sh). The first extract on a fresh volume is one run by
+# hand: kubectl create job --from=cronjob/{{ include "tiles.fullname" . }} {{ include "tiles.fullname" . }}-first
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "tiles.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tiles.labels" . | nindent 4 }}
+    app.kubernetes.io/component: refresh
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  timeZone: UTC
+  # Two runs would write the same temporary file.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "tiles.labels" . | nindent 8 }}
+        app.kubernetes.io/component: refresh
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels:
+            {{- include "tiles.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: refresh
+          {{- if .Values.serviceMesh.enabled }}
+          annotations:
+            # Without this the proxy keeps running after the script exits and the Job never completes.
+            linkerd.io/inject: enabled
+            config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: refresh
+              image: {{ include "tiles.image" .Values.images.refresh | quote }}
+              imagePullPolicy: {{ .Values.imagePullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              command: [/bin/sh, /opt/basemap/refresh.sh]
+              env:
+                - {name: DATA, value: /data}
+                - {name: FILE, value: {{ .Values.file | quote }}}
+                - {name: MAXZOOM, value: {{ .Values.maxzoom | quote }}}
+                - {name: REGION, value: {{ dict "type" "MultiPolygon" "coordinates" $region | toJson | quote }}}
+                - {name: BUILDS, value: {{ .Values.builds | quote }}}
+                - {name: PMTILES_VERSION, value: {{ .Values.pmtiles.version | quote }}}
+                - {name: PMTILES_SHA256, value: {{ .Values.pmtiles.sha256 | quote }}}
+                - {name: ASSETS_COMMIT, value: {{ .Values.assets.commit | quote }}}
+                - {name: ASSETS_SHA256, value: {{ .Values.assets.sha256 | quote }}}
+              resources:
+                {{- toYaml .Values.refresh.resources | nindent 16 }}
+              volumeMounts:
+                - {name: script, mountPath: /opt/basemap, readOnly: true}
+                - {name: data, mountPath: /data}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: script
+              configMap:
+                name: {{ include "tiles.fullname" . }}
+                items: [{key: refresh.sh, path: refresh.sh}]
+                defaultMode: 0555
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ include "tiles.fullname" . }}
+            - name: tmp
+              emptyDir: {}

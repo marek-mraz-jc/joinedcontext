@@ -1,0 +1,38 @@
+---
+# Checklist:
+# - [x] Resources (requests and limits)
+# - [x] Larger storage
+# - [ ] 2+ Replicas -> the uploads claim is ReadWriteOnce; a second CKAN needs an RWX
+#       volume or object storage first, so this stays at one replica on purpose.
+
+ckan:
+  replicaCount: 1
+  storage:
+    size: 50Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: '4'
+      memory: 4Gi
+
+solr:
+  storage:
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 3Gi
+
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

@@ -1,0 +1,13 @@
+---
+sandbox-reaper:
+  reaper:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "sandbox-reaper") }}
+    # Hourly, at a minute nothing else in the deployment uses.
+    schedule: '17 * * * *'
+    # The ceiling of OPS-44 and PF-19, in calendar days. The chart refuses to render above 14;
+    # a `sandbox.joinedcontext.com/ttl` annotation on a namespace may only shorten it.
+    ceilingDays: 14
+    # Log what would be deleted and delete nothing. Worth turning on for one cycle on an
+    # installation whose sandboxes are not labelled yet.
+    dryRun: false

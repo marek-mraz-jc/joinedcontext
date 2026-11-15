@@ -1,0 +1,99 @@
+---
+bases:
+  - "../../defaults/helm-defaults.yaml"
+---
+{{- $root := .Values }}
+{{- $linkerdEnabled := and ($root.global.serviceMesh.enable | default false) (eq ($root.global.serviceMesh.type | default "") "linkerd") }}
+{{- /* No default (T-2480): a missing key used to turn enforcement off without a word. */}}
+{{- $failureAction := index ($root.global.runtimePolicies | default dict) "failureAction" | default "" }}
+{{- if not (has $failureAction (list "Audit" "Enforce")) }}
+{{- fail (printf "global.runtimePolicies.failureAction must be Audit or Enforce, not %q" $failureAction) }}
+{{- end }}
+{{- $enabled := index ($root.global.runtimePolicies | default dict) "enabled" | default false }}
+{{- $namespace := index $root "runtime-policies" "runtime-policies" "namespace" }}
+{{- /* Operator namespaces, used to pin the reverse label-protection rules to the
+       full operator SA username. Fall back to the release namespace if the
+       component is not deployed. */}}
+{{- $cnpgOperatorNamespace := ((($root.postgres | default dict).operator | default dict).namespace | default $namespace) }}
+{{- /* These are cluster-scoped ClusterPolicy objects with fixed names, so they must
+       be created ONCE per cluster. Render them in the shared operator layer (and the
+       legacy all-in-one deployment, deployLayer ""), but NOT per instance — otherwise
+       every instance's release would fight over the same cluster-scoped resources. */}}
+{{- $layer := $root.deployLayer | default "" }}
+{{- /* The namespaces this deployment puts workloads in, collected the same way
+       components/networkpolicies resolves a component's namespace: every part of every
+       enabled component that declares one. The Pod Security policies are scoped to these,
+       so they never reach the namespaces the cluster distribution owns. */}}
+{{- $podSecurityNamespaces := list }}
+{{- /* The namespaces of the enabled parts alone: prepare creates exactly these before this
+       release, so the drift reader's Roles below have a namespace to land in. */}}
+{{- $releaseNamespaces := list $namespace }}
+{{- range $componentName := ($root.components | default list) }}
+  {{- $componentData := index $root $componentName | default dict }}
+  {{- if not $componentData }}
+    {{- $parts := splitList "-" $componentName }}
+    {{- $camelCase := index $parts 0 }}
+    {{- range $i, $part := $parts }}
+      {{- if gt $i 0 }}
+        {{- $camelCase = printf "%s%s" $camelCase ($part | title) }}
+      {{- end }}
+    {{- end }}
+    {{- $componentData = index $root $camelCase | default dict }}
+  {{- end }}
+  {{- range $partKey, $partData := $componentData }}
+    {{- if and (kindIs "map" $partData) (hasKey $partData "namespace") }}
+      {{- $podSecurityNamespaces = append $podSecurityNamespaces (index $partData "namespace") }}
+      {{- if or (not (hasKey $partData "enabled")) (index $partData "enabled") }}
+        {{- $releaseNamespaces = append $releaseNamespaces (index $partData "namespace") }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $podSecurityNamespaces = $podSecurityNamespaces | uniq | sortAlpha }}
+{{- /* The namespaces this deployment holds that exist only at runtime, so no component names
+       them (T-5702): each project's App namespace the Portal creates ({instance}-{project}-apps),
+       each preview (pv-{slug}) and each demo (demo-bbsk). They run the least-trusted code; Kyverno
+       matches these wildcards. Only after the release namespaces, which the drift reader binds. */}}
+{{- $runtimeNamespaces := list (printf "%s-*-apps" $root.global.instanceSlug) "pv-*" "demo-*" }}
+
+releases:
+  {{- if or (eq $layer "") (eq $layer "operators") }}
+  - name: runtime-policies
+    namespace: {{ $namespace }}
+    chart: ./charts/runtime-policies
+    createNamespace: {{ $root.global.createNamespaces }}
+    installed: {{ $enabled }}
+    values:
+      - operators:
+          enabled: true
+        cnpgOperatorNamespace: {{ $cnpgOperatorNamespace }}
+        linkerd:
+          enabled: {{ $linkerdEnabled }}
+        failureAction: {{ $failureAction }}
+        agentReader:
+          enabled: {{ index ($root.global.runtimePolicies | default dict) "agentReader" | default false }}
+        driftReader:
+          # The legacy all-in-one layer only: in the operators layer the instance namespaces
+          # do not exist yet, and `just drift` runs on dev and smartcity, both legacy.
+          secretNamespaces:
+            {{- range $ns := ternary ($releaseNamespaces | uniq | sortAlpha) (list $namespace) (eq $layer "") }}
+            - {{ $ns | quote }}
+            {{- end }}
+        podSecurity:
+          namespaces:
+            {{- range $ns := concat $podSecurityNamespaces $runtimeNamespaces }}
+            - {{ $ns | quote }}
+            {{- end }}
+        # T-6719: the production-shaped namespaces this cluster also runs, held to the image
+        # workflows on main (charts/runtime-policies values.yaml, imageSignatures.production).
+        {{- with index ($root.global.runtimePolicies | default dict) "productionNamespaces" }}
+        imageSignatures:
+          production:
+            namespaces:
+              {{- toYaml . | nindent 14 }}
+            failureAction: {{ index ($root.global.runtimePolicies | default dict) "productionFailureAction" | default "Audit" }}
+        {{- end }}
+  {{- end }}
+
+commonLabels:
+  component: runtime-policies

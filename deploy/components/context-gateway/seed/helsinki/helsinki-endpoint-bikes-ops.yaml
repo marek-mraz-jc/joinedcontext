@@ -1,0 +1,97 @@
+# The stations' operations endpoint (AP-61, AP-62): the same slice the public endpoint reads,
+# for the city's own people, and the one place a generated application may write a station's
+# status back. No policyRef: every Policy of the space applies, so the members' read grant
+# (bikes-ops-read) and the steward's write grant (bikes-ops-steward) meet here and the gateway
+# evaluates the write in full (GW16). Organization audience: the person signs in; nothing here
+# is public, and public-bikes does not reach a signed-in person here (GW22).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-bikes-ops
+  namespace: helsinki
+  title:
+    en: Helsinki city bike stations, operations
+spec:
+  contextSpaceRef: helsinki
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:app-helsinki-data-1
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:app-helsinki-kartta-1
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:bikes-ops-read
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:bikes-ops-steward
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:gtfs-routes-account
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:pipelines-delete-alerts
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:pipelines-write
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-air-quality
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-alerts
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-all
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-all-history
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-bikes
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-cycle-counts
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-districts
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-events
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-feedback
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-heat-vulnerability
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-heritage
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-nature
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-news
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-noise
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-parking
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-permits
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-places
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-service-property-energy
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-education
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-employment
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-environment
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-housing
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-income
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-population
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-services
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-welfare
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-street-cleaning-air
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-traffic-counts
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-traffic-signals
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-traffic-volumes
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-transport
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-trees
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-vision-counts
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-water-quality
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-weather
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:steward-history-journey
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:steward-import-journey
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:steward-row-journey
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:steward-versions
+    - urn:ngsi-ld:Policy:hel.fi:helsinki:transit-stops-account
+  slug: ydp6nddchg4sewmylsiclg4377mlldrj
+  audience: organization
+  # `ogc-features` is the OGC API Features surface dev-smoke reads per Endpoint kind (T-3957).
+  enabledRepresentations: [ngsi-ld, mcp, csv, ogc-features, websocket, odata]
+  projection:
+    hiddenAttributes: [contactPoint]
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: ODC_ODBL
+    attribution:
+      fi: Sisältää Kaupunkipyörät-syötteen dataa (Inurba), ODbL 1.0
+      sv: Innehåller data från stadscykelflödet (Inurba), ODbL 1.0
+      en: Contains data from the City Bikes feed (Inurba), ODbL 1.0
+    themes: [TRAN]
+    keywords:
+      fi: [kaupunkipyörät, pyöräasemat, ylläpito]
+      sv: [stadscyklar, cykelstationer, drift]
+      en: [city bikes, bike stations, operations]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: CONT
+    source:
+      - url: https://gbfs.theta.fifteen.eu/gbfs/2.2/helsinki/gbfs.json
+        title:
+          fi: Kaupunkipyörät, GBFS-syöte
+          en: City Bikes (Helsinki), GBFS feed
+        description:
+          fi: Operaattorin avoin GBFS 2.2 -syöte asemista ja niiden tilasta, ODbL 1.0.
+          en: The operator's open GBFS 2.2 feed of stations and their status, ODbL 1.0.
+    pipelineRef: { kind: Pipeline, name: citybikes-gbfs }

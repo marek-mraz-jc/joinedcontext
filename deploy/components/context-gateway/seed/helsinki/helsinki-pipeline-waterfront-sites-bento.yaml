@@ -1,0 +1,50 @@
+# The mapping of the waterfront-sites pipeline (PL-03): one PointOfInterest per site the city offers
+# for a new service along its shore route (rantareitti), from the open WFS layer
+# `rantareitin_uusien_toimintojen_paikat_2025`.
+#
+# The layer's text (`teksti`) opens with what the site is for ("Sauna.", "Kahvila tai ravintola."):
+# that first sentence, up to 80 characters, names the site, and the whole text with the parking,
+# zoning, restriction and availability lines the layer adds becomes its Finnish description. A site
+# is keyed by the layer's row id, the only key it has.
+#
+# `expiresAt` (NGSI-LD 4.22): a site leaves every read 21 days after the layer last listed it,
+# three weekly runs, so a site the city withdraws does not stay offered.
+
+pipeline:
+  processors:
+    - mapping: |
+        let lease = (now().ts_unix() + 1814400).ts_format("2006-01-02T15:04:05Z", "UTC")
+        # The WFS writes a field it has no value for as null or the string "None".
+        map text {
+          root = if this == null || this.string().trim() == "" || this.string() == "None" { null } else { this.string().trim() }
+        }
+        root = this.features.or([]).filter(f -> f.properties.id.or("").string().re_match("^[0-9]{1,10}$") && f.geometry.type.or("") == "Point" && f.properties.teksti.apply("text") != null).map_each(f -> {
+          "p": f.properties,
+          "text": f.properties.teksti.apply("text").re_replace_all("\\s+", " "),
+          "f": f
+        }).map_each(s -> s.assign({
+          "parking": s.p.pysakointi.apply("text"),
+          "zoning": s.p.kaavoitustilanne.apply("text"),
+          "limits": s.p.kayton_rajoitukset.apply("text"),
+          "availability": s.p.kaytettavyys.apply("text")
+        })).map_each(s -> s.assign({
+          "first": s.text.re_replace_all("^[^\\pL]+", "").re_find_all("^[^.:]+").index(0).or(s.text).trim(),
+          "lines": [
+            s.text,
+            if s.parking != null { "Pysäköinti: " + s.parking } else { null },
+            if s.zoning != null { "Kaavoitustilanne: " + s.zoning } else { null },
+            if s.limits != null { "Käytön rajoitukset: " + s.limits } else { null },
+            if s.availability != null { "Käytettävyys: " + s.availability } else { null }
+          ].filter(l -> l != null)
+        })).map_each(s -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:waterfront-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), s.p.id.string()),
+          "type": "PointOfInterest",
+          "expiresAt": $lease,
+          "name": { "type": "LanguageProperty", "languageMap": { "fi": if s.first.length() > 80 { s.first.slice(0, 80).re_replace_all("\\s+\\S*$", "").re_replace_all("[,;:]+$", "") + "…" } else { s.first } } },
+          "serviceCategory": { "type": "Property", "value": "waterfrontSite" },
+          "description": { "type": "LanguageProperty", "languageMap": { "fi": s.lines.join("\n") } },
+          "dateModified": if s.p.paivitetty_tietopalveluun.or("").string().re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") { { "type": "Property", "value": s.p.paivitetty_tietopalveluun.string() + "T00:00:00Z" } } else { null },
+          "location": { "type": "GeoProperty", "value": s.f.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, City Executive Office" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:rantareitin_uusien_toimintojen_paikat_2025" }
+        }.filter(entry -> entry.value != null))

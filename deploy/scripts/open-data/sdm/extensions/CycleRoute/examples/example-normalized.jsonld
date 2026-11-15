@@ -1,0 +1,102 @@
+{
+  "id": "urn:ngsi-ld:CycleRoute:joinedcontext.com:example:1",
+  "type": "CycleRoute",
+  "alps": {
+    "type": "Property",
+    "value": "alps"
+  },
+  "ctt": {
+    "type": "Property",
+    "value": "ctt"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "dlzka": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "fName": {
+    "type": "Property",
+    "value": "fName"
+  },
+  "fNazov": {
+    "type": "Property",
+    "value": "fNazov"
+  },
+  "farba": {
+    "type": "Property",
+    "value": "farba"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "layer": {
+    "type": "Property",
+    "value": "layer"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "nazov": {
+    "type": "Property",
+    "value": "nazov"
+  },
+  "obnRok": {
+    "type": "Property",
+    "value": "obnRok"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "povrch": {
+    "type": "Property",
+    "value": "povrch"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "sourceId": {
+    "type": "Property",
+    "value": "sourceId"
+  },
+  "spr": {
+    "type": "Property",
+    "value": "spr"
+  },
+  "spravca": {
+    "type": "Property",
+    "value": "spravca"
+  },
+  "stav": {
+    "type": "Property",
+    "value": "stav"
+  },
+  "typ": {
+    "type": "Property",
+    "value": "typ"
+  },
+  "zdroj": {
+    "type": "Property",
+    "value": "zdroj"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/CycleRoute/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

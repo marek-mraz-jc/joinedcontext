@@ -1,0 +1,41 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-ingress-class
+  annotations:
+    policies.kyverno.io/title: Require Ingress Class Name
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Ingress
+    policies.kyverno.io/minversion: 1.8.0
+    policies.kyverno.io/scored: 'true'
+    policies.kyverno.io/description: >-
+      Every Ingress resource must explicitly set `spec.ingressClassName` to ensure
+      it is handled by a known Ingress controller. Omitting this field relies on a
+      cluster-wide default which may not be configured, resulting in the Ingress
+      being silently ignored. This policy does not restrict which class values are
+      allowed; it only enforces that the field is present and non-empty.
+      Note: the legacy `kubernetes.io/ingress-class` annotation is not checked;
+      this policy targets Kubernetes 1.18+ where `spec.ingressClassName` is the
+      canonical field.
+spec:
+  background: true
+  rules:
+    - name: require-ingress-class-name
+      match:
+        any:
+          - resources:
+              kinds:
+                - Ingress
+      validate:
+        failureAction: Audit
+        message: >-
+          Ingress must set spec.ingressClassName explicitly. Relying on the cluster
+          default may result in the Ingress being unhandled.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.ingressClassName || '' }}"
+                operator: Equals
+                value: ''

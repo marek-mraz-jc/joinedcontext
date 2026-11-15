@@ -1,0 +1,22 @@
+# Checklist:
+# - [x] Minimal Resources -> one crawl at a time; kreuzberg holds a PDF and its text in memory
+# - [x] Minimal storage -> the index lives in PostgreSQL
+# - [x] 1 Replica -> the queue would let more claim jobs, one is what a city's sites need
+
+replicaCount: 1
+
+resources:
+  # T-3053 measured 490 MB resident at rest and 679 MB at peak (the embedding model loaded):
+  # the request says so, so the scheduler does not overbook the node.
+  requests:
+    cpu: 50m
+    memory: 640Mi
+  limits:
+    # Two cores for the first full index of every city's documents (T-4749, ~7,300 PDFs): the
+    # embedder runs on both, memory stays as measured. Back to 1 once the daily load is known.
+    cpu: '2'
+    memory: 1Gi
+
+env:
+  # As many embedder threads as the CPU limit (T-3053).
+  JC_ASSISTANT_EMBED_THREADS: "2"

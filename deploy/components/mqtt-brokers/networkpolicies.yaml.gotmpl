@@ -1,0 +1,99 @@
+{{- /* The brokers beside jc (one pod, every module): jc's gateway answers the CONNECT and publish
+       checks on its internal port 8082, jc's ekiben (the runner) and Portal (the capture subscriber)
+       are the clients of 1883, jc's Portal reads the API on 6060 and stamps the brokers through
+       the Kubernetes API. networkpolicies.yaml names the separate components for the same
+       calls; beside jc they resolve to no namespace and drop out. Both halves of each call, and
+       with the mesh on the Linkerd proxy port (4143) beside each, as networkpolicies-linkerd.yaml
+       does there. */}}
+{{- if has "jc" .Values.components }}
+{{- $mesh := and ($.Values.global.serviceMesh.enable | default false) (eq ($.Values.global.serviceMesh.type | default "") "linkerd") }}
+mqtt-brokers-jc:
+  podSelector:
+    app.kubernetes.io/name: mqtt-broker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+              app.kubernetes.io/instance: jc-server
+          componentNamespace: jc
+      ports:
+        - protocol: TCP
+          port: 1883
+        - protocol: TCP
+          port: 6060
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+              app.kubernetes.io/instance: jc-server
+          componentNamespace: jc
+      ports:
+        - protocol: TCP
+          port: 8082
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+
+# The other half of the CONNECT check: jc's internal port admits broker pods only. The gateway
+# decides by the caller's mesh identity, so this is what keeps every other pod from asking.
+jc-from-mqtt-brokers:
+  componentNamespace: jc
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt-broker
+          componentNamespace: mqtt-brokers
+      ports:
+        - protocol: TCP
+          port: 8082
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+
+# jc's side of 1883 and 6060, and the Kubernetes API the Portal stamps the brokers through
+# (kubernetes.default.svc:443, which kube-proxy sends to the API server's 6443).
+jc-to-mqtt-brokers:
+  componentNamespace: jc
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt-broker
+          componentNamespace: mqtt-brokers
+      ports:
+        - protocol: TCP
+          port: 1883
+        - protocol: TCP
+          port: 6060
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+{{- end }}

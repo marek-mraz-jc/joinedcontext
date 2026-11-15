@@ -1,0 +1,429 @@
+# file in this folder -> its path in the configuration repository (jc-core PATH_TEMPLATEs), read
+# by the gateway's development values (flat /repo, every file under its own name) and by the
+# forge bootstrap's seed (this layout). One list, two consumers.
+# The installation's Organization and the settings the whole repository shares (PF-02, PF-41,
+# DM-19, PF-121): one repository; every project below names `hel` except zilina, which belongs to
+# the Organization of its own in seed/zilina (ADR-N-058).
+helsinki-org.yaml: organizations/hel.yaml
+helsinki-platform-settings.yaml: platform-settings.yaml
+helsinki-project.yaml: projects/helsinki/project.yaml
+helsinki-mobility-project.yaml: projects/helsinki-mobility/project.yaml
+helsinki-space.yaml: projects/helsinki/spaces/helsinki/space.yaml
+helsinki-datamodel.yaml: projects/helsinki/spaces/helsinki/datamodels/helsinki.yaml
+helsinki.linkml.yaml: projects/helsinki/spaces/helsinki/datamodels/helsinki.linkml.yaml
+helsinki.v1.schema.json: projects/helsinki/spaces/helsinki/datamodels/helsinki.v1.schema.json
+helsinki.v1.context.jsonld: projects/helsinki/spaces/helsinki/datamodels/helsinki.v1.context.jsonld
+helsinki.v1.example.jsonld: projects/helsinki/spaces/helsinki/datamodels/helsinki.v1.example.jsonld
+helsinki.v1.md: projects/helsinki/spaces/helsinki/datamodels/helsinki.v1.md
+helsinki-endpoint-events.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-events.yaml
+# Helsinki's public MCP server, which helsinki-public reads through (T-4750).
+helsinki-mcp-otvorene-data.yaml: projects/helsinki/mcp/otvorene-data.yaml
+helsinki-endpoint-bikes.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-bikes.yaml
+helsinki-endpoint-bikes-ops.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-bikes-ops.yaml
+helsinki-endpoint-transport.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-transport.yaml
+helsinki-endpoint-all.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-all.yaml
+helsinki-endpoint-news.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-news.yaml
+helsinki-endpoint-weather.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-weather.yaml
+helsinki-endpoint-air-quality.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-air-quality.yaml
+helsinki-endpoint-alerts.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-alerts.yaml
+helsinki-endpoint-feedback.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-feedback.yaml
+helsinki-policy-public-events.yaml: projects/helsinki/spaces/helsinki/policies/public-events.yaml
+helsinki-policy-public-bikes.yaml: projects/helsinki/spaces/helsinki/policies/public-bikes.yaml
+helsinki-policy-bikes-ops-steward.yaml: projects/helsinki/spaces/helsinki/policies/bikes-ops-steward.yaml
+helsinki-policy-bikes-ops-read.yaml: projects/helsinki/spaces/helsinki/policies/bikes-ops-read.yaml
+helsinki-policy-steward-history-journey.yaml: projects/helsinki/spaces/helsinki/policies/steward-history-journey.yaml
+helsinki-policy-steward-import-journey.yaml: projects/helsinki/spaces/helsinki/policies/steward-import-journey.yaml
+helsinki-policy-steward-row-journey.yaml: projects/helsinki/spaces/helsinki/policies/steward-row-journey.yaml
+helsinki-policy-steward-versions.yaml: projects/helsinki/spaces/helsinki/policies/steward-versions.yaml
+helsinki-policy-public-transport.yaml: projects/helsinki/spaces/helsinki/policies/public-transport.yaml
+helsinki-policy-public-all.yaml: projects/helsinki/spaces/helsinki/policies/public-all.yaml
+helsinki-policy-public-all-history.yaml: projects/helsinki/spaces/helsinki/policies/public-all-history.yaml
+helsinki-policy-public-news.yaml: projects/helsinki/spaces/helsinki/policies/public-news.yaml
+helsinki-policy-public-weather.yaml: projects/helsinki/spaces/helsinki/policies/public-weather.yaml
+helsinki-policy-public-air-quality.yaml: projects/helsinki/spaces/helsinki/policies/public-air-quality.yaml
+helsinki-policy-public-alerts.yaml: projects/helsinki/spaces/helsinki/policies/public-alerts.yaml
+helsinki-policy-public-feedback.yaml: projects/helsinki/spaces/helsinki/policies/public-feedback.yaml
+helsinki-policy-pipelines-write.yaml: projects/helsinki/spaces/helsinki/policies/pipelines-write.yaml
+helsinki-policy-gtfs-routes-account.yaml: projects/helsinki/spaces/helsinki/policies/gtfs-routes-account.yaml
+helsinki-policy-transit-stops-account.yaml: projects/helsinki/spaces/helsinki/policies/transit-stops-account.yaml
+helsinki-policy-pipelines-delete-alerts.yaml: projects/helsinki/spaces/helsinki/policies/pipelines-delete-alerts.yaml
+helsinki-kpi-space.yaml: projects/helsinki/spaces/helsinki-kpi/space.yaml
+helsinki-kpi-datamodel.yaml: projects/helsinki/spaces/helsinki-kpi/datamodels/helsinki-kpi.yaml
+helsinki-kpi.linkml.yaml: projects/helsinki/spaces/helsinki-kpi/datamodels/helsinki-kpi.linkml.yaml
+helsinki-kpi.v1.schema.json: projects/helsinki/spaces/helsinki-kpi/datamodels/helsinki-kpi.v1.schema.json
+helsinki-kpi.v1.context.jsonld: projects/helsinki/spaces/helsinki-kpi/datamodels/helsinki-kpi.v1.context.jsonld
+helsinki-kpi.v1.example.jsonld: projects/helsinki/spaces/helsinki-kpi/datamodels/helsinki-kpi.v1.example.jsonld
+helsinki-kpi.v1.md: projects/helsinki/spaces/helsinki-kpi/datamodels/helsinki-kpi.v1.md
+helsinki-endpoint-kpi.yaml: projects/helsinki/spaces/helsinki-kpi/endpoints/helsinki-kpi.yaml
+helsinki-policy-kpi-pipelines-write.yaml: projects/helsinki/spaces/helsinki-kpi/policies/kpi-pipelines-write.yaml
+helsinki-policy-kpi-read.yaml: projects/helsinki/spaces/helsinki-kpi/policies/kpi-read.yaml
+helsinki-serviceaccount-pipelines.yaml: projects/helsinki/access/serviceaccounts/pipelines.yaml
+helsinki-serviceaccount-agent-proxy.yaml: projects/helsinki/access/serviceaccounts/agent-proxy.yaml
+helsinki-datasource-events.yaml: projects/helsinki/datasources/hel-linked-events.yaml
+helsinki-datasource-bikes.yaml: projects/helsinki/datasources/hsl-citybikes-gbfs.yaml
+helsinki-datasource-bikes-info.yaml: projects/helsinki/datasources/hsl-citybikes-gbfs-info.yaml
+helsinki-datasource-hfp.yaml: projects/helsinki/datasources/hsl-hfp.yaml
+helsinki-datasource-news-rss.yaml: projects/helsinki/datasources/hel-news-rss.yaml
+helsinki-datasource-road-weather.yaml: projects/helsinki/datasources/digitraffic-road-weather.yaml
+helsinki-datasource-traffic-messages.yaml: projects/helsinki/datasources/digitraffic-traffic-messages.yaml
+helsinki-datasource-air-quality.yaml: projects/helsinki/datasources/fmi-air-quality.yaml
+helsinki-pipeline-events.yaml: projects/helsinki/pipelines/linked-events/pipeline.yaml
+helsinki-pipeline-bikes.yaml: projects/helsinki/pipelines/citybikes-gbfs/pipeline.yaml
+helsinki-pipeline-bikes-info.yaml: projects/helsinki/pipelines/citybikes-gbfs-info/pipeline.yaml
+helsinki-pipeline-hfp.yaml: projects/helsinki/pipelines/hsl-hfp-vehicles/pipeline.yaml
+helsinki-pipeline-news.yaml: projects/helsinki/pipelines/hel-news/pipeline.yaml
+helsinki-pipeline-road-weather.yaml: projects/helsinki/pipelines/road-weather/pipeline.yaml
+helsinki-pipeline-traffic-messages.yaml: projects/helsinki/pipelines/traffic-messages/pipeline.yaml
+helsinki-pipeline-air-quality.yaml: projects/helsinki/pipelines/air-quality/pipeline.yaml
+# The mapping of each pipeline, native Bento beside its manifest (PL-03): the reconciler renders
+# it into the resident stream (T-0647), so no stream is written twice.
+helsinki-pipeline-events-bento.yaml: projects/helsinki/pipelines/linked-events/bento.yaml
+helsinki-pipeline-bikes-bento.yaml: projects/helsinki/pipelines/citybikes-gbfs/bento.yaml
+helsinki-pipeline-bikes-info-bento.yaml: projects/helsinki/pipelines/citybikes-gbfs-info/bento.yaml
+helsinki-pipeline-hfp-bento.yaml: projects/helsinki/pipelines/hsl-hfp-vehicles/bento.yaml
+helsinki-pipeline-news-bento.yaml: projects/helsinki/pipelines/hel-news/bento.yaml
+helsinki-pipeline-road-weather-bento.yaml: projects/helsinki/pipelines/road-weather/bento.yaml
+helsinki-pipeline-traffic-messages-bento.yaml: projects/helsinki/pipelines/traffic-messages/bento.yaml
+helsinki-pipeline-air-quality-bento.yaml: projects/helsinki/pipelines/air-quality/bento.yaml
+helsinki-ckan-hel-fi.yaml: projects/helsinki/ckan/hel-fi.yaml
+helsinki-blueprint-http-json-feed.yaml: blueprints/http-json-feed/blueprint.yaml
+helsinki-blueprint-gbfs-stations.yaml: blueprints/gbfs-stations/blueprint.yaml
+helsinki-blueprint-mqtt-feed.yaml: blueprints/mqtt-feed/blueprint.yaml
+helsinki-syncsource-blueprint-library.yaml: projects/helsinki/sync/blueprint-library.yaml
+helsinki-uischema-endpoint.yaml: portal/forms/endpoint.uischema.yaml
+helsinki-mobility-space.yaml: projects/helsinki-mobility/spaces/mobility/space.yaml
+helsinki-mobility-datamodel.yaml: projects/helsinki-mobility/spaces/mobility/datamodels/mobility.yaml
+mobility.linkml.yaml: projects/helsinki-mobility/spaces/mobility/datamodels/mobility.linkml.yaml
+helsinki-mobility-shared-bikes.yaml: projects/helsinki-mobility/shared/city-bikes.yaml
+# The mobility project's city bike stations (T-3185): a bundle the Portal image ships, reading the
+# helsinki project's stations through the shared space city-bikes.
+helsinki-mobility-app-bike-stations.yaml: projects/helsinki-mobility/apps/bike-stations/app.yaml
+helsinki-mobility-app-bike-stations-endpoint.yaml: projects/helsinki-mobility/spaces/mobility/endpoints/app-bike-stations.yaml
+helsinki-mobility-app-bike-stations-policy.yaml: projects/helsinki-mobility/spaces/mobility/policies/app-bike-stations-1.yaml
+helsinki-role-steward.yaml: users/roles/steward.yaml
+helsinki-role-org-admin.yaml: users/roles/org-admin.yaml
+helsinki-role-people-admin.yaml: users/roles/people-admin.yaml
+# One right per CKAN instance of the seed, bound to nobody (PF-107).
+helsinki-role-ckan-admin-helsinki-hel-fi.yaml: users/roles/ckan-admin-helsinki-hel-fi.yaml
+helsinki-role-ckan-admin-banskabystrica-banskabystrica.yaml: users/roles/ckan-admin-banskabystrica-banskabystrica.yaml
+helsinki-role-ckan-admin-bbsk-bbsk.yaml: users/roles/ckan-admin-bbsk-bbsk.yaml
+helsinki-role-ckan-admin-praha-praha.yaml: users/roles/ckan-admin-praha-praha.yaml
+helsinki-role-ckan-admin-zilina-zilina.yaml: users/roles/ckan-admin-zilina-zilina.yaml
+helsinki-role-ckan-admin-barcelona-barcelona.yaml: users/roles/ckan-admin-barcelona-barcelona.yaml
+helsinki-role-ckan-admin-bratislava-bratislava.yaml: users/roles/ckan-admin-bratislava-bratislava.yaml
+helsinki-role-ckan-admin-slovensko-slovensko.yaml: users/roles/ckan-admin-slovensko-slovensko.yaml
+helsinki-role-model-editor.yaml: users/roles/model-editor.yaml
+helsinki-role-pipeline-editor.yaml: users/roles/pipeline-editor.yaml
+helsinki-role-endpoint-editor.yaml: users/roles/endpoint-editor.yaml
+helsinki-role-app-editor.yaml: users/roles/app-editor.yaml
+helsinki-role-editor.yaml: users/roles/editor.yaml
+helsinki-role-approver.yaml: users/roles/approver.yaml
+helsinki-role-viewer.yaml: users/roles/viewer.yaml
+helsinki-role-build-lane.yaml: users/roles/build-lane.yaml
+helsinki-role-janitor.yaml: users/roles/janitor.yaml
+helsinki-rolebinding-stewards.yaml: users/assignments/stewards.yaml
+helsinki-rolebinding-admins.yaml: users/assignments/admins.yaml
+helsinki-rolebinding-approvers.yaml: users/assignments/approvers.yaml
+helsinki-rolebinding-editors.yaml: users/assignments/editors.yaml
+helsinki-rolebinding-viewers.yaml: users/assignments/viewers.yaml
+helsinki-rolebinding-build-lane.yaml: users/assignments/build-lane.yaml
+helsinki-rolebinding-janitors.yaml: users/assignments/janitors.yaml
+# The hub (T-1209, Architecture/04 §5a): a space of registrations, one Endpoint over it, and
+# the identity a forward carries.
+helsinki-hub-space.yaml: projects/helsinki/spaces/helsinki-hub/space.yaml
+helsinki-hub-datamodel.yaml: projects/helsinki/spaces/helsinki-hub/datamodels/helsinki-hub.yaml
+helsinki-hub.linkml.yaml: projects/helsinki/spaces/helsinki-hub/datamodels/helsinki-hub.linkml.yaml
+helsinki-hub.v1.schema.json: projects/helsinki/spaces/helsinki-hub/datamodels/helsinki-hub.v1.schema.json
+helsinki-hub.v1.context.jsonld: projects/helsinki/spaces/helsinki-hub/datamodels/helsinki-hub.v1.context.jsonld
+helsinki-hub.v1.example.jsonld: projects/helsinki/spaces/helsinki-hub/datamodels/helsinki-hub.v1.example.jsonld
+helsinki-hub.v1.md: projects/helsinki/spaces/helsinki-hub/datamodels/helsinki-hub.v1.md
+helsinki-endpoint-hub.yaml: projects/helsinki/spaces/helsinki-hub/endpoints/helsinki-hub.yaml
+helsinki-policy-public-hub.yaml: projects/helsinki/spaces/helsinki-hub/policies/public-hub.yaml
+helsinki-csr-transport.yaml: projects/helsinki/spaces/helsinki-hub/registrations/transport.yaml
+helsinki-csr-indicators.yaml: projects/helsinki/spaces/helsinki-hub/registrations/indicators.yaml
+helsinki-serviceaccount-hub-reader.yaml: projects/helsinki/access/serviceaccounts/hub-reader.yaml
+helsinki-serviceaccount-pipeline-proposer.yaml: projects/helsinki/access/serviceaccounts/pipeline-proposer.yaml
+helsinki-layer-bikes.yaml: projects/helsinki/dashboards/bike-stations.yaml
+helsinki-dashboard-bikes.yaml: projects/helsinki/dashboards/city-bikes.yaml
+# The city's open registers (T-2787): one DataSource, one pipeline and its mapping per feed, all
+# written into the city space through helsinki-all.
+helsinki-datasource-services.yaml: projects/helsinki/datasources/hel-servicemap-units.yaml
+helsinki-datasource-beach-water.yaml: projects/helsinki/datasources/fvh-uiras-beaches.yaml
+helsinki-datasource-parking-areas.yaml: projects/helsinki/datasources/parkkiopas-parking-areas.yaml
+helsinki-datasource-excavation.yaml: projects/helsinki/datasources/hel-allu-excavation.yaml
+helsinki-datasource-traffic-arrangements.yaml: projects/helsinki/datasources/hel-allu-traffic-arrangements.yaml
+helsinki-datasource-area-events.yaml: projects/helsinki/datasources/hel-allu-area-events.yaml
+helsinki-datasource-districts.yaml: projects/helsinki/datasources/hel-districts.yaml
+helsinki-datasource-subdistricts.yaml: projects/helsinki/datasources/hel-subdistricts.yaml
+helsinki-datasource-voting-districts.yaml: projects/helsinki/datasources/hel-voting-districts.yaml
+helsinki-datasource-quarters.yaml: projects/helsinki/datasources/hel-quarters.yaml
+helsinki-datasource-preschool-areas.yaml: projects/helsinki/datasources/hel-preschool-areas.yaml
+helsinki-datasource-business-plots.yaml: projects/helsinki/datasources/hel-business-plots.yaml
+helsinki-datasource-environmental-permit-sites.yaml: projects/helsinki/datasources/hel-environmental-permit-sites.yaml
+helsinki-datasource-fortifications.yaml: projects/helsinki/datasources/hel-fortifications.yaml
+helsinki-datasource-landscape-culture.yaml: projects/helsinki/datasources/hel-landscape-culture.yaml
+helsinki-datasource-waterfront-sites.yaml: projects/helsinki/datasources/hel-waterfront-sites.yaml
+helsinki-datasource-parking-places.yaml: projects/helsinki/datasources/hel-parking-places.yaml
+helsinki-datasource-tourist-stops.yaml: projects/helsinki/datasources/hel-tourist-stops.yaml
+helsinki-datasource-tourist-parking.yaml: projects/helsinki/datasources/hel-tourist-parking.yaml
+helsinki-datasource-traffic-lights.yaml: projects/helsinki/datasources/hel-traffic-lights.yaml
+helsinki-datasource-warning-lights.yaml: projects/helsinki/datasources/hel-warning-lights.yaml
+helsinki-datasource-noise-roads-day-0.yaml: projects/helsinki/datasources/hel-noise-roads-day-0.yaml
+helsinki-datasource-noise-roads-day-1.yaml: projects/helsinki/datasources/hel-noise-roads-day-1.yaml
+helsinki-datasource-noise-roads-day-2.yaml: projects/helsinki/datasources/hel-noise-roads-day-2.yaml
+helsinki-datasource-noise-roads-night-0.yaml: projects/helsinki/datasources/hel-noise-roads-night-0.yaml
+helsinki-datasource-noise-roads-night-1.yaml: projects/helsinki/datasources/hel-noise-roads-night-1.yaml
+helsinki-datasource-noise-roads-night-2.yaml: projects/helsinki/datasources/hel-noise-roads-night-2.yaml
+helsinki-datasource-noise-rail.yaml: projects/helsinki/datasources/hel-noise-rail.yaml
+helsinki-datasource-trees-0.yaml: projects/helsinki/datasources/hel-trees-0.yaml
+helsinki-datasource-trees-1.yaml: projects/helsinki/datasources/hel-trees-1.yaml
+helsinki-datasource-trees-2.yaml: projects/helsinki/datasources/hel-trees-2.yaml
+helsinki-datasource-trees-3.yaml: projects/helsinki/datasources/hel-trees-3.yaml
+helsinki-datasource-nature.yaml: projects/helsinki/datasources/hel-nature.yaml
+helsinki-datasource-fee-parking-zones.yaml: projects/helsinki/datasources/hel-parking-fee-zones.yaml
+helsinki-datasource-resident-parking-zones.yaml: projects/helsinki/datasources/hel-resident-parking-zones.yaml
+helsinki-pipeline-services.yaml: projects/helsinki/pipelines/services/pipeline.yaml
+helsinki-pipeline-beach-water.yaml: projects/helsinki/pipelines/beach-water/pipeline.yaml
+helsinki-pipeline-parking-areas.yaml: projects/helsinki/pipelines/parking-areas/pipeline.yaml
+helsinki-pipeline-excavation.yaml: projects/helsinki/pipelines/excavation/pipeline.yaml
+helsinki-pipeline-traffic-arrangements.yaml: projects/helsinki/pipelines/traffic-arrangements/pipeline.yaml
+helsinki-pipeline-area-events.yaml: projects/helsinki/pipelines/area-events/pipeline.yaml
+helsinki-pipeline-districts.yaml: projects/helsinki/pipelines/districts/pipeline.yaml
+helsinki-pipeline-subdistricts.yaml: projects/helsinki/pipelines/subdistricts/pipeline.yaml
+helsinki-pipeline-voting-districts.yaml: projects/helsinki/pipelines/voting-districts/pipeline.yaml
+helsinki-pipeline-quarters.yaml: projects/helsinki/pipelines/quarters/pipeline.yaml
+helsinki-pipeline-preschool-areas.yaml: projects/helsinki/pipelines/preschool-areas/pipeline.yaml
+helsinki-pipeline-business-plots.yaml: projects/helsinki/pipelines/business-plots/pipeline.yaml
+helsinki-pipeline-environmental-permit-sites.yaml: projects/helsinki/pipelines/environmental-permit-sites/pipeline.yaml
+helsinki-pipeline-fortifications.yaml: projects/helsinki/pipelines/fortifications/pipeline.yaml
+helsinki-pipeline-landscape-culture.yaml: projects/helsinki/pipelines/landscape-culture/pipeline.yaml
+helsinki-pipeline-waterfront-sites.yaml: projects/helsinki/pipelines/waterfront-sites/pipeline.yaml
+helsinki-pipeline-parking-places.yaml: projects/helsinki/pipelines/parking-places/pipeline.yaml
+helsinki-pipeline-tourist-stops.yaml: projects/helsinki/pipelines/tourist-stops/pipeline.yaml
+helsinki-pipeline-tourist-parking.yaml: projects/helsinki/pipelines/tourist-parking/pipeline.yaml
+helsinki-pipeline-traffic-lights.yaml: projects/helsinki/pipelines/traffic-lights/pipeline.yaml
+helsinki-pipeline-warning-lights.yaml: projects/helsinki/pipelines/warning-lights/pipeline.yaml
+helsinki-pipeline-noise-roads-day-0.yaml: projects/helsinki/pipelines/noise-roads-day-0/pipeline.yaml
+helsinki-pipeline-noise-roads-day-1.yaml: projects/helsinki/pipelines/noise-roads-day-1/pipeline.yaml
+helsinki-pipeline-noise-roads-day-2.yaml: projects/helsinki/pipelines/noise-roads-day-2/pipeline.yaml
+helsinki-pipeline-noise-roads-night-0.yaml: projects/helsinki/pipelines/noise-roads-night-0/pipeline.yaml
+helsinki-pipeline-noise-roads-night-1.yaml: projects/helsinki/pipelines/noise-roads-night-1/pipeline.yaml
+helsinki-pipeline-noise-roads-night-2.yaml: projects/helsinki/pipelines/noise-roads-night-2/pipeline.yaml
+helsinki-pipeline-noise-rail.yaml: projects/helsinki/pipelines/noise-rail/pipeline.yaml
+helsinki-pipeline-trees-0.yaml: projects/helsinki/pipelines/trees-0/pipeline.yaml
+helsinki-pipeline-trees-1.yaml: projects/helsinki/pipelines/trees-1/pipeline.yaml
+helsinki-pipeline-trees-2.yaml: projects/helsinki/pipelines/trees-2/pipeline.yaml
+helsinki-pipeline-trees-3.yaml: projects/helsinki/pipelines/trees-3/pipeline.yaml
+helsinki-pipeline-nature.yaml: projects/helsinki/pipelines/nature/pipeline.yaml
+helsinki-pipeline-fee-parking-zones.yaml: projects/helsinki/pipelines/fee-parking-zones/pipeline.yaml
+helsinki-pipeline-resident-parking-zones.yaml: projects/helsinki/pipelines/resident-parking-zones/pipeline.yaml
+helsinki-pipeline-services-bento.yaml: projects/helsinki/pipelines/services/bento.yaml
+helsinki-pipeline-beach-water-bento.yaml: projects/helsinki/pipelines/beach-water/bento.yaml
+helsinki-pipeline-parking-areas-bento.yaml: projects/helsinki/pipelines/parking-areas/bento.yaml
+helsinki-pipeline-excavation-bento.yaml: projects/helsinki/pipelines/excavation/bento.yaml
+helsinki-pipeline-traffic-arrangements-bento.yaml: projects/helsinki/pipelines/traffic-arrangements/bento.yaml
+helsinki-pipeline-area-events-bento.yaml: projects/helsinki/pipelines/area-events/bento.yaml
+helsinki-pipeline-districts-bento.yaml: projects/helsinki/pipelines/districts/bento.yaml
+helsinki-pipeline-subdistricts-bento.yaml: projects/helsinki/pipelines/subdistricts/bento.yaml
+helsinki-pipeline-voting-districts-bento.yaml: projects/helsinki/pipelines/voting-districts/bento.yaml
+helsinki-pipeline-quarters-bento.yaml: projects/helsinki/pipelines/quarters/bento.yaml
+helsinki-pipeline-preschool-areas-bento.yaml: projects/helsinki/pipelines/preschool-areas/bento.yaml
+helsinki-pipeline-business-plots-bento.yaml: projects/helsinki/pipelines/business-plots/bento.yaml
+helsinki-pipeline-environmental-permit-sites-bento.yaml: projects/helsinki/pipelines/environmental-permit-sites/bento.yaml
+helsinki-pipeline-fortifications-bento.yaml: projects/helsinki/pipelines/fortifications/bento.yaml
+helsinki-pipeline-landscape-culture-bento.yaml: projects/helsinki/pipelines/landscape-culture/bento.yaml
+helsinki-pipeline-waterfront-sites-bento.yaml: projects/helsinki/pipelines/waterfront-sites/bento.yaml
+helsinki-pipeline-parking-places-bento.yaml: projects/helsinki/pipelines/parking-places/bento.yaml
+helsinki-pipeline-tourist-stops-bento.yaml: projects/helsinki/pipelines/tourist-stops/bento.yaml
+helsinki-pipeline-tourist-parking-bento.yaml: projects/helsinki/pipelines/tourist-parking/bento.yaml
+helsinki-pipeline-traffic-lights-bento.yaml: projects/helsinki/pipelines/traffic-lights/bento.yaml
+helsinki-pipeline-warning-lights-bento.yaml: projects/helsinki/pipelines/warning-lights/bento.yaml
+helsinki-pipeline-noise-roads-day-0-bento.yaml: projects/helsinki/pipelines/noise-roads-day-0/bento.yaml
+helsinki-pipeline-noise-roads-day-1-bento.yaml: projects/helsinki/pipelines/noise-roads-day-1/bento.yaml
+helsinki-pipeline-noise-roads-day-2-bento.yaml: projects/helsinki/pipelines/noise-roads-day-2/bento.yaml
+helsinki-pipeline-noise-roads-night-0-bento.yaml: projects/helsinki/pipelines/noise-roads-night-0/bento.yaml
+helsinki-pipeline-noise-roads-night-1-bento.yaml: projects/helsinki/pipelines/noise-roads-night-1/bento.yaml
+helsinki-pipeline-noise-roads-night-2-bento.yaml: projects/helsinki/pipelines/noise-roads-night-2/bento.yaml
+helsinki-pipeline-noise-rail-bento.yaml: projects/helsinki/pipelines/noise-rail/bento.yaml
+helsinki-pipeline-trees-0-bento.yaml: projects/helsinki/pipelines/trees-0/bento.yaml
+helsinki-pipeline-trees-1-bento.yaml: projects/helsinki/pipelines/trees-1/bento.yaml
+helsinki-pipeline-trees-2-bento.yaml: projects/helsinki/pipelines/trees-2/bento.yaml
+helsinki-pipeline-trees-3-bento.yaml: projects/helsinki/pipelines/trees-3/bento.yaml
+helsinki-pipeline-nature-bento.yaml: projects/helsinki/pipelines/nature/bento.yaml
+helsinki-pipeline-fee-parking-zones-bento.yaml: projects/helsinki/pipelines/fee-parking-zones/bento.yaml
+helsinki-pipeline-resident-parking-zones-bento.yaml: projects/helsinki/pipelines/resident-parking-zones/bento.yaml
+# HSL's network registers (T-5254): fare zones, ticket sales points, City Bike Vantaa's stations and the
+# boardings per stop, which go to the indicator space.
+helsinki-datasource-fare-zones.yaml: projects/helsinki/datasources/hsl-fare-zones.yaml
+helsinki-datasource-sales-points.yaml: projects/helsinki/datasources/hsl-sales-points.yaml
+helsinki-datasource-vantaa-bikes.yaml: projects/helsinki/datasources/hsl-vantaa-bikes.yaml
+helsinki-datasource-stop-boardings.yaml: projects/helsinki/datasources/hsl-stop-boardings.yaml
+helsinki-pipeline-fare-zones.yaml: projects/helsinki/pipelines/fare-zones/pipeline.yaml
+helsinki-pipeline-sales-points.yaml: projects/helsinki/pipelines/sales-points/pipeline.yaml
+helsinki-pipeline-vantaa-bikes.yaml: projects/helsinki/pipelines/vantaa-bikes/pipeline.yaml
+helsinki-pipeline-stop-boardings.yaml: projects/helsinki/pipelines/stop-boardings/pipeline.yaml
+helsinki-pipeline-fare-zones-bento.yaml: projects/helsinki/pipelines/fare-zones/bento.yaml
+helsinki-pipeline-sales-points-bento.yaml: projects/helsinki/pipelines/sales-points/bento.yaml
+helsinki-pipeline-vantaa-bikes-bento.yaml: projects/helsinki/pipelines/vantaa-bikes/bento.yaml
+helsinki-pipeline-stop-boardings-bento.yaml: projects/helsinki/pipelines/stop-boardings/bento.yaml
+# HSL's stops and lines (T-3356): the network transit-reach routes over, beside the live vehicles.
+helsinki-datasource-transit-stops.yaml: projects/helsinki/datasources/hsl-gtfs-stops.yaml
+helsinki-datasource-transit-routes.yaml: projects/helsinki/datasources/hsl-routes.yaml
+helsinki-pipeline-transit-stops.yaml: projects/helsinki/pipelines/transit-stops/pipeline.yaml
+helsinki-pipeline-transit-routes.yaml: projects/helsinki/pipelines/transit-routes/pipeline.yaml
+helsinki-pipeline-transit-stops-bento.yaml: projects/helsinki/pipelines/transit-stops/bento.yaml
+helsinki-pipeline-transit-routes-bento.yaml: projects/helsinki/pipelines/transit-routes/bento.yaml
+# HSL's GTFS static feed (T-3890): agencies and lines, and the shapes they draw.
+helsinki-datasource-gtfs-routes.yaml: projects/helsinki/datasources/hsl-gtfs-routes.yaml
+helsinki-datasource-gtfs-shapes.yaml: projects/helsinki/datasources/hsl-gtfs-shapes.yaml
+helsinki-pipeline-gtfs-routes.yaml: projects/helsinki/pipelines/gtfs-routes/pipeline.yaml
+helsinki-pipeline-gtfs-shapes.yaml: projects/helsinki/pipelines/gtfs-shapes/pipeline.yaml
+helsinki-pipeline-gtfs-routes-bento.yaml: projects/helsinki/pipelines/gtfs-routes/bento.yaml
+helsinki-pipeline-gtfs-shapes-bento.yaml: projects/helsinki/pipelines/gtfs-shapes/bento.yaml
+# Today's scheduled departures per mode, from the feed's calendars and trips (T-6467).
+helsinki-datasource-gtfs-daily-departures.yaml: projects/helsinki/datasources/hsl-gtfs-daily-departures.yaml
+helsinki-pipeline-gtfs-daily-departures.yaml: projects/helsinki/pipelines/gtfs-daily-departures/pipeline.yaml
+helsinki-pipeline-gtfs-daily-departures-bento.yaml: projects/helsinki/pipelines/gtfs-daily-departures/bento.yaml
+# HSL's GTFS-RT trip updates (T-3891): the next departures of a curated set of stops.
+helsinki-datasource-trip-updates.yaml: projects/helsinki/datasources/hsl-trip-updates.yaml
+helsinki-pipeline-departures.yaml: projects/helsinki/pipelines/hsl-departures/pipeline.yaml
+helsinki-pipeline-departures-bento.yaml: projects/helsinki/pipelines/hsl-departures/bento.yaml
+# HSL's GTFS-RT service alerts (T-3892): one Alert each, linked to its lines and stops.
+helsinki-datasource-service-alerts.yaml: projects/helsinki/datasources/hsl-service-alerts.yaml
+helsinki-pipeline-service-alerts.yaml: projects/helsinki/pipelines/hsl-service-alerts/pipeline.yaml
+helsinki-pipeline-service-alerts-bento.yaml: projects/helsinki/pipelines/hsl-service-alerts/bento.yaml
+helsinki-datasource-feedback.yaml: projects/helsinki/datasources/hel-feedback.yaml
+helsinki-pipeline-feedback.yaml: projects/helsinki/pipelines/feedback-requests/pipeline.yaml
+helsinki-pipeline-feedback-bento.yaml: projects/helsinki/pipelines/feedback-requests/bento.yaml
+# Fintraffic LIIPI park and ride (T-3894): the HSL area's sites daily, their free spaces every 5 min.
+helsinki-datasource-liipi-facilities.yaml: projects/helsinki/datasources/liipi-facilities.yaml
+helsinki-datasource-liipi-utilizations.yaml: projects/helsinki/datasources/liipi-utilizations.yaml
+helsinki-datasource-cycle-counters.yaml: projects/helsinki/datasources/lidotiku-cycle-counters.yaml
+helsinki-datasource-traffic-counters.yaml: projects/helsinki/datasources/lidotiku-traffic-counters.yaml
+# HRI file imports of traffic counts (T-5669): the yearly autumn volume table and the 2023 vision pilot.
+helsinki-datasource-traffic-volumes.yaml: projects/helsinki/datasources/hel-traffic-volumes.yaml
+helsinki-datasource-vision-counts.yaml: projects/helsinki/datasources/fvh-vision-counts.yaml
+helsinki-pipeline-liipi-facilities.yaml: projects/helsinki/pipelines/liipi-facilities/pipeline.yaml
+helsinki-pipeline-liipi-facilities-bento.yaml: projects/helsinki/pipelines/liipi-facilities/bento.yaml
+helsinki-pipeline-liipi-utilizations.yaml: projects/helsinki/pipelines/liipi-utilizations/pipeline.yaml
+helsinki-pipeline-liipi-utilizations-bento.yaml: projects/helsinki/pipelines/liipi-utilizations/bento.yaml
+helsinki-pipeline-cycle-counters.yaml: projects/helsinki/pipelines/cycle-counters/pipeline.yaml
+helsinki-pipeline-cycle-counters-bento.yaml: projects/helsinki/pipelines/cycle-counters/bento.yaml
+helsinki-pipeline-traffic-counters.yaml: projects/helsinki/pipelines/traffic-counters/pipeline.yaml
+helsinki-pipeline-traffic-counters-bento.yaml: projects/helsinki/pipelines/traffic-counters/bento.yaml
+helsinki-pipeline-traffic-volumes.yaml: projects/helsinki/pipelines/traffic-volumes/pipeline.yaml
+helsinki-pipeline-traffic-volumes-bento.yaml: projects/helsinki/pipelines/traffic-volumes/bento.yaml
+helsinki-pipeline-vision-counts.yaml: projects/helsinki/pipelines/vision-counts/pipeline.yaml
+helsinki-pipeline-vision-counts-bento.yaml: projects/helsinki/pipelines/vision-counts/bento.yaml
+# The default group of Prague's waste desk (T-2786, AP-118): an organization Group, so it is seeded
+# here beside the organization's roles rather than from the praha folder, which writes its project only.
+group-praha-odpad-viewer.yaml: users/groups/praha-odpad-viewer.yaml
+# Helsinki's service map for its residents (T-2788): a public static bundle the Portal image ships,
+# reading the service register and the beach water sensors of the space helsinki through its own endpoint.
+helsinki-app-kartta.yaml: projects/helsinki/apps/helsinki-kartta/app.yaml
+helsinki-app-kartta-endpoint.yaml: projects/helsinki/spaces/helsinki/endpoints/app-helsinki-kartta.yaml
+helsinki-app-kartta-policy.yaml: projects/helsinki/spaces/helsinki/policies/app-helsinki-kartta-1.yaml
+# Helsinki's open data as grids (T-2788), with the endpoint's own downloads.
+helsinki-app-data.yaml: projects/helsinki/apps/helsinki-data/app.yaml
+helsinki-app-data-endpoint.yaml: projects/helsinki/spaces/helsinki/endpoints/app-helsinki-data.yaml
+helsinki-app-data-policy.yaml: projects/helsinki/spaces/helsinki/policies/app-helsinki-data-1.yaml
+# The public knowledge assistant over the weather and events Endpoints (T-3055, MF-52).
+helsinki-assistant-public.yaml: projects/helsinki/assistant/deployments/helsinki-public.yaml
+# The catalogue's assistant, framed by every page of the catalogue (T-3058, AG-114).
+helsinki-assistant-catalogue.yaml: projects/helsinki/assistant/deployments/helsinki-catalogue.yaml
+# The data portal's public datasets, the catalogue assistant's knowledge (T-3181, T-3054).
+helsinki-knowledge-catalogue.yaml: projects/helsinki/assistant/sources/data-portal.yaml
+# The city's website as a knowledge source (T-3067, user decision 2026-10-07).
+helsinki-knowledge-web.yaml: projects/helsinki/assistant/sources/web.yaml
+helsinki-knowledge-catalogue-ngsi.yaml: projects/helsinki/assistant/sources/catalogue.yaml
+# The platform's User Guide, every workflow with links into the Portal's forms (T-3226, AG-118).
+helsinki-knowledge-guide.yaml: projects/helsinki/assistant/sources/guide.yaml
+# The staff assistant over the website, for the answer-quality evals (T-3067).
+helsinki-assistant-knowledge.yaml: projects/helsinki/assistant/deployments/knowledge.yaml
+# One catalogue dataset per Smart Data Model type, or per group of types that reference
+# each other, each through its own narrowed Endpoint and Policy (T-4344).
+helsinki-endpoint-water-quality.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-beach-water.yaml
+helsinki-policy-public-water-quality.yaml: projects/helsinki/spaces/helsinki/policies/public-water-quality.yaml
+helsinki-datasource-street-cleaning-air.yaml: projects/helsinki/datasources/fvh-swarco-street-cleaning-air.yaml
+helsinki-pipeline-street-cleaning-air.yaml: projects/helsinki/pipelines/street-cleaning-air/pipeline.yaml
+helsinki-pipeline-street-cleaning-air-bento.yaml: projects/helsinki/pipelines/street-cleaning-air/bento.yaml
+helsinki-endpoint-street-cleaning-air.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-street-cleaning-air.yaml
+helsinki-policy-public-street-cleaning-air.yaml: projects/helsinki/spaces/helsinki/policies/public-street-cleaning-air.yaml
+helsinki-endpoint-parking.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-parking.yaml
+helsinki-policy-public-parking.yaml: projects/helsinki/spaces/helsinki/policies/public-parking.yaml
+helsinki-endpoint-permits.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-public-area-permits.yaml
+helsinki-policy-public-permits.yaml: projects/helsinki/spaces/helsinki/policies/public-permits.yaml
+helsinki-endpoint-districts.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-districts.yaml
+helsinki-policy-public-districts.yaml: projects/helsinki/spaces/helsinki/policies/public-districts.yaml
+helsinki-endpoint-heritage.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-heritage.yaml
+helsinki-policy-public-heritage.yaml: projects/helsinki/spaces/helsinki/policies/public-heritage.yaml
+helsinki-endpoint-traffic-signals.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-traffic-signals.yaml
+helsinki-policy-public-traffic-signals.yaml: projects/helsinki/spaces/helsinki/policies/public-traffic-signals.yaml
+helsinki-endpoint-noise.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-noise.yaml
+helsinki-policy-public-noise.yaml: projects/helsinki/spaces/helsinki/policies/public-noise.yaml
+helsinki-endpoint-trees.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-trees.yaml
+helsinki-policy-public-trees.yaml: projects/helsinki/spaces/helsinki/policies/public-trees.yaml
+helsinki-endpoint-nature.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-nature.yaml
+helsinki-policy-public-nature.yaml: projects/helsinki/spaces/helsinki/policies/public-nature.yaml
+helsinki-endpoint-places.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-places.yaml
+helsinki-endpoint-cycle-counts.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-cycle-counts.yaml
+helsinki-endpoint-traffic-counts.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-traffic-counts.yaml
+helsinki-endpoint-traffic-volumes.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-traffic-volumes.yaml
+helsinki-endpoint-vision-counts.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-vision-counts.yaml
+helsinki-policy-public-places.yaml: projects/helsinki/spaces/helsinki/policies/public-places.yaml
+# Helsinki area statistics (T-5258): one pipeline, one Endpoint and one public Policy per theme.
+helsinki-datasource-statistics.yaml: projects/helsinki/datasources/hel-statistics-table.yaml
+helsinki-pipeline-statistics.yaml: projects/helsinki/pipelines/statistics/pipeline.yaml
+helsinki-pipeline-statistics-bento.yaml: projects/helsinki/pipelines/statistics/bento.yaml
+helsinki-endpoint-statistics-population.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-statistics-population.yaml
+helsinki-policy-public-statistics-population.yaml: projects/helsinki/spaces/helsinki/policies/public-statistics-population.yaml
+helsinki-endpoint-statistics-housing.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-statistics-housing.yaml
+helsinki-policy-public-statistics-housing.yaml: projects/helsinki/spaces/helsinki/policies/public-statistics-housing.yaml
+helsinki-endpoint-statistics-employment.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-statistics-employment.yaml
+helsinki-policy-public-statistics-employment.yaml: projects/helsinki/spaces/helsinki/policies/public-statistics-employment.yaml
+helsinki-endpoint-statistics-income.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-statistics-income.yaml
+helsinki-policy-public-statistics-income.yaml: projects/helsinki/spaces/helsinki/policies/public-statistics-income.yaml
+helsinki-endpoint-statistics-education.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-statistics-education.yaml
+helsinki-policy-public-statistics-education.yaml: projects/helsinki/spaces/helsinki/policies/public-statistics-education.yaml
+helsinki-endpoint-statistics-welfare.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-statistics-welfare.yaml
+helsinki-policy-public-statistics-welfare.yaml: projects/helsinki/spaces/helsinki/policies/public-statistics-welfare.yaml
+helsinki-endpoint-statistics-environment.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-statistics-environment.yaml
+helsinki-policy-public-statistics-environment.yaml: projects/helsinki/spaces/helsinki/policies/public-statistics-environment.yaml
+# Service usage (T-5258, T-5667): the web analytics counters, one more statistics theme.
+helsinki-datasource-web-analytics-sites.yaml: projects/helsinki/datasources/hel-web-analytics-sites.yaml
+helsinki-pipeline-service-usage.yaml: projects/helsinki/pipelines/service-usage/pipeline.yaml
+helsinki-pipeline-service-usage-bento.yaml: projects/helsinki/pipelines/service-usage/bento.yaml
+helsinki-endpoint-statistics-services.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-statistics-services.yaml
+helsinki-policy-public-statistics-services.yaml: projects/helsinki/spaces/helsinki/policies/public-statistics-services.yaml
+# Heat vulnerability index and service property energy use (T-5278): one pipeline, one Endpoint and
+# one public Policy each.
+helsinki-datasource-heat-vulnerability.yaml: projects/helsinki/datasources/hel-heat-vulnerability.yaml
+helsinki-pipeline-heat-vulnerability.yaml: projects/helsinki/pipelines/heat-vulnerability/pipeline.yaml
+helsinki-pipeline-heat-vulnerability-bento.yaml: projects/helsinki/pipelines/heat-vulnerability/bento.yaml
+helsinki-endpoint-heat-vulnerability.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-heat-vulnerability.yaml
+helsinki-policy-public-heat-vulnerability.yaml: projects/helsinki/spaces/helsinki/policies/public-heat-vulnerability.yaml
+helsinki-datasource-service-property-energy.yaml: projects/helsinki/datasources/hel-nuuka-properties.yaml
+helsinki-pipeline-service-property-energy.yaml: projects/helsinki/pipelines/service-property-energy/pipeline.yaml
+helsinki-pipeline-service-property-energy-bento.yaml: projects/helsinki/pipelines/service-property-energy/bento.yaml
+helsinki-endpoint-service-property-energy.yaml: projects/helsinki/spaces/helsinki/endpoints/helsinki-service-property-energy.yaml
+helsinki-policy-public-service-property-energy.yaml: projects/helsinki/spaces/helsinki/policies/public-service-property-energy.yaml
+helsinki-policy-public-cycle-counts.yaml: projects/helsinki/spaces/helsinki/policies/public-cycle-counts.yaml
+helsinki-policy-public-traffic-counts.yaml: projects/helsinki/spaces/helsinki/policies/public-traffic-counts.yaml
+helsinki-policy-public-traffic-volumes.yaml: projects/helsinki/spaces/helsinki/policies/public-traffic-volumes.yaml
+helsinki-policy-public-vision-counts.yaml: projects/helsinki/spaces/helsinki/policies/public-vision-counts.yaml
+# The organization's own NGSI-LD catalogue (T-5493): written by the Portal reconciler, read by anyone.
+helsinki-space-catalog.yaml: projects/helsinki/spaces/catalog/space.yaml
+helsinki-datamodel-catalog.yaml: projects/helsinki/spaces/catalog/datamodels/catalog.yaml
+catalog.linkml.yaml: projects/helsinki/spaces/catalog/datamodels/catalog.linkml.yaml
+helsinki-endpoint-catalog.yaml: projects/helsinki/spaces/catalog/endpoints/catalog.yaml
+helsinki-policy-catalog-portal-write.yaml: projects/helsinki/spaces/catalog/policies/catalog-portal-write.yaml
+helsinki-policy-catalog-public-read.yaml: projects/helsinki/spaces/catalog/policies/catalog-public-read.yaml
+# The MQTT demo (T-4857): two brokers, one device each, and the pipelines writing their messages.
+helsinki-mqttbroker-sensors.yaml: projects/helsinki/mqttbrokers/sensors.yaml
+helsinki-mqttbroker-vehicles.yaml: projects/helsinki/mqttbrokers/vehicles.yaml
+helsinki-serviceaccount-sensor-kallio.yaml: projects/helsinki/access/serviceaccounts/sensor-kallio.yaml
+helsinki-serviceaccount-vehicle-demo.yaml: projects/helsinki/access/serviceaccounts/vehicle-demo.yaml
+helsinki-datasource-mqtt-sensors.yaml: projects/helsinki/datasources/mqtt-sensors.yaml
+helsinki-datasource-mqtt-vehicles.yaml: projects/helsinki/datasources/mqtt-vehicles.yaml
+helsinki-pipeline-mqtt-sensors.yaml: projects/helsinki/pipelines/mqtt-sensors/pipeline.yaml
+helsinki-pipeline-mqtt-vehicles.yaml: projects/helsinki/pipelines/mqtt-vehicles/pipeline.yaml

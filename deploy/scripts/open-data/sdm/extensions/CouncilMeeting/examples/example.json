@@ -1,0 +1,27 @@
+{
+  "cZasadnutia": 0,
+  "cisloZasadnutia": "cisloZasadnutia",
+  "dataProvider": "dataProvider",
+  "datumZasadnutia": "datumZasadnutia",
+  "hyperlinkNaDochadzku": "hyperlinkNaDochadzku",
+  "hyperlinkNaPozvanku": "hyperlinkNaPozvanku",
+  "hyperlinkNaPrijateUznesenia": "hyperlinkNaPrijateUznesenia",
+  "hyperlinkNaVysledkyHlasovani": "hyperlinkNaVysledkyHlasovani",
+  "hyperlinkNaZapisnicu": "hyperlinkNaZapisnicu",
+  "iCOSamospravy": "iCOSamospravy",
+  "id": "urn:ngsi-ld:CouncilMeeting:joinedcontext.com:example:1",
+  "isPartOf": "https://example.org/isPartOf",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "nazovSamospravy": "nazovSamospravy",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "organSamospravy": "organSamospravy",
+  "rok": 0,
+  "source": "https://example.org/source",
+  "type": "CouncilMeeting"
+}

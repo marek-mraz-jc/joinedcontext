@@ -1,0 +1,5 @@
+{{- if .Values.operators.enabled }}
+{{- $cnpgUser := printf "system:serviceaccount:%s:postgres-operator-cloudnative-pg" (.Values.cnpgOperatorNamespace | default .Release.Namespace) }}
+{{ .Files.Get "files/protect-operator-owned-labels.yaml" | replace "KYVERNO_FAILURE_ACTION" .Values.failureAction | replace "CNPG_OPERATOR_USERNAME" $cnpgUser }}
+{{ .Files.Get "files/restrict-cnpg-operator-pod-labels.yaml" | replace "KYVERNO_FAILURE_ACTION" .Values.failureAction }}
+{{- end }}

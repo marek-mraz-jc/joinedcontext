@@ -1,0 +1,53 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "Číslo": "D-1/2025",
+    "Typ_dotácie": "kultúra",
+    "Prvé_doručenie": 1735689600000,
+    "Stav_finan__vyúčtovania": "vyúčtované",
+    "Č__zmluvy": "Z-0",
+    "Žiadateľ": "Obec Hrnčiarska Ves",
+    "IČO": "00318949",
+    "Právna_forma": "obec",
+    "Schválená_výška_dotácie": 1000.5,
+    "Skutočné_čerpanie": 900
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "Číslo": "D-2/2025",
+    "Typ_dotácie": "kultúra",
+    "Prvé_doručenie": 1735689600000,
+    "Stav_finan__vyúčtovania": "vyúčtované",
+    "Č__zmluvy": "Z-1",
+    "Žiadateľ": "OZ Kultúra",
+    "IČO": "42200001",
+    "Právna_forma": "obec",
+    "Schválená_výška_dotácie": 1001.5,
+    "Skutočné_čerpanie": 900
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "Číslo": "D-3/2025",
+    "Typ_dotácie": "kultúra",
+    "Prvé_doručenie": 1735689600000,
+    "Stav_finan__vyúčtovania": "vyúčtované",
+    "Č__zmluvy": "Z-2",
+    "Žiadateľ": "Mesto Brezno",
+    "IČO": "00313271",
+    "Právna_forma": "obec",
+    "Schválená_výška_dotácie": 1002.5,
+    "Skutočné_čerpanie": 900
+   }
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item 8d435d33cd5d431cbaeda5837b3d3a77 (Oázy chladu – místa ke koupání), 52 records on 2026-10-23, served by its ArcGIS Hub
+# download as GeoJSON in WGS 84, as the toilets read theirs. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5269).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-bathing-places
+  namespace: praha
+  title:
+    en: 'Cool spots: places to swim (IPR Praha)'
+    cs: Oázy chladu – místa ke koupání (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/8d435d33cd5d431cbaeda5837b3d3a77_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

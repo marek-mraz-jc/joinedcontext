@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: air-quality-steward
+  namespace: org
+  annotations:
+    joinedcontext.com/app: helsinki/air-quality
+spec:
+  description: The stewards of air-quality, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000001 # demo.steward

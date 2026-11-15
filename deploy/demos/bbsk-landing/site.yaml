@@ -1,0 +1,268 @@
+# The BBSK demo landing page, ConfigMaps demo-bbsk-landing and demo-bbsk-landing-site as prod served them
+# (final export prod-20261109T1958Z, release demo-bbsk-smartcity), namespace renamed. Static site, no secret.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-bbsk-landing
+  namespace: bbsk-landing
+data:
+  default.conf: "# T-4740: the BBSK demo's landing page. Static files only, no cookie, no form; the one framed\n# page is the demo assistant's widget on assistant.smartcity.joinedcontext.com, which the\
+    \ CSP names alone.\nserver {\n    listen 8080;\n    server_tokens off;\n    absolute_redirect off;\n    root /srv/site;\n    autoindex off;\n    charset utf-8;\n\n    location = /healthz {\n       \
+    \ access_log off;\n        default_type text/plain;\n        return 200 \"ok\\n\";\n    }\n\n    add_header X-Content-Type-Options nosniff always;\n    add_header Referrer-Policy no-referrer always;\n\
+    \    add_header X-Robots-Tag \"noindex, nofollow\" always;\n    add_header Permissions-Policy \"camera=(), microphone=(), geolocation=(), payment=(), usb=()\" always;\n    add_header Cache-Control \"\
+    no-cache\" always;\n    add_header Content-Security-Policy \"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-src https://assistant.smartcity.joinedcontext.com; base-uri\
+    \ 'none'; form-action 'none'; frame-ancestors 'none'\" always;\n\n    location = / {\n        limit_except GET { deny all; }\n        default_type text/html;\n        try_files /index.html =404;\n \
+    \   }\n    location ~ ^/(landing|jc-dock|jc-assistant)\\.js$ {\n        limit_except GET { deny all; }\n        types { text/javascript js; }\n    }\n    location = /landing.css {\n        limit_except\
+    \ GET { deny all; }\n        types { text/css css; }\n    }\n\n    location / { return 404; }\n}\n"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-bbsk-landing-site
+  namespace: bbsk-landing
+data:
+  index.html: "<!doctype html>\n<html lang=\"sk\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"robots\" content=\"noindex, nofollow\"\
+    >\n<meta name=\"referrer\" content=\"no-referrer\">\n<title>DEMO · Banskobystrický samosprávny kraj (ukážka od joinedcontext, nie oficiálna stránka BBSK)</title>\n<meta name=\"description\" content=\"\
+    Ukážka od joinedcontext: snímka úvodnej stránky www.bbsk.sk s AI asistentom nad otvorenými dátami kraja a mesta Banská Bystrica. Nie je to oficiálna stránka BBSK.\">\n<link rel=\"stylesheet\" href=\"\
+    /landing.css\">\n<script src=\"/jc-dock.js\"></script>\n</head>\n<body>\n<a class=\"skip\" href=\"#obsah\">Skočiť na obsah</a>\n<div class=\"ribbon\" role=\"note\"><span>DEMO · <span class=\"ribbon__long\"\
+    >ukážka od joinedcontext, </span>nie oficiálna stránka BBSK</span></div>\n<header class=\"header\">\n  <div class=\"header__top\"><div class=\"wrap\">\n    <nav aria-label=\"Rýchle odkazy\"><ul><li><a\
+    \ href=\"https://www.bbsk.sk/\" rel=\"noopener\">BBSK.sk</a></li><li><a href=\"https://www.bbsk.sk/sluzby\" rel=\"noopener\">E-služby</a></li><li><a href=\"https://www.bbsk.sk/uradne-hodiny\" rel=\"\
+    noopener\">Úradné hodiny</a></li><li><a href=\"https://www.bbsk.sk/zlepsenie-kvality-ovzdusia\" rel=\"noopener\">Aktuálna kvalita ovzdušia</a></li></ul></nav>\n    <nav class=\"lang\" aria-label=\"\
+    Jazyk\"><ul><li><a href=\"https://www.bbsk.sk/foreigners\" rel=\"noopener\" lang=\"en\">EN</a></li><li><span aria-current=\"page\">SK</span></li></ul></nav>\n  </div></div>\n  <div class=\"header__main\"\
+    ><div class=\"wrap\">\n    <a class=\"wordmark\" href=\"https://www.bbsk.sk/\" rel=\"noopener\">Banskobystrický samosprávny kraj · <b>DEMO</b></a>\n    <div class=\"header__functions\">\n      <a class=\"\
+    search\" href=\"https://www.bbsk.sk/vyhladavanie\" rel=\"noopener\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"10.5\" cy=\"10.5\" r=\"6.5\"/><path d=\"M15.5 15.5 21 21\"/></svg>Hľadať</a>\n\
+    \      <details class=\"menu\">\n        <summary><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3 6h18M3 12h18M3 18h18\"/></svg>Menu</summary>\n        <div class=\"menu__panel\"><div class=\"\
+    wrap\">\n<nav aria-label=\"Témy\"><h2><a href=\"https://www.bbsk.sk/sekcie\" rel=\"noopener\">Témy</a></h2><ul><li><a href=\"https://www.bbsk.sk/sluzby\" rel=\"noopener\">E-služby</a></li><li><a href=\"\
+    https://www.bbsk.sk/sekcie/socialne-sluzby\" rel=\"noopener\">Sociálne služby</a></li><li><a href=\"https://www.bbsk.sk/sekcie/zdravie\" rel=\"noopener\">Zdravie</a></li><li><a href=\"https://www.bbsk.sk/sekcie/skolstvo\"\
+    \ rel=\"noopener\">Školstvo</a></li><li><a href=\"https://www.bbsk.sk/sekcie/doprava\" rel=\"noopener\">Verejná doprava</a></li><li><a href=\"https://www.bbsk.sk/sekcie/kultura\" rel=\"noopener\">Kultúra</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/sekcie/financie\" rel=\"noopener\">Financie</a></li></ul></nav>\n<nav aria-label=\"Poslanci a zastupiteľstvo\"><h2><a href=\"https://www.bbsk.sk/sekcie/poslanci-zastupitelstvo\"\
+    \ rel=\"noopener\">Poslanci a zastupiteľstvo</a></h2><ul><li><a href=\"https://www.bbsk.sk/organizacne-jednotky\" rel=\"noopener\">Organizačné jednotky</a></li><li><a href=\"https://www.bbsk.sk/sekcie/otvoreny-kraj\"\
+    \ rel=\"noopener\">Otvorený kraj</a></li><li><a href=\"https://www.bbsk.sk/sekcie/dotacie\" rel=\"noopener\">Dotácie</a></li><li><a href=\"https://www.bbsk.sk/sekcie/kariera\" rel=\"noopener\">Kariéra</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/organizacie\" rel=\"noopener\">Organizácie</a></li><li><a href=\"https://www.bbsk.sk/sekcie/region\" rel=\"noopener\">Región</a></li></ul></nav>\n<nav aria-label=\"Občan\"\
+    ><h2><a href=\"https://www.bbsk.sk/sekcie/obcan\" rel=\"noopener\">Občan</a></h2><ul><li><a href=\"https://www.bbsk.sk/sekcie/podnikatel\" rel=\"noopener\">Podnikateľ</a></li><li><a href=\"https://www.bbsk.sk/aktuality?categories=tlacove-spravy\"\
+    \ rel=\"noopener\">Tlačové správy</a></li><li><a href=\"https://www.bbsk.sk/sekcie/zverejnovanie-informacii\" rel=\"noopener\">Zverejňovanie informácií</a></li><li><a href=\"https://www.bbsk.sk/sekcie/verejne-obstaravanie\"\
+    \ rel=\"noopener\">Verejné obstarávanie</a></li><li><a href=\"https://www.bbsk.sk/sekcie/majetok\" rel=\"noopener\">Majetok</a></li><li><a href=\"https://www.bbsk.sk/zverejnovanie?categories=strategicke-dokumenty#filter\"\
+    \ rel=\"noopener\">Strategické dokumenty</a></li></ul></nav>\n</div></div>\n      </details>\n    </div>\n  </div></div>\n  <nav class=\"banners\" aria-label=\"Zvýraznené\"><ul class=\"wrap\">\n<li><a\
+    \ href=\"https://www.bbsk.sk/volby-2026\" rel=\"noopener\"><strong>Voľby 2026</strong><small>Voľby do orgánov BBSK v roku 2026</small></a></li>\n<li><a href=\"https://www.bbsk.sk/revitalizacia-majetku\"\
+    \ rel=\"noopener\"><strong>Revitalizácia budov</strong><small>Revitalizácia nevyužívaného majetku</small></a></li>\n<li><a href=\"https://www.bbsk.sk/nas-kraj\" rel=\"noopener\"><strong>Náš kraj</strong><small>Časopis\
+    \ Banskobystrického kraja</small></a></li>\n</ul></nav>\n</header>\n\n<main id=\"obsah\">\n<section class=\"hero\" aria-label=\"Rozcestník\">\n  <div class=\"wrap hero__ai\">\n    <p class=\"ai__tag\"\
+    >DEMO · pridané joinedcontext</p>\n    <h2>AI asistent nad dátami vášho kraja: vyskúšajte ho</h2>\n    <button type=\"button\" class=\"hero__ask\" data-ask><svg viewBox=\"0 0 24 24\" aria-hidden=\"\
+    true\"><path d=\"M4 5h16v11H9l-5 4z\"/></svg>Opýtajte sa AI asistenta</button>\n  </div>\n  <div class=\"wrap hero__lists\">\n<section class=\"hero__list\"><h2>O kraji</h2><ul><li><a href=\"https://www.bbsk.sk/predseda\"\
+    \ rel=\"noopener\">Predseda</a></li><li><a href=\"https://www.bbsk.sk/podpredsedovia-bbsk\" rel=\"noopener\">Podpredsedovia</a></li><li><a href=\"https://www.bbsk.sk/riaditel-uradu\" rel=\"noopener\"\
+    >Riaditeľ úradu</a></li><li><a href=\"https://www.bbsk.sk/sekcie/poslanci-zastupitelstvo\" rel=\"noopener\">Zastupiteľstvo a poslanci</a></li><li><a href=\"https://www.bbsk.sk/organizacne-jednotky\"\
+    \ rel=\"noopener\">Úrad BBSK</a></li><li><a href=\"https://www.bbsk.sk/hlavny-kontrolor\" rel=\"noopener\">Hlavný kontrolór</a></li></ul></section>\n<section class=\"hero__list\"><h2>Aktuality</h2><ul><li><a\
+    \ href=\"https://www.bbsk.sk/aktuality/nova-cesta-na-prsiansku-terasu-je-oficialne-otvorena\" rel=\"noopener\">Nová cesta na Pršiansku terasu je oficiálne otvorená</a></li><li><a href=\"https://www.bbsk.sk/aktuality/region-ziskal-turisticky-tahak-o-akom-sa-pred-rokmi-len-snivalo-cesta-na-kraovu-hou-je-hotova\"\
+    \ rel=\"noopener\">Región získal turistický ťahák. Cesta na Kráľovu hoľu je hotová</a></li><li><a href=\"https://www.bbsk.sk/aktuality/banskobystricky-kraj-opravil-dalsich-desat-mostov-za-42-miliona-eur\"\
+    \ rel=\"noopener\">Banskobystrický kraj opravil ďalších desať mostov za 4,2 milióna eur</a></li><li><a href=\"https://www.bbsk.sk/kontakt-pre-media\" rel=\"noopener\">Kontakt pre médiá</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/aktuality\" rel=\"noopener\">Všetky aktuality ...</a></li></ul></section>\n<section class=\"hero__list\"><h2>Dôležité</h2><ul><li><a href=\"https://www.bbsk.sk/sekcie/dotacie\"\
+    \ rel=\"noopener\">Dotácie</a></li><li><a href=\"https://www.bbsk.sk/sekcie/otvoreny-kraj\" rel=\"noopener\">Otvorený kraj</a></li><li><a href=\"https://www.bbsk.sk/sekcie/rp-bbsk\" rel=\"noopener\"\
+    >Rada partnerstva BBSK</a></li><li><a href=\"https://www.bbsk.sk/ako-vybavit\" rel=\"noopener\">Ako vybaviť</a></li><li><a href=\"https://www.bbsk.sk/organizacie\" rel=\"noopener\">Organizácie</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/sekcie/kariera\" rel=\"noopener\">Pracujte u nás</a></li></ul></section>\n</div>\n</section>\n\n<section class=\"ai\" id=\"asistent\" aria-labelledby=\"asistent-nadpis\"\
+    >\n  <div class=\"wrap\">\n    <p class=\"ai__tag\">DEMO · pridané joinedcontext</p>\n    <h2 id=\"asistent-nadpis\">AI asistent nad dátami kraja: vyskúšajte ho</h2>\n    <p class=\"lead\">Asistent\
+    \ odpovedá z webu www.bbsk.sk a z otvorených dát Banskobystrického samosprávneho kraja a mesta Banská Bystrica a pri každom fakte uvedie zdroj. Kliknite na otázku: otvorí sa asistent a rovnakú otázku\
+    \ v ňom nájdete medzi návrhmi.</p>\n    <ul class=\"cards\">\n<li><button type=\"button\" data-ask><span class=\"head\"><svg viewBox=\"0 0 48 48\" aria-hidden=\"true\"><path d=\"M6 8h36v24H20l-10 8v-8H6zM24\
+    \ 14v9M24 27v.5\"/></svg></span><strong>Ako nahlásim výtlk na ceste v kraji?</strong><small>Odpoveď z webu www.bbsk.sk</small></button></li>\n<li><button type=\"button\" data-ask><span class=\"head\"\
+    ><svg viewBox=\"0 0 48 48\" aria-hidden=\"true\"><path d=\"M10 6h28v28H10zM10 22h28M10 14h28M15 34v6M33 34v6\"/><circle cx=\"16\" cy=\"28\" r=\"1.5\"/><circle cx=\"32\" cy=\"28\" r=\"1.5\"/></svg></span><strong>Kde\
+    \ nájdem cestovné poriadky autobusov v kraji?</strong><small>Odpoveď z webu www.bbsk.sk</small></button></li>\n<li><button type=\"button\" data-ask><span class=\"head\"><svg viewBox=\"0 0 48 48\" aria-hidden=\"\
+    true\"><path d=\"M4 22h40M4 22c8 0 12 8 20 8s12-8 20-8M10 22v16M24 30v8M38 22v16M4 38h40\"/></svg></span><strong>Koľko mostov spravuje kraj a koľko je starších ako 100 rokov?</strong><small>Z otvorených\
+    \ dát: register mostov</small></button></li>\n</ul>\n  </div>\n</section>\n\n<section class=\"section\" aria-labelledby=\"sluzby\">\n  <div class=\"wrap\">\n    <h2 id=\"sluzby\">Služby</h2>\n    <ul\
+    \ class=\"services\">\n<li><section class=\"service\"><p class=\"service__image\">Symboly sociálnych služieb</p><h3><a href=\"https://www.bbsk.sk/sekcie/socialne-sluzby\" rel=\"noopener\">Sociálne služby</a></h3><ul><li><a\
+    \ href=\"https://www.bbsk.sk/sekcie/socialne-sluzby-pre-obcanov\" rel=\"noopener\">Pre občanov</a></li><li><a href=\"https://www.bbsk.sk/sekcie/socialne-sluzby-pre-poskytovatelov\" rel=\"noopener\"\
+    >Pre poskytovateľov</a></li><li><a href=\"https://www.bbsk.sk/aktuality?month_year=&amp;categories=socialne-sluzby&amp;regions=#zoznam\" rel=\"noopener\">Aktuality sociálnych služieb</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/od-srdca-k-srdcu\" rel=\"noopener\">Od srdca k srdcu</a></li><li><a href=\"https://www.bbsk.sk/kontakty-ossz\" rel=\"noopener\">Kontakty</a></li><li><a href=\"https://www.bbsk.sk/legislativa-koncepcia-vzn\"\
+    \ rel=\"noopener\">Legislatíva, koncepcia, VZN</a></li></ul></section></li>\n<li><section class=\"service\"><p class=\"service__image\">Symboly zdravotnej starostlivosti</p><h3><a href=\"https://www.bbsk.sk/sekcie/zdravie\"\
+    \ rel=\"noopener\">Zdravie</a></h3><ul><li><a href=\"https://www.bbsk.sk/sekcie/zdravotnictvo-pre-obcanov\" rel=\"noopener\">Zdravotnícke služby pre občanov</a></li><li><a href=\"https://www.bbsk.sk/sekcie/pre-poskytovatelov-zdravotnej-starostlivosti\"\
+    \ rel=\"noopener\">Pre poskytovateľov</a></li><li><a href=\"https://www.bbsk.sk/podnet-zdravotnictvo\" rel=\"noopener\">Podnet, podanie, sťažnosť</a></li><li><a href=\"https://www.bbsk.sk/kde-je-moja-zdravotna-dokumentacia\"\
+    \ rel=\"noopener\">Kde je moja zdravotná dokumentácia?</a></li><li><a href=\"https://www.bbsk.sk/ambulantna-pohotovost\" rel=\"noopener\">Ambulantná pohotovosť</a></li></ul></section></li>\n<li><section\
+    \ class=\"service\"><p class=\"service__image\">Symboly kultúry</p><h3><a href=\"https://www.bbsk.sk/sekcie/kultura\" rel=\"noopener\">Kultúra</a></h3><ul><li><a href=\"https://www.bbsk.sk/sekcie/kulturne-institucie\"\
+    \ rel=\"noopener\">Kultúrne inštitúcie</a></li><li><a href=\"https://www.bbsk.sk/kulturny-newsletter\" rel=\"noopener\">Kultúrny newsletter</a></li><li><a href=\"https://www.bbsk.sk/aktuality?month_year=&amp;categories=kultura&amp;regions=#zoznam\"\
+    \ rel=\"noopener\">Aktuality z kultúry</a></li><li><a href=\"https://www.bbsk.sk/kvet-kultury-umenia\" rel=\"noopener\">Kvet kultúry a umenia</a></li><li><a href=\"https://www.bbsk.sk/vyhodnotenie-kulturnych-institucii\"\
+    \ rel=\"noopener\">Plány a vyhodnotenie</a></li><li><a href=\"https://www.bbsk.sk/strategicke-dokumenty-kultura\" rel=\"noopener\">Strategické dokumenty</a></li></ul></section></li>\n<li><section class=\"\
+    service\"><p class=\"service__image\">Symboly školstvo</p><h3><a href=\"https://www.bbsk.sk/sekcie/skolstvo\" rel=\"noopener\">Školstvo</a></h3><ul><li><a href=\"https://www.bbsk.sk/aktuality?month_year=&amp;categories=skolstvo&amp;regions=#zoznam\"\
+    \ rel=\"noopener\">Školské aktuality</a></li><li><a href=\"https://www.bbsk.sk/organizacie?q=&amp;categories=skolstvo&amp;regions=#filter\" rel=\"noopener\">Školské organizácie</a></li><li><a href=\"\
+    https://www.bbsk.sk/sikana\" rel=\"noopener\">Pomoc pre Teba</a></li><li><a href=\"https://www.bbsk.sk/reforma-vzdelavania\" rel=\"noopener\">Reforma vzdelávania</a></li><li><a href=\"https://www.bbsk.sk/zverejnovanie?categories=strategicke-dokumenty-skolstvo#filter\"\
+    \ rel=\"noopener\">Strategické dokumenty</a></li><li><a href=\"https://www.bbsk.sk/legislativa-skolstvo\" rel=\"noopener\">Legislatíva</a></li></ul></section></li>\n<li><section class=\"service\"><p\
+    \ class=\"service__image\">Symboly dopravy</p><h3><a href=\"https://www.bbsk.sk/sekcie/doprava\" rel=\"noopener\">Doprava</a></h3><ul><li><a href=\"https://www.bbsk.sk/aktuality?categories=doprava#zoznam\"\
+    \ rel=\"noopener\">Aktuality</a></li><li><a href=\"https://www.bbsk.sk/sekcie/doprava-pre-obcanov\" rel=\"noopener\">Dopravné služby pre občanov</a></li><li><a href=\"https://www.bbsk.sk/cestovne-poriadky\"\
+    \ rel=\"noopener\">Cestovné poriadky</a></li><li><a href=\"https://www.bbsk.sk/sekcie/pre-dopravcov\" rel=\"noopener\">Služby pre dopravcov</a></li><li><a href=\"https://www.bbsk.sk/sekcie/cesty\" rel=\"\
+    noopener\">Cestná sieť</a></li><li><a href=\"https://www.bbsk.sk/sekcie/cyklodoprava\" rel=\"noopener\">Cyklodoprava</a></li></ul></section></li>\n<li><section class=\"service\"><p class=\"service__image\"\
+    >Symboly územného plánu a životného prostredia</p><h3><a href=\"https://www.bbsk.sk/sekcie/uzemne-planovanie-zp\" rel=\"noopener\">Územné plánovanie a životné prostredie</a></h3><ul><li><a href=\"https://www.bbsk.sk/mapovy-portal\"\
+    \ rel=\"noopener\">Mapový portál</a></li><li><a href=\"https://www.bbsk.sk/uzemny-plan-vuc-bbk\" rel=\"noopener\">Územný plán regiónu</a></li><li><a href=\"https://www.bbsk.sk/uzemne-plany-mikroregionov\"\
+    \ rel=\"noopener\">Územné plány mikroregiónov</a></li><li><a href=\"https://www.bbsk.sk/zp\" rel=\"noopener\">Životné prostredie</a></li><li><a href=\"https://www.bbsk.sk/zlepsenie-kvality-ovzdusia\"\
+    \ rel=\"noopener\">LIFE IP Zlepšenie kvality ovzdušia</a></li></ul></section></li>\n<li><section class=\"service\"><p class=\"service__image\">Symboly projektov</p><h3><a href=\"https://www.bbsk.sk/sekcie/projekty\"\
+    \ rel=\"noopener\">Projekty</a></h3><ul><li><a href=\"https://www.bbsk.sk/sekcie/projekty-rozvoja-kraja\" rel=\"noopener\">Projekty rozvoja kraja</a></li><li><a href=\"https://www.bbsk.sk/sekcie/projekty-rozvoja-skolstva\"\
+    \ rel=\"noopener\">Projekty rozvoja školstva</a></li><li><a href=\"https://www.bbsk.sk/revitalizacia-majetku\" rel=\"noopener\">Revitalizácia majetku</a></li><li><a href=\"https://www.bbsk.sk/rekonstrukcia-ciest\"\
+    \ rel=\"noopener\">Rekonštrukcia ciest a mostov</a></li><li><a href=\"https://www.bbsk.sk/inovacne-centrum-banskobystrickeho-kraja\" rel=\"noopener\">Inovačné centrum BBSK</a></li><li><a href=\"https://www.bbsk.sk/projekty-bbsk\"\
+    \ rel=\"noopener\">Ďalšie projekty EÚ BBSK</a></li></ul></section></li>\n<li><section class=\"service\"><p class=\"service__image\">Symboly sme tu pre vas</p><h3><a href=\"https://www.bbsk.sk/sekcie/sme-tu-pre-vas\"\
+    \ rel=\"noopener\">Sme tu pre vás</a></h3><ul><li><a href=\"https://www.bbsk.sk/sekcie/region\" rel=\"noopener\">Región</a></li><li><a href=\"https://www.bbsk.sk/sekcie/podnikatel\" rel=\"noopener\"\
+    >Podnikatelia</a></li><li><a href=\"https://www.bbsk.sk/sekcie/obcan\" rel=\"noopener\">Občania</a></li><li><a href=\"https://www.bbsk.sk/rozvojova-agentura-bbsk-no\" rel=\"noopener\">Rozvojová agentúra</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/sekcie/civilna-ochrana\" rel=\"noopener\">Civilná ochrana</a></li><li><a href=\"https://www.bbsk.sk/sekcie/cestovny-ruch\" rel=\"noopener\">Cestovný ruch</a></li></ul></section></li>\n\
+    </ul>\n  </div>\n</section>\n\n<section class=\"section\" aria-label=\"Kalendár\">\n  <div class=\"wrap\">\n    <a class=\"calendar\" href=\"https://www.bbsk.sk/kalendar\" rel=\"noopener\"><span class=\"\
+    calendar__image\">Fotografia: Kalendár</span><span class=\"calendar__text\"><strong>Kalendár</strong><span>Vyberte si zo zoznamu podujatí organizovaných v Banskobystrickom kraji.</span></span></a>\n\
+    \  </div>\n</section>\n\n<section class=\"section\" aria-labelledby=\"hladate\">\n  <div class=\"wrap\">\n    <h2 id=\"hladate\">Možno hľadáte</h2>\n    <ul class=\"next\">\n<li><a href=\"https://www.bbsk.sk/rozvojova-agentura-bbsk-no\"\
+    \ rel=\"noopener\"><strong>Dobrý kraj</strong><span>Oboznámte sa s projektami a aktivitami Rozvojovej agentúry BBSK.</span></a></li>\n<li><a href=\"https://www.bbsk.sk/kontakty\" rel=\"noopener\"><strong>Kontakty</strong><span>Kontakty\
+    \ na organizačné jednotky a pracovníkov Úradu BBSK.</span></a></li>\n<li><a href=\"https://www.bbsk.sk/turista\" rel=\"noopener\"><strong>Turistika</strong><span>Objavte najkrajšie miesta nášho kraja.\
+    \ Tipy na zaujímavé výlety a úžasné zážitky.</span></a></li>\n</ul>\n  </div>\n</section>\n\n<section class=\"section grey\" id=\"mcp\" aria-labelledby=\"mcp-nadpis\">\n  <div class=\"wrap\">\n    <p\
+    \ class=\"ai__tag\">DEMO · pridané joinedcontext</p>\n    <h2 id=\"mcp-nadpis\">Pripojte vlastného AI asistenta (MCP)</h2>\n    <p class=\"lead\">Tie isté dáta a ten istý web kraja máte aj vo svojom\
+    \ AI asistentovi. Konektor len číta, nepotrebuje prihlásenie ani kľúč.</p>\n    <p><strong>Adresa konektora</strong><code class=\"url\">https://api.smartcity.joinedcontext.com/api/mcp/d/bbsk-demo</code></p>\n\
+    \    <div class=\"two\">\n      <div class=\"panel\">\n        <h3>Claude (claude.ai a Claude Desktop)</h3>\n        <ol>\n          <li>Otvorte Prispôsobiť, potom Konektory, zvoľte + Pridať a Pridať\
+    \ vlastný konektor.</li>\n          <li>Pomenujte ho napríklad „BBSK demo“ a vložte adresu vyššie.</li>\n          <li>Rozšírené nastavenia nechajte prázdne a zvoľte Pridať.</li>\n        </ol>\n  \
+    \      <p>Potom sa opýtajte: „Koľko mostov spravuje kraj a koľko je starších ako 100 rokov?“</p>\n      </div>\n      <div class=\"panel\">\n        <h3>Claude Code, VS Code a iní klienti MCP</h3>\n\
+    \        <pre>claude mcp add --transport http bbsk-demo https://api.smartcity.joinedcontext.com/api/mcp/d/bbsk-demo</pre>\n        <pre>{ \"servers\": { \"bbsk-demo\": { \"type\": \"http\", \"url\"\
+    : \"https://api.smartcity.joinedcontext.com/api/mcp/d/bbsk-demo\" } } }</pre>\n        <p>ChatGPT: podľa <a href=\"https://developers.openai.com/apps-sdk/deploy/connect-chatgpt\" rel=\"noopener\">návodu\
+    \ OpenAI na pripojenie vlastného konektora</a>.</p>\n      </div>\n    </div>\n    <h3 class=\"notice-title\">Odpovede tvorí umelá inteligencia</h3>\n    <p class=\"notice\">Môžu obsahovať chyby, dôležité\
+    \ informácie si overte v uvedených zdrojoch. Rozhovory uchovávame 90 dní na zlepšenie služby, osobné údaje v nich maskujeme; nezadávajte osobné údaje. Stránka nepoužíva cookies ani analytiku. Asistent\
+    \ má denný limit; keď sa minie, povie to a odpovedá znova na druhý deň. Otvorené dáta kraja a mesta nájdete v katalógu <a href=\"https://opendata.smartcity.joinedcontext.com/organization/bbsk\">opendata.smartcity.joinedcontext.com</a>.</p>\n\
+    \  </div>\n</section>\n</main>\n\n<footer class=\"footer\">\n  <div class=\"wrap\">\n    <p class=\"footer__demo\">DEMO · ukážka od joinedcontext, nie oficiálna stránka BBSK</p>\n    <div class=\"footer__nav\"\
+    >\n      <nav aria-label=\"Služby\"><h2>Služby</h2><ul><li><a href=\"https://www.bbsk.sk/sekcie/socialne-sluzby\" rel=\"noopener\">Sociálne služby</a></li><li><a href=\"https://www.bbsk.sk/sekcie/zdravie\"\
+    \ rel=\"noopener\">Zdravie</a></li><li><a href=\"https://www.bbsk.sk/sekcie/kultura\" rel=\"noopener\">Kultúra</a></li><li><a href=\"https://www.bbsk.sk/sekcie/skolstvo\" rel=\"noopener\">Školstvo</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/sekcie/doprava\" rel=\"noopener\">Doprava</a></li><li><a href=\"https://www.bbsk.sk/sekcie/uzemne-planovanie-zp\" rel=\"noopener\">Územné plánovanie a životné prostredie</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/sekcie/projekty\" rel=\"noopener\">Projekty</a></li><li><a href=\"https://www.bbsk.sk/sekcie/sme-tu-pre-vas\" rel=\"noopener\">Sme tu pre vás</a></li></ul></nav>\n<nav aria-label=\"\
+    Viac o BBSK\"><h2>Viac o BBSK</h2><ul><li><a href=\"https://www.bbsk.sk/organizacne-jednotky\" rel=\"noopener\">Úrad BBSK</a></li><li><a href=\"https://www.bbsk.sk/aktuality\" rel=\"noopener\">Aktuality</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/sekcie/loga-bbsk\" rel=\"noopener\">Logá BBSK</a></li><li><a href=\"https://cuet.slovensko.sk/?PublisherName=Banskobystrick%C3%BD+samospr%C3%A1vny+kraj&amp;AlternativePublicationCheck=false&amp;AlternativeTypeCode=&amp;DocumentTypeCode=\"\
+    \ rel=\"noopener\">Úradná tabuľa</a></li><li><a href=\"https://www.bbsk.sk/podniky-organizacie\" rel=\"noopener\">Obchodné spoločnosti BBSK</a></li><li><a href=\"https://opendata.bbsk.sk/\" rel=\"noopener\"\
+    >Open Data</a></li></ul></nav>\n<nav aria-label=\"Kontakty\"><h2>Kontakty</h2><ul><li><a href=\"https://www.bbsk.sk/pytajte-sa-bbsk\" rel=\"noopener\">Kontaktujte nás</a></li><li><a href=\"https://www.bbsk.sk/poslanci\"\
+    \ rel=\"noopener\">Poslanci</a></li><li><a href=\"https://www.bbsk.sk/podavanie-oznameni-o-protispolocenskej-cinnosti\" rel=\"noopener\">Protispoločenská činnosť</a></li><li><a href=\"https://www.bbsk.sk/pristup-k-informaciam\"\
+    \ rel=\"noopener\">Prístup k informáciám</a></li><li><a href=\"https://www.bbsk.sk/najcastejsie-kladene-otazky\" rel=\"noopener\">Najčastejšie kladené otázky</a></li><li><a href=\"https://www.bbsk.sk/chatbot-krajbot\"\
+    \ rel=\"noopener\">Chatbot</a></li></ul></nav>\n<nav aria-label=\"O stránke\"><h2>O stránke</h2><ul><li><a href=\"https://www.bbsk.sk/vyhlasenie-o-pristupnosti\" rel=\"noopener\">Vyhlásenie o prístupnosti</a></li><li><a\
+    \ href=\"https://www.bbsk.sk/ochrana-osobnych-udajov\" rel=\"noopener\">Ochrana osobných údajov</a></li><li><a href=\"https://www.bbsk.sk/pouzivanie-suborov-cookies-ochrana-osobnych-udajov\" rel=\"\
+    noopener\">Používanie cookies</a></li><li><a href=\"https://www.bbsk.sk/mapa-stranky\" rel=\"noopener\">Mapa stránok</a></li><li><a href=\"https://www.bbsk.sk/kontaktny-formular\" rel=\"noopener\">Nahláste\
+    \ problém</a></li></ul></nav>\n</div>\n    <div class=\"footer__bottom\"><p class=\"footer__wordmark\">Banskobystrický samosprávny kraj · DEMO</p><p>Námestie SNP 23 974 01 Banská Bystrica</p><p>Telefón:\
+    \ 048 / 4325 111 Mail: podatelna@bbsk.sk</p><p>IČO: 37828100 DIČ: 2021627333</p></div>\n    <p class=\"footer__copy\">Snímka úvodnej stránky <a href=\"https://www.bbsk.sk/\" rel=\"noopener\">www.bbsk.sk</a>\
+    \ z 19. 10. 2026: texty a odkazy patria BBSK a vedú na jeho stránky; fotografie a logá sme vynechali. AI asistenta a túto ukážku prevádzkuje joinedcontext.</p>\n  </div>\n</footer>\n\n<details class=\"\
+    jc-assistant\" id=\"jc-assistant\">\n  <summary><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 5h16v11H9l-5 4z\"/></svg><span>Opýtajte sa AI asistenta</span></summary>\n  <iframe src=\"\
+    https://assistant.smartcity.joinedcontext.com/d/bbsk-demo/widget?embed=1&amp;dock=1&amp;lang=sk\" title=\"AI asistent\" loading=\"lazy\" referrerpolicy=\"no-referrer\"></iframe>\n</details>\n<script\
+    \ src=\"/jc-assistant.js\"></script>\n<script src=\"/landing.js\"></script>\n</body>\n</html>\n"
+  jc-assistant.js: "// The catalogue's assistant (T-4204, AG-114): Escape or the ✕ in the chat's header (T-4635)\n// closes it and gives focus back to its button; the chat's expand button (T-4658) grows\
+    \ it to the\n// window and back. On a phone, or expanded, where the open frame takes the screen (jc-theme.css),\n// the page behind is inert so focus and a screen reader stay in the chat. Without script\
+    \ the\n// button still opens and closes it.\n// T-4685 (API/05 §1.6.1): on a wide screen the chat docks to the right edge and the page shrinks\n// beside it; the visitor drags its edge. The panel stays\
+    \ open, docked and on the same assistant\n// across the catalogue's links (this tab's sessionStorage, read again by jc-dock.js before the\n// first paint), and a done answer about one dataset opens\
+    \ that dataset's page. The script runs\n// right after the frame is parsed, before the page is first drawn.\n(function () {\n  var box = document.querySelector(\"details.jc-assistant\");\n  if (!box)\
+    \ {\n    return;\n  }\n  // jc/dock.js gives the docked room back unless this ran (a failed load during a rollout).\n  window.jcAssistant = true;\n  var KEY = \"jc-assistant\";\n  var WIDTH = \"jc-dock-width\"\
+    ;\n  var root = document.documentElement;\n  var phone = window.matchMedia(\"(max-width: 40rem)\");\n  var wide = window.matchMedia(\"(min-width: 1100px)\");\n  var frame = box.querySelector(\"iframe\"\
+    );\n  var origin = frame ? new URL(frame.src, location.href).origin : null;\n  var state = { open: false, mode: wide.matches ? \"dock\" : \"panel\", widget: null, focused: false };\n  try {\n    var\
+    \ held = JSON.parse(sessionStorage.getItem(KEY) || \"null\");\n    if (held && typeof held === \"object\") {\n      state.open = held.open === true;\n      if (held.mode === \"dock\" || held.mode ===\
+    \ \"panel\" || held.mode === \"full\") {\n        state.mode = held.mode;\n      }\n      state.widget = typeof held.widget === \"string\" ? held.widget : null;\n      state.focused = held.focused ===\
+    \ true;\n    }\n  } catch (e) { /* a fresh panel */ }\n  function save() {\n    try { sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* this page only */ }\n  }\n  // The assistant\
+    \ the panel was open with stays while it stays open: the same host, one widget\n  // path, never another address.\n  function ours(url) {\n    try {\n      var to = new URL(url);\n      return to.origin\
+    \ === origin && /^\\/d\\/[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\/widget$/.test(to.pathname) && !to.search && !to.hash;\n    } catch (e) {\n      return false;\n    }\n  }\n\n  var silenced = [];\n  function\
+    \ silence(on) {\n    silenced.forEach(function (el) { el.inert = false; });\n    silenced = [];\n    if (!on || !(phone.matches || box.classList.contains(\"jc-full\"))) {\n      return;\n    }\n   \
+    \ for (var node = box; node && node !== document.body; node = node.parentElement) {\n      Array.prototype.forEach.call(node.parentElement.children, function (el) {\n        if (el !== node && !el.inert)\
+    \ {\n          el.inert = true;\n          silenced.push(el);\n        }\n      });\n    }\n  }\n  function place() {\n    box.classList.toggle(\"jc-full\", state.mode === \"full\");\n    root.classList.toggle(\"\
+    jc-docked\", box.open && state.mode === \"dock\");\n    silence(box.open);\n  }\n  function close() {\n    box.open = false;\n    box.querySelector(\"summary\").focus();\n  }\n\n  // The dock's edge:\
+    \ dragged, or moved with the arrow keys, between 360 px and half the window.\n  var edge = document.createElement(\"div\");\n  edge.className = \"jc-dock-edge\";\n  edge.tabIndex = 0;\n  edge.setAttribute(\"\
+    role\", \"separator\");\n  edge.setAttribute(\"aria-orientation\", \"vertical\");\n  edge.setAttribute(\"aria-label\", /^cs/.test(root.lang) ? \"Šířka asistenta\" : /^en/.test(root.lang) ? \"Assistant\
+    \ width\" : \"Šírka asistenta\");\n  function width(px, keep) {\n    var most = Math.max(360, Math.floor(window.innerWidth / 2));\n    var w = Math.round(Math.min(Math.max(px, 360), most));\n    root.style.setProperty(\"\
+    --jc-dock\", w + \"px\");\n    edge.setAttribute(\"aria-valuemin\", \"360\");\n    edge.setAttribute(\"aria-valuemax\", String(most));\n    edge.setAttribute(\"aria-valuenow\", String(w));\n    if (keep)\
+    \ {\n      try { localStorage.setItem(WIDTH, String(w)); } catch (e) { /* this tab only */ }\n    }\n  }\n  var kept = NaN;\n  try { kept = parseInt(localStorage.getItem(WIDTH), 10); } catch (e) { /*\
+    \ the default */ }\n  width(kept > 0 ? kept : window.innerWidth * 0.34, false);\n  edge.addEventListener(\"pointerdown\", function (event) {\n    edge.setPointerCapture(event.pointerId);\n    root.classList.add(\"\
+    jc-dragging\");\n  });\n  edge.addEventListener(\"pointermove\", function (event) {\n    if (edge.hasPointerCapture(event.pointerId)) {\n      width(window.innerWidth - event.clientX, false);\n    }\n\
+    \  });\n  edge.addEventListener(\"pointerup\", function (event) {\n    edge.releasePointerCapture(event.pointerId);\n    root.classList.remove(\"jc-dragging\");\n    width(window.innerWidth - event.clientX,\
+    \ true);\n  });\n  edge.addEventListener(\"keydown\", function (event) {\n    var now = parseInt(edge.getAttribute(\"aria-valuenow\"), 10);\n    if (event.key === \"ArrowLeft\" || event.key === \"ArrowRight\"\
+    ) {\n      event.preventDefault();\n      width(now + (event.key === \"ArrowLeft\" ? 24 : -24), true);\n    }\n  });\n  box.appendChild(edge);\n\n  // Open on the page before: open again now, on the\
+    \ assistant it had, before the first paint.\n  if (state.open && frame) {\n    frame.loading = \"eager\";\n    if (state.widget && ours(state.widget) && state.widget !== frame.src.split(\"?\")[0]) {\n\
+    \      frame.src = state.widget + \"?embed=1&dock=1\";\n    }\n    box.open = true;\n    // Focus stays in the chat across the page change, as it was.\n    if (state.focused) {\n      frame.focus();\n\
+    \    }\n  }\n  place();\n  window.addEventListener(\"pagehide\", function () {\n    state.focused = box.open && document.activeElement === frame;\n    save();\n  });\n\n  box.addEventListener(\"toggle\"\
+    , function () {\n    state.open = box.open;\n    state.widget = box.open && frame ? frame.src.split(\"?\")[0] : null;\n    save();\n    place();\n  });\n  document.addEventListener(\"keydown\", function\
+    \ (event) {\n    if (event.key === \"Escape\" && box.open) {\n      close();\n    }\n  });\n  // T-4685: the one dataset a done answer is about, on this catalogue alone; never while the\n  // visitor\
+    \ selects text or types in the page, never the page already open.\n  function opens(url) {\n    var to;\n    try { to = new URL(url); } catch (e) { return null; }\n    var here = location.pathname.replace(/\\\
+    /$/, \"\");\n    if (to.origin !== location.origin || !/^\\/dataset\\/[a-z0-9_-]{2,100}\\/?$/.test(to.pathname) || to.pathname.replace(/\\/$/, \"\") === here) {\n      return null;\n    }\n    var active\
+    \ = document.activeElement;\n    if (String(window.getSelection ? window.getSelection() : \"\") !== \"\" ||\n        (active && active !== frame && (/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)\
+    \ || active.isContentEditable))) {\n      return null;\n    }\n    return to.pathname;\n  }\n  // The ✕ in the chat's header (T-4635), its expand button (T-4658), its dock button and its\n  // dataset\
+    \ (T-4685): only the frame this page opened, from its own origin, is heard, and each\n  // message carries nothing else.\n  window.addEventListener(\"message\", function (event) {\n    var data = event.data;\n\
+    \    if (!frame || event.source !== frame.contentWindow || event.origin !== origin || !data) {\n      return;\n    }\n    if (box.open && data.type === \"jc-assistant-close\") {\n      close();\n  \
+    \  } else if (data.type === \"jc-assistant-size\" && (data.size === \"full\" || data.size === \"panel\" || data.size === \"dock\")) {\n      state.mode = data.size;\n      save();\n      place();\n\
+    \    } else if (box.open && data.type === \"jc-assistant-dataset\" && typeof data.url === \"string\") {\n      var path = opens(data.url);\n      if (path) {\n        frame.contentWindow.postMessage({\
+    \ type: \"jc-assistant-opened\", url: data.url }, origin);\n        location.assign(path);\n      }\n    } else if (box.open && data.type === \"jc-assistant-back\") {\n      history.back();\n    }\n\
+    \  });\n})();\n"
+  jc-dock.js: "// T-4685 (API/05 §1.6.1): before the first paint, a page whose assistant was open on the page\n// before makes room for it, docked at its width, and holds its first render until the panel\
+    \ is\n// parsed, so the panel never shows empty and the page never jumps. jc-assistant.js opens it.\n// A catalogue rollout that fails a static file (owner report 2026-10-19 05:55Z) never leaves the\n\
+    // page shrunk for a panel that does not come: when jc-assistant.js did not run by the time the\n// page is parsed, the room is given back.\n(function () {\n  try {\n    var held = JSON.parse(sessionStorage.getItem(\"\
+    jc-assistant\") || \"null\");\n    if (!held || held.open !== true) {\n      return;\n    }\n    var root = document.documentElement;\n    if (held.mode === \"dock\") {\n      root.classList.add(\"\
+    jc-docked\");\n    }\n    var kept = parseInt(localStorage.getItem(\"jc-dock-width\"), 10);\n    if (kept > 0) {\n      root.style.setProperty(\"--jc-dock\", kept + \"px\");\n    }\n    var expect =\
+    \ document.createElement(\"link\");\n    expect.rel = \"expect\";\n    expect.href = \"#jc-assistant\";\n    expect.setAttribute(\"blocking\", \"render\");\n    document.head.appendChild(expect);\n\
+    \    document.addEventListener(\"DOMContentLoaded\", function () {\n      if (window.jcAssistant !== true) {\n        root.classList.remove(\"jc-docked\");\n        expect.remove();\n      }\n    });\n\
+    \  } catch (e) { /* storage off: the panel opens closed */ }\n})();\n"
+  landing.css: "/* The BBSK demo's landing page (T-4740, owner 2026-10-19T12:55Z): a snapshot of the www.bbsk.sk\n   home page, its layout, colours, type, header and footer, rebuilt in our own CSS. No file,\
+    \ font,\n   photo or logo of theirs: a photo or a pictogram is a colour block with its caption. */\n:root {\n  --blue: #264a96;\n  --blue-dark: #1d3871;\n  --blue-mid: #203f80;\n  --blue-light: #d5dceb;\n\
+    \  --red: #da2125;\n  --ink: #21252b;\n  --muted: #56595d;\n  --ground: #f4f6fa;\n  --line: #d3d3d5;\n  --white: #fff;\n  --ribbon: 2.25rem;\n  --sans: \"Roboto\", \"Helvetica Neue\", Arial, system-ui,\
+    \ sans-serif;\n  --display: \"Manrope\", \"Segoe UI\", \"Helvetica Neue\", Arial, system-ui, sans-serif;\n  color-scheme: light;\n}\n* { box-sizing: border-box; }\nhtml { scroll-padding-top: calc(var(--ribbon)\
+    \ + 1rem); }\nbody { margin: 0; padding-top: var(--ribbon); font: 300 1rem/1.7 var(--sans); color: var(--ink); background: var(--white); }\na { color: var(--blue); text-decoration: none; }\na:hover\
+    \ { color: var(--blue-dark); text-decoration: underline; }\na:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid var(--red); outline-offset: 2px; }\nh1, h2, h3 { font-family:\
+    \ var(--display); font-weight: 700; line-height: 1.2; color: var(--ink); }\nul { list-style: none; margin: 0; padding: 0; }\n.wrap { max-width: 1296px; margin: 0 auto; padding: 0 1.5rem; }\n.skip {\
+    \ position: absolute; left: -9999px; }\n.skip:focus { left: 1rem; top: calc(var(--ribbon) + .5rem); z-index: 30; background: var(--white); padding: .5rem 1rem; }\n.lead { max-width: 52rem; margin: -.5rem\
+    \ 0 2rem; font-size: 1.0625rem; }\n\n/* DEMO on every width, above everything but the open assistant. */\n.ribbon { position: fixed; inset: 0 0 auto; z-index: 20; min-height: var(--ribbon); display:\
+    \ flex; align-items: center; justify-content: center; padding: .25rem 1rem; background: var(--red); color: var(--white); font: 600 .875rem/1.3 var(--sans); text-align: center; }\n\n/* Header: the grey\
+    \ utility bar, the white bar with the name, the dark search and the blue menu\n   block that runs to the right edge, then the blue band of three banners. */\n.header__top { background: var(--ground);\
+    \ font-size: .875rem; }\n.header__top .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .25rem 1.5rem; min-height: 2.75rem; }\n.header__top ul { display:\
+    \ flex; flex-wrap: wrap; gap: .25rem 1.25rem; }\n.header__top a { color: var(--muted); }\n.header__top .lang span { color: var(--blue); font-weight: 700; }\n.header__main { background: linear-gradient(90deg,\
+    \ var(--white) 50%, var(--blue) 50%); }\n.header__main .wrap { display: flex; justify-content: space-between; align-items: stretch; min-height: 6.25rem; background: var(--white); padding-right: 0; }\n\
+    .wordmark { align-self: center; color: var(--blue); font: 800 1.25rem/1.2 var(--display); text-transform: uppercase; max-width: 22rem; padding: .75rem 0; }\n.wordmark b { color: var(--red); }\n.wordmark:hover\
+    \ { text-decoration: none; color: var(--blue-dark); }\n.header__functions { display: flex; flex: 0 1 55%; }\n.header__functions .search, .menu > summary { display: flex; align-items: center; gap: .6rem;\
+    \ color: var(--white); font-weight: 400; padding: 0 2.25rem; min-height: 100%; }\n.header__functions .search { background: var(--ink); }\n.menu { flex: 1; display: flex; background: var(--blue); }\n\
+    .menu > summary { list-style: none; cursor: pointer; flex: 1; }\n.menu > summary::-webkit-details-marker { display: none; }\n.header__functions svg { width: 1.25rem; height: 1.25rem; fill: none; stroke:\
+    \ currentColor; stroke-width: 1.8; stroke-linecap: round; }\n.header__functions .search:hover { text-decoration: none; background: #000; }\n.menu__panel { position: absolute; left: 0; right: 0; top:\
+    \ 100%; z-index: 12; background: var(--blue); color: var(--white); padding: 2rem 0; box-shadow: 0 12px 24px rgba(0, 0, 0, .2); }\n.menu__panel .wrap { background: none; display: grid; grid-template-columns:\
+    \ repeat(auto-fit, minmax(14rem, 1fr)); gap: 1.5rem; min-height: 0; padding-right: 1.5rem; }\n.menu__panel h2 { font-size: 1.25rem; margin: 0 0 .75rem; }\n.menu__panel a { color: var(--white); }\n.menu__panel\
+    \ li { padding: .2rem 0; }\n.header__main { position: relative; }\n\n.banners { background: var(--blue); color: var(--white); }\n.banners ul { display: grid; grid-template-columns: repeat(3, 1fr); padding-block:\
+    \ 1.25rem; }\n.banners li + li { border-left: 1px solid rgba(255, 255, 255, .25); padding-left: 2rem; }\n.banners a { color: var(--white); display: block; }\n.banners a:hover { text-decoration: none;\
+    \ }\n.banners strong { font: 600 1.375rem/1.3 var(--display); display: block; }\n.banners strong::after { content: \" ›\"; }\n.banners small { font-size: .8125rem; opacity: .85; }\n\n/* The hero: where\
+    \ bbsk.sk has its photo, a solid band in the page's blue with the assistant's\n   invitation, then the three white lists (owner 13:50Z item 7). */\n.hero { padding: 4rem 0 6rem; background: var(--blue-mid);\
+    \ color: var(--white); }\n.hero__ai { margin-bottom: 3.5rem; }\n.hero__ai .ai__tag { color: var(--blue-light); }\n.hero__ai h2 { color: var(--white); font-size: clamp(1.75rem, 3.5vw, 2.75rem); max-width:\
+    \ 40rem; margin: .25rem 0 1.75rem; }\n.hero__ask, .jc-assistant > summary { display: inline-flex; align-items: center; gap: .6rem; border: 0; border-radius: 999px; font: 600 1rem/1.2 var(--sans); cursor:\
+    \ pointer; }\n.hero__ask { background: var(--white); color: var(--blue); padding: .9rem 1.6rem; }\n.hero__ask:hover { background: var(--blue-light); }\n.hero__ask svg, .jc-assistant > summary svg {\
+    \ width: 1.35rem; height: 1.35rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }\n.hero__lists { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4.5rem; }\n\
+    .hero__list { background: var(--white); padding: 2rem 1.75rem 2.5rem; box-shadow: 0 6px 20px rgba(29, 56, 113, .12); }\n.hero__list h2 { font-size: 1.75rem; margin: 0 0 1.25rem; }\n.hero__list li {\
+    \ padding: .4rem 0; font-size: 1.0625rem; font-weight: 400; }\n\nsection.section { padding: 4.5rem 0 1rem; }\nsection.section h2 { font-size: clamp(2rem, 3.4vw, 2.75rem); margin: 0 0 2rem; }\nsection.grey\
+    \ { background: var(--ground); padding-bottom: 4.5rem; margin-top: 3.5rem; }\n\n/* The assistant, our addition: its own band so nobody takes it for bbsk.sk's. */\n.ai { background: var(--ground); padding:\
+    \ 4rem 0; border-top: 4px solid var(--red); }\n.ai h2 { font-size: clamp(1.75rem, 3vw, 2.5rem); margin: 0 0 1rem; color: var(--blue); }\n.ai__tag { display: inline-block; margin: 0 0 .75rem; padding:\
+    \ .2rem .6rem; background: var(--red); color: var(--white); font: 700 .75rem/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase; }\n.cards { display: grid; grid-template-columns: repeat(auto-fill,\
+    \ minmax(min(100%, 18rem), 1fr)); gap: 1.5rem; }\n.cards li { display: flex; }\n.cards button { flex: 1; display: flex; flex-direction: column; text-align: left; padding: 0; border: 0; background: var(--white);\
+    \ cursor: pointer; font: inherit; color: inherit; }\n.cards .head { display: flex; align-items: center; justify-content: center; height: 6.5rem; width: 100%; background: var(--blue); color: var(--white);\
+    \ }\n.cards .head svg { width: 3rem; height: 3rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }\n.cards strong { display: block; padding: 1.25rem\
+    \ 1.25rem .25rem; font: 600 1.25rem/1.35 var(--display); color: var(--blue); }\n.cards strong::after { content: \" ›\"; }\n.cards small { display: block; padding: 0 1.25rem 1.25rem; color: var(--muted);\
+    \ font-size: .875rem; }\n.cards button:hover strong { color: var(--blue-dark); text-decoration: underline; }\n\n/* Služby: bbsk.sk's grid of eight, the pictogram strip a blue block with its caption.\
+    \ */\n.services { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: 1.75rem; }\n.service { background: var(--ground); height: 100%; padding-bottom: 1.5rem;\
+    \ }\n.service__image { margin: 0; height: 8.5rem; display: flex; align-items: center; justify-content: center; padding: 1rem; background: var(--blue); color: var(--blue-light); font-size: .8125rem;\
+    \ text-align: center; }\n.service h3 { margin: 0; padding: 1.5rem 1.5rem .75rem; font-size: 1.375rem; font-weight: 600; }\n.service h3 a::after { content: \" ›\"; }\n.service ul { padding: 0 1.5rem;\
+    \ }\n.service li { padding: .35rem 0; }\n.service li a { color: var(--ink); }\n.service li a:hover { color: var(--blue); }\n\n.calendar { display: grid; grid-template-columns: 1fr 1fr; min-height: 22rem;\
+    \ border-radius: 4px; overflow: hidden; color: var(--white); }\n.calendar:hover { text-decoration: none; color: var(--white); }\n.calendar__image { display: flex; align-items: flex-end; padding: 1rem\
+    \ 1.25rem; font-size: .8125rem; background: linear-gradient(180deg, #e8b88a 0%, #c9d6ec 45%, #6f8f6a 100%); }\n.calendar__text { display: flex; flex-direction: column; justify-content: center; padding:\
+    \ 3rem 6rem; background: var(--blue); }\n.calendar__text strong { font: 600 2.75rem/1.2 var(--display); margin-bottom: 1rem; }\n.calendar__text strong::after { content: \" ›\"; }\n\n.next { display:\
+    \ grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 2rem; }\n.next a { display: block; color: var(--muted); }\n.next a:hover { text-decoration: none; }\n.next strong\
+    \ { display: block; font: 600 1.5rem/1.3 var(--display); color: var(--blue); margin-bottom: .75rem; }\n.next strong::after { content: \" ›\"; }\n.next a:hover strong { text-decoration: underline; }\n\
+    \n.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.5rem; }\n.panel { background: var(--white); padding: 1.5rem; }\n.panel h3 { margin: 0 0 .5rem;\
+    \ font-size: 1.25rem; }\n.panel ol { padding-left: 1.25rem; margin: .5rem 0 0; }\ncode, pre { font: 400 .875rem/1.5 SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace; }\npre { background:\
+    \ var(--ink); color: var(--white); padding: 1rem; overflow-x: auto; margin: .75rem 0 0; white-space: pre-wrap; word-break: break-all; }\n.url { display: block; background: var(--white); border: 1px\
+    \ solid var(--line); padding: .75rem 1rem; word-break: break-all; font-size: 1rem; margin-top: .25rem; }\n.notice-title { margin: 2.5rem 0 .5rem; font-size: 1.25rem; }\n.notice { max-width: 52rem; margin:\
+    \ 0; }\n\n.footer { background: var(--ink); color: var(--white); padding: 4rem 0 3rem; font-size: .875rem; }\n.footer a { color: var(--white); }\n.footer__demo { font-weight: 600; font-size: 1rem; margin:\
+    \ 0 0 2.5rem; padding: .75rem 1rem; border-left: 4px solid var(--red); background: rgba(255, 255, 255, .06); }\n.footer__nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%,\
+    \ 14rem), 1fr)); gap: 1.5rem; }\n.footer__nav h2 { color: var(--white); font-size: 1.375rem; font-weight: 600; margin: 0 0 1rem; }\n.footer__nav li { border-bottom: 1px solid rgba(255, 255, 255, .15);\
+    \ padding: .55rem 0; }\n.footer__bottom { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 1rem 2rem; margin-top: 3.5rem; padding-top: 3rem; border-top: 10px\
+    \ solid rgba(255, 255, 255, .08); font-size: 1rem; }\n.footer__bottom p { margin: 0; }\n.footer__wordmark { font: 800 1rem/1.2 var(--display); text-transform: uppercase; }\n.footer__copy { margin: 3rem\
+    \ 0 0; color: #b9bcc2; font-size: .8125rem; }\n\n/* The assistant (T-4685): a button until opened; open, a panel at the corner, docked to the right\n   edge on a wide screen with the page beside it,\
+    \ the whole screen on a phone. jc-assistant.js,\n   the catalogue's own, moves it between those and keeps it open across reloads in this tab. */\n.jc-assistant { position: fixed; right: 1.25rem; bottom:\
+    \ 1.25rem; z-index: 15; }\n/* The launcher: a pill in the page's blue, not the ribbon's red, which reads as a warning. */\n.jc-assistant > summary { list-style: none; background: var(--blue); color:\
+    \ var(--white); padding: .85rem 1.4rem; box-shadow: 0 6px 18px rgba(29, 56, 113, .35); }\n.jc-assistant > summary:hover { background: var(--blue-dark); }\n.jc-assistant > summary::-webkit-details-marker\
+    \ { display: none; }\n.jc-assistant[open] > summary { display: none; }\n.jc-assistant > iframe { position: fixed; right: 1rem; bottom: max(1rem, env(safe-area-inset-bottom)); width: min(26rem, calc(100vw\
+    \ - 2rem)); height: min(760px, calc(100vh - var(--ribbon) - 2rem)); height: min(760px, calc(100dvh - var(--ribbon) - 2rem)); border: 1px solid var(--line); border-radius: 6px; background: var(--white);\
+    \ box-shadow: 0 8px 30px rgba(0, 0, 0, .25); }\n.jc-assistant.jc-full > iframe { right: max(1rem, calc((100vw - 60rem) / 2)); top: calc(var(--ribbon) + 1rem); width: min(60rem, calc(100vw - 2rem));\
+    \ height: calc(100vh - var(--ribbon) - 2rem); height: calc(100dvh - var(--ribbon) - 2rem); }\nbody:has(.jc-assistant.jc-full[open]) { overflow: hidden; }\n.jc-dock-edge { display: none; }\n@media (min-width:\
+    \ 1100px) {\n  html.jc-docked { --jc-dock-w: clamp(360px, var(--jc-dock, 34vw), 50vw); }\n  html.jc-docked body { margin-right: var(--jc-dock-w); }\n  html.jc-docked .ribbon { right: var(--jc-dock-w);\
+    \ }\n  html.jc-docked .jc-assistant[open]:not(.jc-full) > iframe { top: var(--ribbon); bottom: auto; right: 0; width: var(--jc-dock-w); height: calc(100vh - var(--ribbon)); height: calc(100dvh - var(--ribbon));\
+    \ border-width: 0 0 0 1px; border-radius: 0; box-shadow: none; }\n  html.jc-docked .jc-assistant[open]:not(.jc-full) > .jc-dock-edge { display: block; position: fixed; top: var(--ribbon); bottom: 0;\
+    \ right: calc(var(--jc-dock-w) - 4px); width: 8px; cursor: col-resize; touch-action: none; z-index: 1; }\n  .jc-dock-edge:focus-visible { outline: 3px solid var(--red); outline-offset: -3px; }\n  html.jc-dragging\
+    \ .jc-assistant > iframe { pointer-events: none; }\n}\n\n@media (max-width: 1000px) {\n  .hero__lists { grid-template-columns: 1fr; gap: 1.5rem; }\n  .hero { padding: 3rem 0; }\n  .banners ul { grid-template-columns:\
+    \ 1fr; gap: 1rem; }\n  .banners li + li { border-left: 0; padding-left: 0; border-top: 1px solid rgba(255, 255, 255, .25); padding-top: 1rem; }\n  .calendar { grid-template-columns: 1fr; }\n  .calendar__image\
+    \ { min-height: 10rem; }\n  .calendar__text { padding: 2rem 1.5rem; }\n  .header__functions .search, .menu > summary { padding: 0 1.25rem; }\n}\n@media (max-width: 640px) {\n  /* One line of DEMO on\
+    \ a phone; the launcher shrinks to its icon and keeps clear of the text. */\n  .ribbon__long { display: none; }\n  .hero { padding: 2.5rem 0 3rem; }\n  .hero__ai { margin-bottom: 2rem; }\n  .jc-assistant\
+    \ { right: 1rem; bottom: max(1rem, env(safe-area-inset-bottom)); }\n  .jc-assistant > summary { padding: .9rem; }\n  .jc-assistant > summary span { position: absolute; width: 1px; height: 1px; overflow:\
+    \ hidden; clip-path: inset(50%); white-space: nowrap; }\n  .footer { padding-bottom: 5rem; }\n  .wrap { padding: 0 1rem; }\n  .header__main { background: var(--white); }\n  .header__main .wrap { flex-wrap:\
+    \ wrap; padding-right: 1rem; }\n  .header__functions { flex: 1 0 100%; }\n  .header__functions > * { flex: 1; justify-content: center; min-height: 3rem; }\n  section.section { padding-top: 3rem; }\n\
+    \  .ai { padding: 2.5rem 0; }\n  body:has(.jc-assistant[open]) { overflow: hidden; }\n  .jc-assistant[open] { inset: 0; z-index: 25; }\n  .jc-assistant[open] > iframe { inset: 0; width: 100%; height:\
+    \ 100vh; height: 100dvh; border: 0; border-radius: 0; }\n}\n@media (prefers-reduced-motion: no-preference) { .cards button, .header__functions .search { transition: background-color .15s; } }\n"
+  landing.js: "// T-4740: every \"ask\" button opens the docked assistant (jc-assistant.js places it). The chat shows\n// the same six questions as its suggestions; it takes no question from the page.\n\
+    (function () {\n  var box = document.getElementById(\"jc-assistant\");\n  if (!box) {\n    return;\n  }\n  Array.prototype.forEach.call(document.querySelectorAll(\"[data-ask]\"), function (button) {\n\
+    \    button.addEventListener(\"click\", function () {\n      box.open = true;\n      var frame = box.querySelector(\"iframe\");\n      if (frame) {\n        frame.loading = \"eager\";\n        frame.focus();\n\
+    \      }\n    });\n  });\n})();\n"

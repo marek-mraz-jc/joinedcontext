@@ -1,0 +1,18 @@
+# The steward approves the changes made in the space, so they read who changed a value, when and
+# why: every kept version of every attribute (`versions=all`, ADR-N-054 2.4, DM-114; T-6348).
+# The person, not a role: `steward` is a RoleBinding over manifests and never reaches a token
+# (see banskabystrica/policy-mesto-steward-read.yaml), so a `kind: role` assignee matches nobody.
+# The viewer and the public get no version read; a version's actor stays under the erasure rule
+# of ADR-N-054 2.6.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: steward-versions
+  namespace: helsinki
+  title: { en: The steward reads who changed a value and why }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: user, id: de300000-0000-4000-8000-000000000001 } # demo.steward
+  operations: [queryTemporal, retrieveTemporal]
+  actions: [readVersions]
