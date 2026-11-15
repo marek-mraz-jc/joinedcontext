@@ -202,20 +202,19 @@ const INNER_ROUTER_BYTES: u32 = 256 << 10;
 
 /// The state and the router one request of a view is served by (T-6619 R3-005).
 struct Served {
-    /// The view compilation, the schema revision and the service root it was built for.
+    /// The view compilation and the schema revision it was built for.
     view: std::sync::Weak<dyn std::any::Any + Send + Sync>,
     revision: u64,
-    service_root: String,
     state: Arc<ODataState>,
     routed: Router,
     /// The weight of its model ([`model`]).
     weight: u32,
 }
 
-/// [`assembled`] for a request that reads no model document, kept per view and version on
-/// this pod: such a request's model is the same for every caller (the engine narrows only the
+/// [`assembled`] for a request that reads no model document, kept per view, version and
+/// service root on this pod: such a request's model is the same for every caller (the engine narrows only the
 /// documents that name the model), so it is built again only when the view compilation, the
-/// schema revision or the service root moves (T-6619 R3-005: the model key, the state and the
+/// schema revision moves (T-6619 R3-005: the model key, the state and the
 /// router were built per request). Weighed as [`model`] weighs, under the same bound, plus
 /// the inner router the view's `AppState` builds on its first call (~246 KiB, T-5896), which
 /// a kept entry now builds once instead of per request.
@@ -226,22 +225,26 @@ fn kept(
     version: CsdlVersion,
     service_root: String,
 ) -> Option<Arc<Served>> {
-    static KEPT: LazyLock<moka::sync::Cache<(String, bool), Arc<Served>>> = LazyLock::new(|| {
+    // The service root is part of the key: one view read under two hosts kept one entry and
+    // rebuilt it on every request that changed host (odata review P-2-09).
+    type Key = (String, bool, String);
+    static KEPT: LazyLock<moka::sync::Cache<Key, Arc<Served>>> = LazyLock::new(|| {
         moka::sync::Cache::builder()
             .max_capacity(MODEL_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed))
-            .weigher(|_key: &(String, bool), value: &Arc<Served>| {
+            .weigher(|_key: &Key, value: &Arc<Served>| {
                 value.weight.saturating_add(INNER_ROUTER_BYTES)
             })
             .build()
     });
-    let key = (id.to_owned(), version == CsdlVersion::V4_01);
+    let key = (
+        id.to_owned(),
+        version == CsdlVersion::V4_01,
+        service_root.clone(),
+    );
     let generation = view.generation();
     let (revision, _) = view.schema()?;
     if let Some(hit) = KEPT.get(&key) {
-        if std::sync::Weak::ptr_eq(&hit.view, &generation)
-            && hit.revision == revision
-            && hit.service_root == service_root
-        {
+        if std::sync::Weak::ptr_eq(&hit.view, &generation) && hit.revision == revision {
             return Some(hit);
         }
     }
@@ -278,7 +281,7 @@ fn assembled(
     let state = Arc::new(ODataState {
         model: csdl,
         url_model,
-        service_root: service_root.clone(),
+        service_root,
         url_limits: odata_url::Limits::strict(),
         csdl_limits: odata_csdl::Limits::strict(),
         max_header_len: MAX_HEADER_LEN,
@@ -312,7 +315,6 @@ fn assembled(
     Some(Served {
         view: generation,
         revision,
-        service_root,
         state,
         routed,
         weight,
@@ -575,7 +577,20 @@ mod tests {
         std::sync::atomic::AtomicUsize::new(0);
 
     async fn send(app: &Router, method: &str, uri: &str, body: &str) -> (StatusCode, String) {
-        let mut req = Request::builder().method(method).uri(uri);
+        send_at(app, "localhost:9090", method, uri, body).await
+    }
+
+    async fn send_at(
+        app: &Router,
+        host: &str,
+        method: &str,
+        uri: &str,
+        body: &str,
+    ) -> (StatusCode, String) {
+        let mut req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(axum::http::header::HOST, host);
         if !body.is_empty() {
             req = req
                 .header(CONTENT_TYPE, "application/json")
@@ -658,6 +673,22 @@ mod tests {
             assembled_so_far() - before,
             3,
             "a new schema revision builds anew"
+        );
+        // Two hosts read the view by turns: one build for each, none per turn (P-2-09).
+        for host in [
+            "a.example.org",
+            "b.example.org",
+            "a.example.org",
+            "b.example.org",
+        ] {
+            let (s, b) = send_at(&app, host, "GET", cars, "").await;
+            assert_eq!(s, StatusCode::OK, "{b}");
+            assert!(b.contains(&format!("http://{host}/x/views/")), "{b}");
+        }
+        assert_eq!(
+            assembled_so_far() - before,
+            5,
+            "one build per host, kept while the hosts take turns"
         );
         Ok(())
     }
