@@ -3370,6 +3370,7 @@ name = "ekiben-io-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "chrono",
  "ekiben-bloblang",
  "ekiben-core",
