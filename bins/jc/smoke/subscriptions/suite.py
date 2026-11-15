@@ -214,7 +214,7 @@ class Suite:
             return None, f"no secret file {var} in --realm-secrets-dir"
         form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": client,
                                        "client_secret": f.read_text().strip()}).encode()
-        st, _, raw = self.http.call("POST", f"/id/realms/{realm}/protocol/openid-connect/token", body=form,
+        st, _, raw = self.http.call("POST", f"/login/realms/{realm}/protocol/openid-connect/token", body=form,
                                     headers={"Content-Type": "application/x-www-form-urlencoded"})
         tok = (as_json(raw) or {}).get("access_token") if st == 200 else None
         if not tok:

@@ -72,7 +72,7 @@ fn kinds() -> Vec<Kind> {
             json!({
                 "class": "resident",
                 "compute": { "kind": "bloblang", "bloblang": "root = this" },
-                "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:ovzdusie:air-public"
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:ovzdusie:air-in"
             }),
         ),
         // Its `spec.contextSpaceRef` is not resolved by the check (`references::fields` has no
@@ -199,6 +199,13 @@ async fn state() -> AppState {
             "air-public",
             PROJECT,
             json!({ "contextSpaceRef": "air", "slug": "k7m2qz4tv6xh3n5jb2ryd3wcfa", "audience": "public", "enabledRepresentations": ["ngsi-ld", "ogc-features"] }),
+        ),
+        // Open data is read-only (EP-187): a Pipeline writes through an internal Endpoint.
+        (
+            "Endpoint",
+            "air-in",
+            PROJECT,
+            json!({ "contextSpaceRef": "air", "slug": "p4ws6kd2ma7nzr3tqx5bvh2ecy", "audience": "organization", "enabledRepresentations": ["ngsi-ld"] }),
         ),
         (
             "Policy",

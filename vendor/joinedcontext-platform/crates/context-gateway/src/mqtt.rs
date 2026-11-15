@@ -540,7 +540,8 @@ fn refused(
         ));
     }
     account
-        .ended(now)
+        .credentials_end
+        .is_some_and(|end| end <= now)
         .then_some(("the account's credentials have expired", Reason::Expired))
 }
 
@@ -746,6 +747,10 @@ async fn auth(
     headers: HeaderMap,
     Json(connect): Json<Connect>,
 ) -> Json<Answer> {
+    if gateway.stale() {
+        tracing::warn!(clientid = %connect.clientid, "mqtt connect refused: the access rules are stale");
+        return Json(Answer::deny());
+    }
     let caller = headers
         .get(MESH_IDENTITY)
         .and_then(|value| value.to_str().ok());
@@ -810,6 +815,9 @@ async fn acl(
     let brokers = gateway.brokers();
     let (mut allowed, mut why) =
         publish_check(&brokers, &gateway.service_accounts(), caller, &access);
+    if allowed && gateway.stale() {
+        (allowed, why) = (false, "the access rules are stale");
+    }
     if allowed {
         let release = caller.map(broker_of).unwrap_or_default();
         let per_second = brokers.get(release).map_or(1, |b| b.messages_per_second);

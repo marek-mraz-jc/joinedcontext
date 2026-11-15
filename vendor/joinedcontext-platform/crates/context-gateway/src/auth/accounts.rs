@@ -51,9 +51,8 @@ pub struct ScopedRole {
 }
 
 impl Account {
-    /// Whether the account's last credential has ended at `now` (PF-36): a token its client
-    /// still holds is refused on every surface, MQTT included.
-    pub fn ended(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+    /// Whether every credential of the account has ended at `now` (PF-36).
+    pub fn has_ended(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
         self.credentials_end.is_some_and(|end| end <= now)
     }
 
@@ -124,7 +123,7 @@ impl ServiceAccounts {
     /// ended at `now` (PF-36): what an open session admitted under it rechecks (S-3-12).
     pub fn holds(&self, project: &str, name: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
         self.by_client_id.values().any(|account| {
-            account.project == project && account.name == name && !account.ended(now)
+            account.project == project && account.name == name && !account.has_ended(now)
         })
     }
 

@@ -57,7 +57,7 @@ def test_a_stop_fails_its_row_passes_the_earlier_ones_and_skips_the_rest():
 def test_a_failure_line_the_plan_does_not_know_and_a_run_without_verdict_fail():
     rows = results("SMOKE: something new broke\n")
     assert rows["script"]["result"] == "fail"
-    rows = results("ok /id/realms/jc/.well-known/openid-configuration\n")  # killed mid-run
+    rows = results("ok /login/realms/jc/.well-known/openid-configuration\n")  # killed mid-run
     assert all(r["result"] == "fail" for r in rows.values())
 
 

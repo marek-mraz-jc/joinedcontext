@@ -142,6 +142,7 @@ pub const PROBLEM_TYPES: &[ProblemType] = &[
     ProblemType { slug: "unauthorized", status: 401, title: "Authentication Required", hint: "Sign in again, or send a valid bearer token for this audience." },
     ProblemType { slug: "forbidden", status: 403, title: "Access Denied by Policy", hint: "Ask a project owner or an organization administrator for the role this needs." },
     ProblemType { slug: "personal-data-public", status: 403, title: "Personal Data on a Public Endpoint", hint: "Hide the attributes the Endpoint's model marks as personal data in its projection, or narrow its audience." },
+    ProblemType { slug: "open-data-read-only", status: 403, title: "Open Data Is Read-Only", hint: "Write through an internal Endpoint of the space; an open-data Endpoint only reads." },
     ProblemType { slug: "domain-not-verified", status: 403, title: "Domain Not Verified", hint: "Verify the domain in the organization settings first." },
     ProblemType { slug: "origin-refused", status: 403, title: "Origin Refused", hint: "Open the WebSocket from a page on the platform's own origin, or from a client that sends no Origin." },
     ProblemType { slug: "resource-not-found", status: 404, title: "Resource Not Found", hint: "Check the name in the address; it does not exist or is not shared with you." },

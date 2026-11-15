@@ -18,7 +18,8 @@ const SUFFIX = process.env.E2E_SUFFIX ?? new Date().toISOString().slice(11, 16).
 // Journey-named (`t1595-…`), so the residue sweep's janitor may remove what a failed run leaves.
 const SOURCE = `t1595-mcp-source-${SUFFIX}`;
 const PIPELINE = `t1595-mcp-bikes-${SUFFIX}`;
-const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all";
+// The write door of the helsinki space: open data is read-only (EP-187).
+const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all-write";
 
 const SOURCE_MANIFEST = {
   apiVersion: "joinedcontext.com/v1alpha1",

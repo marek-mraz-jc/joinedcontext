@@ -25,7 +25,7 @@ https://{host}/{org}/api/v1/                            management API (OData se
 https://{host}/{org}/api/mcp                            MCP management door
 https://{host}/{org}/api/mcp/data                       MCP data hub
 https://{host}/{org}/api/endpoint/{slug}/{surface}/...  one Endpoint on one surface (§3)
-https://{host}/{org}/id/                                identity: issuer, sign-in, account, credentials
+https://{host}/{org}/login/                             identity: issuer, sign-in, account, credentials
 https://{host}/{org}/data/                              open data catalogue (dataroom)
 https://{host}/{org}/git/   /{org}/dash/   /{org}/dsc/  forge, dashboards, data space connector
 https://{host}/-/...                                    deployment pages: sign-in chooser, assets, docs, operator
@@ -118,7 +118,7 @@ A Context Space has the same surfaces under `/{org}/cs/{space}/` (today `/cs/{sp
 | `{api host}/api/mcp/{project}/{name}` (named MCP server) | `/{org}/api/mcp/{project}/{name}` | MCP | frozen | `GW mcp/mod.rs:62` |
 | `{api host}/catalog.jsonld`, `/catalog.ttl`, `/catalog/{file}` | `/{org}/catalog.jsonld`, `/{org}/catalog.ttl`, `/{org}/catalog/{file}` | API | frozen | `GW handlers/catalog.rs:378`…`:381` |
 | `{api host}/oauth/register`, `/oauth/authorize`, `/oauth/token` | `/{org}/oauth/...` | API | frozen | `GW oauth.rs:453`…`:456` |
-| `id.{base}/realms/{realm}` and its OIDC paths | `/{org}/id/` | identity | frozen | `KA oidc/src/handlers.rs:47` |
+| `id.{base}/realms/{realm}` and its OIDC paths | `/{org}/login/` (`/{org}/id/` answers 308 there, T-7006) | identity | frozen | `KA oidc/src/handlers.rs:47` |
 | `opendata.{base}/` pages: `/dataset/{name}`, `/dataset/{name}/resource/{id}`, `/organization/{name}`, `/{lang}/...` | `/{org}/data/` + the same path | page | frozen | `DR api/src/lib.rs:1332`, `DR web/src/lib.rs:1455`, `:1665`, `:1958` |
 | `opendata.{base}/api/3/action/{action}`, `/api/action/{action}` (CKAN API) | `/{org}/data/api/3/action/{action}` | API | frozen | `DR api/src/lib.rs:494` |
 | `opendata.{base}/catalog`, `/catalog.{ttl,n3,jsonld,rdf,xml,nt}`, `/profiles/{profile}/catalog.*`, `/publisher/{publisher}/catalog.*` | `/{org}/data/` + the same path | API | frozen | `DR api/src/lib.rs:502`…`:508` |
@@ -136,16 +136,16 @@ How a module gets its host today: `JC app.rs:164` (`plan_mounts`: slug mode puts
 
 ### Identity and discovery
 
-The issuer of an Organization is `https://{canonical-host}/{org}/id`, fixed by this page (EP-183). `{canonical-host}` is the host the Organization has when it is created (with "Organization in the path" `off`, the issuer is `https://{canonical-host}/id`), and the issuer stays that string when the Organization later binds an own domain or the setting changes: an issuer is an identifier, and changing it signs every person out and breaks every client that stored it. It is built from the registry, never from `Host`, `X-Forwarded-Host` or `Forwarded`. Discovery follows the path-issuer rules:
+The issuer of an Organization is `https://{canonical-host}/{org}/login`, fixed by this page (EP-183). `{canonical-host}` is the host the Organization has when it is created (with "Organization in the path" `off`, the issuer is `https://{canonical-host}/login`), and the issuer stays that string when the Organization later binds an own domain or the setting changes: an issuer is an identifier, and changing it signs every person out and breaks every client that stored it. It is built from the registry, never from `Host`, `X-Forwarded-Host` or `Forwarded`. Discovery follows the path-issuer rules:
 
 | Document | Address |
 |---|---|
-| OpenID configuration | `https://{canonical-host}/{org}/id/.well-known/openid-configuration` |
-| RFC 8414 authorization server metadata | `https://{canonical-host}/.well-known/oauth-authorization-server/{org}/id` |
+| OpenID configuration | `https://{canonical-host}/{org}/login/.well-known/openid-configuration` |
+| RFC 8414 authorization server metadata | `https://{canonical-host}/.well-known/oauth-authorization-server/{org}/login` |
 | RFC 9728 protected resource, management door | `https://{host}/.well-known/oauth-protected-resource/{org}/api/mcp` |
 | RFC 9728 protected resource, data hub | `https://{host}/.well-known/oauth-protected-resource/{org}/api/mcp/data` |
 | RFC 9728 protected resource, one Endpoint | `https://{host}/.well-known/oauth-protected-resource/{org}/api/endpoint/{slug}/mcp` |
-| OpenID4VCI credential issuer metadata | `https://{canonical-host}/.well-known/openid-credential-issuer/{org}/id` |
+| OpenID4VCI credential issuer metadata | `https://{canonical-host}/.well-known/openid-credential-issuer/{org}/login` |
 
 Each document names only its own Organization. The suffix form a client may build (`{resource}/.well-known/oauth-protected-resource`, `GW mcp/mod.rs:36`, `:44`) stays served beside it.
 

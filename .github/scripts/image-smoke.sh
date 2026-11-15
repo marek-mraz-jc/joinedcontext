@@ -54,7 +54,7 @@ check() { # path needle
   done
   fail "$1 did not answer with $2: $(echo "$body" | head -c 300)"
 }
-check /id/realms/jc/.well-known/openid-configuration '"issuer"'
+check /login/realms/jc/.well-known/openid-configuration '"issuer"'
 check /opendata/api/3/action/status_show '"success"'
 check /dashboards/api/health '"database"'
 check /streams/ping pong

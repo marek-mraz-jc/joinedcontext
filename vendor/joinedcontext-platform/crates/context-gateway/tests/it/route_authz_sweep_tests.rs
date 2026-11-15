@@ -646,6 +646,7 @@ fn endpoint(base_path: String) -> Endpoint {
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         policy_names: vec!["readers".to_owned()],
         manifest_name: String::new(),
         policies: vec![serde_norway::from_str(GRANT).expect("the policy parses")],

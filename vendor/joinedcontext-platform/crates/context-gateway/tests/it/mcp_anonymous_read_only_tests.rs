@@ -70,6 +70,7 @@ fn endpoint(slug: &str, space: &str, base_path: String) -> Endpoint {
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         base_path,
         models: vec![Model {
             name: "mesto".to_owned(),

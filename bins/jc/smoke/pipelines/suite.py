@@ -244,16 +244,20 @@ def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline, 
     else:
         st2, _, raw2 = http.call("GET", f"/streams/streams/{sid}", ekiben_tok)
         last = ((prod or {}).get(p.key) or {}).get("last") or {}
-        if st2 != 200 and not p.scheduled and not p.resident and last.get("sent") and p.slug and p.out_type:
-            # No clock and a source that ends: prod's Portal ran it and let the stream go too, so
-            # compare with what prod's newest run left, its target type holding that run's sent.
+        if st2 != 200 and not p.scheduled and not p.resident and p.slug and p.out_type:
+            # No clock and a source that ends: the Portal runs it once from its queue and deletes
+            # the stream after the run (PL-78, run_queue.rs Clock::Once), on prod as on jc. So the
+            # row reads what the run left: its target type holds prod's newest run's sent, or,
+            # without prod's run log, at least one entity of jc's own run (T-7018).
             q = f"/api/endpoint/{p.slug}/ngsi-ld/v1/entities?type={urllib.parse.quote(p.out_type)}&count=true&limit=0"
             st3, h3, _ = http.call("GET", q)
             n = h3.get("ngsild-results-count")
+            want = int(last["sent"]) if last.get("sent") else 1
+            said = (f"as on prod (no stream after its run {last['run']}, sent {last['sent']})" if last.get("sent")
+                    else "no prod run log: what jc's own run left (PL-78)")
             r.check("held", p.key, f"GET /streams/streams/{sid}; GET {q}",
-                    f"200, or as on prod (no stream after its run {last['run']}, sent {last['sent']}): "
-                    f"count >= {last['sent']}", f"{st2} {short(raw2, 60)}; {st3} count={n}",
-                    st3 == 200 and n is not None and int(n) >= int(last["sent"]))
+                    f"200, or {said}: count >= {want}", f"{st2} {short(raw2, 60)}; {st3} count={n}",
+                    st3 == 200 and n is not None and str(n).isdigit() and int(n) >= want)
         else:
             r.check("held", p.key, f"GET /streams/streams/{sid}", "200 the stream the Portal deployed",
                     f"{st2} {short(raw2, 100)}", st2 == 200)

@@ -124,6 +124,7 @@ fn endpoint(model: Option<&Value>) -> Endpoint {
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         roles: Default::default(),
         slug: SLUG.to_owned(),
         title: Default::default(),

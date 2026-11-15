@@ -200,14 +200,30 @@ impl Reaper {
         Some(all)
     }
 
-    /// Polls until the process ends, or answers the panic that stopped a tick: the caller ends
-    /// the process then, so revocation never stops silently (T-4591). Started once, next to the
-    /// server.
+    /// Polls until the process ends. A tick that panics leaves the tables stale: the gateway
+    /// refuses every request until a reload succeeds, so revocation never stops silently
+    /// (T-4591), and the process it may share with other modules goes on. Started once, next to
+    /// the server; it returns only when the runtime cancels the blocking task.
     pub async fn run(self) -> tokio::task::JoinError {
-        ticking(self, |reaper| {
-            reaper.tick();
-        })
-        .await
+        ticking(self, Reaper::guarded).await
+    }
+
+    /// [`Self::tick`], its panic caught: the tables go stale, and the next tick reloads them
+    /// whole, since half of them may have been swapped when it panicked.
+    fn guarded(&mut self) {
+        self.survive(Self::tick);
+    }
+
+    fn survive(&mut self, tick: fn(&mut Self) -> bool) {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tick(self))) {
+            Ok(true) => self.gateway.set_stale(false),
+            Ok(false) => {}
+            Err(_) => {
+                tracing::error!(dir = %self.dir.display(), "a repository reload panicked; the gateway refuses requests until a reload succeeds");
+                self.seen = None;
+                self.gateway.set_stale(true);
+            }
+        }
     }
 }
 
@@ -295,7 +311,40 @@ fn fingerprint(dir: &Path, walked: &mut usize) -> Option<Fingerprint> {
 
 #[cfg(test)]
 mod tests {
-    use super::ticking;
+    use super::{ticking, Reaper};
+    use crate::app::Gateway;
+    use std::sync::Arc;
+
+    const SPACE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n";
+
+    fn gateway() -> Arc<Gateway> {
+        Arc::new(Gateway::new(
+            crate::proxy::Broker::new("http://localhost:9"),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        ))
+    }
+
+    /// A-3-gateway-001: a tick that panics leaves the gateway stale (refusing) and the process
+    /// running; the next tick reloads the whole repository, unchanged as it is, and clears it.
+    #[test]
+    fn a_panicking_tick_stales_the_gateway_until_a_reload() {
+        let dir = std::env::temp_dir().join(format!("reaper-stale-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create the repository");
+        std::fs::write(dir.join("space.yaml"), SPACE).expect("write the space");
+        let gateway = gateway();
+        let mut reaper = Reaper::new(Arc::clone(&gateway), &dir);
+        reaper.survive(Reaper::tick);
+        assert!(
+            !gateway.stale(),
+            "an unchanged repository is no reason to refuse"
+        );
+        reaper.survive(|_| panic!("a manifest the loader cannot take"));
+        assert!(gateway.stale(), "a panicked tick leaves the tables stale");
+        reaper.survive(Reaper::tick);
+        assert!(!gateway.stale(), "the reload after the panic clears it");
+        std::fs::remove_dir_all(&dir).expect("remove the repository");
+    }
 
     /// T-4591: a step that panics ends the loop with the panic, for the caller to act on, and
     /// every step runs off the async worker.

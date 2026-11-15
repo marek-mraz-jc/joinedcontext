@@ -75,6 +75,7 @@ fn endpoint(slug: &str, audience: Audience, role: &str) -> Endpoint {
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         base_path: format!("/api/endpoint/{slug}"),
         models: Vec::new(),
         policy_names: Vec::new(),
@@ -736,7 +737,13 @@ fn scoped_token(realm: &common::Realm, scope: &str) -> String {
 
 /// The organization Endpoint with a steward grant of every write the tests forge.
 fn writer_app(broker: &str, realm: &common::Realm) -> Router {
+    writer_app_on(broker, realm, false)
+}
+
+/// [`writer_app`] with the Endpoint open data or not (EP-187).
+fn writer_app_on(broker: &str, realm: &common::Realm, open_data: bool) -> Router {
     let mut air = endpoint(AIR, Audience::Organization, "steward");
+    air.open_data = open_data;
     air.policies = vec![serde_norway::from_str(
         "contextSpaceRef: ovzdusie\n\
          assigner: did:web:banskabystrica.sk\n\
@@ -758,6 +765,126 @@ fn writer_app(broker: &str, realm: &common::Realm) -> Router {
         Some(HOST.to_owned()),
     );
     router(Arc::new(gateway))
+}
+
+/// EP-187 (T-6972): an open-data Endpoint is read-only. Every write path a steward may use on
+/// the internal Endpoint, MCP's included, answers `403 open-data-read-only` there before the
+/// broker; the same writes on the internal Endpoint pass, and reads and subscriptions go on.
+#[tokio::test]
+async fn an_open_data_endpoint_refuses_every_write_before_the_broker() {
+    let realm = common::Realm::new();
+    let base = format!("/api/endpoint/{AIR}/ngsi-ld/v1");
+    let entity = json!({ "id": ENTITY, "type": "AirQualityObserved" });
+    let attrs = json!({ "pm10": { "type": "Property", "value": 1 } });
+    let writes = [
+        (
+            Method::POST,
+            format!("{base}/entities"),
+            Some(entity.clone()),
+        ),
+        (
+            Method::PATCH,
+            format!("{base}/entities/{ENTITY}/attrs"),
+            Some(attrs.clone()),
+        ),
+        (
+            Method::POST,
+            format!("{base}/entities/{ENTITY}/attrs"),
+            Some(attrs.clone()),
+        ),
+        (
+            Method::PATCH,
+            format!("{base}/entities/{ENTITY}"),
+            Some(attrs),
+        ),
+        (Method::DELETE, format!("{base}/entities/{ENTITY}"), None),
+        (
+            Method::POST,
+            format!("{base}/entityOperations/upsert"),
+            Some(json!([entity])),
+        ),
+        (
+            Method::POST,
+            format!("/api/endpoint/{AIR}/mcp"),
+            Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                         "params": { "name": "batch_delete", "arguments": { "ids": [ENTITY] } } })),
+        ),
+    ];
+    let reason = [("jc-reason", "EP-187")];
+    let bearer = scoped_token(&realm, "openid");
+    for (method, path, body) in &writes {
+        let broker = common::BrokerStub::start(vec![json!([])]).await;
+        let open = request(method.clone(), path, Some(&bearer), &reason, body.clone());
+        let (code, problem) = answer(writer_app_on(&broker.url, &realm, true), open).await;
+        assert_eq!(code, StatusCode::FORBIDDEN, "{method} {path}: {problem}");
+        let refused = problem.to_string();
+        assert!(
+            refused.contains("open-data-read-only"),
+            "{method} {path}: {problem}"
+        );
+        assert!(
+            broker.hops().is_empty(),
+            "{method} {path}: {:?}",
+            broker.hops()
+        );
+        let internal = request(method.clone(), path, Some(&bearer), &reason, body.clone());
+        let (code, problem) = answer(writer_app_on(&broker.url, &realm, false), internal).await;
+        assert_ne!(code, StatusCode::FORBIDDEN, "{method} {path}: {problem}");
+    }
+
+    let broker = common::BrokerStub::start(vec![json!([]), json!([])]).await;
+    let open = writer_app_on(&broker.url, &realm, true);
+    let read = request(
+        Method::GET,
+        &format!("{base}/entities?type=AirQualityObserved"),
+        Some(&bearer),
+        &[],
+        None,
+    );
+    let (code, problem) = answer(open.clone(), read).await;
+    assert_eq!(code, StatusCode::OK, "{problem}");
+    let subscription = json!({ "type": "Subscription", "entities": [{ "type": "AirQualityObserved" }],
+                               "notification": { "endpoint": { "uri": "https://city.example/n" } } });
+    let subscribe = request(
+        Method::POST,
+        &format!("{base}/subscriptions"),
+        Some(&bearer),
+        &[],
+        Some(subscription),
+    );
+    let (code, problem) = answer(open, subscribe).await;
+    assert_ne!(
+        code,
+        StatusCode::FORBIDDEN,
+        "a subscription changes no data: {problem}"
+    );
+}
+
+/// H2c (T-7011): the refusal is the Endpoint's, not the host's. A writer's token through the
+/// API host is refused before the broker, and so it is under a host-role header a client typed
+/// (`jc`'s router removes that copy; the gateway alone would still refuse).
+#[tokio::test]
+async fn an_open_data_endpoint_refuses_a_writer_on_the_api_host() {
+    let realm = common::Realm::new();
+    let bearer = scoped_token(&realm, "openid");
+    let entity = json!({ "id": ENTITY, "type": "AirQualityObserved" });
+    for role in ["api", "opendata", "working"] {
+        let broker = common::BrokerStub::start(vec![json!([])]).await;
+        let write = request(
+            Method::POST,
+            &format!("/api/endpoint/{AIR}/ngsi-ld/v1/entities"),
+            Some(&bearer),
+            &[("jc-reason", "EP-187"), ("x-jc-host-role", role)],
+            Some(entity.clone()),
+        );
+        let (code, problem) = answer(writer_app_on(&broker.url, &realm, true), write).await;
+        assert_eq!(code, StatusCode::FORBIDDEN, "{role}: {problem}");
+        assert!(
+            problem.to_string().contains("open-data-read-only"),
+            "{role}: {problem}"
+        );
+        assert!(broker.hops().is_empty(), "{role}: {:?}", broker.hops());
+    }
 }
 
 /// S-49 (T-5955): a prompt-injected model holding a read-only connector's token forges writes
