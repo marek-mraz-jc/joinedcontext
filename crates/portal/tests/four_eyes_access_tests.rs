@@ -65,7 +65,9 @@ fn manifest(kind: &str) -> (String, String) {
             "scope": { "organization": "bb" }
         }),
         "Group" => json!({ "members": [{ "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" }] }),
-        "DataModel" => json!({ "version": "1.1.0", "linkml": "models/air.linkml.yaml" }),
+        "DataModel" => {
+            json!({ "version": "1.1.0", "linkml": "models/air.linkml.yaml", "lifecycle": "draft" })
+        }
         _ => json!({
             "owner": { "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" },
             "purpose": "the air-quality adapter",
@@ -74,11 +76,16 @@ fn manifest(kind: &str) -> (String, String) {
         }),
     };
     let name = format!("{}-x", kind.to_ascii_lowercase());
+    // A ServiceAccount belongs to a project, never to the organization (jc-core scope).
+    let namespace = match kind {
+        "ServiceAccount" => "ovzdusie",
+        _ => ORG_NAMESPACE,
+    };
     let yaml = format!(
-        "apiVersion: {API_VERSION}\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: {ORG_NAMESPACE}\nspec: {spec}\n"
+        "apiVersion: {API_VERSION}\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec: {spec}\n"
     );
     let info = resource::by_kind(kind).expect("a served kind");
-    let path = resource::repository_path(info, ORG_NAMESPACE, None, &name).expect("a path");
+    let path = resource::repository_path(info, namespace, None, &name).expect("a path");
     (path, yaml)
 }
 

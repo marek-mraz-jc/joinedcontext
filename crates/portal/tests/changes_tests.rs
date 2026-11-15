@@ -1996,6 +1996,21 @@ async fn bundle_on(
         "org-admin",
         json!({ "rules": [{ "kinds": ["ContextSpace"], "verbs": ["propose", "approve", "delete"] }] }),
     ));
+    // PL-94: whoever approves a Pipeline reads the Entities of the space it writes.
+    state.mirror.upsert(org(
+        "Role",
+        "entity-reader",
+        json!({ "rules": [{ "kinds": ["Entity"], "verbs": ["read"] }] }),
+    ));
+    state.mirror.upsert(org(
+        "RoleBinding",
+        "reviewer-reads-entities",
+        json!({
+            "subjects": [{ "user": "jana.approver@banskabystrica.sk" }],
+            "role": "entity-reader",
+            "scope": { "organization": "bb" }
+        }),
+    ));
     // The Endpoint the Pipeline writes through (PL-111).
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
