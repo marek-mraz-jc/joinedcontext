@@ -12881,6 +12881,7 @@
     "markdown": "Text stránky v Markdowne",
     "markdownHint": "Prvý riadok so znakom # je nadpis stránky, napríklad \"# Podpora\", potom \"Napíšte nám na **podpora@mesto.sk**\". HTML sa zobrazí ako text, obrázky sa vynechajú; najviac {max} KiB.",
     "size": "{bytes} z {max} bajtov",
+    "sizeOver": "{bytes} z {max} bajtov: o {over} viac, než je limit. Text skráťte, aby sa dal zverejniť.",
     "write": "Písať",
     "preview": "Náhľad",
     "views": "Text alebo náhľad",

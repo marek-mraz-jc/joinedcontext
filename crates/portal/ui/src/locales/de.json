@@ -12881,6 +12881,7 @@
     "markdown": "Seitentext in Markdown",
     "markdownHint": "Die erste Zeile mit # ist der Seitentitel, z. B. \"# Support\", dann \"Schreiben Sie an **support@stadt.de**\". HTML erscheint als Text, Bilder entfallen; höchstens {max} KiB.",
     "size": "{bytes} von {max} Bytes",
+    "sizeOver": "{bytes} von {max} Bytes: {over} über der Grenze. Kürzen Sie den Text, um ihn zu veröffentlichen.",
     "write": "Schreiben",
     "preview": "Vorschau",
     "views": "Text oder Vorschau",

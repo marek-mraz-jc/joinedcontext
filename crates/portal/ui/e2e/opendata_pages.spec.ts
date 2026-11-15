@@ -148,11 +148,19 @@ async function shot(page: Page, name: string, phoneStep?: (page: Page) => Promis
   mkdirSync(dir, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: join(dir, `opendata-pages-${name}-desktop.png`), fullPage: true });
+  await page.screenshot({
+    path: join(dir, `opendata-pages-${name}-desktop.png`),
+    fullPage: true,
+    animations: "disabled",
+  });
   await page.setViewportSize({ width: 400, height: 900 });
   if (phoneStep) await phoneStep(page);
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: join(dir, `opendata-pages-${name}-phone.png`), fullPage: true });
+  await page.screenshot({
+    path: join(dir, `opendata-pages-${name}-phone.png`),
+    fullPage: true,
+    animations: "disabled",
+  });
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
@@ -202,15 +210,33 @@ test.describe("Administration → Open data pages", () => {
 
   test("a 422 marks the field with the server's words", async ({ page }) => {
     await stubApi(page, {
-      write: { status: 422, detail: "spec.appearance.pages[0].markdown: the text is 18 464 bytes, at most 16 384" },
+      write: {
+        status: 422,
+        detail: "spec.appearance.pages[0].markdown: the text holds a control character (U+0007) at line 3; remove it",
+      },
     });
     await page.goto("/organization/opendata-pages?lang=en");
     await editConnectorSk(page);
-    // A pasted export, too long for one page: the counter turns red before the server says so.
-    await page.getByRole("textbox", { name: /Page text in Markdown/ }).fill(`# Dlhý text\n\n${"Odsek o otvorených údajoch. ".repeat(615)}`);
+    // Text pasted from a word processor, with a bell character the eye does not see.
+    await page
+      .getByRole("textbox", { name: /Page text in Markdown/ })
+      .fill("# Podpora\n\nNapíšte nám\u0007 na podpora@bbsk.sk.");
+    await expect(page.locator("article").getByText("Podpora", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Publish" }).click();
-    await expect(page.getByText(/at most 16 384/)).toBeVisible();
+    await expect(page.getByText(/holds a control character/)).toBeVisible();
     await shot(page, "error");
+  });
+
+  test("a text over the limit cannot be published and the counter says why", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/organization/opendata-pages?lang=en");
+    await editConnectorSk(page);
+    await page
+      .getByRole("textbox", { name: /Page text in Markdown/ })
+      .fill(`# Dlhý text\n\n${"Odsek o otvorených údajoch. ".repeat(615)}`);
+    await expect(page.getByRole("button", { name: "Publish" })).toBeDisabled();
+    await expect(page.getByText("18464 of 16384 bytes")).toBeVisible();
+    await shot(page, "toolong");
   });
 
   test("a 409 says to decide the open change first", async ({ page }) => {

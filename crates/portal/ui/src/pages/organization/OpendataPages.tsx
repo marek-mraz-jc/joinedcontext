@@ -105,7 +105,12 @@ export function OpendataPages(): JSX.Element {
   if (pages.isPending) return <PageLoading label={t("app.loading")} />;
   if (pages.isError) {
     return pages.error instanceof ApiError && pages.error.status === 403 ? (
-      <Alert tone="info">{t("opendataPages.refused.list")}</Alert>
+      <section aria-labelledby="opendata-pages-title" className="flex flex-col gap-4">
+        <h2 id="opendata-pages-title" className="text-title font-semibold text-fg">
+          {t("opendataPages.title")}
+        </h2>
+        <Alert tone="info">{t("opendataPages.refused.list")}</Alert>
+      </section>
     ) : (
       <PageFailed error={pages.error} onRetry={() => void pages.refetch()} />
     );
@@ -335,6 +340,7 @@ function PageEditor({
   // Publish meets a 409 while a Change of the Organization is open: say so once, beside the buttons.
   const blocked = pendingChange !== undefined && !done;
   const bytes = new TextEncoder().encode(markdown).length;
+  const tooLong = bytes > maxBytes;
 
   const format = (kind: Format) => {
     const box = area.current;
@@ -369,8 +375,10 @@ function PageEditor({
           className="font-mono text-caption"
         />
       </Field>
-      <p className={bytes > maxBytes ? "text-caption text-danger" : "text-caption text-fg-muted"}>
-        {t("opendataPages.size", { bytes, max: maxBytes })}
+      <p id="opendata-page-size" className={tooLong ? "text-caption text-danger" : "text-caption text-fg-muted"}>
+        {tooLong
+          ? t("opendataPages.sizeOver", { bytes, max: maxBytes, over: bytes - maxBytes })
+          : t("opendataPages.size", { bytes, max: maxBytes })}
       </p>
     </div>
   );
@@ -428,8 +436,8 @@ function PageEditor({
           <Button
             variant="primary"
             loading={publish.isPending}
-            disabled={blocked}
-            aria-describedby={blocked ? "opendata-page-blocked" : undefined}
+            disabled={blocked || tooLong}
+            aria-describedby={blocked ? "opendata-page-blocked" : tooLong ? "opendata-page-size" : undefined}
             onClick={() => publish.mutate()}
           >
             {t("opendataPages.publish")}

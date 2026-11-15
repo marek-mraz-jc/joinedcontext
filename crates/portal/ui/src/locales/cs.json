@@ -12881,6 +12881,7 @@
     "markdown": "Text stránky v Markdownu",
     "markdownHint": "První řádek se znakem # je nadpis stránky, například \"# Podpora\", pak \"Napište nám na **podpora@mesto.cz**\". HTML se zobrazí jako text, obrázky se vynechají; nejvýše {max} KiB.",
     "size": "{bytes} z {max} bajtů",
+    "sizeOver": "{bytes} z {max} bajtů: o {over} víc, než je limit. Text zkraťte, aby šel zveřejnit.",
     "write": "Psát",
     "preview": "Náhled",
     "views": "Text nebo náhled",

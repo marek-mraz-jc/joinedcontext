@@ -12881,6 +12881,7 @@
     "markdown": "Page text in Markdown",
     "markdownHint": "The first line starting with # is the page title, e.g. \"# Support\", then \"Write to **support@city.sk**\". Raw HTML shows as text, images are left out; at most {max} KiB.",
     "size": "{bytes} of {max} bytes",
+    "sizeOver": "{bytes} of {max} bytes: {over} over the limit. Shorten the text to publish it.",
     "write": "Write",
     "preview": "Preview",
     "views": "Text or preview",

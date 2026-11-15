@@ -239,6 +239,19 @@ describe("open data pages", () => {
     );
   });
 
+  it("a_text_over_the_limit_cannot_be_published_and_the_counter_says_why", async () => {
+    renderPages();
+    await openEditor();
+    fireEvent.change(screen.getByRole("textbox", { name: /Page text in Markdown/ }), {
+      target: { value: "é".repeat(8193) },
+    });
+    const publish = screen.getByRole("button", { name: "Publish" });
+    expect(publish).toBeDisabled();
+    expect(document.getElementById(publish.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
+      "16386 of 16384 bytes: 2 over the limit. Shorten the text to publish it.",
+    );
+  });
+
   it("a_409_says_to_decide_the_open_change_first", async () => {
     renderPages({ write: problem(409, "a Change on Organization bbsk is open") });
     const user = await openEditor();
