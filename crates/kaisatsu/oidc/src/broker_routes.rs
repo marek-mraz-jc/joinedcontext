@@ -78,20 +78,7 @@ pub fn broker_router() -> Router<OidcState> {
 }
 
 fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    let target = mount.cookie_name("auth");
-    for val in headers.get_all(header::COOKIE) {
-        if let Ok(s) = val.to_str() {
-            for part in s.split(';').map(str::trim) {
-                if let Some((name, v)) = part.split_once('=')
-                    && name == target
-                    && !v.is_empty()
-                {
-                    return Some(v.to_owned());
-                }
-            }
-        }
-    }
-    None
+    crate::handlers::read_cookie(headers, &mount.cookie_name("auth"))
 }
 
 fn verify_auth_cookie(

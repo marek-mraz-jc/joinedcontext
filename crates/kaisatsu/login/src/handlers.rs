@@ -16,7 +16,7 @@ use jc_router::Mount;
 use kaisatsu_core::page::{self, Page};
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
-use kaisatsu_oidc::{ClientIp, OidcState, second_factor_required};
+use kaisatsu_oidc::{ClientIp, OidcState, read_cookie, second_factor_required};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 
@@ -917,32 +917,8 @@ async fn sign_out_other_sessions(
     Ok(())
 }
 
-pub(crate) fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|s| s.split(';').map(str::trim))
-        .filter_map(|part| part.split_once('='))
-        .find(|(name, v)| *name == target && !v.is_empty())
-        .map(|(_, v)| v.to_owned())
-}
-
 pub(crate) fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    let target = mount.cookie_name("auth");
-    for val in headers.get_all(header::COOKIE) {
-        if let Ok(s) = val.to_str() {
-            for part in s.split(';').map(str::trim) {
-                if let Some((name, v)) = part.split_once('=')
-                    && name == target
-                    && !v.is_empty()
-                {
-                    return Some(v.to_owned());
-                }
-            }
-        }
-    }
-    None
+    read_cookie(headers, &mount.cookie_name("auth"))
 }
 
 /// K1: Verifies that the browser's auth session cookie matches `auth_session.handle_hash` in

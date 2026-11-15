@@ -608,21 +608,20 @@ pub(crate) fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+/// The first non-empty value of cookie `target` across every `Cookie` header.
+pub fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(';').map(str::trim))
+        .filter_map(|part| part.split_once('='))
+        .find(|(name, v)| *name == target && !v.is_empty())
+        .map(|(_, v)| v.to_owned())
+}
+
 pub(crate) fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    let target = mount.cookie_name("sso");
-    for val in headers.get_all(header::COOKIE) {
-        if let Ok(s) = val.to_str() {
-            for part in s.split(';').map(str::trim) {
-                if let Some((name, v)) = part.split_once('=')
-                    && name == target
-                    && !v.is_empty()
-                {
-                    return Some(v.to_owned());
-                }
-            }
-        }
-    }
-    None
+    read_cookie(headers, &mount.cookie_name("sso"))
 }
 
 /// Keycloak's maximum authentication age for `UPDATE_PASSWORD` and `CONFIGURE_TOTP` (5 min):

@@ -407,7 +407,7 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             if let Some(dir) = import_dir {
                 // Applied at start like Keycloak's `--import-realm`; idempotent on a restart.
                 let files = load_realm_files_from_path(&dir).map_err(fail(EXIT_INVALID_INPUT))?;
-                for realm_files in group_by_realm(files) {
+                for realm_files in kaisatsu_server::group_files_by_realm(files) {
                     apply_realm_files(
                         &store,
                         &realm_files,
@@ -550,22 +550,6 @@ async fn shutdown_signal() {
         () = interrupt => {}
         () = terminate => {}
     }
-}
-
-/// Splits an import directory into one file list per realm (the `realm` field), keeping
-/// file-name order inside each, so several realms can sit in one mounted directory.
-fn group_by_realm(
-    files: Vec<(String, serde_json::Value)>,
-) -> Vec<Vec<(String, serde_json::Value)>> {
-    let mut groups: Vec<(String, Vec<(String, serde_json::Value)>)> = Vec::new();
-    for (name, doc) in files {
-        let realm = doc["realm"].as_str().unwrap_or_default().to_owned();
-        match groups.iter_mut().find(|(r, _)| *r == realm) {
-            Some((_, list)) => list.push((name, doc)),
-            None => groups.push((realm, vec![(name, doc)])),
-        }
-    }
-    groups.into_iter().map(|(_, list)| list).collect()
 }
 
 struct CommandsContainer(Commands);
