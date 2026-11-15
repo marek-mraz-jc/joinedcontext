@@ -2882,7 +2882,23 @@
       "maskedKept": "{count, plural, one {# record stays on the list: a value of it was masked as a secret, and replaying it would write the mask. The pipeline's next read of its source brings it again.} other {# records stay on the list: a value of each was masked as a secret, and replaying them would write the mask. The pipeline's next read of its source brings them again.}}",
       "newest": "Newest",
       "older": "Older records",
-      "openRun": "Open its run"
+      "openRun": "Open its run",
+      "groups": {
+        "title": "By rule",
+        "lead": "Every kept record, counted by the rule it broke and the attribute, the largest first. Fix the largest group first.",
+        "export": "Export CSV",
+        "exporting": "Exporting…",
+        "exportHint": "Every kept record with its rule and reason, secrets masked and personal attributes left out. The file: {file}.",
+        "count": "{count, plural, one {# record} other {# records}}",
+        "allowed": "The model allows:",
+        "fix": {
+          "model": "Fix in the data model: it refuses this attribute or value. Widen the slot, or declare the attribute, if the source is right.",
+          "mapping": "Fix in the mapping: it writes a value of the wrong shape. Convert or map it to what the slot takes.",
+          "step": "Fix the step: a step of the pipeline failed on these records. Open a record's run to see the step's error.",
+          "runner": "The runner refused these records without a model rule. Open a record's run to see the runner's words."
+        },
+        "example": "Example"
+      }
     },
     "runs": {
       "open": "Runs and log",

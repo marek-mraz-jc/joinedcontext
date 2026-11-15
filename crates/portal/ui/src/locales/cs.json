@@ -2882,7 +2882,23 @@
       "maskedKept": "{count, plural, one {# záznam zůstává v seznamu: jeho hodnota byla zamaskována jako tajemství a opakování by zapsalo masku. Přinese ho další čtení zdroje.} few {# záznamy zůstávají v seznamu: jejich hodnoty byly zamaskovány jako tajemství a opakování by zapsalo masku. Přinese je další čtení zdroje.} other {# záznamů zůstává v seznamu: jejich hodnoty byly zamaskovány jako tajemství a opakování by zapsalo masku. Přinese je další čtení zdroje.}}",
       "newest": "Nejnovější",
       "older": "Starší záznamy",
-      "openRun": "Otevřít jeho běh"
+      "openRun": "Otevřít jeho běh",
+      "groups": {
+        "title": "Podle pravidla",
+        "lead": "Všechny uchované záznamy podle porušeného pravidla a atributu, největší skupina první. Opravte nejdřív největší skupinu.",
+        "export": "Exportovat CSV",
+        "exporting": "Exportuje se…",
+        "exportHint": "Všechny uchované záznamy s pravidlem a důvodem, tajemství zamaskovaná a osobní atributy vynechané. Soubor: {file}.",
+        "count": "{count, plural, one {# záznam} few {# záznamy} other {# záznamů}}",
+        "allowed": "Model povoluje:",
+        "fix": {
+          "model": "Opravte v datovém modelu: odmítá tento atribut nebo hodnotu. Je-li zdroj správný, rozšiřte slot nebo atribut deklarujte.",
+          "mapping": "Opravte v mapování: zapisuje hodnotu špatného tvaru. Převeďte ji nebo namapujte na to, co slot přijímá.",
+          "step": "Opravte krok: krok pipeline na těchto záznamech selhal. Chybu kroku najdete v běhu záznamu.",
+          "runner": "Runner tyto záznamy odmítl bez pravidla modelu. Jeho slova najdete v běhu záznamu."
+        },
+        "example": "Příklad"
+      }
     },
     "runs": {
       "open": "Běhy a záznam",
