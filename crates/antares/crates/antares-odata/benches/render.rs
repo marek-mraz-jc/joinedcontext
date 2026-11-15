@@ -22,13 +22,51 @@ const CITY: &str = "https://example.org/city/";
 const ENTITIES: u32 = 100;
 const RUNS: usize = 300;
 
-const SCHEMA: &str = r#"{
-  "id": "https://example.org/city", "name": "city",
-  "prefixes": {"city": {"prefix_prefix": "city", "prefix_reference": "https://example.org/city/"}},
-  "default_prefix": "city",
-  "classes": {"Car": {"slots": ["speed", "label"]}},
-  "slots": {"speed": {"range": "float"}, "label": {"range": "string"}}
-}"#;
+/// Sets and members of the wide view, about a production model's (T-6935 P-2-10): the
+/// per-Entity work that scales with them cannot show on the one-set `cars` view.
+const WIDE_SETS: usize = 30;
+const WIDE_MEMBERS: usize = 15;
+
+/// The city schema: Car with speed, label and `WIDE_MEMBERS - 2` more slots, and `WIDE_SETS - 1`
+/// more classes; the `cars` view still narrows to Car's speed and label.
+fn wide_schema() -> serde_json::Value {
+    let extra: Vec<String> = (2..WIDE_MEMBERS).map(|n| format!("s{n}")).collect();
+    let mut classes = serde_json::Map::new();
+    let car: Vec<&str> = ["speed", "label"]
+        .into_iter()
+        .chain(extra.iter().map(String::as_str))
+        .collect();
+    classes.insert("Car".into(), json!({"slots": car}));
+    for n in 1..WIDE_SETS {
+        classes.insert(format!("T{n}"), json!({"slots": extra}));
+    }
+    let mut slots = serde_json::Map::new();
+    slots.insert("speed".into(), json!({"range": "float"}));
+    slots.insert("label".into(), json!({"range": "string"}));
+    for slot in &extra {
+        slots.insert(slot.clone(), json!({"range": "float"}));
+    }
+    json!({"id": "https://example.org/city", "name": "city",
+        "prefixes": {"city": {"prefix_prefix": "city", "prefix_reference": CITY}},
+        "default_prefix": "city", "classes": classes, "slots": slots})
+}
+
+/// The view over every class of [`wide_schema`] and each of its slots.
+fn wide_view() -> serde_json::Value {
+    let types: Vec<String> = std::iter::once("city:Car".to_owned())
+        .chain((1..WIDE_SETS).map(|n| format!("city:T{n}")))
+        .collect();
+    let attributes: Vec<String> = ["speed", "label"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain((2..WIDE_MEMBERS).map(|n| format!("s{n}")))
+        .map(|slot| format!("city:{slot}"))
+        .collect();
+    json!({"id": "wide", "tenant": "city", "@context": {"city": CITY},
+        "selector": types,
+        "rules": [{"types": types, "attributes": attributes}],
+        "operations": ["query_entities", "retrieve_entity"]})
+}
 
 async fn send(app: &Router, method: &str, uri: &str, body: Option<String>) -> StatusCode {
     let mut req = Request::builder()
@@ -89,7 +127,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "rules": [{"types": ["city:Car"], "attributes": ["city:speed", "city:label"]}],
         "operations": ["query_entities", "retrieve_entity"]});
     send(&app, "PUT", "/q/views/cars", Some(view.to_string())).await;
-    send(&app, "PUT", "/q/schemas/city", Some(SCHEMA.to_owned())).await;
+    send(&app, "PUT", "/q/views/wide", Some(wide_view().to_string())).await;
+    send(
+        &app,
+        "PUT",
+        "/q/schemas/city",
+        Some(wide_schema().to_string()),
+    )
+    .await;
     for n in 0..ENTITIES {
         let car = json!({"id": format!("urn:ngsi-ld:Car:{n}"), "type": format!("{CITY}Car"),
             format!("{CITY}speed"): {"type": "Property", "value": n},
@@ -120,6 +165,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "OData: $filter speed gt 49 and contains(label,'car')",
         &app,
         "/x/views/cars/odata/v4/Car?$top=100&$filter=speed%20gt%2049%20and%20contains(label,'car')",
+    )
+    .await?;
+    // A nullable member: one `!speed` probe read before the page (nulls_first).
+    sample(
+        "OData: 100 Cars $orderby speed",
+        &app,
+        "/x/views/cars/odata/v4/Car?$top=100&$orderby=speed",
+    )
+    .await?;
+    sample(
+        &format!("OData: 100 Cars, {WIDE_SETS} sets x {WIDE_MEMBERS} members"),
+        &app,
+        "/x/views/wide/odata/v4/Car?$top=100&$count=true",
     )
     .await?;
     sample(

@@ -58,6 +58,8 @@ pub(crate) struct Reads {
     pub(crate) view: ViewOps,
     pub(crate) edm: Arc<Edm>,
     pub(crate) state: Arc<ODataState>,
+    /// [`set_types`] of `edm`, compacted once per model, not per Entity read (T-6935 P-2-10).
+    pub(crate) set_types: Vec<(String, String)>,
 }
 
 /// `$entity?$id=` (Q23): the id, percent-decoded, is a URL of this service,
@@ -1481,7 +1483,10 @@ pub(crate) fn entity_value(
         properties.push(("id".to_owned(), Value::from(id)));
     }
     if wanted("_types") {
-        properties.push(("_types".into(), Value::from(visible_types(&reads.edm, doc))));
+        properties.push((
+            "_types".into(),
+            Value::from(visible_types(&reads.set_types, doc)),
+        ));
     }
     for system in ["scope", "createdAt", "modifiedAt"] {
         // The temporal members only when named (E6): a nested $select may
@@ -1649,13 +1654,22 @@ fn types_of(doc: &Value) -> Vec<&str> {
     }
 }
 
-/// The sets of the Entity's types the model holds, by name.
-fn visible_types(edm: &Edm, doc: &Value) -> Vec<String> {
-    let types = types_of(doc);
+/// The core name of each class's own set's type and the set's name, in set order.
+pub(crate) fn set_types(edm: &Edm) -> Vec<(String, String)> {
     edm.sets
         .iter()
-        .filter(|(_, s)| s.output.is_none() && types.contains(&core_name(&s.type_iri).as_str()))
-        .map(|(name, _)| name.clone())
+        .filter(|(_, s)| s.output.is_none())
+        .map(|(name, s)| (core_name(&s.type_iri), name.clone()))
+        .collect()
+}
+
+/// The sets of the Entity's types the model holds, by name, out of [`set_types`].
+fn visible_types(set_types: &[(String, String)], doc: &Value) -> Vec<String> {
+    let types = types_of(doc);
+    set_types
+        .iter()
+        .filter(|(ty, _)| types.contains(&ty.as_str()))
+        .map(|(_, name)| name.clone())
         .collect()
 }
 
@@ -2671,13 +2685,14 @@ mod tests {
             schema_version: "0.m1".into(),
             histories: std::collections::BTreeMap::new(),
         };
+        let types = set_types(&edm);
         let both = json!({"type": ["https://e.org/T", "https://e.org/Hidden"]});
-        assert_eq!(visible_types(&edm, &both), vec!["T".to_owned()]);
+        assert_eq!(visible_types(&types, &both), vec!["T".to_owned()]);
         assert_eq!(
-            visible_types(&edm, &json!({"type": "https://e.org/T"})),
+            visible_types(&types, &json!({"type": "https://e.org/T"})),
             vec!["T".to_owned()]
         );
-        assert_eq!(visible_types(&edm, &json!({})), Vec::<String>::new());
+        assert_eq!(visible_types(&types, &json!({})), Vec::<String>::new());
     }
 
     #[test]
