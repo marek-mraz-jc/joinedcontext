@@ -534,6 +534,15 @@ def test_a_busy_file_is_asked_again_within_its_wait(monkeypatch):
     assert s.file("/f", None)[0] == 429 and len(calls) == suite.FILE_TRIES
 
 
+def test_the_file_type_is_the_bundles_smallest_whatever_a_pipeline_wrote_since():
+    # smoke 43666862140 (T-6953): Event 2 rows in the bundle, 462 after linked-events wrote; the
+    # live pick moved to Vehicle and the restore compare read Event's file rows as lost.
+    bundle = {"BikeHireDockingStation": 577, "Event": 2, "Vehicle": 2}
+    assert suite.file_type({**bundle, "Event": 462}, bundle) == "Event"
+    assert suite.file_type(bundle, bundle) == "Event"
+    assert suite.file_type({"Event": 2, "Tree": None}, {"Event": 2, "Tree": None}) == "Event"
+
+
 def test_a_file_past_the_row_ceiling_passes_only_as_its_413(tmp_path, serve, monkeypatch):
     """T-6823: a file whose bundle count passes FILE_ROWS is refused before its first byte; that 413
     is the documented answer, and a 200 for it means the ceiling is gone."""
