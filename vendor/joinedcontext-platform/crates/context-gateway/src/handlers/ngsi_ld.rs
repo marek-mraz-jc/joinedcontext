@@ -119,7 +119,7 @@ pub(crate) async fn space_ngsi_ld(
     .map(|(space, subject)| (Arc::clone(&space.endpoint), subject));
     let prefix = format!("/cs/{space}/ngsi-ld/v1");
     // The space surface's view is the one the Portal writes per Context Space (plan 5.1).
-    let view = |endpoint: &Endpoint| format!("cs-{}", endpoint.space);
+    let view = |endpoint: &Endpoint| crate::resolver::space_view(&endpoint.space);
     as_ngsi_ld_error(serve_ngsi_ld_view(&gateway, admitted, &prefix, view, request).await).await
 }
 
@@ -421,7 +421,7 @@ pub(crate) fn has_view(view: &str) -> bool {
 /// canonical surface, the one whose root is `/cs/{segment}` (T-3643).
 pub(crate) fn view_of(endpoint: &Endpoint) -> String {
     if endpoint.base_path.starts_with("/cs/") {
-        format!("cs-{}", endpoint.space)
+        crate::resolver::space_view(&endpoint.space)
     } else {
         endpoint.slug.clone()
     }

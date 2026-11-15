@@ -252,11 +252,11 @@ pub fn brokers_of(repo: &Repository, endpoints: &[Endpoint]) -> SpaceBrokers {
             .is_some();
         if moving {
             table.moving.insert(segment.clone());
-            table.moving.insert(format!("cs-{segment}"));
+            table.moving.insert(crate::resolver::space_view(&segment));
         }
         table
             .by_view
-            .insert(format!("cs-{segment}"), broker.clone());
+            .insert(crate::resolver::space_view(&segment), broker.clone());
         table.names.insert(segment.clone(), id.name.clone());
         table.by_space.insert(segment, broker);
     }

@@ -790,7 +790,7 @@ pub(crate) async fn space_mcp_message(
         Err(problem) => return *problem,
     };
     // The space surface's view is the one the Portal writes per Context Space (plan 5.1).
-    let view = format!("cs-{}", space.endpoint.space);
+    let view = crate::resolver::space_view(&space.endpoint.space);
     mcp_answer(
         gateway,
         Arc::clone(&space.endpoint),
