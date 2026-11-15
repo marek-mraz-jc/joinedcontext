@@ -990,7 +990,7 @@ pub async fn get_person(
     patch,
     path = "/api/v1/organization/people/{id}",
     summary = "Edit Person",
-    description = "Edits a person's name, e-mail or language. An e-mail change needs a person in a Portal session (a service account's or an agent's token: 403); names and language stay open to tokens (PF-93).",
+    description = "Edits a person's name, e-mail or language; an e-mail change needs a Portal session (PF-93).",
     tag = "people",
     params(("id" = String, Path, description = "The Keycloak user id")),
     request_body(content = EditPerson, example = json!({ "lastName": "Nováková" })),
