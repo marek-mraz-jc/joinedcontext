@@ -931,6 +931,36 @@ mod tests {
         assert!(!keeps_versions(&other, &[grant], Utc::now(), None));
     }
 
+    /// P-3-01 (T-6937): the write path asks `None` first and parses the body only when it holds,
+    /// which is sound because no touched set is kept unless `None` is.
+    #[test]
+    fn no_touched_set_is_kept_unless_the_unnamed_write_is() {
+        let jana = Subject {
+            id: Some("jana".to_owned()),
+            ..Subject::default()
+        };
+        let grants = [
+            "      name: { versions: [keep] }\n",
+            "      \"*\": { versions: [keep] }\n",
+            "      name: { history: true }\n",
+        ]
+        .map(|attributes| {
+            spec(&format!(
+                "assignee: {{ kind: user, id: jana }}\noperations: [updateAttrs]\n\
+                 information:\n  - entities: [{{ type: Air }}]\n    attributes:\n{attributes}"
+            ))
+        });
+        for grant in grants {
+            let keeps = |touched: Option<&BTreeSet<String>>| {
+                keeps_versions(&jana, std::slice::from_ref(&grant), Utc::now(), touched)
+            };
+            for touched in [["name"], ["pm10"], ["*"]] {
+                let touched = touched.iter().map(|s| (*s).to_owned()).collect();
+                assert!(!keeps(Some(&touched)) || keeps(None), "{touched:?}");
+            }
+        }
+    }
+
     /// S-49 (T-5955): a read-only token is refused every write a Policy grants its holder, and
     /// still reads.
     #[test]
