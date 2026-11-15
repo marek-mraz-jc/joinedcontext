@@ -7,11 +7,12 @@
 
 use crate::app::Gateway;
 use crate::auth::subject::admit;
-use crate::handlers::files::file_csv;
+use crate::handlers::files::file_csv_for;
 use crate::handlers::ogc::{filter_query, output_name};
+use crate::middleware::tenancy;
 use crate::query;
 use axum::body::Body;
-use axum::extract::{Path, Request, State};
+use axum::extract::Request;
 use axum::http::header::CONTENT_DISPOSITION;
 use axum::http::{HeaderValue, Response, Uri};
 use axum::response::IntoResponse;
@@ -58,10 +59,12 @@ pub(crate) async fn preset_csv(
         return ProblemDetails::not_found().into_response();
     }
     // Admitted before the output is looked up, so a refused caller learns no output's name.
-    let endpoint = match admit(&gateway, slug, Some(Representation::Csv), request.headers()) {
-        Ok((endpoint, _)) => endpoint,
-        Err(problem) => return *problem,
-    };
+    tenancy::strip_client_headers(&mut request);
+    let (endpoint, subject) =
+        match admit(&gateway, slug, Some(Representation::Csv), request.headers()) {
+            Ok(admitted) => admitted,
+            Err(problem) => return *problem,
+        };
     // A stored `query` that does not read leaves the output unserved (404), as the view does,
     // never the whole view (T-6762).
     let reads = |query: Option<&str>, types: &[&str]| {
@@ -112,7 +115,7 @@ pub(crate) async fn preset_csv(
         Ok(uri) => *request.uri_mut() = uri,
         Err(_) => return ProblemDetails::not_found().into_response(),
     }
-    let mut response = file_csv(State(gateway), Path(slug.to_owned()), request).await;
+    let mut response = file_csv_for(&gateway, (endpoint, subject), request).await;
     // The output names the file; its name is `[A-Za-z0-9_-]`, so it needs no quoting.
     if response.headers().contains_key(CONTENT_DISPOSITION) {
         if let Ok(disposition) =
