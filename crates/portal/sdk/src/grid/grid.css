@@ -262,6 +262,28 @@
   margin: var(--jc-space-2, 8px) 0 0;
 }
 
+/* A turning ring before "Loading…": the read is alive, not stuck (T-7063). */
+.jc-grid-loading::before {
+  content: "";
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: 0.5em;
+  vertical-align: -0.15em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: jc-grid-spin 0.8s linear infinite;
+}
+
+@keyframes jc-grid-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jc-grid-loading::before { animation: none; }
+}
+
 /* The way out reads as live, not in the muted grey of the sentence beside it. */
 .jc-grid-empty-hint button {
   color: var(--jc-color-ink, var(--jc-color-text, #1a1a1a));
@@ -502,6 +524,30 @@
    the grid's edge. */
 .jc-grid-review-rows {
   overflow-x: auto;
+}
+
+/* What to do after a refusal: one quiet line under the reasons. */
+.jc-grid-refused-next {
+  margin: 0;
+  text-align: center;
+  color: var(--jc-color-muted, #666);
+}
+
+/* The pending bar's actions read as buttons, not as text beside the count. */
+.jc-grid-pending > button {
+  min-height: 2.75rem;
+  padding: var(--jc-space-1, 4px) var(--jc-space-3, 12px);
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 4px);
+  background: var(--jc-color-card, #f5f5f5);
+  color: var(--jc-color-ink, var(--jc-color-text, #1a1a1a));
+  font: inherit;
+  cursor: pointer;
+}
+
+.jc-grid-pending > button:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0066cc);
+  outline-offset: 1px;
 }
 
 /* A radio and its words: a gap between them, the pair kept on one line. */
@@ -2619,7 +2665,8 @@ a.jc-cell--link:focus-visible {
   gap: var(--jc-space-1, 4px);
   list-style: none;
   margin: 0;
-  padding: 0;
+  /* Off the card's edge, in line with the toolbar above it. */
+  padding: 0 var(--jc-space-2, 8px);
 }
 
 .jc-grid-chip {

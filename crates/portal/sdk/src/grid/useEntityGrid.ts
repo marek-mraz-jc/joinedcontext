@@ -47,6 +47,8 @@ export interface GridLabels {
   filtersMatchNothing: string;
   /** Before the source's sentence on a refused write in the review: "not saved" (T-7063). */
   notSaved: string;
+  /** Under the refusals in the review: what the person can do next (T-7063). */
+  refusedNext: string;
   loading: string;
   /** Said over the dimmed rows while a narrowed question is read again (T-5623). */
   filtering: string;
@@ -336,6 +338,7 @@ export const DEFAULT_LABELS: GridLabels = {
   empty: "No rows.",
   filtersMatchNothing: "None of the rows match your filters.",
   notSaved: "not saved",
+  refusedNext: "Change the value and apply again, or discard the changes to keep what is stored.",
   loading: "Loading…",
   filtering: "Filtering…",
   previous: "Previous",

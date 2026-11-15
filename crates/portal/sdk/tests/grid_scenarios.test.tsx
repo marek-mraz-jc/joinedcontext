@@ -224,6 +224,7 @@ describe("reading and writing safely (T-7063)", () => {
     fireEvent.click(within(panel).getByRole("button", { name: DEFAULT_LABELS.apply }));
     expect(await within(panel).findByText(`Station 1 — ${DEFAULT_LABELS.notSaved}: Access Denied by Policy`)).toBeInTheDocument();
     expect(panel.textContent).not.toContain("urn:");
+    expect(within(panel).getByText(DEFAULT_LABELS.refusedNext)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: DEFAULT_LABELS.discard }));
     expect(await screen.findByDisplayValue("5")).toBeInTheDocument();
   });

@@ -124,6 +124,7 @@ export function GridReview({ view }: { view: GridView }): React.JSX.Element | nu
           </p>
         );
       })}
+      {refused.length > 0 && <p className="jc-grid-refused-next">{labels.refusedNext}</p>}
       <label className="jc-grid-reason">
         <span>{labels.reason}</span>
         <input

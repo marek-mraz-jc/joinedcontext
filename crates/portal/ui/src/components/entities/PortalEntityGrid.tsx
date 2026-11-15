@@ -109,6 +109,7 @@ export function gridLabels(t: (key: string, values?: Record<string, string>) => 
     empty: t("entityGrid.empty"),
     filtersMatchNothing: t("entityGrid.filtersMatchNothing"),
     notSaved: t("entityGrid.notSaved"),
+    refusedNext: t("entityGrid.refusedNext"),
     loading: t("entityGrid.loading"),
     filtering: t("entityGrid.filtering"),
     previous: t("entityGrid.previous"),
