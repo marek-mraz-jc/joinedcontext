@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: pipelines-write
+  namespace: bbsk
+  title: { sk: Kanály zapisujú zdrojový priestor, en: The ingestion pipelines write the raw space }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-kraj }
+  assigner: did:web:bbsk.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is what an annual re-poll does: the same cell, published again. Create and query are
+  # what a stream needs to start from nothing and to check itself. No delete: a published cube
+  # row is never withdrawn, it is superseded by the next year's.
+  # `queryEntity` is `GET /entities`, and that is how the indicator pipeline reads the rows it
+  # computes from: `queryBatch` is only the `POST /entityOperations/query` form, so without this
+  # the read was refused `403 Access Denied by Policy`, the stream's `errored()` guard dropped
+  # the whole tick, and the indicator space stayed empty in silence (T-2445). Granted by name
+  # and not as the `retrieveOps` group: one operation is what this account does.
+  operations: [upsertBatch, createBatch, queryBatch, queryEntity]

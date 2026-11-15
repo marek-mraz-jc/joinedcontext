@@ -1,0 +1,41 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: justify-linkerd-inject-opt-out
+  annotations:
+    policies.kyverno.io/title: Linkerd Injection Opt-Out Must Be Justified
+    policies.kyverno.io/category: Linkerd
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      A Pod that opts out of the mesh with linkerd.io/inject=disabled must
+      document why via the mesh.joinedcontext.com/opt-out-reason annotation. This
+      keeps unmeshed workloads auditable instead of silently slipping out of
+      mTLS coverage.
+spec:
+  background: true
+  rules:
+    - name: opt-out-needs-reason
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE, UPDATE]
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."linkerd.io/inject" || ''enabled'' }}'
+            operator: Equals
+            value: disabled
+      validate:
+        failureAction: KYVERNO_FAILURE_ACTION
+        message: >-
+          Pod opts out of Linkerd injection (linkerd.io/inject=disabled) without
+          a justification. Add a mesh.joinedcontext.com/opt-out-reason annotation
+          explaining why this workload must run unmeshed.
+        deny:
+          conditions:
+            all:
+              - key: '{{ request.object.metadata.annotations."mesh.joinedcontext.com/opt-out-reason" || '''' }}'
+                operator: Equals
+                value: ''

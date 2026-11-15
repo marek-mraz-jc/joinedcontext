@@ -1,0 +1,6 @@
+---
+component: ai
+parts:
+  # T-4694: the standalone assistant on ai.{domain}: the static bundle of the platform's
+  # crates/assistant/widget/app (build.mjs --template), one page per deployment at /{publicId}.
+  - name: app

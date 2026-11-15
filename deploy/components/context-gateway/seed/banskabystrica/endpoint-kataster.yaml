@@ -1,0 +1,39 @@
+# One type per catalogue dataset (T-4344): the cadastral parcels of the space
+# banskabystrica-verejne (T-4697), read through their own Policy. CC BY 4.0: the dataset and every
+# parcel credit ÚGKK SR. The parcels carry no owner: the INSPIRE service publishes none.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: banskabystrica-kataster
+  namespace: banskabystrica
+  title: { sk: Parcely katastra — Banská Bystrica, en: Cadastral parcels — Banská Bystrica }
+  description:
+    sk: 'Parcely registra C v katastrálnom území Banská Bystrica: číslo parcely, výmera a hranica, týždenne. Zdroj: Úrad geodézie, kartografie a katastra SR (INSPIRE), CC BY 4.0. Bez vlastníkov.'
+    en: 'The register C parcels of the cadastral area of Banská Bystrica: the parcel number, area and outline, weekly. Source: the Geodesy, Cartography and Cadastre Authority of Slovakia (INSPIRE), CC BY 4.0. No owners.'
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  slug: c223begxsfspzmdaq5ij4aayw6vyucjl
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:kataster-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: banskabystrica }
+      license: cc-by
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Parcels of land: number, area and outline; no owner, no other personal data (T-4697).
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Úrad geodézie, kartografie a katastra SR, INSPIRE Katastrálne parcely, CC BY 4.0'
+      en: 'Source: Geodesy, Cartography and Cadastre Authority of the Slovak Republic, INSPIRE Cadastral Parcels, CC BY 4.0'
+    themes: [GOVE, REGI]
+    keywords:
+      sk: [kataster, parcela, pozemok, výmera, Banská Bystrica]
+      en: [cadastre, parcel, land, area, Banská Bystrica]
+    spatial:
+      - SK032
+      - https://data.gov.sk/id/lau2/SK0321508438
+    frequency: WEEKLY
+    pipelineRef: { kind: Pipeline, name: kataster }

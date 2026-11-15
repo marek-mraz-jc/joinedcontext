@@ -1,0 +1,18 @@
+# The sites the city offers for new services along its shore route, 2025, as an open WFS layer, in WGS84. No key.
+# CC-BY-4.0, read from the HRI catalogue (package uusien-toimintojen-paikat-helsingin-rantareitilla). 95 sites
+# on 2026-10-26; the whole layer is 58 kB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-waterfront-sites
+  namespace: helsinki
+  title:
+    en: Sites for new services on the shore route
+    fi: Uusien toimintojen paikat rantareitillä
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:rantareitin_uusien_toimintojen_paikat_2025
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

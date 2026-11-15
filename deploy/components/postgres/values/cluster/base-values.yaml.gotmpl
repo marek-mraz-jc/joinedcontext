@@ -1,0 +1,193 @@
+---
+{{- $this := .Values.postgres.cluster -}}
+{{- $global := .Values.global }}
+
+# values: https://github.com/cloudnative-pg/charts/blob/main/charts/cluster/values.yaml
+# raw: https://raw.githubusercontent.com/cloudnative-pg/charts/refs/heads/main/charts/cluster/values.yaml
+# - [x] Containers run as non-root with `readOnlyRootFilesystem` -> default in CloudNativePG
+# - [x] Health probes -> default in CloudNativePG
+# - [x] Graceful shutdown -> default in CloudNativePG
+# - [ ] Standard labels
+# - [x] ServiceAccount with least privilege where required -> default in CloudNativePG
+# - [x] Named ports -> default in CloudNativePG
+# - [x] Ingress with TLS -> not applicable
+
+type: postgis
+
+version:
+  postgresql: "16"
+  timescaledb: "2.15"
+  postgis: "3.4"
+
+cluster:
+  imageName: "{{ .Values.images.postgres.cluster.repository }}:{{ .Values.images.postgres.cluster.tag }}@{{ .Values.images.postgres.cluster.digest }}"
+  # Skip the Linkerd proxy for inbound on the instance-manager status/probe port
+  # (:8000, served over the instance's own TLS). The kubelet probe is unmeshed
+  # (tls=None), so mandatory mTLS (cluster-authenticated) would deny it and the
+  # instances would CrashLoop. This annotation is propagated onto the instance pods
+  # via the operator's INHERITED_ANNOTATIONS (see operator base-values). Inert
+  # without Linkerd.
+  annotations:
+    config.linkerd.io/skip-inbound-ports: "8000"
+    # Inherited by the instance pods and by the operator's own initdb/join Jobs (see the
+    # operator's INHERITED_ANNOTATIONS): the instance manager watches this Cluster and
+    # reports status back, so taking its token away stops the database from starting.
+    security.joinedcontext.com/api-access-reason: >-
+      CloudNativePG instance manager: watches its own Cluster resource and reports
+      instance status back to the operator.
+  storage:
+    size: "8Gi"
+    storageClass: "{{ $global.storage.storageClass.rwo | default "" }}"
+
+  # Chart 0.7.0 reads cluster.monitoring.enabled, never enablePodMonitor: it renders the chart's
+  # PrometheusRule, whose CNPGClusterHighConnectionsWarning fires at 80 % of max_connections for
+  # 5 min (T-5125). The PodMonitor comes from components/monitoring, at the platform's interval.
+  monitoring:
+    enabled: {{ $global.metrics.enabled }}
+    podMonitor:
+      enabled: false
+
+  {{- if .Values.databases }}
+  roles:
+    {{- /*
+      One role per USER, not per database. A user may own several databases — CKAN keeps its
+      catalogue and its DataStore apart and owns both (EP-65) — and CNPG rejects the whole
+      Cluster if a name repeats in `spec.managed.roles`:
+        admission webhook denied the request: spec.managed.roles: Invalid value: "ckan":
+        Role name is duplicate of another
+      The webhook is the only thing that checks this, so it fails at `dev-apply`, not at render.
+    */}}
+    {{- $seen := dict }}
+    {{- range $key, $db := .Values.databases }}
+    {{- if eq $db.embedded true }}
+    {{- if hasKey $seen $db.user }}
+    {{- $prior := index $seen $db.user }}
+    {{- if ne $prior $db.secret.name }}
+    {{- fail (printf "database %q gives user %q the secret %q, but another database already gives that user %q. One user has one password; give the databases different users or the same secret." $key $db.user $db.secret.name $prior) }}
+    {{- end }}
+    {{- else }}
+    {{- $_ := set $seen $db.user $db.secret.name }}
+    - name: "{{ $db.user }}"
+      ensure: present
+      login: true
+      superuser: false
+      passwordSecret:
+        name: "{{ $db.secret.name }}"
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if (dig "branchPreviews" "enabled" false $global) }}
+    # The group every branch preview's role joins (ADR-N-062, T-5548): `just dev-preview` creates
+    # pv_{slug} IN ROLE pv_previews, and the two pg_hba lines below hold the group to its own
+    # database. It never logs in itself.
+    - name: pv_previews
+      ensure: present
+      login: false
+      superuser: false
+      inherit: false
+    {{- end }}
+  {{- else }}
+  roles: []
+  {{- end }}
+
+  postgresql:
+    parameters: {}
+    synchronous: {}
+    pg_hba:
+      # CloudNativePG always appends `host all all all scram-sha-256` as its own last rule,
+      # so a `hostssl` line on its own changes nothing: a client that refuses TLS simply
+      # falls through to that catch-all and is served in plaintext. `hostnossl ... reject`
+      # is what actually closes it — an unencrypted connection is refused before it can
+      # reach the appended rule (BSI TR-03187 CT-9). Unix-socket clients (the instance
+      # manager, the metrics exporter) match the `local ... peer` rules and are unaffected.
+      - hostnossl all all all reject
+      {{- if (dig "branchPreviews" "enabled" false $global) }}
+      # A branch preview's role reaches the database of its own name and nothing else: Postgres
+      # grants CONNECT to PUBLIC on every database and the platform's never revoke it, so a grant
+      # alone would let pv_{slug} into `portal` (ADR-N-062, Deployment/17 section 1).
+      - hostssl sameuser +pv_previews all scram-sha-256
+      - host all +pv_previews all reject
+      {{- end }}
+      - hostssl all all all scram-sha-256
+
+{{- $backups := deepCopy ($this.backups | default dict) }}
+{{- /* `target: artifact-store` archives to the platform's own store (T-5289): its address, the
+backup bucket (unless destinationPath names a path in it) and the key the store's bucket Job makes for that bucket alone, with no SSE (the
+store has no KMS). Keep in step with the other postgres values file. */}}
+{{- if eq ($backups.target | default "") "artifact-store" }}
+{{- if not (has "artifact-store" .Values.components) }}
+{{- fail "postgres.cluster.backups.target is 'artifact-store' but the environment does not deploy the artifact-store component: add it to components, or set target '' and name an external store" }}
+{{- end }}
+{{- $store := index .Values "artifact-store" "store" }}
+{{- $_ := set $backups "endpointURL" (printf "http://artifact-store.%s.svc.cluster.local:9000" $store.namespace) }}
+{{- $_ := set $backups "destinationPath" ($backups.destinationPath | default (printf "s3://%s/" ($store.backupBucket | default dict).name)) }}
+{{- $_ := set $backups "existingSecret" "postgres-backup-artifact-store" }}
+{{- $_ := set $backups "encryption" "" }}
+{{- end }}
+backups:
+  enabled: {{ $backups.enabled | default false }}
+{{- if $backups.enabled }}
+  provider: {{ $backups.provider | default "s3" | quote }}
+  endpointURL: {{ $backups.endpointURL | default "" | quote }}
+  destinationPath: {{ $backups.destinationPath | default "" | quote }}
+  retentionPolicy: {{ $backups.retentionPolicy | default "30d" | quote }}
+  s3:
+    region: {{ $backups.region | default "" | quote }}
+    bucket: {{ $backups.bucket | default "" | quote }}
+    path: {{ $backups.path | default "/" | quote }}
+  secret:
+    # The object store credentials are operator-supplied and must not be templated into a
+    # manifest: the chart points barman at an existing Secret instead of creating one.
+    create: false
+    name: {{ $backups.existingSecret | default "postgres-backup-s3" | quote }}
+  {{- /* Server-side encryption the store applies; '' sends none (a store without KMS refuses SSE-S3). */}}
+  {{- $sse := ternary $backups.encryption "AES256" (hasKey $backups "encryption") }}
+  wal:
+    compression: gzip
+    encryption: {{ $sse | quote }}
+  data:
+    compression: gzip
+    encryption: {{ $sse | quote }}
+  scheduledBackups:
+    - name: daily-backup
+      schedule: {{ $backups.schedule | default "0 0 3 * * *" | quote }}
+      backupOwnerReference: self
+      method: barmanObjectStore
+{{- end }}
+
+{{- $recovery := $this.recovery | default dict }}
+{{- if $recovery.enabled }}
+{{- /*
+Point-in-time recovery (OPS-10, OPS-11). This is the same release and the same cluster name —
+everything in the platform connects to `postgres-cluster-rw` — bootstrapped from the WAL archive
+instead of `initdb`. The restore is therefore a values change plus a delete of the old Cluster
+object, not a second component.
+*/}}
+{{- $sourcePath := $recovery.destinationPath | default $backups.destinationPath | default "" }}
+{{- $target := $recovery.targetTime | default "" | toString }}
+{{- if and $target (not (regexMatch "^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}" $target)) }}
+{{- fail (printf "postgres.cluster.recovery.targetTime must be an ISO 8601 instant such as 2026-08-15T14:30:00Z (quote it in YAML), got %q" $target) }}
+{{- end }}
+{{- if and $backups.enabled (eq ($backups.destinationPath | default "") $sourcePath) }}
+{{- fail "postgres.cluster.recovery: the restored cluster carries the source cluster's name, so it would archive its own WAL over the backup it is recovering from. Give postgres.cluster.backups.destinationPath a fresh path, or turn backups off until the restore is verified." }}
+{{- end }}
+mode: recovery
+recovery:
+  method: object_store
+  # The serverName the archive was written under: the name of the cluster being restored.
+  clusterName: {{ $recovery.sourceCluster | default $this.name | quote }}
+  pitrTarget:
+    # Empty recovers to the end of the archive; an instant recovers to that instant (OPS-10).
+    time: {{ $target | quote }}
+  provider: {{ $recovery.provider | default $backups.provider | default "s3" | quote }}
+  endpointURL: {{ $recovery.endpointURL | default $backups.endpointURL | default "" | quote }}
+  destinationPath: {{ $sourcePath | quote }}
+  s3:
+    region: {{ $recovery.region | default $backups.region | default "" | quote }}
+    bucket: {{ $recovery.bucket | default $backups.bucket | default "" | quote }}
+    path: {{ $recovery.path | default $backups.path | default "/" | quote }}
+  secret:
+    # Read-only credentials for the archive, operator-supplied like the backup ones.
+    create: false
+    name: {{ $recovery.existingSecret | default $backups.existingSecret | default "postgres-backup-s3" | quote }}
+{{- end }}

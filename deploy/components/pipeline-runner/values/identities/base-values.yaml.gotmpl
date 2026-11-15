@@ -1,0 +1,10 @@
+# The pipelines' own namespace, `{instance}-pipeline-identities` in every profile, a single
+# namespace one included (charts/identities), and the token service the grant there is for.
+namespace: {{ index .Values "pipeline-runner" "identities" "pipelineNamespace" }}
+tokenService:
+  serviceAccount: pipeline-tokens
+  namespace: {{ index .Values "pipeline-runner" "tokens" "namespace" }}
+{{- $portal := dig "portal" "portal" dict .Values }}
+portal:
+  serviceAccount: portal
+  namespace: {{ if dig "enabled" false $portal }}{{ dig "namespace" "" $portal | quote }}{{ else }}''{{ end }}

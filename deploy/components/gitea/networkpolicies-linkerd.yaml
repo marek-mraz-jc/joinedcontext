@@ -1,0 +1,200 @@
+---
+gitea-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/instance: gitea-forge
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# Meshed traffic reaches a pod through its Linkerd inbound proxy on 4143, not on the
+# service port, so the 5432 and 8080 rules alone would leave the connections blocked.
+postgres-linkerd-from-gitea:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+portal-linkerd-from-gitea:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# The forge declares an egress policy, so its Linkerd proxy needs identity (8080),
+# destination (8086) and policy (8090) spelled out. Without them the proxy never learns the
+# inbound policy for its own admin port, the kubelet startup probe gets a 403 and the pod
+# never leaves Init.
+gitea-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/instance: gitea-forge
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 4143
+    # Itself, meshed: the migration that duplicates a project's repository (PF-89).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 4143
+
+gitea-linkerd-from-jc:
+  podSelector:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/instance: gitea-forge
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bootstrap
+          componentNamespace: gitea
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+        # The Actions runner (ADR-N-028, AP-81): it takes jobs from the forge, and the jobs
+        # clone, publish packages and call the forge API through it.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea-runner
+          componentNamespace: gitea-runner
+        # The gateway's git-sync checkout of the configuration repository (T-0278).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+portal-linkerd-egress-to-gitea:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# A meshed pod under an egress policy needs the control plane spelled out, or its proxy never
+# learns the inbound policy for its own admin port and the pod loops in Init.
+bootstrap-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: bootstrap
+    app.kubernetes.io/instance: gitea-bootstrap
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 4143

@@ -1,0 +1,99 @@
+# A Bento flow for a GBFS 2.x city-bike feed: station_status every minute into
+# BikeHireDockingStation entities (PL-01, PL-04, CC-23..CC-27). What the helsinki-bikes stream
+# is, as a card any project can run against its own operator's feed.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: gbfs-stations
+  namespace: org
+  title:
+    en: City-bike stations from a GBFS feed
+    fi: Kaupunkipyöräasemat GBFS-syötteestä
+    sk: Stanice mestských bicyklov z kanála GBFS
+    cs: Stanice sdílených kol z kanálu GBFS
+    de: Leihrad-Stationen aus einem GBFS-Feed
+  description:
+    en: Reads the stations' free bikes and docks from a GBFS feed and writes them into a Context Space.
+    sk: Číta voľné bicykle a stojany staníc z kanála GBFS a zapisuje ich do kontextového priestoru.
+    cs: Čte volná kola a stojany stanic z kanálu GBFS a zapisuje je do kontextového prostoru.
+    de: Liest freie Räder und Stellplätze der Stationen aus einem GBFS-Feed und schreibt sie in einen Kontextbereich.
+spec:
+  version: 1.0.0
+  category: ingestion
+  riskClass: yellow
+  allowedRoles: [portal-approver]
+  parameterSchema:
+    type: object
+    required: [name, stationStatusUrl]
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+        title: Flow name
+        x-jc-title: { sk: Názov toku, cs: Název toku, de: Name des Ablaufs }
+        pattern: ^[a-z][a-z0-9-]{1,40}$
+        default: citybikes
+      stationStatusUrl:
+        type: string
+        title: station_status.json URL
+        x-jc-title:
+          sk: URL súboru station_status.json
+          cs: URL souboru station_status.json
+          de: URL der station_status.json
+        format: uri
+        default: https://gbfs.theta.fifteen.eu/gbfs/2.2/helsinki/en/station_status.json
+      period:
+        type: string
+        title: Poll every
+        x-jc-title: { sk: Načítať každých, cs: Načíst každých, de: Abfragen alle }
+        default: 1m
+        oneOf:
+          - const: '1m'
+            title: Minute
+            x-jc-title: { sk: Minútu, cs: Minutu, de: Minute }
+          - const: '5m'
+            title: '5 minutes'
+            x-jc-title: { sk: '5 minút', cs: '5 minut', de: '5 Minuten' }
+          - const: '15m'
+            title: '15 minutes'
+            x-jc-title: { sk: '15 minút', cs: '15 minut', de: '15 Minuten' }
+      targetEndpoint:
+        type: string
+        title: Endpoint the flow writes through
+        x-jc-title:
+          sk: Endpoint, cez ktorý tok zapisuje
+          cs: Endpoint, přes který tok zapisuje
+          de: Endpoint, über den der Ablauf schreibt
+        default: urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all
+  templates:
+    - name: datasource
+      template: |
+        apiVersion: joinedcontext.com/v1alpha1
+        kind: DataSource
+        metadata:
+          name: "{{ name }}-gbfs"
+          title: { en: "GBFS station status ({{ name }})" }
+        spec:
+          type: http
+          http:
+            url: "{{ stationStatusUrl }}"
+            verb: GET
+            headers: { Accept: application/json }
+            timeout: 15s
+    - name: pipeline
+      template: |
+        apiVersion: joinedcontext.com/v1alpha1
+        kind: Pipeline
+        metadata:
+          name: "{{ name }}-gbfs"
+          title: { en: "BikeHireDockingStation from {{ name }}" }
+        spec:
+          class: auto
+          period: "{{ period }}"
+          schedule: "* * * * *"
+          source:
+            dataSourceRef: { kind: DataSource, name: "{{ name }}-gbfs" }
+          targetEndpoint: "{{ targetEndpoint }}"
+          quotas:
+            maxMemoryMb: 128
+            cpuMillicores: 100

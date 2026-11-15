@@ -1,0 +1,27 @@
+---
+# The collector's ServiceAccount client. No browser flow, no direct grant, no redirect: the
+# only thing it does is exchange its secret for a token bound to the Portal's audience, which
+# is what the ingest route checks before it stores a row.
+activity-ingest:
+  name: Activity ingest
+  description: Service account of the OpenTelemetry Collector, posting activity events to the Portal
+  subdomain: ''
+  # Unused: the client has no browser flow. The realm template reads the key on every
+  # client, so leaving it out fails the render rather than defaulting.
+  redirectPath: ''
+  componentNamespaces:
+    - observability
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-api-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        config:
+          included.client.audience: portal-api
+          access.token.claim: 'true'
+          id.token.claim: 'false'

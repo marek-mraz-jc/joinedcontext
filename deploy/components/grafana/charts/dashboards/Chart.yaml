@@ -1,0 +1,6 @@
+---
+apiVersion: v2
+name: dashboards
+description: The committed Grafana dashboards of the platform, as one ConfigMap (OPS-16)
+type: application
+version: 0.1.0

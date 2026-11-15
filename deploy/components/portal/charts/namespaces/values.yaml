@@ -1,0 +1,30 @@
+# The installation's release name: projects' apps namespaces are `{release}-{project}-apps`.
+release: ''
+# The Portal's ServiceAccount and its namespace.
+serviceAccount:
+  name: portal
+  namespace: ''
+# The edge: the Service every App's Ingress routes to, the one the chart's edge Ingress names.
+edge:
+  gatewayService: apisix-gateway
+  # The class of the edge Ingress, which an App's Ingress copies (app_hosts.rs).
+  ingressClass: traefik
+  # The annotations an App's Ingress may carry: the ones the edge Ingress carries
+  # (components/apisix values, `ingress.annotations`), which app_hosts.rs copies, and Helm's
+  # own. Any other one (an nginx snippet, a Traefik middleware of another namespace) changes
+  # what the edge does beyond routing to APISIX (F-R2DEP2-006).
+  ingressAnnotations:
+    - ingress.kubernetes.io/affinity
+    - meta.helm.sh/release-name
+    - meta.helm.sh/release-namespace
+    - traefik.ingress.kubernetes.io/router.tls.options
+    - nginx.ingress.kubernetes.io/ssl-ciphers
+    - nginx.ingress.kubernetes.io/ssl-prefer-server-ciphers
+    - nginx.ingress.kubernetes.io/force-ssl-redirect
+    - nginx.ingress.kubernetes.io/proxy-buffer-size
+    - nginx.ingress.kubernetes.io/proxy-buffers-number
+    - nginx.ingress.kubernetes.io/proxy-busy-buffers-size
+# The namespace `{release}-app-tests`, where a run tests the model's code before it offers
+# publication (SDK-38). Needs the builder image, so it is on where the forge's runner is.
+appTests:
+  enabled: false

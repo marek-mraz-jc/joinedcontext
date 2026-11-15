@@ -1,0 +1,56 @@
+# Helsinki service usage (T-5258): the KeyPerformanceIndicator entities of the service-usage
+# pipeline, whose id carries the theme `services`: visits and page views per city website and
+# month (T-5667: Korkeasaari zoo's visitor API is suspended, so the zoo series are gone). The newest period as the value and every
+# period since the first run in the history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-statistics-services
+  namespace: helsinki
+  title:
+    fi: Palvelujen käyttö — Helsingin tilastot
+    sv: Användning av tjänster — Helsingfors statistik
+    en: Service usage — Helsinki statistics
+  description:
+    fi: 'Helsingin palvelujen käyttö: kaupungin verkkosivustojen käynnit ja sivunäytöt kuukaudessa sivustoittain. Yksi Smart Data Models KeyPerformanceIndicator kutakin tunnuslukua kohden. Lähde: Helsingin kaupunginkanslia, CC BY 4.0.'
+    sv: 'Användning av Helsingfors tjänster: besök och sidvisningar per månad för stadens webbplatser. En Smart Data Models KeyPerformanceIndicator per nyckeltal. Källa: Helsingfors stadskansli, CC BY 4.0.'
+    en: 'Usage of Helsinki services: visits and page views per city website and month. One Smart Data Models KeyPerformanceIndicator per indicator, the newest period as kpiValue and the earlier periods in its history. Properties beyond the model: districtCode (0910000000, the whole city), divisionLevel (city), statisticsTable (the series: web-visits, web-pageviews) and dimensionKey (idsite=<the site id of the export>). Source: the City of Helsinki Digitalisation unit, CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: 2otvm3oapms4vsucerjhnywlumdqf3px
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-services
+  # The NGSI-LD door also answers the temporal API, the series per indicator. An indicator has
+  # no geometry of its own: OGC API Features serves it as a feature without one.
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunginkanslia, Helsinki Region Infoshare, CC BY 4.0'
+      sv: 'Källa: Helsingfors stadskansli, Helsinki Region Infoshare, CC BY 4.0'
+      en: 'Source: City of Helsinki Executive Office, Helsinki Region Infoshare, CC BY 4.0'
+    themes: [SOCI, EDUC]
+    keywords:
+      fi: [kävijämäärät, verkkoanalytiikka, verkkosivustot, palvelut]
+      sv: [besökare, webbanalys, webbplatser, tjänster]
+      en: [visitors, web analytics, websites, services]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: MONTHLY
+    source:
+      - url: https://hri.fi/data/fi/dataset/helsingin-kaupungin-verkkosivustojen-kavijaanalytiikka
+        title:
+          fi: Helsingin kaupungin verkkosivustojen kävijäanalytiikka
+          en: Web analytics of the City of Helsinki websites
+        description:
+          fi: Kuukausittainen Matomo-vienti sivustoittain
+          en: Monthly Matomo export per website
+    pipelineRef: { kind: Pipeline, name: service-usage }

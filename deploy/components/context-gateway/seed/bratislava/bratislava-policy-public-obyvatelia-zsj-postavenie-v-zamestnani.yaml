@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-obyvatelia-zsj-postavenie-v-zamestnani
+  namespace: bratislava
+  title:
+    sk: 'Verejné čítanie: Počet obyvateľov podľa postavenia v zamestnaní (súčasného/posledne vykonávaného) v ZSJ'
+    en: 'Public read: Residents by status in employment (current or last) in the basic settlement units (ZSJ), 2021 census'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  # Read only, the rows of this one hub dataset (CC BY 4.0, nothing about a person); discovery
+  # beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:obyvatelia-zsj-postavenie-v-zamestnani[.][a-z0-9.-]+$

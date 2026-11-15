@@ -1,0 +1,45 @@
+# Dog zones of the IPR Praha geoportal (T-5426), PointOfInterest of the space praha-mesto read through
+# its own Policy, which narrows the public read to the area-dog-zones- ids.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-psi-zony
+  namespace: praha
+  title: { cs: Psí zóny — Praha, en: Dog zones — Prague }
+  description:
+    cs: 'Plochy pro volný pohyb psů, psí hřiště a plochy se zákazem vstupu psů nebo s povinným vodítkem: typ, název a obrys. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'Areas where dogs may run free, dog parks and areas where dogs are banned or must stay on a lead: kind, name and outline. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: dk7sx3bmq2rfwhe6tzc4jn5ylgo7apvu
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-psi-zony
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Mapped areas and lines: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [SOCI, ENVI]
+    keywords:
+      cs: [Praha, psi, psí zóny, volný pohyb psů]
+      en: [Prague, dogs, dog zones, off-lead areas]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/143a034267e34baaacdf253b89f4f09e_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Volný pohyb psů – psí zóny (IPR Praha), en: Dog zones (IPR Praha) }
+        description:
+          cs: Volný pohyb psů – psí zóny z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Dog zones from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+    pipelineRef: { kind: Pipeline, name: area-dog-zones }

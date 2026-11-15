@@ -1,0 +1,18 @@
+# One PointOfInterest per record of the IPR layer Oázy chladu – vodní plochy a toky into the city space (T-5426).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: area-water-areas
+  namespace: praha
+  title: { en: 'Cool spots: water areas and streams', cs: Oázy chladu – vodní plochy a toky }
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '45 2 * * 5'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-area-water-areas }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  # 9043515 bytes on 2026-10-25.
+  quotas: { maxMemoryMb: 512, cpuMillicores: 100 }

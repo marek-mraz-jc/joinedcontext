@@ -1,0 +1,18 @@
+# The register is republished weekly (frequency SETMANAL); a daily run shows a change within a day
+# and heals a missed run (T-5265).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: equipaments
+  namespace: barcelona
+  title: { ca: Equipaments de Barcelona, es: Equipamientos de Barcelona, en: Barcelona facilities }
+spec:
+  class: auto
+  schedule: '47 6 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-equipaments }
+  # Every stream writes through the one endpoint that evaluates the pipelines-write Policy.
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  output: { type: PointOfInterest, mode: upsert }
+  # Measured 2026-10-23: the 23 packages (25,469 rows, 23,337 kept) peak at 392 MiB in one run.
+  quotas: { maxMemoryMb: 448, cpuMillicores: 100 }

@@ -1,0 +1,57 @@
+# The event.php CMS (Brezno; T-5354): the calendar page draws its map from a `var places = [[...]]` array holding
+# each upcoming event's page link (`<a href="<host>/<slug>/">`); its points are the CMS's default for most events and
+# are never read. The event's page lists each date it runs on under "Čas a miesto konania" (`<strong>29.10.2026</strong>`,
+# the place text, `<strong>16:00</strong>`). Each date is one record. The 50 soonest pages of the source's own host
+# are read, a second apart.
+- mapping: |
+    let places = content().string().re_find_object("var places = \\[\\[(?P<v>[\\s\\S]*?)\\]\\];").v.or("")
+    let slugs = $places.re_find_all_object("<a href=\"__HOST_RE__/(?P<s>[a-z0-9-]{1,200})/\">").map_each(m -> m.s).unique()
+    root = $slugs.slice(0, [$slugs.length(), 50].min()).map_each(s -> { "url": "__HOST__/" + s + "/", "path": "/" + s + "/", "sourceId": "/" + s + "/" })
+- unarchive:
+    format: json_array
+- branch:
+    # Only a page of the source's own host: the slug is checked by the pattern above and the host is fixed in the
+    # url below, so an item can never send the run to another host.
+    request_map: |
+      root = ""
+      meta event_path = this.path.trim_prefix("/")
+    processors:
+      - sleep:
+          duration: 1s
+      - http:
+          url: __HOST__/${! @event_path }
+          verb: GET
+          headers:
+            User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public events)
+            Accept: text/html
+          timeout: 20s
+          retries: 1
+    result_map: |
+      # "29.10.2026" and "16:00" are Bratislava's wall time; a date without its time a whole day.
+      map at {
+        let m = this.d.re_find_object("^(?P<d>[0-9]{1,2})\\.(?P<m>[0-9]{1,2})\\.(?P<y>[0-9]{4})$")
+        let day = if $m.y.or("") == "" { null } else { "%s-%02d-%02d".format($m.y, $m.m.number().int64(), $m.d.number().int64()) }
+        let t = this.t.or("").re_find_object("^(?P<h>[0-9]{1,2}):(?P<i>[0-9]{2})$")
+        let local = if $day != null && $t.h.or("") != "" { "%sT%02d:%s:00".format($day, $t.h.number().int64(), $t.i) } else { null }
+        root = if $local != null { $local + ($local + "Z").ts_format("-07:00", "Europe/Bratislava") } else { $day }
+      }
+      let page = content().string()
+      let name = $page.re_find_object("<h1>(?P<v>[^<]{1,500})</h1>").v.or("")
+      let dates = $page.re_find_all_object("glyphicon-calendar text-muted\"></span>\\s*<strong>(?P<d>[0-9.]{8,10})</strong>\\s*<span class=\"glyphicon glyphicon-map-marker text-muted\"></span>(?P<v>[^<]{0,300})(?:<span class=\"pull-right\"><strong>(?P<t>[0-9]{1,2}:[0-9]{2})</strong>)?")
+      root.name = if $name == "" { null } else { $name }
+      # The place as the CMS writes it ("Mestská veža, Námestie M. R. Štefánika, 977 01 Brezno"): the venue table
+      # matches the whole text; a postcode and its town give the address.
+      root.shows = $dates.map_each(s -> {
+        "start": s.apply("at"),
+        "venue": s.v.trim().(v -> if v == "" { null } else { v }),
+        "postalCode": s.v.re_find_object("(?:^|,)\\s*(?P<z>[0-9]{3} ?[0-9]{2})\\s+[^,]+").z.or("").(v -> if v == "" { null } else { v }),
+        "locality": s.v.re_find_object("(?:^|,)\\s*[0-9]{3} ?[0-9]{2}\\s+(?P<l>[^,]+?)\\s*(?:,|$)").l.or("").(v -> if v == "" { null } else { v })
+      })
+# One record per date.
+- mapping: |
+    let event = this.without("shows", "path")
+    root = this.shows.or([]).map_each(s -> $event.merge(s))
+- unarchive:
+    format: json_array
+- archive:
+    format: json_array

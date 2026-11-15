@@ -1,0 +1,51 @@
+{{- $portalNamespace := required "portal.namespace is the Portal's namespace" .Values.portal.namespace }}
+{{- /*
+  What the Portal writes in the runner's namespace to start an App's build (AP-130): the Job,
+  the Secret holding that one job's registration token, which the Job owns, and the App's cache
+  claim. Server-side apply is create + patch. Jobs and claims are deleted by the Portal (a Job
+  whose token never arrived, the claim of a retired App); a token Secret goes with its Job. Jobs
+  are listed to count the running builds, so only one runs at a time (T-5815). No pods, no
+  exec, no logs: the Portal never reaches into a build.
+
+  No `get` on Secrets (T-4798): this namespace holds the forge's and, on a single-namespace
+  installation, the whole platform's credentials. The Portal tells a Job that holds its token
+  by an annotation on the Job. RBAC cannot name the `build-` prefix, so the admission policy
+  `{release}-portal-secrets` (components/portal/charts/namespaces) bounds what it writes.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: portal-build-pods
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gitea-runner
+    app.kubernetes.io/component: build-pod
+    app.kubernetes.io/part-of: joinedcontext
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "patch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: portal-build-pods
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gitea-runner
+    app.kubernetes.io/component: build-pod
+    app.kubernetes.io/part-of: joinedcontext
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: portal-build-pods
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.portal.serviceAccount }}
+    namespace: {{ $portalNamespace }}

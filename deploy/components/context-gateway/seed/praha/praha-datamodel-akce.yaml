@@ -1,0 +1,17 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: praha-akce
+  namespace: praha
+  title: { cs: Akce, en: Events }
+spec:
+  contextSpaceRef: praha-akce
+  linkml: ./praha-akce.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [Event, PointOfInterest]
+  artifacts:
+    jsonSchema: ./praha-akce.v1.schema.json
+    context: ./praha-akce.v1.context.jsonld
+    docs: ./praha-akce.v1.md
+    example: ./praha-akce.v1.example.jsonld

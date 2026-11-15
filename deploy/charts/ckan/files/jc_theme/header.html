@@ -1,0 +1,48 @@
+{% ckan_extends %}
+
+{# A demo says so above everything else on every page (T-4687): words from the branding block,
+   kept in view while the page scrolls. #}
+{% block header_wrapper %}
+  {% set ribbon = h.jc_branding().ribbon %}
+  {% if ribbon %}<div class="jc-ribbon" role="note">{{ ribbon }}</div>{% endif %}
+  {{ super() }}
+{% endblock %}
+
+{# The joinedcontext.com lockup, mark and name in one image (T-4627, owner), unless the instance
+   names its own (site.logo, T-4636): /jc-logo.svg is
+   https://www.joinedcontext.com/img/logo-light.svg, copied unchanged on 2026-10-18 (paths only,
+   no script, no external reference). Its alt is the installation's name, so the link still says
+   whose catalogue this is (T-2888). #}
+{% block header_logo %}
+  <a class="logo jc-brand" href="{{ h.url_for('home.index') }}">
+    <img src="{{ h.jc_site_logo() }}" alt="{{ h.jc_site_title() }}" width="171" height="36">
+  </a>
+{% endblock %}
+
+{# The sections by the names the search filters use (T-3028): publishers and topics, not
+   CKAN's organizations and groups. #}
+{% block header_site_navigation_tabs %}
+  {% set org_type = h.default_group_type('organization') %}
+  {% set group_type = h.default_group_type('group') %}
+  {# Topics only once one exists: the entry opened an empty page (T-4217). #}
+  {% if h.jc_has_topics() %}
+    {{ h.build_nav_main(
+      (h.default_package_type() ~ '.search', h.jc_t('nav_datasets'), ['dataset', 'resource']),
+      (org_type ~ '.index', h.jc_t('nav_publishers'), ['organization']),
+      (group_type ~ '.index', h.jc_t('nav_topics'), ['group']),
+      ('home.about', h.jc_t('nav_about'))) }}
+  {% else %}
+    {{ h.build_nav_main(
+      (h.default_package_type() ~ '.search', h.jc_t('nav_datasets'), ['dataset', 'resource']),
+      (org_type ~ '.index', h.jc_t('nav_publishers'), ['organization']),
+      ('home.about', h.jc_t('nav_about'))) }}
+  {% endif %}
+{% endblock %}
+
+{# Staff who signed in get the way back to the Portal beside CKAN's own dashboard (T-2744). #}
+{% block header_dashboard %}
+  {{ super() }}
+  {% if h.jc_portal_url() %}
+    <li><a href="{{ h.jc_portal_url() }}"><span class="text">{{ h.jc_t('portal') }}</span></a></li>
+  {% endif %}
+{% endblock %}

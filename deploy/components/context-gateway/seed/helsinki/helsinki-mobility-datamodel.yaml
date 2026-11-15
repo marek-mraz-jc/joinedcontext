@@ -1,0 +1,14 @@
+# The one model of the mobility space (DM-61), empty until the project writes a type of its own;
+# the city bikes it reads come through the shared space, not through this model.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: mobility
+  namespace: helsinki-mobility
+  title: { en: Mobility analytics }
+spec:
+  contextSpaceRef: mobility
+  linkml: ./mobility.linkml.yaml
+  version: 0.1.0
+  lifecycle: draft
+  classes: []

@@ -1,0 +1,84 @@
+{{- $release := .Values.release }}
+{{- $sa := .Values.serviceAccount }}
+{{- /*
+  The bound on the Portal's cluster-wide namespace and RoleBinding rights (AP-117). A native
+  admission policy, not a Kyverno one: the API server evaluates it for every request, with no
+  resource filter that skips a system namespace and no webhook that can fail open, and it always
+  denies, whatever an environment's Kyverno action is.
+
+  A namespace the Portal creates, changes or deletes is `{release}-{project}-apps`, labelled as
+  the Portal's and with that project, before and after the change, so the Portal can neither
+  adopt a namespace it did not create nor let one go. A RoleBinding it writes sits in such a
+  namespace and binds `{release}-portal-apps` to the Portal and nobody else.
+
+  The RoleBinding rule matches the namespace by name; binding-policy.yaml checks that the
+  namespace is one the Portal made (T-4775).
+*/}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $release }}-portal-apps-namespaces
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["namespaces"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        resources: ["rolebindings"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+  matchConditions:
+    - name: the-portal
+      expression: request.userInfo.username == "system:serviceaccount:{{ $sa.namespace }}:{{ $sa.name }}"
+  variables:
+    # The object before and after the request: one of them is null on CREATE and DELETE.
+    - name: sides
+      expression: "[object, oldObject].filter(o, o != null)"
+  validations:
+    - expression: >-
+        request.resource.resource != "namespaces" || variables.sides.all(n,
+          has(n.metadata.labels)
+          && "joinedcontext.com/managed-by" in n.metadata.labels
+          && n.metadata.labels["joinedcontext.com/managed-by"] == "joinedcontext-portal"
+          && "joinedcontext.com/project" in n.metadata.labels
+          && n.metadata.labels["joinedcontext.com/project"] != ""
+          && n.metadata.name == "{{ $release }}-" + n.metadata.labels["joinedcontext.com/project"] + "-apps")
+      messageExpression: >-
+        "The Portal may only write a namespace named {{ $release }}-{project}-apps that carries joinedcontext.com/managed-by=joinedcontext-portal and joinedcontext.com/project={project}, not " + request.name + " (AP-117)."
+    # Kyverno's Pod Security policies list the namespaces this deployment owns, not the apps
+    # namespaces the Portal makes at run time, so the namespace's own Pod Security label is what
+    # keeps a Deployment the Portal writes from becoming a privileged pod on the node (T-4775).
+    # The namespace after the change must enforce `restricted` at the latest version; DELETE
+    # has no after.
+    - expression: >-
+        request.resource.resource != "namespaces" || object == null || (
+          has(object.metadata.labels)
+          && "pod-security.kubernetes.io/enforce" in object.metadata.labels
+          && object.metadata.labels["pod-security.kubernetes.io/enforce"] == "restricted"
+          && (!("pod-security.kubernetes.io/enforce-version" in object.metadata.labels)
+            || object.metadata.labels["pod-security.kubernetes.io/enforce-version"] == "latest"))
+      messageExpression: >-
+        "The Portal may only write a namespace that enforces the restricted Pod Security Standard at the latest version (pod-security.kubernetes.io/enforce=restricted), not " + request.name + " (AP-117)."
+    - expression: >-
+        request.resource.resource != "rolebindings" || (
+          request.namespace.matches("^{{ $release }}-[a-z0-9]([-a-z0-9]*[a-z0-9])?-apps$")
+          && variables.sides.all(b,
+            b.roleRef.kind == "ClusterRole"
+            && b.roleRef.name == "{{ $release }}-portal-apps"
+            && has(b.subjects) && size(b.subjects) == 1
+            && b.subjects[0].kind == "ServiceAccount"
+            && b.subjects[0].name == "{{ $sa.name }}"
+            && b.subjects[0].namespace == "{{ $sa.namespace }}"))
+      messageExpression: >-
+        "The Portal may only bind the ClusterRole {{ $release }}-portal-apps to itself, and only in a {{ $release }}-{project}-apps namespace, not in " + request.namespace + " (AP-117)."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $release }}-portal-apps-namespaces
+spec:
+  policyName: {{ $release }}-portal-apps-namespaces
+  validationActions: [Deny]

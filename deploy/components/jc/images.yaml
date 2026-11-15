@@ -1,0 +1,69 @@
+---
+# ghcr.io/marek-mraz-jc/jc, built, smoke-tested and signed by the monorepo's
+# .github/workflows/image.yml on main and scanned by its image-scan.yml.
+jc:
+  # main 799d0eab (signed, cosign githubWorkflowSha 799d0eab, refs/heads/main), smoke 43245641340: 10 fail,
+  # 0 not on the known list, no row new against 4ddda006. = 12e72d5b + T-6829 A/B/E (MCP fixes), T-6830
+  # (antares_remint_batched, migration 0034 at boot), T-6824 (dataroom CKAN CORS for the viz origin),
+  # T-6825 (DataSource/Pipeline types outside ekiben's registry refused at save with 422; jc-prod's 1486
+  # DataSources+Pipelines use none of them), T-6831 (SDM mirror in the image at /srv/sdm-mirror).
+  # main 12e72d5b (signed, cosign githubWorkflowSha 12e72d5b, refs/heads/main). 749b9a71 (T-6819 merge on main,
+  # no image of its own) differs from it only in bins/jc/smoke; its smoke 43225400970: 10 fail, 0 not on the
+  # known list, no row new against 4ddda006. = 75e834b6 + T-6768 (Antares visible under a metadata narrowing),
+  # T-6806 (binding scope must exist), T-6810/6811/6815/6816/6817/6821/6822/6826 (Portal OData per Organization),
+  # T-6823 (OGC export 429 when busy, 413 past ANTARES_EXPORT_FILE_ROWS). T-6825's stricter validation is not in it.
+  # main 75e834b6 (signed, cosign githubWorkflowSha 75e834b6, refs/heads/main), smoke 43181308851: 10 fail,
+  # 0 not on the known list, no row new against 4ddda006. = ffc8fdf7 + 9adaf071 (T-6805 subscribe builder
+  # on stored presets) + e9a7f865 (T-6803 round 2, smoke only) + T-6802 (Endpoint edit page waits for the
+  # gateway's admission, UI only).
+  # ffc8fdf7 (signed, cosign githubWorkflowSha ffc8fdf7, refs/heads/main), smoke 43161732041: 27 fail,
+  # 16 rows new against 4ddda006, all smoke-harness races of T-6803's gate (worker-t6803, round 2 e9a7f865);
+  # pinned on the supervisor's 07:34Z order. = f0b6e756 + T-6803 (smoke only, ckan.rs keeps published
+  # datasets in host mode) + T-6800 (restore gate VACUUM ANALYZE).
+  # f0b6e756 (signed, cosign githubWorkflowSha f0b6e756, refs/heads/main), smoke 43153936254: 11 fail,
+  # none new against 4ddda006 (17). = 54f8a5e2 + T-6772/T-6777/T-6779/T-6780 (Organization
+  # appearance), T-6800 (beside-types reads), T-6801 (dataroom /logo.svg sandbox CSP + nosniff),
+  # T-6798, T-6799, T-6802. 54f8a5e2 is 4ddda006 + T-6795,
+  # T-6796, T-6797 (a [[hosts]] registry, active only with [[organizations]]: jc-dev and jc-prod
+  # configure none, so no host answers 421). 4ddda006 is 1a970fe8 + T-6790,
+  # T-6791 and T-6783 round 2 (portal-api audience mapper: the exported realms need rehearsal.py
+  # add_portal_audience on their stored realm, jc's shipped realm has it). 1a970fe8 is
+  # 6ef2f405 (T-6769, T-6770, T-6793 warn: values/server keeps JC_GATEWAY_URN_OWNER_PREFIX=warn until
+  # 2026-11-25) + T-6788 (MCP limit keys the caller, not jc's own pod), T-6785, T-6776, T-6766 (with
+  # 2+ Organizations only that Organization's members open its projects; org-admins no longer change
+  # its domain, gitRepositoryUrl, limits or catalog), T-6739, T-6749, T-6750, T-6752, T-6753, T-6763.
+  # T-6736 (P-18: a Pipeline's derived grants bind on an Endpoint with policyRefs) is in every jc image
+  # since e8d794c0, this one included.
+  # Never pin an image older than 520e299e: without its reconciler guard a fresh start deletes
+  # managed groups and their members.
+  server:
+    repository: 'ghcr.io/marek-mraz-jc/jc'
+    tag: '799d0eabb06f41f446f3dc7f9f3a0d35515285e7'
+    digest: 'sha256:f0baf5e7bbc21032426003d39c047fd18f09fcd1537749b3af672240b92d2284'
+  # jc-functions: the platform image's runtime, the digest jc-migrate's rehearsals ran
+  # (deploy/rehearsal/apps.sh) and dev's components/functions runs.
+  # jc-dev's own pin (T-6723, Decided by the supervisor 2026-11-15 03:35Z, owner may override): main
+  # c61599fb (signed, promote/sign green in ci 43658368346), smoke 43651239746: 10 fail, 0 rows new
+  # against 799d0eab; on jc-dev since 01:15Z with second_factor required, 0 restarts. `server` above
+  # stays jc-prod's.
+  serverJcDev:
+    repository: 'ghcr.io/marek-mraz-jc/jc'
+    tag: 'c61599fb98b5d7dd2d0a01deabea579232ef5afb'
+    digest: 'sha256:05d5204753677a7039701d67dbc3df60d9e4751d439a764dc5bd82d16d4bd838'
+  functions:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-platform'
+    tag: 'main'
+    digest: 'sha256:a43cb1a1dca5a1e2de60f586341b2b66a8d9d07c66af6ea50e5a52510cd5dbe8'
+  # The init container that copies Secret jc-setup into the state dir: busybox's sh and install,
+  # the same pin as components/keycloak/images.yaml dbchecker.
+  seed:
+    repository: 'docker.io/busybox'
+    tag: '1.38'
+    digest: 'sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616'
+  # prom-label-proxy (metricsProxy part): one static Go binary, runs as nobody. v0.16.2 of
+  # 2026-11-04; trivy 2026-11-10: one HIGH, golang.org/x/net/html CVE-2026-78661 (HTML parsing,
+  # which the proxy never does; not in CISA KEV, so scan-pinned-images.py does not block it).
+  metricsProxy:
+    repository: 'quay.io/prometheuscommunity/prom-label-proxy'
+    tag: 'v0.16.2'
+    digest: 'sha256:9812cce38fa78c39250c9c59c78bbe75895ef9126952a098cd44adef2e21dbc5'

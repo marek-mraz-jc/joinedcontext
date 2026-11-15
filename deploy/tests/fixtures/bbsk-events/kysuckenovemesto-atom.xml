@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+	<title>Kysucké Nové Mesto Feed</title>
+	<subtitle>Kultúra a šport</subtitle>
+	<link href="http://www.kysuckenovemesto.sk/get_rss.php?id=3_atom" type="application/atom+rss" rel="alternate" />
+	<id>http://www.kysuckenovemesto.sk/get_rss.php?id=3_atom</id>
+	<updated>2026-10-25T21:03:47+02:00</updated>
+	<author>
+		<name>Kysucké Nové Mesto</name>
+	</author>
+
+	<entry>
+		<id>http://www.kysuckenovemesto.sk/akcia/patranie-po-tekvickach-1.html</id>
+		<title type="text">Patranie po tekvičkách</title>
+		<published>2026-10-06T13:18:00+02:00</published>
+		<link rel="alternate" href="http://www.kysuckenovemesto.sk/akcia/patranie-po-tekvickach-1.html" />
+		<summary type="text">Ak nájdete v priestoroch knižnice tekvičku, dostanete sladkú odmenu....</summary>
+		<content type="text">Ak nájdete v priestoroch knižnice tekvičku, dostanete sladkú odmenu....</content>
+		<updated>2026-10-06T13:18:00+02:00</updated>
+	</entry>
+</feed>

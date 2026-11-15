@@ -1,0 +1,20 @@
+# Open Data BCN's street inventory of speed reducers (dataset infraestructures-inventari-reductors-velocitat,
+# CC BY 4.0): every Berlin cushion and speed band with its model, its address and its point. The
+# resource's download link answers 302 to this address on the same host; the DataSource names it
+# directly. About 0.65 MB, rewritten weekly; the mapping refuses more than 4 MiB (T-5431).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-speed-reducers
+  namespace: barcelona
+  title:
+    ca: Inventari de reductors de velocitat de Barcelona (Open Data BCN)
+    es: Inventario de reductores de velocidad de Barcelona (Open Data BCN)
+    en: Barcelona speed reducers inventory (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/resources/bcn/Mobiliari_Urba/Infraestruc_Mobiliari_Urba_Reductors_Velocitat.csv
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 60s

@@ -1,0 +1,114 @@
+{{- /*
+  The identity of the nightly drift check (T-4956, `just drift <env>`): `helmfile diff
+  --three-way-merge` reads Helm's release Secrets and the live objects, and nothing more.
+  Verbs get and list only, so the identity cannot create, change or delete anything. It holds
+  no long-lived token: `just drift` mints one with `kubectl create token --duration 30m`.
+  Resources are named, never '*': a wildcard also grants subresources such as nodes/proxy (the
+  kubelet API, exec over a GET websocket) and pods/log. The list holds each kind in
+  ci/golden/*.txt; tests/test_runtime_policies.py fails when a rendered kind is missing here or
+  a wildcard or subresource comes back. Secrets are not in the ClusterRole (T-5702): Helm's release
+  records and the charts' own Secrets live in the release namespaces, so a Role per namespace in
+  driftReader.secretNamespaces reads them there, and kube-system and every App namespace stay
+  out of reach.
+*/}}
+{{- if .Values.driftReader.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jc-drift-reader
+  namespace: {{ .Release.Namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: jc-drift-reader
+rules:
+  - apiGroups: ['']
+    resources: [configmaps, limitranges, namespaces, persistentvolumeclaims, resourcequotas, serviceaccounts, services]
+    verbs: [get, list]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations, validatingadmissionpolicies, validatingadmissionpolicybindings, validatingwebhookconfigurations]
+    verbs: [get, list]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [daemonsets, deployments, statefulsets]
+    verbs: [get, list]
+  - apiGroups: [argoproj.io]
+    resources: [applications, appprojects]
+    verbs: [get, list]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list]
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [get, list]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
+    verbs: [get, list]
+  - apiGroups: [kyverno.io]
+    resources: [clusterpolicies]
+    verbs: [get, list]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [alertmanagers, podmonitors, prometheuses, prometheusrules, servicemonitors]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list]
+  - apiGroups: [policy.linkerd.io]
+    resources: [authorizationpolicies, meshtlsauthentications, servers]
+    verbs: [get, list]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, databases, scheduledbackups]
+    verbs: [get, list]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings, clusterroles, rolebindings, roles]
+    verbs: [get, list]
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares, tlsoptions]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jc-drift-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: jc-drift-reader
+subjects:
+  - kind: ServiceAccount
+    name: jc-drift-reader
+    namespace: {{ .Release.Namespace }}
+{{- range $ns := .Values.driftReader.secretNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jc-drift-reader-secrets
+  namespace: {{ $ns }}
+rules:
+  - apiGroups: ['']
+    resources: [secrets]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jc-drift-reader-secrets
+  namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jc-drift-reader-secrets
+subjects:
+  - kind: ServiceAccount
+    name: jc-drift-reader
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

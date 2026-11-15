@@ -1,0 +1,19 @@
+# One NoiseZone per polygon of the bands from 45 dB of the IPR layer Hluková mapa povrchové dopravy – den into the city space (T-5683).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-noise-day-2
+  namespace: praha
+  title:
+    en: Noise map of surface transport, day, bands from 45 dB
+    cs: Hluková mapa povrchové dopravy – den, pásma od 45 dB
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '25 2 * * 0'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-noise-day }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: NoiseZone, mode: upsert }
+  quotas: { maxMemoryMb: 384, cpuMillicores: 100 }

@@ -1,0 +1,15 @@
+---
+# Incident notes on the public status page, status.{domain} (T-5102). The deployer writes one entry
+# per incident and leaves it here; the page shows an open one (no `end`) at the top and a closed one
+# for 90 days. A commit to this file reaches the page with the next apply.
+#
+#   - id: 2026-10-21-odata-timeouts          unique, lower case, digits and hyphens
+#     environments: [dev, smartcity]          the probe target names it concerns
+#     start: "2026-10-21T20:15:00Z"           UTC
+#     end: "2026-10-21T21:05:00Z"             UTC; leave out while it lasts
+#     surfaces: [odata, ogc]                  catalogue portal ngsi-ld odata ogc sta websocket mcp assistant csv ical
+#     title: {sk: "Pomalé OData", en: "Slow OData"}
+#     note: {sk: "Čo sa stalo a čo robíme.", en: "What happened and what we do."}
+#
+# Public text: name no host, address, person or error body.
+incidents: []

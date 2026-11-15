@@ -1,0 +1,22 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  name: helsinki
+  namespace: org
+  title: { en: Helsinki, sk: Helsinki }
+spec:
+  organizationRef: hel
+  # The MQTT demo (T-4857, ADR-N-048 §2.9): `sensors` on the platform address and `vehicles` on
+  # the dedicated port 18830, whose limits sum to 40 connections and 60 messages a second, and
+  # `hsl-bridge` (T-5883, seeded where the dev bridge runs), one bridge client at up to 1,000 a
+  # second (2 connections, 2,000); a fourth broker is refused for the count. Written here by the
+  # org admin only (PF-117).
+  quotas:
+    mqtt:
+      enabled: true
+      brokers: 3
+      connections: 50
+      messagesPerSecond: 2100
+      maxMessageBytes: 4096
+      addresses: [platform, dedicatedPort]
+      ports: [18830]

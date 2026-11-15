@@ -1,0 +1,165 @@
+# The mapping of the cycle-counters pipeline (PL-03, T-5253): one TrafficFlowObserved per city
+# Eco-Counter station and direction with the bicycles it counted on the newest day the source has
+# closed (Helsinki time), from the city's traffic measurement API (lidotiku.api.hel.fi, CC BY 4.0).
+# The day is the sum of the station's rows of that day: some stations write a row an hour, some a
+# quarter hour (and label it 3600 s), and a station without a passing writes no row.
+#
+# The closed day: the source loads every station in one import about a day late (at 03:30
+# Helsinki time on 2026-10-23 the newest rows were of 2026-10-22 02:15, and 2026-10-21 was still
+# growing at 21:00 the day after). The newest row of any station is where the import stopped;
+# the closed day is the newest one that ends at or before that row's quarter hour ends. A station
+# whose own import stopped earlier writes no row for it and is counted, never undercounted.
+#
+# Plausibility (owner 2026-10-22): a station is left out, with its reason counted in one WARN
+# line, when it has no position, lies outside Helsinki and a kilometre around it (0,0 and
+# swapped coordinates among them), is a spare, a clone or a test logger by its name, repeats an earlier station (the same id, or the same name
+# within 20 m: the API lists every Lauttasaari bridge station twice, once as "Formula : ..."),
+# or wrote nothing for three days. A row is left out when it counts pedestrians or nothing
+# named, carries a count below 0 or above 5000, or names a direction the mapping does not know.
+# A run that keeps no station, or writes no observation, fails, so the space keeps the last
+# counts instead of none.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = if content().length() > 2097152 { throw("the counter list is %d bytes, more than the 2 MiB read".format(content().length())) } else { this }
+
+    - mapping: |
+        let box = { "w": 24.76, "s": 59.91, "e": 25.29, "n": 60.31 }
+        let all = this.results.features.or([]).map_each(f -> {
+          "id": f.properties.id.or(null),
+          "name": f.properties.name.or("").string().trim(),
+          "key": f.properties.name.or("").string().lowercase().re_replace_all("^[a-z]+ : ", "").trim(),
+          "lon": f.geometry.coordinates.index(0).catch(null),
+          "lat": f.geometry.coordinates.index(1).catch(null)
+        })
+        let judged = $all.enumerated().map_each(e -> e.value.assign({ "reason":
+          if e.value.id.type() != "number" { "noId" }
+          else if e.value.lon.type() != "number" || e.value.lat.type() != "number" { "noLocation" }
+          else if !(e.value.lon >= $box.w && e.value.lon <= $box.e && e.value.lat >= $box.s && e.value.lat <= $box.n) {
+            if e.value.lat >= $box.w && e.value.lat <= $box.e && e.value.lon >= $box.s && e.value.lon <= $box.n { "swappedCoordinates" } else { "outsideHelsinki" }
+          }
+          else if e.value.name.lowercase().re_match("clone|spare|logger|vaihtolaskin|varalaskin") { "spareOrClone" }
+          else if $all.slice(0, e.index).any(o -> o.id == e.value.id || (o.key == e.value.key && o.lon.type() == "number" && o.lat.type() == "number" && ((o.lon - e.value.lon) * 55660).pow(2) + ((o.lat - e.value.lat) * 111320).pow(2) < 400)) { "duplicate" }
+          else { null }
+        }))
+        root.counters = $judged.filter(c -> c.reason == null).map_each(c -> c.without("reason", "key"))
+        root.dropped = $judged.filter(c -> c.reason != null).fold({}, t -> t.tally.assign({ t.value.reason: t.tally.get(t.value.reason).or(0) + 1 }))
+
+    - switch:
+        - check: this.dropped.keys().length() > 0
+          processors:
+            - log: { level: WARN, message: 'cycle counters left out: ${! json("dropped") }' }
+
+    # A thrown message keeps its content: [] first, so nothing goes on to the stations.
+    - mapping: root = this.counters
+    - mapping: |
+        root = if this.length() == 0 { throw("no Eco-Counter station of the answer lies in Helsinki") } else { this }
+    - unarchive: { format: json_array }
+    - mapping: |
+        meta counter = this.id.string()
+        root = this
+
+    - branch:
+        request_map: root = ""
+        processors:
+          - try:
+              - http:
+                  url: https://lidotiku.api.hel.fi/api/observations/?counter=${! @counter }&measurement_type=count&page_size=1
+                  verb: GET
+                  headers: { Accept: application/json }
+                  timeout: 30s
+                  retries: 1
+              - mapping: |
+                  root = if content().length() > 65536 { throw("the newest row of a counter is more than 64 KiB") } else { { "rows": this.results.or([]) } }
+          - catch:
+              - log:
+                  level: WARN
+                  message: 'cycle counter ${! @counter } not read: ${! error() }'
+              - mapping: 'root = { "failed": true }'
+        result_map: root.latest = this
+
+    - mapping: |
+        root = this.without("latest")
+        root.failed = this.latest.failed.or(false)
+        root.newest = this.latest.rows.or([]).map_each(r -> r.datetime.ts_parse("2006-01-02T15:04:05Z07:00").ts_unix().catch(0)).fold(0, t -> if t.value > t.tally { t.value } else { t.tally })
+
+    - archive: { format: json_array }
+    - mapping: |
+        let now = now().ts_unix()
+        let cutoff = this.map_each(c -> c.newest).filter(t -> t <= $now + 86400).fold(0, t -> if t.value > t.tally { t.value } else { t.tally })
+        let next = ($cutoff + 900).ts_format("2006-01-02", "Europe/Helsinki")
+        let day = ($next + "T12:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_sub_iso8601("P1D").ts_format("2006-01-02", "UTC")
+        let from = (($day + "T00:00:00") + ($day + "T00:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_format("-07:00", "Europe/Helsinki")).ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+        let to = (($next + "T00:00:00") + ($next + "T00:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_format("-07:00", "Europe/Helsinki")).ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+        root = this.map_each(c -> c.assign({ "stale": c.newest < $now - 259200, "day": $day, "from": $from, "to": $to }))
+    - unarchive: { format: json_array }
+    - mapping: |
+        meta counter = this.id.string()
+        meta day = this.day
+        root = this
+
+    - branch:
+        request_map: root = if this.failed || this.stale { deleted() } else { "" }
+        processors:
+          - try:
+              - http:
+                  url: https://lidotiku.api.hel.fi/api/observations/?counter=${! @counter }&measurement_type=count&start_date=${! @day }&end_date=${! @day }&page_size=1000
+                  verb: GET
+                  headers: { Accept: application/json }
+                  timeout: 30s
+                  retries: 1
+              - mapping: |
+                  root = if content().length() > 1048576 { throw("the observations of a counter are more than 1 MiB") } else if this.next.or(null) != null { throw("the day of a counter is more than one page of 1000 rows") } else { { "rows": this.results.or([]) } }
+          - catch:
+              - log:
+                  level: WARN
+                  message: 'cycle counter ${! @counter } not read: ${! error() }'
+              - mapping: 'root = { "failed": true }'
+        result_map: root.observations = this
+
+    - mapping: |
+        let directions = { "": null, "Pohjoiseen": "north", "Etelään": "south", "Itään": "east", "Länteen": "west", "IN": "inbound", "OUT": "outbound" }
+        let day = this.day
+        let from = this.from
+        let to = this.to
+        let rows = this.observations.rows.or([]).filter(r -> r.typeofmeasurement.or("") == "count" && r.datetime.type() == "string").map_each(r -> r.assign({ "t": r.datetime.ts_parse("2006-01-02T15:04:05Z07:00").ts_unix().catch(null) })).filter(r -> r.t != null)
+        let today = $rows.filter(r -> r.t.ts_format("2006-01-02", "Europe/Helsinki") == $day)
+        let judged = $today.map_each(r -> r.assign({ "reason":
+          if r.vehicletype.or("") != "bicycle" { "notBicycle" }
+          else if r.value.type() != "number" || r.value < 0 || r.value > 5000 { "outOfRange" }
+          else if !$directions.keys().contains(r.direction.or("")) { "unknownDirection" }
+          else { null }
+        }))
+        let kept = $judged.filter(r -> r.reason == null)
+        let dropped = $judged.filter(r -> r.reason != null).fold({}, t -> t.tally.assign({ t.value.reason: t.tally.get(t.value.reason).or(0) + 1 }))
+        let counter = this
+        let failed = this.failed || this.observations.failed.or(false)
+        meta dropped = if $failed { "notRead" } else if this.stale { "stale" } else if $kept.length() == 0 { "noBicycleCountForTheDay" } else if $dropped.keys().length() > 0 { $dropped.format_json(no_indent: true) } else { "" }
+        root = if $failed || this.stale { [] } else {
+          $kept.map_each(r -> r.direction.or("")).unique().map_each(d -> {
+            "id": "urn:ngsi-ld:%v:%v:%v:cycle-%v%v".format("TrafficFlowObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $counter.id.string(), if $directions.get(d) == null { "" } else { "-" + $directions.get(d) }),
+            "type": "TrafficFlowObserved",
+            "name": { "type": "LanguageProperty", "languageMap": { "fi": $counter.name } },
+            "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [$counter.lon, $counter.lat] } },
+            "dateObserved": { "type": "Property", "value": $to },
+            "dateObservedFrom": { "type": "Property", "value": $from },
+            "dateObservedTo": { "type": "Property", "value": $to },
+            "intensity": { "type": "Property", "value": $kept.filter(r -> r.direction.or("") == d).fold(0, r -> r.tally + r.value.value).round(), "observedAt": $to },
+            "vehicleType": { "type": "Property", "value": "bicycle" },
+            "trafficDirection": if $directions.get(d) == null { null } else { { "type": "Property", "value": $directions.get(d) } },
+            "dataProvider": { "type": "Property", "value": "City of Helsinki, traffic measurement API (Eco-Counter)" },
+            "source": { "type": "Property", "value": "https://lidotiku.api.hel.fi/api/observations/?counter=" + $counter.id.string() }
+          }.filter(entry -> entry.value != null))
+        }
+
+    - switch:
+        - check: '@dropped != ""'
+          processors:
+            - log: { level: WARN, message: 'cycle counter ${! @counter }: left out ${! @dropped }' }
+
+    - archive: { format: json_array }
+    - mapping: root = this.flatten()
+    - mapping: |
+        root = if this.length() == 0 { throw("no Eco-Counter station wrote a count for the closed day") } else { this }
+    - unarchive: { format: json_array }

@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: bike-lanes
+  namespace: barcelona
+  title:
+    ca: Carrils bici de Barcelona, cada setmana
+    es: Carriles bici de Barcelona, cada semana
+    en: Barcelona bike lanes, weekly
+spec:
+  class: auto
+  # The city redraws the layers on request (carril-bici last on 2026-10-02): a weekly read is enough.
+  schedule: '35 5 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-bike-lanes }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert: a segment the layers drop leaves by its expiresAt, three weeks after its last listing.
+  output: { type: BikeLane, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

@@ -1,0 +1,12 @@
+---
+# Re-pin a digest with:
+#   T=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/python:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $T" \
+#     -H 'Accept: application/vnd.oci.image.index.v1+json' \
+#     https://registry-1.docker.io/v2/library/python/manifests/<tag> | grep -i docker-content-digest
+probes:
+  probe:
+    # The Python project's official slim image: files/probe.py needs the standard library only.
+    repository: 'docker.io/library/python'
+    tag: '3.13.17-slim-trixie'
+    digest: 'sha256:d98cc29d3266e535dd9da1099688d9cb3ca4753813571e071763d17725460962'

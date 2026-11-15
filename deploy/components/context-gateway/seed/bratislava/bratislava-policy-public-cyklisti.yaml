@@ -1,0 +1,31 @@
+# Public read of the Endpoint bratislava-cyklisti (T-5273): its ids only, so the two catalogue datasets of one type stay apart.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-cyklisti
+  namespace: bratislava
+  title: { sk: 'Verejné čítanie: cyklisti podľa sčítačov', en: 'Public read: cyclist counts' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # Its entities keep history: anyone reads it, as far back as the space keeps it (T-4372).
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: TrafficFlowObserved
+          idPattern: ^urn:ngsi-ld:TrafficFlowObserved:[a-z0-9.-]+:bratislava:cycle-[a-z0-9-]+-(forward|backward)$

@@ -1,0 +1,221 @@
+{
+  "@context": {
+    "@vocab": "https://smartdatamodels.org/",
+    "AdministrativeArea": {
+      "@id": "jc:AdministrativeArea"
+    },
+    "Bridge": {
+      "@id": "jc:Bridge"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "PointOfInterest": {
+      "@id": "sdm-poi:PointOfInterest"
+    },
+    "PostalAddress": {
+      "@id": "schema:PostalAddress"
+    },
+    "PublicOrganization": {
+      "@id": "sdm-cpsv:PublicOrganization"
+    },
+    "address": {
+      "@id": "schema:address"
+    },
+    "addressCountry": {
+      "@id": "schema:addressCountry"
+    },
+    "addressLocality": {
+      "@id": "schema:addressLocality"
+    },
+    "alternateName": {
+      "@id": "schema:alternateName"
+    },
+    "areaCode": {
+      "@id": "jc:areaCode"
+    },
+    "bridgeCode": {
+      "@id": "jc:bridgeCode"
+    },
+    "bridgedLength": {
+      "@id": "jc:bridgedLength",
+      "@type": "xsd:float"
+    },
+    "capacity": {
+      "@id": "jc:capacity",
+      "@type": "xsd:integer"
+    },
+    "category": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "sdm-poi:category"
+    },
+    "childAreas": {
+      "@id": "jc:childAreas",
+      "@type": "@id"
+    },
+    "dataProvider": {
+      "@id": "smartdatamodels:dataProvider"
+    },
+    "districtName": {
+      "@id": "jc:districtName"
+    },
+    "divisionLevel": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:divisionLevel"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "heritageStatus": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:heritageStatus"
+    },
+    "hospitalKind": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:hospitalKind"
+    },
+    "id": "@id",
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "legalId": {
+      "@id": "jc:legalId"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "managerName": {
+      "@id": "jc:managerName"
+    },
+    "medicalSpecialties": {
+      "@id": "jc:medicalSpecialties"
+    },
+    "name": {
+      "@id": "schema:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "operatorName": {
+      "@id": "jc:operatorName"
+    },
+    "organizationCategory": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:organizationCategory"
+    },
+    "postalCode": {
+      "@id": "schema:postalCode"
+    },
+    "preferredLabel": {
+      "@id": "sdm-cpsv:preferredLabel"
+    },
+    "providerKind": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:providerKind"
+    },
+    "publicOrganizations": {
+      "@id": "jc:publicOrganizations",
+      "@type": "@id"
+    },
+    "refMunicipality": {
+      "@id": "jc:refMunicipality",
+      "@type": "@id"
+    },
+    "refParentArea": {
+      "@id": "jc:refParentArea",
+      "@type": "@id"
+    },
+    "roadClass": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:roadClass"
+    },
+    "roadNumber": {
+      "@id": "jc:roadNumber"
+    },
+    "schema": "http://schema.org/",
+    "smartdatamodels": "https://smartdatamodels.org/",
+    "sdm-cpsv": "https://smartdatamodels.org/dataModel.CPSV-AP/",
+    "sdm-poi": "https://smartdatamodels.org/dataModel.PointOfInterest/",
+    "serviceForm": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:serviceForm"
+    },
+    "serviceKind": {
+      "@id": "jc:serviceKind"
+    },
+    "shex": "http://www.w3.org/ns/shex#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "source": {
+      "@id": "smartdatamodels:source",
+      "@type": "xsd:anyURI"
+    },
+    "spanCount": {
+      "@id": "jc:spanCount",
+      "@type": "xsd:integer"
+    },
+    "spatial": {
+      "@id": "sdm-cpsv:spatial"
+    },
+    "streetAddress": {
+      "@id": "schema:streetAddress"
+    },
+    "structureKind": {
+      "@id": "jc:structureKind"
+    },
+    "structureMaterial": {
+      "@id": "jc:structureMaterial"
+    },
+    "surfaceArea": {
+      "@id": "jc:surfaceArea",
+      "@type": "xsd:float"
+    },
+    "targetGroup": {
+      "@id": "jc:targetGroup"
+    },
+    "type": "@type",
+    "url": {
+      "@id": "schema:url"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "yearBuilt": {
+      "@id": "jc:yearBuilt",
+      "@type": "xsd:integer"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

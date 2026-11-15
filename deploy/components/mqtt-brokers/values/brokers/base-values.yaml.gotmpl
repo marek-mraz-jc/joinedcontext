@@ -1,0 +1,56 @@
+---
+{{- $this := index .Values "mqtt-brokers" "brokers" }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Runs as non-root with `readOnlyRootFilesystem`, no volume but its ConfigMap
+# - [ ] Health probes -> none, see the chart: the Linkerd Servers refuse the kubelet's TCP probe
+# - [x] Standard labels
+# - [x] ServiceAccount per broker, no token mounted: it is the broker's mesh identity only
+# - [x] Named ports, Service, TLS -> 1883/1884, TLS at the ingress controller on 8883
+
+image:
+  repository: {{ index .Values.images "mqtt-brokers" "brokers" "repository" | quote }}
+  tag: {{ index .Values.images "mqtt-brokers" "brokers" "tag" | quote }}
+  digest: {{ index .Values.images "mqtt-brokers" "brokers" "digest" | quote }}
+
+domain: {{ $global.domain | quote }}
+clusterIssuer: {{ $global.ingress.clusterIssuer | quote }}
+ingress:
+  className: {{ $global.ingress.ingressClass | quote }}
+{{- if has "jc" .Values.components }}
+{{- /* jc (one pod, every module): its gateway answers the CONNECT check on the internal port of
+       Service jc, its Portal stamps the brokers and reads their API, its ekiben is the runner
+       and its Portal the capture subscriber, all under ServiceAccount jc (workload
+       fullnameOverride). */}}
+{{- $jcNamespace := .Values.jc.server.namespace }}
+authUrl: "http://jc.{{ $jcNamespace }}.svc.cluster.local:8082/internal/mqtt/auth"
+gateway:
+  namespace: {{ $jcNamespace | quote }}
+  podLabels:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+runner:
+  namespace: {{ $jcNamespace | quote }}
+  serviceAccount: jc
+portal:
+  namespace: {{ $jcNamespace | quote }}
+  serviceAccount: jc
+{{- else }}
+authUrl: "http://context-gateway.{{ index .Values "context-gateway" "gateway" "namespace" }}.svc.cluster.local:8082/internal/mqtt/auth"
+gateway:
+  namespace: {{ index .Values "context-gateway" "gateway" "namespace" | quote }}
+runner:
+  namespace: {{ index .Values "pipeline-runner" "runner" "namespace" | quote }}
+  serviceAccount: pipeline-runner
+{{- if has "portal" .Values.components }}
+portal:
+  # fullnameOverride of the portal part names its ServiceAccount.
+  namespace: {{ .Values.portal.portal.namespace | quote }}
+  serviceAccount: portal
+{{- end }}
+{{- end }}
+brokers:
+  {{- $this.brokers | default list | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

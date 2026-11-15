@@ -1,0 +1,44 @@
+# Offences recorded by the city police by group of event, 2017-2022: one public dataset of the hub (T-5671, Research/bratislava-open-data.md row 150), item 2566d894a604427196b65b09a46ea60b, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-priestupkov-podla-druhu-udalosti
+  namespace: bratislava
+  title:
+    sk: Počet priestupkov podľa druhu udalosti v rokoch 2017 - 2022
+    en: Offences recorded by the city police by group of event, 2017-2022
+  description:
+    sk: 'Ukazovatele tabuľky „Počet priestupkov podľa druhu udalosti v rokoch 2017 - 2022“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Ukazovatele sú súčty a počty riadkov tabuľky, ktoré vypočíta portál. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Offences recorded by the city police by group of event, 2017-2022”, one per city district, period and figure, as KeyPerformanceIndicator. The figures are counts and sums of the table rows, computed by the hub. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: i55ycunbgaazgfsrmrxul5ynopqdfizf
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-priestupkov-podla-druhu-udalosti
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [JUST]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/2566d894a604427196b65b09a46ea60b
+        title:
+          sk: Počet priestupkov podľa druhu udalosti v rokoch 2017 - 2022
+          en: Offences recorded by the city police by group of event, 2017-2022
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet priestupkov podľa druhu udalosti v rokoch 2017 - 2022. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Offences recorded by the city police by group of event, 2017-2022. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics }

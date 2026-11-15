@@ -1,0 +1,93 @@
+# The mapping of the chmi-weather pipeline (T-5429, PL-03): one WeatherObserved per ČHMÚ weather
+# station in Prague, with the newest 10-minute values ČHMÚ's open data publishes for it
+# (opendata.chmi.cz meteorology/climate/now, one JSON file per station and UTC day).
+#
+# The DataSource's answer (the directory listing of those files) is the health check that starts the
+# run and names the files: a station whose file of today is not listed yet (the first minutes after
+# midnight UTC) reads its file of yesterday. The eight stations are ČHMÚ's in the city, as its station
+# list (metadata/meta1) gives them on 2026-10-24: Ruzyně, Karlov, Libuš and Kbely (WMO 11518, 11519,
+# 11520, 11567), Klementinum, Komořany, Vinohrady - Flora and Břevnov. Their name and point come from
+# that list; a station stays fixed where it stands. One call per station, 30 s each, to
+# opendata.chmi.cz only, each answer capped at 1 MiB (a day file holds ~95 kB).
+#
+# Ids: urn:ngsi-ld:WeatherObserved:{org}:{space}:chmi-{WIGOS id}.
+#
+# Read: per element the newest value of the day file: T (air temperature, °C), H (relative humidity, %, written as a fraction), P (pressure,
+# hPa), SRA10M (10-minute precipitation, mm), F (mean wind speed, m/s), D (mean wind direction, °)
+# and Fmax (gust, m/s). Each value carries its own time as observedAt, which the catalogue's
+# charts read its history by (T-5432); dateObserved is the newest of those times.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a value outside its physical range (temperature -40 to
+# 50 °C, humidity 0 to 100 %, pressure 800 to 1100 hPa, precipitation 0 to 100 mm, wind 0 to 75 m/s,
+# gust 0 to 100 m/s, direction 0 to 360°) is left out of the entity, and so is a value older than
+# three hours (a station that stopped reporting keeps its last entity instead of a stale one
+# rewritten). A station whose file does not answer, or holds no value in range, is left out. A
+# listing that names none of the stations fails the run, and so does a run where no station answers.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 8388608 { throw("ČHMÚ listed %v bytes; more than 8 MiB is not the 10-minute directory".format(content().length())) } else { content().string() }
+        - mapping: |
+            let listing = content().string()
+            let today = now().ts_format("20060102", "UTC")
+            let yesterday = (now().ts_unix() - 86400).ts_format("20060102", "UTC")
+            let stations = [
+              { "wsi": "0-20000-0-11518", "name": "Praha, Ruzyně", "c": [14.255556, 50.100278] },
+              { "wsi": "0-20000-0-11519", "name": "Praha, Karlov", "c": [14.427778, 50.069167] },
+              { "wsi": "0-20000-0-11520", "name": "Praha, Libuš", "c": [14.446944, 50.007778] },
+              { "wsi": "0-20000-0-11567", "name": "Praha, Kbely", "c": [14.538056, 50.123333] },
+              { "wsi": "0-203-0-11514", "name": "Praha, Klementinum", "c": [14.416923, 50.086634] },
+              { "wsi": "0-203-0-10904013001", "name": "Praha, Komořany", "c": [14.40636, 49.9886] },
+              { "wsi": "0-203-0-11201020001", "name": "Praha, Vinohrady - Flora", "c": [14.46186, 50.07584] },
+              { "wsi": "0-203-0-11201024001", "name": "Praha, Břevnov", "c": [14.352689, 50.080843] }
+            ]
+            let listed = $stations.map_each(s -> s.assign({ "day": if $listing.contains("10m-%v-%v.json".format(s.wsi, $today)) { $today } else if $listing.contains("10m-%v-%v.json".format(s.wsi, $yesterday)) { $yesterday } else { "" } })).filter(s -> s.day != "")
+            root = if $listed.length() == 0 { throw("ČHMÚ's 10-minute directory lists none of the Prague stations") } else { $listed }
+        - unarchive: { format: json_array }
+        - branch:
+            request_map: root = this
+            processors:
+              - http:
+                  url: https://opendata.chmi.cz/meteorology/climate/now/data/10m-${! this.wsi }-${! this.day }.json
+                  verb: GET
+                  headers:
+                    Accept: application/json
+                    User-Agent: joinedcontext-praha/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+              - mapping: |
+                  root = if content().length() > 1048576 { throw("ČHMÚ answered %v bytes; more than 1 MiB is not one station's day".format(content().length())) } else { this }
+              # A station whose day file does not answer reads no value instead of failing the run.
+              - catch:
+                  - mapping: root = {}
+            result_map: root.values = this.data.data.values.catch([])
+        - mapping: |
+            let limits = { "T": [-40, 50], "H": [0, 100], "P": [800, 1100], "SRA10M": [0, 100], "F": [0, 75], "Fmax": [0, 100], "D": [0, 360] }
+            let since = now().ts_unix() - 10800
+            let wsi = this.wsi
+            let rows = this.values.or([]).filter(v -> v.type() == "array" && v.length() >= 4 && v.index(0) == $wsi && $limits.keys().contains(v.index(1).string()) && v.index(3).type() == "number" && v.index(2).string().ts_parse("2006-01-02T15:04:05Z").catch(null) != null)
+            let fresh = $rows.filter(v -> v.index(2).string().ts_parse("2006-01-02T15:04:05Z").ts_unix() >= $since)
+            let ranged = $fresh.filter(v -> v.index(3) >= $limits.get(v.index(1).string()).index(0) && v.index(3) <= $limits.get(v.index(1).string()).index(1))
+            let newest = $limits.keys().map_each(k -> $ranged.filter(v -> v.index(1) == k).sort_by(v -> v.index(2)).index(-1).catch(null)).filter(v -> v != null).fold({}, a -> a.tally.merge({ a.value.index(1): { "value": a.value.index(3), "at": a.value.index(2) } }))
+            meta station = this.wsi
+            meta read = $rows.length()
+            meta stale = $rows.length() - $fresh.length()
+            meta range = $fresh.length() - $ranged.length()
+            root = if $newest.keys().length() == 0 { deleted() } else { this.without("values").assign({ "newest": $newest }) }
+        - log:
+            level: INFO
+            message: 'chmi-weather ${! meta("station") }: read ${! meta("read") } values, ${! meta("stale") } older than 3 h, ${! meta("range") } out of range'
+        - mapping: |
+            let n = this.newest
+            let reading = { "T": "temperature", "H": "relativeHumidity", "P": "atmosphericPressure", "SRA10M": "precipitation", "F": "windSpeed", "D": "windDirection", "Fmax": "gustSpeed" }
+            root = {
+              "id": "urn:ngsi-ld:%v:%v:%v:chmi-%v".format("WeatherObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.wsi),
+              "type": "WeatherObserved",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": this.name } },
+              "stationCode": { "type": "Property", "value": this.wsi },
+              "dateObserved": { "type": "Property", "value": $n.values().map_each(v -> v.at).sort().index(-1) },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": this.c } },
+              "dataProvider": { "type": "Property", "value": "Český hydrometeorologický ústav (CC BY 4.0)" },
+              "source": { "type": "Property", "value": "https://opendata.chmi.cz/meteorology/climate/now/data/" }
+            }.merge($reading.keys().filter(k -> $n.get(k) != null).fold({}, a -> a.tally.merge({ $reading.get(a.value): { "type": "Property", "value": if a.value == "H" { ($n.get(a.value).value * 10).round() / 1000 } else { $n.get(a.value).value }, "observedAt": $n.get(a.value).at } })))

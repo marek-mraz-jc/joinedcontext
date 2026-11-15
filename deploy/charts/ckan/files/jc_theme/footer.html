@@ -1,0 +1,64 @@
+{% ckan_extends %}
+
+{# The installation's own footer (T-2888, T-3009): its mark and name, the lines its branding
+   block writes (a demo disclaimer, an imprint), its links and none of CKAN's: no CKAN
+   documentation, no CKAN Association, no Open Definition badge. The API is the catalogue's own. #}
+{% block footer_content %}
+  {% set brand = h.jc_branding() %}
+  <div class="row gy-4">
+    <div class="col-md-6 jc-footer-lines">
+      <div class="jc-footer-brand">
+        {% if g.site_logo %}<img src="{{ h.url_for_static_or_external(g.site_logo) }}" alt="" />{% endif %}
+        <span>{{ brand.instanceName }}</span>
+      </div>
+      {% if brand.organisation %}<p>{{ brand.organisation }}</p>{% endif %}
+      {% for line in brand.footerLines %}<p>{{ line }}</p>{% endfor %}
+      {% if brand.contactEmail %}<p><a href="mailto:{{ brand.contactEmail }}">{{ brand.contactEmail }}</a></p>{% endif %}
+    </div>
+    <nav class="col-md-3 footer-links" aria-label="{{ h.jc_t('about_site') }}">
+      <ul class="list-unstyled">
+        {% block footer_links %}
+          <li><a href="{{ h.url_for('home.about') }}">{{ h.jc_t('about_site') }}</a></li>
+          {% if h.jc_portal_url() %}<li><a href="{{ h.jc_portal_url() }}">{{ h.jc_t('portal') }}</a></li>{% endif %}
+          <li><a href="{{ h.url_for('home.about') }}#api">{{ h.jc_t('catalogue_api') }}</a></li>
+          {% for name in ('connector', 'privacy', 'terms', 'support', 'accessibility') %}
+            <li><a href="{{ h.url_for('jc_pages.' ~ name) }}">{{ h.jc_page(name).title }}</a></li>
+          {% endfor %}
+        {% endblock %}
+      </ul>
+    </nav>
+    <div class="col-md-3 attribution">
+      {% snippet "snippets/language_selector.html" %}
+    </div>
+  </div>
+  {# The assistant (AG-114): a native disclosure, so a keyboard opens it and a closed one loads
+     nothing; the page it frames is the assistant host's, framed only by the origins it allows.
+     It opens in the page's language (owner 2026-10-30, replacing T-4280: an English catalogue
+     page opened a Slovak chat); the visitor can still switch it in the chat. #}
+  {# A dataset's or resource's page opens its publisher's assistant, any other page the
+     catalogue's (T-4281). #}
+  {# Docked beside the page on a wide screen (T-4685): `dock=1` tells the chat this host docks it,
+     and the panel stays open across the catalogue's links. #}
+  {# Beside it, the same size, the page that adds the catalogue to the visitor's own assistant
+     (T-4585), in one row on a phone too. Its face is the four assistants' own logos in colour,
+     no words, its name in the aria-label (T-4613). #}
+  {% set publisher = pkg_dict.organization.name if pkg_dict is defined and pkg_dict and pkg_dict.organization else None %}
+  {% set widget = h.jc_assistant_widget(publisher) %}
+  {% set assistants = h.jc_mcp_install() %}
+  {% if widget or assistants %}
+    <div class="jc-corner">
+      {% if assistants %}<a class="jc-assistants-link" href="{{ h.url_for('jc_pages.assistants') }}" aria-label="{{ h.jc_t('assistants_label') }}">{% for mark in ('claude', 'chatgpt', 'mcp') %}<span class="jc-seg jc-seg-{{ mark }}">{% include 'jc/brand-' ~ mark ~ '.svg' %}</span>{% endfor %}</a>{% endif %}
+      {% if widget %}
+        <details class="jc-assistant" id="jc-assistant">
+          <summary><svg class="jc-assistant-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-5A8 8 0 1 1 21 12z"/></svg><span>{{ h.jc_t('assistant') }}</span></summary>
+          <iframe src="{{ widget }}?embed=1&amp;dock=1&amp;lang={{ h.lang() }}&amp;scheme=light" title="{{ h.jc_t('assistant') }}" loading="lazy" referrerpolicy="no-referrer"></iframe>
+        </details>
+      {% endif %}
+    </div>
+    {# T-4685: not deferred, so a panel open on the page before is open again before the first
+       paint (jc-dock.js holds that paint until here). #}
+    {% if widget %}<script src="{{ h.url_for_static('/jc-assistant.js') }}"></script>{% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block footer_links_ckan %}{% endblock %}

@@ -1,0 +1,102 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-transport
+  namespace: helsinki
+  title: { en: 'HSL public transport: vehicles, stops, departures, alerts, park and ride' }
+  description:
+    fi: 'HSL:n joukkoliikenne: bussien, raitiovaunujen, metrojen, junien ja lauttojen sijainnit reaaliajassa (WebSocket), pysäkit, linjat ja liikennöitsijät, häiriötiedotteet sekä liityntäpysäköinnin paikat. Lähteet: HSL ja Fintraffic, CC BY 4.0.'
+    en: 'HSL public transport: live positions of the buses, trams, metro, trains and ferries (WebSocket), the stops, lines and operators, the service alerts and the park and ride sites. Sources: HSL and Fintraffic, CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: ajaezssvx3bwqgejgepmq4ig3frgan4e
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-transport
+  # `websocket`: the live vehicle positions reach a map as notifications, anonymously like the
+  # REST read, under the gateway's Origin check and per-caller cap (EP-106, EP-107, T-4035).
+  # `ogc-features`: the vehicles, stops and park and ride sites open in QGIS and any OGC API
+  # Features client, anonymously like the REST read (owner order 2026-10-12, T-4067).
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  # The organizer's contact line stays in the space for the city's own coordination and is
+  # served by no public endpoint (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  # The catalogue entry (EP-62..EP-65): one dataset in the hel-fi catalogue, one resource per
+  # representation, and a DataStore mirror of the CSV rows reloaded on every publish run.
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin seudun liikenne (HSL) ja Fintraffic, CC BY 4.0'
+      sv: 'Källa: Helsingforsregionens trafik (HRT) och Fintraffic, CC BY 4.0'
+      en: 'Source: Helsinki Region Transport (HSL) and Fintraffic, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      fi:
+        - joukkoliikenne
+        - bussit
+        - raitiovaunut
+        - metro
+        - lähiliikennejunat
+        - lautat
+        - ajoneuvojen sijainnit
+        - lähdöt
+        - häiriötiedotteet
+        - liityntäpysäköinti
+      sv:
+        - kollektivtrafik
+        - bussar
+        - spårvagnar
+        - metro
+        - närtåg
+        - färjor
+        - fordonspositioner
+        - avgångar
+        - störningsmeddelanden
+        - infartsparkering
+      en:
+        - public transport
+        - buses
+        - trams
+        - metro
+        - commuter trains
+        - ferries
+        - vehicle positions
+        - departures
+        - service alerts
+        - park and ride
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/049
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/092
+    frequency: CONT
+    source:
+      - url: https://hsl.fi/en/hsl/open-data
+        title:
+          fi: 'HSL:n avoin data: GTFS ja GTFS Realtime'
+          en: 'HSL open data: GTFS and GTFS Realtime'
+        description:
+          fi: Pysäkit, linjat, lähdöt ja häiriötiedotteet, CC BY 4.0.
+          en: Stops, lines, departures and service alerts, CC BY 4.0.
+      - url: https://parking.fintraffic.fi/api/v1
+        title:
+          fi: Fintraffic LIIPI, liityntäpysäköinti
+          en: Fintraffic LIIPI, park and ride
+        description:
+          fi: HSL-alueen liityntäpysäköintipaikat ja vapaat paikat, CC BY 4.0.
+          en: The park and ride sites of the HSL area and their free spaces, CC BY 4.0.
+      - url: https://hri.fi/data/en_GB/dataset/hsl-reittiopas-api
+        title:
+          fi: HSL:n Reittiopas-rajapinnat
+          en: HSL Journey Planner APIs
+        description:
+          fi: HSL:n avoimet rajapinnat, mukaan lukien reaaliaikaiset ajoneuvojen sijainnit (HFP, MQTT), CC BY 4.0.
+          en: HSL's open APIs, including the real-time vehicle positions (HFP over MQTT), CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: hsl-hfp-vehicles }

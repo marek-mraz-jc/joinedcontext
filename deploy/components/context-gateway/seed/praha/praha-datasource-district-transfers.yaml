@@ -1,0 +1,17 @@
+# The money the City of Prague passes to its 57 city districts in 2026, 1119 lines, updated monthly (LKOD edf20520).
+# No key. The catalogue declares the data free of any rights, as the budget's.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mhmp-district-transfers
+  namespace: praha
+  title:
+    en: Transfers between the city and its districts 2026 (MHMP)
+    cs: Finanční vztahy mezi HMP a MČ HMP 2026
+spec:
+  type: http
+  http:
+    url: https://opendata-storage.praha.eu/ROZ_rozpocet_finance/financni_vztahy/Zdroje/2026/Financni_vztahy_mezi_HMP_a_MC_HMP_2026.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

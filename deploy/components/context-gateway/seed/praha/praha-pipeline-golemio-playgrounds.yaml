@@ -1,0 +1,17 @@
+# One PointOfInterest per children's playground from Golemio's /v2/playgrounds into the city space (T-5276).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: golemio-playgrounds
+  namespace: praha
+  title: { en: Playgrounds, cs: Dětská hřiště }
+spec:
+  class: auto
+  # Golemio refreshes it on the 1st of each month; one read a week is one request of the key's 20 per 8 s.
+  period: 168h
+  schedule: '35 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: golemio-playgrounds }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

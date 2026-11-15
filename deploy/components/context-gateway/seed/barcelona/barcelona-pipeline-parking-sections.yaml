@@ -1,0 +1,20 @@
+# The regulated surface parking sections into the space barcelona once a day (T-5262): one
+# OnStreetParking per section and kind of zone. The file changes monthly; a daily read keeps the
+# space within a day of it.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: parking-sections
+  namespace: barcelona
+  title:
+    ca: Trams d'aparcament en superfície, cada dia
+    es: Tramos de aparcamiento en superficie, cada día
+    en: Surface parking sections, daily
+spec:
+  class: auto
+  schedule: '20 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-parking-sections }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:barcelona:barcelona
+  output: { type: OnStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 320, cpuMillicores: 200 }

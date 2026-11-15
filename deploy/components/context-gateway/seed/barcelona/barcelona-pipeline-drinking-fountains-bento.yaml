@@ -1,0 +1,84 @@
+# The mapping of the drinking-fountains pipeline (PL-03, T-5431): one PointOfInterest of category
+# drinking-fountain per fountain of Open Data BCN's register (dataset fonts, the newest file: fonts_beure_2026.csv,
+# a new file each March): CODI (district and number, 01-004), NOM (empty for 349 of 1,760 on
+# 2026-10-23: then "Font de beure" and the code), CARRER and NUMERO_CARRER, NOM_DISTRICTE and WGS84
+# LATITUD/LONGITUD. `expiresAt`: a fountain the file drops leaves every read three weeks (three
+# update periods) after the file last listed it.
+#
+# Plausibility (owner 2026-10-22): a row with no code of the form 00-000, a point that is no number
+# or lies outside the municipality's 1 km margin (the space's in-area bbox) and a second row of one
+# code are dropped, each counted by reason in `dropped`, which the next step logs. A file over 2 MiB
+# or 10,000 rows (281 kB and 1,760 rows on 2026-10-23) is refused, and a file with no fountain at
+# all fails the run, so the fountains stand instead of going quiet.
+
+pipeline:
+  processors:
+    # The DataSource answers the package (package_show?id=fonts). The city adds a new file each
+    # March under a new name and keeps the old ones, so the run reads the newest CSV resource of
+    # the package, never a fixed file; only a download on Open Data BCN's own host is fetched. A
+    # package whose newest file is more than 13 months old (one missed March) fails the run.
+    - mapping: |
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00")
+        let files = if content().length() > 1048576 { throw("the fonts package answer is %d bytes, more than the 1 MiB read".format(content().length())) } else if this.success.or(false) != true { throw("Open Data BCN refused the fonts package") } else { this.result.resources.or([]) }
+        let newest = $files.filter(r -> r.format.or("") == "CSV" && r.url.or("").re_match("^https://opendata-ajuntament[.]barcelona[.]cat/data/dataset/[0-9a-f-]{36}/resource/[0-9a-f-]{36}/download/[A-Za-z0-9_.-]+[.]csv$")).sort_by(r -> r.last_modified.or("")).index(-1).or(null)
+        let floor = $now.ts_sub_iso8601("P13M").ts_format("2006-01-02T15:04:05", "UTC")
+        meta file = if $newest == null { throw("the fonts package lists no CSV file on Open Data BCN") } else if $newest.last_modified.or("") < $floor { throw("the newest drinking fountains file is from %s, more than 13 months old".format($newest.last_modified.or("an unknown day"))) } else { $newest.url.trim_prefix("https://opendata-ajuntament.barcelona.cat/data/dataset/") }
+        root = ""
+    - http:
+        url: https://opendata-ajuntament.barcelona.cat/data/dataset/${! @file }
+        verb: GET
+        headers:
+          Accept: text/csv
+          User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+        timeout: 60s
+        retries: 2
+    - mapping: |
+        root = if errored() { throw("the drinking fountains file was not read: %s".format(error())) } else { content() }
+    - mapping: |
+        let text = if content().length() > 2097152 { throw("the fountains file is %d bytes, more than the 2 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿") }
+        let bbox = [2.04, 41.3, 2.24, 41.48]
+        let rows = $text.parse_csv(true, ",")
+        let read = if $rows.length() > 10000 { throw("the fountains file holds %d rows, more than the 10,000 read".format($rows.length())) } else { $rows }
+        let coded = $read.filter(r -> r.CODI.or("").trim().re_match("^[0-9]{2}-[0-9]{3}$"))
+        let placed = $coded.map_each(r -> {
+          "id": r.CODI.trim(),
+          "name": r.NOM.or("").trim(),
+          "street": [r.CARRER.or("").trim(), r.NUMERO_CARRER.or("").trim()].filter(s -> s != "").join(" "),
+          "district": r.NOM_DISTRICTE.or("").trim(),
+          "lon": r.LONGITUD.or("").trim().number().catch(null),
+          "lat": r.LATITUD.or("").trim().number().catch(null)
+        }).filter(f -> f.lon != null && f.lat != null)
+        let inside = $placed.filter(f -> f.lon >= $bbox.index(0) && f.lon <= $bbox.index(2) && f.lat >= $bbox.index(1) && f.lat <= $bbox.index(3))
+        # One fountain per code: sorted, so a repeat sits beside its first.
+        let by_id = $inside.sort_by(f -> f.id)
+        let unique = $by_id.enumerated().filter(e -> e.index == 0 || $by_id.index(e.index - 1).id != e.value.id).map_each(e -> e.value)
+        root.dropped = {
+          "noCode": $read.length() - $coded.length(),
+          "noPoint": $coded.length() - $placed.length(),
+          "outsideTheCity": $placed.length() - $inside.length(),
+          "duplicateCode": $inside.length() - $unique.length()
+        }
+        root.fountains = if $unique.length() == 0 { throw("the fountains file holds no fountain") } else { $unique }
+    - log:
+        level: INFO
+        message: 'drinking fountains: ${! json("fountains").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.fountains
+    - unarchive: { format: json_array }
+    - mapping: |
+        # The run's clock (a test sets bcn_now to read a recorded file as of its own day).
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:drinking-fountain-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
+          "type": "PointOfInterest",
+          "expiresAt": ($now + 21 * 86400).ts_format("2006-01-02T15:04:05Z", "UTC"),
+          "name": { "type": "Property", "value": if this.name != "" { this.name } else { "Font de beure " + this.id } },
+          "category": { "type": "Property", "value": ["drinking-fountain"] },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [this.lon, this.lat] } },
+          "address": { "type": "Property", "value": {
+            "streetAddress": this.street,
+            "addressLocality": "Barcelona",
+            "district": this.district,
+            "addressCountry": "ES"
+          }.filter(entry -> entry.value != "") },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/fonts" }
+        }

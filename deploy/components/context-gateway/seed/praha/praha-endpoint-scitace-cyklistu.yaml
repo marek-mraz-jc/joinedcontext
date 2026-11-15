@@ -1,0 +1,44 @@
+# Golemio's cycle counters in Prague and the bicycles each direction counted in its newest five
+# minutes (T-5681), TrafficFlowObserved of the space praha-mesto read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-scitace-cyklistu
+  namespace: praha
+  title: { cs: Sčítače cyklistů — Praha, en: Cycle counters — Prague }
+  description:
+    cs: 'Automatické sčítače cyklistů v Praze: počet kol v každém směru za posledních pět minut a historie za 30 dní. Zdroj: Golemio, Operátor ICT.'
+    en: 'The automatic cycle counters of Prague: the bicycles each direction counted in its newest five minutes, and 30 days of history. Source: Golemio, Operátor ICT.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: q2jsncsnzgbbcddpesc32wn7z3of3hpa
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-scitace-cyklistu
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp, sta]
+  catalog:
+    # Off the catalogue (T-5788, owner order 2026-10-26: an empty dataset leaves it): on 2026-10-26
+    # prod held 0 TrafficFlowObserved two hours after the runner resumed (dev 61): its prod polls write nothing.
+    # The harvest feeds leave it out (EP-139); publish it again once prod holds data.
+    harvest: false
+    # Counts of passing bicycles per direction: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    attribution:
+      cs: 'Zdroj: Golemio, Operátor ICT, a.s.; podmínky užití https://api.golemio.cz/api-keys/'
+      en: 'Source: Golemio, Operátor ICT, a.s.; terms of use https://api.golemio.cz/api-keys/'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, cyklistika, sčítače, intenzita]
+      en: [Prague, cycling, counters, intensity]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: CONT
+    source:
+      - url: https://api.golemio.cz/v2/bicyclecounters
+        title: { cs: Sčítače cyklistů – API (Golemio), en: Cycle counters API (Golemio) }
+        description:
+          cs: Sčítače cyklistů v Praze a jejich pětiminutové počty, Operátor ICT, podle podmínek užití Golemio.
+          en: The cycle counters of Prague and their five-minute counts, Operátor ICT, under Golemio's terms of use.
+    pipelineRef: { kind: Pipeline, name: bicycle-counters }

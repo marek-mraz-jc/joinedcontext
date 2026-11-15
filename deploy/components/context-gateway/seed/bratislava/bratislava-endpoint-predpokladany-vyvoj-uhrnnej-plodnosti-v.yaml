@@ -1,0 +1,44 @@
+# Expected total fertility in Bratislava's city districts in selected years: one public dataset of the hub (T-5274), item 3b302b42fe0347ab9a71b90244b47769, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-predpokladany-vyvoj-uhrnnej-plodnosti-v
+  namespace: bratislava
+  title:
+    sk: Predpokladaný vývoj úhrnnej plodnosti v mestských častiach Bratislavy vo vybraných rokoch
+    en: Expected total fertility in Bratislava's city districts in selected years
+  description:
+    sk: 'Ukazovatele tabuľky „Predpokladaný vývoj úhrnnej plodnosti v mestských častiach Bratislavy vo vybraných rokoch“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Expected total fertility in Bratislava's city districts in selected years”, one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: havdcr5benkmflipscqppzmlhm4ot3oi
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-predpokladany-vyvoj-uhrnnej-plodnosti-v
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/3b302b42fe0347ab9a71b90244b47769
+        title:
+          sk: Predpokladaný vývoj úhrnnej plodnosti v mestských častiach Bratislavy vo vybraných rokoch
+          en: Expected total fertility in Bratislava's city districts in selected years
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Predpokladaný vývoj úhrnnej plodnosti v mestských častiach Bratislavy vo vybraných rokoch. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Expected total fertility in Bratislava's city districts in selected years. Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics }

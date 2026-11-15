@@ -1,0 +1,52 @@
+# The energy use of the City of Helsinki's service properties (T-5278): the KeyPerformanceIndicator
+# entities of the service-property-energy pipeline, one per location and utility, read through their
+# own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-service-property-energy
+  namespace: helsinki
+  title:
+    fi: Palvelukiinteistöjen energiankulutus — Helsinki
+    sv: Servicefastigheternas energiförbrukning — Helsingfors
+    en: Energy use of service properties — Helsinki
+  description:
+    fi: 'Helsingin kaupungin palvelu- ja käyttökiinteistöjen (koulut, päiväkodit, virastot, kauppahallit) kuukausittainen sähkön- ja lämmönkulutus (kWh) ja vedenkulutus (m³) Nuuka-energiahallintapalvelusta. Yksi Smart Data Models KeyPerformanceIndicator kohdetta ja hyödykettä kohden, viimeisin kokonainen kuukausi arvona ja aiemmat kuukaudet historiassa. Kaukojäähdytys ei sisälly. Lähde: Helsingin kaupunki, CC BY 4.0.'
+    sv: 'Den månatliga el- och värmeförbrukningen (kWh) och vattenförbrukningen (m³) i Helsingfors stads service- och verksamhetsfastigheter (skolor, daghem, ämbetshus, saluhallar) från energihanteringstjänsten Nuuka. En Smart Data Models KeyPerformanceIndicator per objekt och nyttighet, den senaste hela månaden som värde och tidigare månader i historiken. Fjärrkyla ingår inte. Källa: Helsingfors stad, CC BY 4.0.'
+    en: "The monthly electricity and heat use (kWh, unitCode KWH) and water use (m³, unitCode MTQ) of the City of Helsinki's service and utility properties (schools, day care centres, offices, market halls) from its energy management service Nuuka. One Smart Data Models KeyPerformanceIndicator per location and utility, the last complete month as kpiValue and the earlier months in its history. District cooling is left out, and so are locations the source marks disabled. Nuuka publishes no coordinates. Property beyond the model: dimensionKey (the location's name in Nuuka, its property code where it has one, and the utility). Source: City of Helsinki, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: vdv6dd5zhwph3ggzjz6xyffu2ikrmvtl
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-service-property-energy
+  # The NGSI-LD door also answers the temporal API, the monthly series per location and utility.
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, palvelukiinteistöjen energiankulutustiedot (Nuuka), CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, energiförbrukningsdata för servicefastigheter (Nuuka), CC BY 4.0'
+      en: 'Source: City of Helsinki, energy consumption data of service properties (Nuuka), CC BY 4.0'
+    themes: [ENER, GOVE]
+    keywords:
+      fi: [energiankulutus, sähkö, kaukolämpö, vesi, kiinteistöt]
+      sv: [energiförbrukning, el, fjärrvärme, vatten, fastigheter]
+      en: [energy consumption, electricity, district heating, water, properties]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: MONTHLY
+    source:
+      - url: https://hri.fi/data/fi/dataset/helsingin-kaupungin-palvelukiinteistojen-energiankulutustietoja
+        title:
+          fi: Helsingin kaupungin palvelukiinteistöjen energiankulutustietoja
+          en: Energy consumption data of the City of Helsinki's service properties
+        description: { fi: Nuuka Open API, en: Nuuka Open API }
+    pipelineRef: { kind: Pipeline, name: service-property-energy }

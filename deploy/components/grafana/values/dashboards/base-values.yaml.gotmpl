@@ -1,0 +1,7 @@
+---
+# The name the Grafana release mounts (values/grafana/base-values.yaml.gotmpl).
+configMapName: grafana-dashboards
+provider: platform
+projectsConfigMapName: {{ index .Values "grafana" "dashboards" "projectsConfigMapName" }}
+gatewayUrl: {{ index .Values "grafana" "grafana" "gatewayUrl" | quote }}
+projects: {{ index .Values "grafana" "grafana" "projects" | toJson }}

@@ -1,0 +1,500 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:RiverBasin a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "RiverBasin" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:zoneType ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nM2 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:specialise ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:aUT ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:thematic1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fACC ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iDN2 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:link ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dOW ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:relatedZon ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fIDSubpovodiaBbsk ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:wiseEvolut ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:inspireIdL ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vYMERA ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:relatedZ1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:sOI ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:inspireIdN ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:gmlId ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:aCH ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:thematicId ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:designatio ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nameLangua ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fIDKraj0 ],
+        jc:Entity ;
+    skos:definition "A river basin of the region." ;
+    skos:exactMatch jc:RiverBasin ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:upstream_source "https://smart-data-models.github.io/dataModel.PointOfInterest/PointOfInterest/schema.json" .
+
+jc:aCH a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "aCH" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `ACH`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:aUT a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "aUT" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `AUT`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dOW a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dOW" ;
+    rdfs:range jc:datetime ;
+    skos:definition "The source column `DOW`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:date_or_datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date_or_datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:decimal a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:decimal ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:designatio a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "designatio" ;
+    skos:definition "The source column `designatio`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:double a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:double ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:fACC a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fACC" ;
+    skos:definition "The source column `FACC`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:fIDKraj0 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fIDKraj0" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `FID_kraj_0`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:fIDSubpovodiaBbsk a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fIDSubpovodiaBbsk" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `FID_subpovodia_bbsk`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:gmlId a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "gmlId" ;
+    skos:definition "The source column `gml_id`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iDN2 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iDN2" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `IDN2`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:inspireIdL a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "inspireIdL" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `inspireIdL`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:inspireIdN a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "inspireIdN" ;
+    skos:definition "The source column `inspireIdN`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:jsonpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:jsonpointer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpointer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:link a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "link" ;
+    skos:definition "The source column `link`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:nM2 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nM2" ;
+    skos:definition "The source column `NM2`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The source column `nameText`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:nameLangua a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nameLangua" ;
+    skos:definition "The source column `nameLangua`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:relatedZ1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "relatedZ1" ;
+    skos:definition "The source column `relatedZ_1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:relatedZon a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "relatedZon" ;
+    skos:definition "The source column `relatedZon`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:sOI a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "sOI" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `SOI`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:sparqlpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:sparqlpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:specialise a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "specialise" ;
+    skos:definition "The source column `specialise`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:thematic1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "thematic1" ;
+    skos:definition "The source column `thematic_1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:thematicId a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "thematicId" ;
+    skos:definition "The source column `thematicId`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:time a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:time ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:vYMERA a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vYMERA" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `VYMERA`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:wiseEvolut a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "wiseEvolut" ;
+    skos:definition "The source column `wiseEvolut`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:zoneType a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "zoneType" ;
+    skos:definition "The source column `zoneType`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/RiverBasin> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+
+<https://joinedcontext.com/models/sdm/extensions/RiverBasin> a owl:Ontology ;
+    rdfs:label "RiverBasin" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "RiverBasin, an extension of dataModel.PointOfInterest/PointOfInterest" ;
+    skos:definition "A river basin of the region. Extends dataModel.PointOfInterest/PointOfInterest: OpenStreetMap OSMWater requires osmId and osmType, which the region's register has not." .
+

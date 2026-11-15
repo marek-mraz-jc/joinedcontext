@@ -1,0 +1,243 @@
+{
+ "help": "https://opendata-ajuntament.barcelona.cat/data/api/3/action/help_show?name=datastore_search_sql",
+ "success": true,
+ "result": {
+  "records": [
+   {
+    "town": "Barcelona",
+    "src": "agenda-activitats-esportives",
+    "ends": "2026-12-13",
+    "num": "10",
+    "name": "Caminada del Nadal Solidari",
+    "zip": "08003",
+    "starts": "2026-12-13",
+    "lon": "2.1868205122544464",
+    "modified": "2026-10-14T12:24:54",
+    "phone": null,
+    "street": "Passeig de Pujades",
+    "lat": "41.38637693357173",
+    "district": "Ciutat Vella",
+    "id": "99400013467"
+   },
+   {
+    "town": "BARCELONA",
+    "src": "agenda-cultural",
+    "ends": "2027-01-04",
+    "num": "51",
+    "name": "Concert d’Any Nou del Gran Teatre del Liceu",
+    "zip": "08002",
+    "starts": "2027-01-04",
+    "lon": "2.1733467293401083",
+    "modified": "2026-05-07T10:28:18",
+    "phone": "934 859 913",
+    "street": "C la Rambla",
+    "lat": "41.38014677441643",
+    "district": "Ciutat Vella",
+    "id": "99400642884"
+   },
+   {
+    "town": "Barcelona",
+    "src": "agenda-cultural",
+    "ends": "2026-11-11",
+    "num": "274",
+    "name": "Taller 'Moviment conscient'",
+    "zip": "08031",
+    "starts": "2026-09-16",
+    "lon": "2.173211965156838",
+    "modified": "2026-07-31T15:42:55",
+    "phone": null,
+    "street": "Passeig de Fabra i Puig",
+    "lat": "41.43045503743151",
+    "district": "Nou Barris",
+    "id": "99400255636"
+   },
+   {
+    "town": "Barcelona",
+    "src": "agenda-cultural",
+    "ends": null,
+    "num": "5",
+    "name": "Exposició permanent  'Col·lecció d'escultura'",
+    "zip": "08002",
+    "starts": "2011-05-14",
+    "lon": "2.17695685162379",
+    "modified": "2026-03-12T14:21:38",
+    "phone": null,
+    "street": "Plaça de Sant Iu",
+    "lat": "41.38420549734736",
+    "district": "Ciutat Vella",
+    "id": "2025121918"
+   },
+   {
+    "town": "Barcelona",
+    "src": "agenda-diaria",
+    "ends": "2026-12-20",
+    "num": "2",
+    "name": "Espectacle \"Pastoretes de Vallvidrera'",
+    "zip": "08017",
+    "starts": "2026-12-12",
+    "lon": "2.104182128122585",
+    "modified": "2026-07-08T13:01:28",
+    "phone": null,
+    "street": "Carrer d'Elisa Moragas i Badia",
+    "lat": "41.41384832407153",
+    "district": "Sarrià-Sant Gervasi",
+    "id": "99400300596"
+   },
+   {
+    "town": "BARCELONA",
+    "src": "agenda-diaria",
+    "ends": null,
+    "num": "43",
+    "name": "Visites audioguiades a la Casa Batlló",
+    "zip": "08007",
+    "starts": "2002-03-19",
+    "lon": "2.1649640719737016",
+    "modified": "2023-04-13T12:39:52",
+    "phone": null,
+    "street": "Pg Gràcia",
+    "lat": "41.39173522253645",
+    "district": "Eixample",
+    "id": "2042164840"
+   },
+   {
+    "town": "SABADELL",
+    "src": "agenda-diaria",
+    "ends": null,
+    "num": null,
+    "name": "Visites en helicòpter a la ciutat de Barcelona",
+    "zip": "08205",
+    "starts": null,
+    "lon": "-1.4894678076317491",
+    "modified": "2021-04-16T09:47:20",
+    "phone": "93 730 49 11",
+    "street": "AEROPORT SABADELL",
+    "lat": "-0.0010942582961042412",
+    "district": "",
+    "id": "2120131241"
+   },
+   {
+    "town": "Barcelona",
+    "src": "agenda-diaria",
+    "ends": "2026-11-15",
+    "num": null,
+    "name": "Dates de festa major",
+    "zip": "08020",
+    "starts": "2026-11-06",
+    "lon": null,
+    "modified": "2026-10-19T13:57:26",
+    "phone": null,
+    "street": "",
+    "lat": null,
+    "district": "Sant Martí",
+    "id": "1306094659"
+   },
+   {
+    "town": "Barcelona",
+    "src": "agenda-cultural",
+    "ends": null,
+    "num": "15",
+    "name": "Col·lecció permanent del Museu Picasso",
+    "zip": "08003",
+    "starts": null,
+    "lon": "2.180853795205005",
+    "modified": "2026-10-14T13:01:48",
+    "phone": null,
+    "street": "Carrer de Montcada",
+    "lat": "41.385187649272225",
+    "district": "Ciutat Vella",
+    "id": "1299140408"
+   },
+   {
+    "town": "Barcelona",
+    "src": "agenda-diaria",
+    "ends": "2020-01-01",
+    "num": "2",
+    "name": "Espectacle \"Pastoretes de Vallvidrera'",
+    "zip": "08017",
+    "starts": "2026-12-12",
+    "lon": "2.104182128122585",
+    "modified": "2026-07-08T13:01:28",
+    "phone": null,
+    "street": "Carrer d'Elisa Moragas i Badia",
+    "lat": "41.41384832407153",
+    "district": "Sarrià-Sant Gervasi",
+    "id": "90000000001"
+   },
+   {
+    "town": "BARCELONA",
+    "src": "agenda-cultural",
+    "ends": "2027-01-04",
+    "num": "51",
+    "name": "Concert d’Any Nou del Gran Teatre del Liceu",
+    "zip": "08002",
+    "starts": "2027-01-04",
+    "lon": "2.1733467293401083",
+    "modified": "2026-05-07T10:28:18",
+    "phone": "934 859 913",
+    "street": "C la Rambla",
+    "lat": "41.38014677441643",
+    "district": "Ciutat Vella",
+    "id": "90000000002"
+   }
+  ],
+  "fields": [
+   {
+    "type": "text",
+    "id": "id"
+   },
+   {
+    "type": "text",
+    "id": "name"
+   },
+   {
+    "type": "text",
+    "id": "modified"
+   },
+   {
+    "type": "text",
+    "id": "street"
+   },
+   {
+    "type": "text",
+    "id": "num"
+   },
+   {
+    "type": "text",
+    "id": "zip"
+   },
+   {
+    "type": "text",
+    "id": "town"
+   },
+   {
+    "type": "text",
+    "id": "district"
+   },
+   {
+    "type": "text",
+    "id": "lat"
+   },
+   {
+    "type": "text",
+    "id": "lon"
+   },
+   {
+    "type": "text",
+    "id": "starts"
+   },
+   {
+    "type": "text",
+    "id": "ends"
+   },
+   {
+    "type": "text",
+    "id": "phone"
+   },
+   {
+    "type": "text",
+    "id": "src"
+   }
+  ],
+  "sql": "(the bcn-agenda DataSource query)"
+ }
+}

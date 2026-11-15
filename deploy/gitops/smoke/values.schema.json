@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of smoke (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "revision": {
+      "type": "string"
+    },
+    "image": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string"
+    },
+    "domain": {
+      "type": "string"
+    },
+    "realm": {
+      "type": "string"
+    },
+    "namespaceAnnotations": {
+      "type": "object"
+    },
+    "components": {
+      "type": "array"
+    },
+    "waitSeconds": {
+      "type": "number"
+    },
+    "global": {
+      "type": "object"
+    }
+  }
+}

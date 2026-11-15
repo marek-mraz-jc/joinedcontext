@@ -1,0 +1,32 @@
+---
+component: node-storage
+parts:
+  - name: local-path
+    hooks:
+      # The ConfigMap is k3s's until this release makes it. Helm cannot adopt it in place: its
+      # server-side apply conflicts with k3s's field manager ("deploy@<node>"), and clearing the
+      # managed fields only renames that owner ("before-first-apply"). So a ConfigMap any other
+      # manager touched is deleted and the release creates it a moment later; the provisioner
+      # reads it per volume, so only a volume made in that second would retry.
+      - events: ["presync"]
+        command: sh
+        args:
+          - -ec
+          - |
+            managers=$(kubectl -n kube-system get configmap local-path-config -o jsonpath='{.metadata.managedFields[*].manager}' 2>/dev/null) || exit 0
+            others=$(printf '%s\n' $managers | grep -vx helm || true)
+            [ -n "$managers" ] && [ -z "$others" ] && exit 0
+            kubectl -n kube-system delete configmap local-path-config
+      # The provisioner reads helperPod.yaml once at start, and its Deployment is k3s's, so no
+      # checksum annotation of ours can roll it. After a sync that changed the ConfigMap, stamp
+      # the data's hash on its pod template; a changed stamp restarts it, an unchanged one is a no-op.
+      - events: ["postsync"]
+        command: sh
+        args:
+          - -ec
+          - |
+            sum=$(kubectl -n kube-system get configmap local-path-config -o jsonpath='{.data}' | sha256sum | cut -c1-16)
+            have=$(kubectl -n kube-system get deploy local-path-provisioner -o jsonpath='{.spec.template.metadata.annotations.joinedcontext\.com/local-path-config}')
+            [ "$sum" = "$have" ] && exit 0
+            kubectl -n kube-system patch deploy local-path-provisioner --type=merge \
+              -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"joinedcontext.com/local-path-config\":\"$sum\"}}}}}"

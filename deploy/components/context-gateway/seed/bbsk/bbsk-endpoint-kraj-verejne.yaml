@@ -1,0 +1,35 @@
+# The region's raw rows open to anyone (T-2934, owner decision 2026-10-06, option b1): the ŠÚ SR
+# cubes the pipelines mirror into bbsk-kraj are the statistics office's open data (CC BY-SA 4.0,
+# listed in bbsk-kraj's catalog block), and the indicators application draws its trend lines from
+# their yearly rows through this endpoint (AP-04, a further space read through its public
+# Endpoint). The steward's notes stay behind: kraj-public-read names every column but
+# stewardNote. Not published to CKAN; the region's catalogue entry is bbsk-kpi's.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bbsk-kraj-verejne
+  namespace: bbsk
+  title:
+    sk: Banskobystrický kraj — zdrojové údaje, verejne
+    en: Banská Bystrica Region, raw data, public
+  description:
+    sk: 'Ročné údaje Štatistického úradu SR za kraj a jeho okresy, ako ich kraj zrkadlí: počet obyvateľov (om7102rr), evidovaní uchádzači o zamestnanie (pr5001rr) a emisie tuhých znečisťujúcich látok na km² (zp3803rs), a mesačné počty cyklistov na cyklosčítačoch kraja (Scitace_new), CC BY-SA 4.0. Bez poznámok správcu údajov.'
+    en: "The Statistical Office's yearly data for the region and its districts as the region mirrors them: residents (om7102rr), registered jobseekers (pr5001rr) and solid particulate emissions per km² (zp3803rs), and the monthly cyclist counts of the region's bicycle counters (Scitace_new), CC BY-SA 4.0. Without the data steward's notes."
+spec:
+  contextSpaceRef: bbsk-kraj
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:app-bbsk-zaznamy-1
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:app-bbsk-zaznamy-2-steward
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:kraj-public-read
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:kraj-steward-note
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:kraj-steward-read
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:pipelines-write
+  slug: 2lwz27hvqjvxaow2hr73lxmxx743irui
+  audience: public
+  # mcp: the members of the public `otvorene-data` MCP server (T-4141) and the public
+  # assistant's connectors (T-4167); the gateway lists a member only when it serves MCP.
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  # Not a catalogue dataset: the region's catalogue entry is bbsk-kpi's and the ŠÚ SR cubes are datasets of their own. Its own record stays;
+  # the harvest feeds leave it out (EP-139, T-4744).
+  catalog: { harvest: false }

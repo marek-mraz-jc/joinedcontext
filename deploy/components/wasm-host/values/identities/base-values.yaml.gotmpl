@@ -1,0 +1,13 @@
+# The Apps' job namespace, `{instance}-app-identities` in every profile (AP-159, T-3372), and the
+# token service the grant there is for.
+namespace: {{ index .Values "wasm-host" "identities" "appNamespace" }}
+holds: app-job-serviceaccounts
+tokenRole: wasm-host-tokens
+portalRole: portal-app-job-accounts
+tokenService:
+  serviceAccount: wasm-host-tokens
+  namespace: {{ index .Values "wasm-host" "tokens" "namespace" }}
+{{- $portal := dig "portal" "portal" dict .Values }}
+portal:
+  serviceAccount: portal
+  namespace: {{ if dig "enabled" false $portal }}{{ dig "namespace" "" $portal | quote }}{{ else }}''{{ end }}

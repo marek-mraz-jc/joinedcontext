@@ -1,0 +1,7 @@
+[
+  {"id": "urn:ngsi-ld:Article:n1", "type": "Article", "name": "Raitiotie Kalasatamaan valmistuu", "description": "Raitiovaunu liikenne alkaa", "datePublished": "2026-10-05T08:00:00Z", "url": "https://www.hel.fi/n1"},
+  {"id": "urn:ngsi-ld:Article:n2", "type": "Article", "name": {"fi": "Raitiovaunu liikenne kasvaa", "en": "Tram traffic grows"}, "datePublished": {"@type": "DateTime", "@value": "2026-10-06T08:00:00Z"}, "url": "https://www.hel.fi/n2"},
+  {"id": "urn:ngsi-ld:Article:n3", "type": "Article", "name": "Kirjasto avaa uuden lukusalin", "description": "Kirjasto lukeminen", "datePublished": "2026-10-07T08:00:00Z"},
+  {"id": "urn:ngsi-ld:Article:n4", "type": "Article", "name": "Uimahalli remontoidaan", "datePublished": "2026-10-13T08:00:00Z"},
+  {"id": "urn:ngsi-ld:Article:n5", "type": "Article", "name": "Ei päivämäärää"}
+]

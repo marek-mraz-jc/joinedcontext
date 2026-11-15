@@ -1,0 +1,18 @@
+# file in this folder -> its path in the configuration repository (jc-core PATH_TEMPLATEs), read by
+# the forge bootstrap's seed (components/gitea/values/{seed,bootstrap}/development-values) in the
+# development profile only. The App sharing matrix (T-4911): README.md.
+sharing-project.yaml: projects/sharing/project.yaml
+sharing-other-project.yaml: projects/sharing-other/project.yaml
+sharing-space.yaml: projects/sharing/spaces/sharing-bikes/space.yaml
+sharing-datamodel.yaml: projects/sharing/spaces/sharing-bikes/datamodels/sharing-bikes.yaml
+sharing-bikes.linkml.yaml: projects/sharing/spaces/sharing-bikes/datamodels/sharing-bikes.linkml.yaml
+sharing-shared-bikes.yaml: projects/sharing/shared/city-bikes.yaml
+sharing-app-private.yaml: projects/sharing/apps/sharing-private/app.yaml
+sharing-app-project.yaml: projects/sharing/apps/sharing-project/app.yaml
+sharing-app-organization.yaml: projects/sharing/apps/sharing-organization/app.yaml
+sharing-app-roles.yaml: projects/sharing/apps/sharing-roles/app.yaml
+sharing-app-public.yaml: projects/sharing/apps/sharing-public/app.yaml
+sharing-group-roles-viewer.yaml: users/groups/sharing-roles-viewer.yaml
+sharing-rolebinding-members.yaml: users/assignments/sharing-members.yaml
+sharing-rolebinding-authors.yaml: users/assignments/sharing-authors.yaml
+sharing-rolebinding-neighbours.yaml: users/assignments/sharing-neighbours.yaml

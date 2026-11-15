@@ -1,0 +1,18 @@
+# HSL's GTFS-RT trip updates, the whole network as one protobuf document (T-3889: about 640 kB in
+# the day, 7.6 kB at night). No key. CC BY 4.0 (HSL open data). T-3891 reads the departures of a
+# curated set of stops from it.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-trip-updates
+  namespace: helsinki
+  title:
+    en: HSL real-time trip updates (GTFS-RT)
+    fi: HSL:n reaaliaikaiset vuoropäivitykset (GTFS-RT)
+spec:
+  type: http
+  http:
+    url: https://realtime.hsl.fi/realtime/trip-updates/v2/hsl
+    verb: GET
+    headers: { Accept: application/x-protobuf }
+    timeout: 15s

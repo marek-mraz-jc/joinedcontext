@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-obyvatelia-podla-jazyka-v-domacnosti-zsj
+  namespace: bratislava
+  title:
+    sk: 'Verejné čítanie: Počet obyvateľov podľa najčastejšie používaného jazyka  v domácnosti v ZSJ'
+    en: 'Public read: Population by language used most often at home in the basic settlement units'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  # Read only, the rows of this one hub dataset (CC BY 4.0, census aggregates, nothing about a
+  # person); discovery beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:obyvatelia-podla-jazyka-v-domacnosti-zsj[.][a-z0-9.-]+$

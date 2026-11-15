@@ -1,0 +1,20 @@
+# The Padró's code list (Open Data BCN dataset pad-dimensions, CC BY 4.0), the first read of the
+# statistics pipeline (T-5266): the Catalan labels of every coded breakdown of the Padró tables
+# (SEXE, EDAT_Q, NACIONALITAT_G...) and the 73 barri codes (CODI_BARRI_DEST), the register an
+# indicator's refArea must name. 336 rows from the CKAN DataStore, about 60 KB. No key.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-statistics-dimensions
+  namespace: barcelona
+  title:
+    ca: Dimensions del Padró (Open Data BCN)
+    es: Dimensiones del Padrón (Open Data BCN)
+    en: Codes of the Barcelona population register (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/datastore_search?resource_id=b00be3f8-9328-4175-8689-24a25bc0907c&limit=1000
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

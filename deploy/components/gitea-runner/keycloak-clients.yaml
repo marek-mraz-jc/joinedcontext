@@ -1,0 +1,39 @@
+---
+# The build lane's identity (AP-73, ADR-N-028 §5, T-2636). The `propose` job of every
+# application's workflow sends `status.build` to the Portal API as this client's service
+# account, `service-account-jc-build-lane`, which the `build-lane` RoleBinding names and whose
+# one right is that field. A workload never gets a static key: `client_credentials` alone, one
+# audience, `portal-api`, so the gateway and the Portal's internal listener refuse the token,
+# and a lifetime of 15 minutes. The client holds no secret (PF-47, T-2868): the forge's
+# `gitea-lane-token` CronJob, in the forge's namespace, proves it with its pod's projected
+# ServiceAccount token, mints the token every 5 minutes and writes it as the Actions
+# organization secret `JC_LANE_TOKEN`; the runner sees that token alone.
+jc-build-lane:
+  name: Build lane
+  description: Service account of the applications' build lane; client_credentials only, audience portal-api
+  subdomain: ''
+  redirectPath: ''
+  federated:
+    release: gitea.bootstrap
+    serviceAccount: gitea-bootstrap-lane-token
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    webOrigins: []
+    # The realm template merges `attributes` over its defaults; the two defaults are repeated.
+    attributes:
+      post.logout.redirect.uris: '+'
+      pkce.code.challenge.method: S256
+      access.token.lifespan: '900'
+    protocolMappers:
+      - name: portal-api-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.client.audience: portal-api
+          access.token.claim: 'true'
+          id.token.claim: 'false'

@@ -1,0 +1,20 @@
+# The buses and trolleybuses of DPMŽ in service now, each with its position and its deviation from
+# the timetable, from the city's open data portal, dataset 124 "Zoznam vozidiel verejnej dopravy".
+# POST without a body; no key. ODbL, credited "Mesto Žilina" (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: zilina-opendata-mhd-vozidla
+  namespace: zilina
+  title:
+    sk: Vozidlá MHD (opendata.zilina.sk)
+    en: Public transport vehicles (opendata.zilina.sk)
+spec:
+  type: http
+  http:
+    url: https://opendata.zilina.sk/api/datasets/v1/public-transport/vehicles/list
+    verb: POST
+    headers:
+      Accept: application/json
+      User-Agent: joinedcontext-zilina/1.0 (+https://dev.joinedcontext.com)
+    timeout: 30s

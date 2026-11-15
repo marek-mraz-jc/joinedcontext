@@ -1,0 +1,87 @@
+# The mapping of the pedestrian-crossings pipeline (PL-03, T-5264): one PedestrianCrossing per
+# crossing of Open Data BCN's street inventory (dataset infraestructures-inventari-pas-vianants,
+# Infraestructures_Inventari_Pas_Vianants.csv, rewritten weekly): ID_Pas, the marking's kind
+# (Codi_Pas, three kinds the typology dataset names), its painted area in m² (M2_Pas), its barri
+# (Codi_Barri, empty for a crossing on the city's edge), WGS84 Longitud/Latitud and the dates it
+# entered (Data_Alta) and left (Data_Baixa) the inventory. The file keeps every crossing ever
+# painted: a row with a Data_Baixa is gone from the street and is not written (28,210 of 39,237 on
+# 2026-10-23). Data_Alta is left out: half the rows carry the inventory's start, 2000/01/01, not
+# the day the crossing was painted. `expiresAt`: a crossing the file drops or marks as gone leaves
+# every read three weeks (three update periods) after the file last listed it.
+#
+# Plausibility (owner 2026-10-22): a row with no numeric id or an unknown kind, a point that is no
+# number or lies outside the municipality's 1 km margin (the space's in-area bbox), a second row of
+# one id, and a second crossing of one kind within the same ~1 m cell (5 decimals of a degree: the
+# file lists 50 crossings twice on 2026-10-23, an old record beside its repainting, of which the
+# newer Data_Alta stands) are dropped; an area of 0 or below or above 500 m² is left out of the
+# entity. Each is counted by reason in `dropped`, which the next step logs. A file with no current
+# crossing at all fails the run, so the crossings stand instead of going quiet.
+
+pipeline:
+  processors:
+    - mapping: |
+        let text = if content().length() > 8388608 { throw("the crossings file is %d bytes, more than the 8 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿") }
+        let bbox = [2.04, 41.3, 2.24, 41.48]
+        let kinds = {
+          "255000000_Pastilla": "stripes", "255128000_Taco": "blocks", "000000255_Ciclista": "cycle"
+        }
+        # Only the current rows are parsed (a third of the file): Data_Baixa is the last column, so
+        # a current row ends with its comma (or ,"" when quoted). Parsing all 39k rows needed 256 MiB.
+        let lines = $text.replace_all("\r", "").split("\n").filter(l -> l.trim() != "")
+        let current = if $lines.length() == 0 || !$lines.index(0).re_match("Data_Baixa\"?$") { throw("the crossings file has no Data_Baixa column last") } else { ([$lines.index(0)].concat($lines.slice(1).filter(l -> l.re_match(",(\"\")?$")))).join("\n").parse_csv(true, ",") }
+        let coded = $current.filter(r -> r.ID_Pas.or("").trim().re_match("^[0-9]{1,12}$") && $kinds.exists(r.Codi_Pas.or("").trim()))
+        let placed = $coded.map_each(r -> {
+          "id": r.ID_Pas.trim(),
+          "code": r.Codi_Pas.trim(),
+          "lon": r.Longitud.or("").trim().number().catch(null),
+          "lat": r.Latitud.or("").trim().number().catch(null),
+          "area": r.M2_Pas.or("").trim().number().catch(null),
+          "barri": r.Codi_Barri.or("").trim().number().catch(0),
+          "since": r.Data_Alta.or("").trim()
+        }).filter(c -> c.lon != null && c.lat != null)
+        let inside = $placed.filter(c -> c.lon >= $bbox.index(0) && c.lon <= $bbox.index(2) && c.lat >= $bbox.index(1) && c.lat <= $bbox.index(3))
+        # One crossing per id, then per kind and ~1 m cell: sorted, so a repeat sits beside its first.
+        let by_id = $inside.sort_by(c -> c.id)
+        let ids = $by_id.enumerated().filter(e -> e.index == 0 || $by_id.index(e.index - 1).id != e.value.id).map_each(e -> e.value)
+        let by_cell = $ids.map_each(c -> c.assign({ "cell": "%v %.5f %.5f".format(c.code, c.lon, c.lat) })).sort_by(c -> c.cell + " " + c.since)
+        let unique = $by_cell.enumerated().filter(e -> e.index == $by_cell.length() - 1 || $by_cell.index(e.index + 1).cell != e.value.cell).map_each(e -> e.value)
+        root.dropped = {
+          "removed": $lines.length() - 1 - $current.length(),
+          "noIdOrKind": $current.length() - $coded.length(),
+          "noPoint": $coded.length() - $placed.length(),
+          "outsideTheCity": $placed.length() - $inside.length(),
+          "duplicateId": $inside.length() - $ids.length(),
+          "sameKindWithin1m": $ids.length() - $unique.length(),
+          "areaOutOfRange": $unique.filter(c -> c.area == null || c.area <= 0 || c.area > 500).length()
+        }
+        # The crossings leave as small rows, one message each, and each becomes its entity on its
+        # own: building all 11k entities in one message needed 192 MiB, the whole run now 160.
+        root.crossings = if $unique.length() == 0 { throw("the crossings file holds no current crossing") } else { $unique.map_each(c -> c.without("cell", "since")) }
+    - log:
+        level: INFO
+        message: 'pedestrian crossings: ${! json("crossings").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.crossings
+    - unarchive: { format: json_array }
+    - mapping: |
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        let kinds = {
+          "255000000_Pastilla": { "kind": "stripes", "label": "Pas de pastilles" },
+          "255128000_Taco": { "kind": "blocks", "label": "Pas de tacs" },
+          "000000255_Ciclista": { "kind": "cycle", "label": "Pas de bicicletes" }
+        }
+        # The run's clock (a test sets bcn_now to read a recorded file as of its own day) and the
+        # kinds the typology dataset infraestructures-tipologia-pas-vianants names.
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("PedestrianCrossing", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
+          "type": "PedestrianCrossing",
+          "expiresAt": ($now + 21 * 86400).ts_format("2006-01-02T15:04:05Z", "UTC"),
+          "crossingType": { "type": "Property", "value": $kinds.get(this.code).kind },
+          "crossingTypeLabel": { "type": "Property", "value": $kinds.get(this.code).label },
+          "markedArea": if this.area == null || this.area <= 0 || this.area > 500 { null } else { { "type": "Property", "value": this.area, "unitCode": "MTK" } },
+          "refNeighbourhood": if this.barri < 1 || this.barri > 73 { null } else {
+            { "type": "Relationship", "object": "urn:ngsi-ld:%v:%v:%v:neighbourhood-%02d".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.barri.int64()) }
+          },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [this.lon, this.lat] } },
+          "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/infraestructures-inventari-pas-vianants" }
+        }.filter(entry -> entry.value != null)

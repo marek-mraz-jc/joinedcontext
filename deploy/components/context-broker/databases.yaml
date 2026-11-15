@@ -1,0 +1,19 @@
+---
+context-broker:
+  name: 'antares'
+  embedded: true
+  user: 'antares'
+  secret:
+    name: 'db-antares'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  # The broker's first migration needs both extensions, neither of which PostgreSQL marks as
+  # trusted, and its role is deliberately not a superuser (ANTARES_REQUIRE_RLS refuses to boot
+  # as one). CNPG creates them; the migration's CREATE EXTENSION IF NOT EXISTS is then a no-op.
+  extensions:
+    - name: 'postgis'
+      ensure: present
+    - name: 'btree_gin'
+      ensure: present

@@ -1,0 +1,46 @@
+---
+# Filled from components/basemap/images.yaml and default-environment.yaml.gotmpl.
+images:
+  server: {repository: '', tag: '', digest: ''}
+  refresh: {repository: '', tag: '', digest: ''}
+imagePullPolicy: IfNotPresent
+
+host: ''
+corsDomain: ''
+schedule: '0 3 1 * *'
+file: basemap.pmtiles
+maxzoom: 15
+regions: {}
+storage: 12Gi
+builds: https://build.protomaps.com
+pmtiles: {version: '', sha256: ''}
+assets: {commit: '', sha256: ''}
+# The languages a style is rendered in, one file each (files/styles/light-<lang>.json).
+languages: [sk, en, cs, fi]
+
+serviceMesh:
+  enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+  # The job and the server share one volume, and on an SELinux node each pod relabels it to its
+  # own random MCS categories on mount: the server could not open what the job wrote (403 on
+  # dev, 2026-10-18). One fixed pair for both pods, still container_t.
+  seLinuxOptions:
+    level: 's0:c463,c838'
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+server:
+  resources: {}
+refresh:
+  resources: {}

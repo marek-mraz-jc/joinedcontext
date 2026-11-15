@@ -1,0 +1,1335 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:adresa a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/adresa"^^xsd:anyURI ;
+    linkml:description "The source column `Adresa`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/adresa"^^xsd:anyURI .
+
+jc:aktivne a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/aktivne"^^xsd:anyURI ;
+    linkml:description "The source column `Aktívne`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/aktivne"^^xsd:anyURI .
+
+jc:aktualnyStav a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/aktualnyStav"^^xsd:anyURI ;
+    linkml:description "The source column `Aktuálny_stav`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/aktualnyStav"^^xsd:anyURI .
+
+jc:aktualnyStavUpraveny a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/aktualnyStavUpraveny"^^xsd:anyURI ;
+    linkml:description "The source column `Aktuálny_stav_upravený`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/aktualnyStavUpraveny"^^xsd:anyURI .
+
+jc:boolean a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"boolean\"." ;
+    skos:exactMatch "schema:Boolean"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "Bool" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Boolean"^^xsd:anyURI ;
+    linkml:description "A binary (true or false) value" ;
+    linkml:repr "bool" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#boolean"^^xsd:anyURI .
+
+jc:celkovaZazmluvnenaSuma a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/celkovaZazmluvnenaSuma"^^xsd:anyURI ;
+    linkml:description "The source column `Celková_zazmluvnená_suma`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/celkovaZazmluvnenaSuma"^^xsd:anyURI .
+
+jc:cerpanieSpolu a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/cerpanieSpolu"^^xsd:anyURI ;
+    linkml:description "The source column `Čerpanie_spolu`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/cerpanieSpolu"^^xsd:anyURI .
+
+jc:curie a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://www.w3.org/TR/curie/" ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"curie\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:note "in RDF serializations this MUST be expanded to a URI",
+        "in non-RDF serializations MAY be serialized as the compact representation" ;
+    linkml:base "Curie" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Curie"^^xsd:anyURI ;
+    linkml:description "a compact URI" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:dOW a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/dOW"^^xsd:anyURI ;
+    linkml:description "The source column `DOW`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:datetime ;
+    linkml:slot_uri "https://joinedcontext.com/models/dOW"^^xsd:anyURI .
+
+jc:dataProvider a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "https://smartdatamodels.org/dataProvider"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/dataProvider"^^xsd:anyURI ;
+    linkml:description "Who published the row, with the credit its licence asks for." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://smartdatamodels.org/dataProvider"^^xsd:anyURI .
+
+jc:date a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"date\".",
+        "URI is dateTime because OWL reasoners don't work with straight date or time" ;
+    skos:exactMatch "schema:Date"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "XSDDate" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Date"^^xsd:anyURI ;
+    linkml:description "a date (year, month and day) in an idealized calendar" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#date"^^xsd:anyURI .
+
+jc:date_or_datetime a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"date_or_datetime\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/DateOrDatetime"^^xsd:anyURI ;
+    linkml:description "Either a date or a datetime" ;
+    linkml:repr "str" ;
+    linkml:uri "https://w3id.org/linkml/DateOrDatetime"^^xsd:anyURI .
+
+jc:datumZaniku a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/datumZaniku"^^xsd:anyURI ;
+    linkml:description "The source column `Dátum_zániku`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/datumZaniku"^^xsd:anyURI .
+
+jc:decimal a linkml:TypeDefinition ;
+    skos:broadMatch "schema:Number"^^xsd:anyURI ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"decimal\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "Decimal" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Decimal"^^xsd:anyURI ;
+    linkml:description "A real number with arbitrary precision that conforms to the xsd:decimal specification" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#decimal"^^xsd:anyURI .
+
+jc:double a linkml:TypeDefinition ;
+    skos:closeMatch "schema:Float"^^xsd:anyURI ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"double\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "float" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Double"^^xsd:anyURI ;
+    linkml:description "A real number that conforms to the xsd:double specification" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#double"^^xsd:anyURI .
+
+jc:fACC a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/fACC"^^xsd:anyURI ;
+    linkml:description "The source column `FACC`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/fACC"^^xsd:anyURI .
+
+jc:fLAT a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/fLAT"^^xsd:anyURI ;
+    linkml:description "The source column `F_LAT`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/fLAT"^^xsd:anyURI .
+
+jc:fLON a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/fLON"^^xsd:anyURI ;
+    linkml:description "The source column `F_LON`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/fLON"^^xsd:anyURI .
+
+jc:gEOMLATBACKUP a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/gEOMLATBACKUP"^^xsd:anyURI ;
+    linkml:description "The source column `GEOM_LAT_BACKUP`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/gEOMLATBACKUP"^^xsd:anyURI .
+
+jc:gEOMLONBACKUP a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/gEOMLONBACKUP"^^xsd:anyURI ;
+    linkml:description "The source column `GEOM_LON_BACKUP`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/gEOMLONBACKUP"^^xsd:anyURI .
+
+jc:iCO a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/iCO"^^xsd:anyURI ;
+    linkml:description "The source column `IČO`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/iCO"^^xsd:anyURI .
+
+jc:iCOOrganizacia a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/iCOOrganizacia"^^xsd:anyURI ;
+    linkml:description "The source column `IČO_organizácia`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/iCOOrganizacia"^^xsd:anyURI .
+
+jc:iCOPrijimatela a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/iCOPrijimatela"^^xsd:anyURI ;
+    linkml:description "The source column `IČO_prijímateľa`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/iCOPrijimatela"^^xsd:anyURI .
+
+jc:iDN2 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/iDN2"^^xsd:anyURI ;
+    linkml:description "The source column `IDN2`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:integer ;
+    linkml:slot_uri "https://joinedcontext.com/models/iDN2"^^xsd:anyURI .
+
+jc:iDN3 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/iDN3"^^xsd:anyURI ;
+    linkml:description "The source column `IDN3`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:integer ;
+    linkml:slot_uri "https://joinedcontext.com/models/iDN3"^^xsd:anyURI .
+
+jc:iDN4 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/iDN4"^^xsd:anyURI ;
+    linkml:description "The source column `IDN4`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:integer ;
+    linkml:slot_uri "https://joinedcontext.com/models/iDN4"^^xsd:anyURI .
+
+jc:iDProjektu a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/iDProjektu"^^xsd:anyURI ;
+    linkml:description "The source column `ID_projektu`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/iDProjektu"^^xsd:anyURI .
+
+jc:identifier a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "https://smartdatamodels.org/dataModel.CPSV-AP/identifier"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/identifier"^^xsd:anyURI ;
+    linkml:description "The source column `Kód_projektu`, `ID_IA`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://smartdatamodels.org/dataModel.CPSV-AP/identifier"^^xsd:anyURI .
+
+jc:index a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/index"^^xsd:anyURI ;
+    linkml:description "The source column `Index_`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/index"^^xsd:anyURI .
+
+jc:isPartOf a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/isPartOf"^^xsd:anyURI ;
+    linkml:description "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:uri ;
+    linkml:slot_uri "https://joinedcontext.com/models/isPartOf"^^xsd:anyURI .
+
+jc:jsonpath a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://www.ietf.org/archive/id/draft-goessner-dispatch-jsonpath-00.html" ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"jsonpath\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Jsonpath"^^xsd:anyURI ;
+    linkml:description "A string encoding a JSON Path. The value of the string MUST conform to JSON Point syntax and SHOULD dereference to zero or more valid objects within the current instance document when encoded in tree form." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:jsonpointer a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://datatracker.ietf.org/doc/html/rfc6901" ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"jsonpointer\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Jsonpointer"^^xsd:anyURI ;
+    linkml:description "A string encoding a JSON Pointer. The value of the string MUST conform to JSON Point syntax and SHOULD dereference to a valid object within the current instance document when encoded in tree form." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:kategoria a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/kategoria"^^xsd:anyURI ;
+    linkml:description "The source column `Kategória`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/kategoria"^^xsd:anyURI .
+
+jc:kodKraja a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/kodKraja"^^xsd:anyURI ;
+    linkml:description "The source column `Kód_kraja`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/kodKraja"^^xsd:anyURI .
+
+jc:kodObce a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/kodObce"^^xsd:anyURI ;
+    linkml:description "The source column `Kód_obce`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/kodObce"^^xsd:anyURI .
+
+jc:kodOkresuKraja a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/kodOkresuKraja"^^xsd:anyURI ;
+    linkml:description "The source column `Kód_okresu_kraja`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:integer ;
+    linkml:slot_uri "https://joinedcontext.com/models/kodOkresuKraja"^^xsd:anyURI .
+
+jc:lATJitter a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/lATJitter"^^xsd:anyURI ;
+    linkml:description "The source column `LAT_jitter`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/lATJitter"^^xsd:anyURI .
+
+jc:lAU1 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/lAU1"^^xsd:anyURI ;
+    linkml:description "The source column `LAU1`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/lAU1"^^xsd:anyURI .
+
+jc:lAU1CODE a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/lAU1CODE"^^xsd:anyURI ;
+    linkml:description "The source column `LAU1_CODE`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/lAU1CODE"^^xsd:anyURI .
+
+jc:lAU2 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/lAU2"^^xsd:anyURI ;
+    linkml:description "The source column `LAU2`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/lAU2"^^xsd:anyURI .
+
+jc:lAU2CODE a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/lAU2CODE"^^xsd:anyURI ;
+    linkml:description "The source column `LAU2_CODE`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/lAU2CODE"^^xsd:anyURI .
+
+jc:lONJitter a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/lONJitter"^^xsd:anyURI ;
+    linkml:description "The source column `LON_jitter`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/lONJitter"^^xsd:anyURI .
+
+jc:miestoRealizacieProjektu a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/miestoRealizacieProjektu"^^xsd:anyURI ;
+    linkml:description "The source column `Miesto_realizácie_projektu`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/miestoRealizacieProjektu"^^xsd:anyURI .
+
+jc:miestoRealizacieProjektuKraj a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/miestoRealizacieProjektuKraj"^^xsd:anyURI ;
+    linkml:description "The source column `Miesto_realizácie_projektu_kraj`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/miestoRealizacieProjektuKraj"^^xsd:anyURI .
+
+jc:miestoRealizacieProjektuObec a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/miestoRealizacieProjektuObec"^^xsd:anyURI ;
+    linkml:description "The source column `Miesto_realizácie_projektu_obec`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/miestoRealizacieProjektuObec"^^xsd:anyURI .
+
+jc:nM2 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nM2"^^xsd:anyURI ;
+    linkml:description "The source column `NM2`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nM2"^^xsd:anyURI .
+
+jc:nM3 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nM3"^^xsd:anyURI ;
+    linkml:description "The source column `NM3`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nM3"^^xsd:anyURI .
+
+jc:nM4 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nM4"^^xsd:anyURI ;
+    linkml:description "The source column `NM4`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nM4"^^xsd:anyURI .
+
+jc:nUTS1 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nUTS1"^^xsd:anyURI ;
+    linkml:description "The source column `NUTS1`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nUTS1"^^xsd:anyURI .
+
+jc:nUTS1CODE a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nUTS1CODE"^^xsd:anyURI ;
+    linkml:description "The source column `NUTS1_CODE`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nUTS1CODE"^^xsd:anyURI .
+
+jc:nUTS2 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nUTS2"^^xsd:anyURI ;
+    linkml:description "The source column `NUTS2`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nUTS2"^^xsd:anyURI .
+
+jc:nUTS2CODE a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nUTS2CODE"^^xsd:anyURI ;
+    linkml:description "The source column `NUTS2_CODE`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nUTS2CODE"^^xsd:anyURI .
+
+jc:nUTS3 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nUTS3"^^xsd:anyURI ;
+    linkml:description "The source column `NUTS3`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nUTS3"^^xsd:anyURI .
+
+jc:nUTS3CODE a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nUTS3CODE"^^xsd:anyURI ;
+    linkml:description "The source column `NUTS3_CODE`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nUTS3CODE"^^xsd:anyURI .
+
+jc:name a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "https://smartdatamodels.org/name"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/name"^^xsd:anyURI ;
+    linkml:description "The source column `Názov_projektu`, `Názov`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://smartdatamodels.org/name"^^xsd:anyURI .
+
+jc:nazovKraja a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nazovKraja"^^xsd:anyURI ;
+    linkml:description "The source column `Názov_kraja`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nazovKraja"^^xsd:anyURI .
+
+jc:nazovPrijimatela a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/nazovPrijimatela"^^xsd:anyURI ;
+    linkml:description "The source column `Názov_prijímateľa`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/nazovPrijimatela"^^xsd:anyURI .
+
+jc:ncname a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"ncname\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "NCName" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Ncname"^^xsd:anyURI ;
+    linkml:description "Prefix part of CURIE" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:nodeidentifier a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"nodeidentifier\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "NodeIdentifier" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Nodeidentifier"^^xsd:anyURI ;
+    linkml:description "A URI, CURIE or BNODE that represents a node in a model." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/ns/shex#nonLiteral"^^xsd:anyURI .
+
+jc:oBJECTID1 a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/oBJECTID1"^^xsd:anyURI ;
+    linkml:description "The source column `OBJECTID_1`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:integer ;
+    linkml:slot_uri "https://joinedcontext.com/models/oBJECTID1"^^xsd:anyURI .
+
+jc:obecNUTS a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/obecNUTS"^^xsd:anyURI ;
+    linkml:description "The source column `Obec_NUTS`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/obecNUTS"^^xsd:anyURI .
+
+jc:obecNazov a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/obecNazov"^^xsd:anyURI ;
+    linkml:description "The source column `Obec_názov`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/obecNazov"^^xsd:anyURI .
+
+jc:objectidentifier a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"objectidentifier\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:note "Used for inheritance and type checking" ;
+    linkml:base "ElementIdentifier" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Objectidentifier"^^xsd:anyURI ;
+    linkml:description "A URI or CURIE that represents an object in the model." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/ns/shex#iri"^^xsd:anyURI .
+
+jc:obstaravaciaCena a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/obstaravaciaCena"^^xsd:anyURI ;
+    linkml:description "The source column `Obstarávacia_cena`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/obstaravaciaCena"^^xsd:anyURI .
+
+jc:oficialnyNazov a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/oficialnyNazov"^^xsd:anyURI ;
+    linkml:description "The source column `Oficiálny_názov`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/oficialnyNazov"^^xsd:anyURI .
+
+jc:okresKraj a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/okresKraj"^^xsd:anyURI ;
+    linkml:description "The source column `Okres_Kraj`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/okresKraj"^^xsd:anyURI .
+
+jc:okresNazov a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/okresNazov"^^xsd:anyURI ;
+    linkml:description "The source column `Okres_názov`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/okresNazov"^^xsd:anyURI .
+
+jc:platnostProjektuOd a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/platnostProjektuOd"^^xsd:anyURI ;
+    linkml:description "The source column `Platnosť_projektu_od`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:datetime ;
+    linkml:slot_uri "https://joinedcontext.com/models/platnostProjektuOd"^^xsd:anyURI .
+
+jc:poznamka a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/poznamka"^^xsd:anyURI ;
+    linkml:description "The source column `Poznámka`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/poznamka"^^xsd:anyURI .
+
+jc:rok a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/rok"^^xsd:anyURI ;
+    linkml:description "The source column `Rok`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/rok"^^xsd:anyURI .
+
+jc:rokText a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/rokText"^^xsd:anyURI ;
+    linkml:description "The source column `Rok_text`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/rokText"^^xsd:anyURI .
+
+jc:rokZaradenia a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/rokZaradenia"^^xsd:anyURI ;
+    linkml:description "The source column `Rok_zaradenia`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/rokZaradenia"^^xsd:anyURI .
+
+jc:rozpocetAktualny a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/rozpocetAktualny"^^xsd:anyURI ;
+    linkml:description "The source column `Rozpočet_aktuálny`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/rozpocetAktualny"^^xsd:anyURI .
+
+jc:rozsahUzemiaProjektu a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/rozsahUzemiaProjektu"^^xsd:anyURI ;
+    linkml:description "The source column `Rozsah_územia_projektu`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/rozsahUzemiaProjektu"^^xsd:anyURI .
+
+jc:sUMCerpanieSpolu a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/sUMCerpanieSpolu"^^xsd:anyURI ;
+    linkml:description "The source column `SUM_Čerpanie_spolu`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/sUMCerpanieSpolu"^^xsd:anyURI .
+
+jc:sektorOvZPUpraveny a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/sektorOvZPUpraveny"^^xsd:anyURI ;
+    linkml:description "The source column `Sektor_OvZP_upraveny`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/sektorOvZPUpraveny"^^xsd:anyURI .
+
+jc:source a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "https://smartdatamodels.org/source"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/source"^^xsd:anyURI ;
+    linkml:description "The service the row was read from." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:uri ;
+    linkml:slot_uri "https://smartdatamodels.org/source"^^xsd:anyURI .
+
+jc:sparqlpath a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://www.w3.org/TR/sparql11-query/#propertypaths" ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"sparqlpath\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Sparqlpath"^^xsd:anyURI ;
+    linkml:description "A string encoding a SPARQL Property Path. The value of the string MUST conform to SPARQL syntax and SHOULD dereference to zero or more valid objects within the current instance document when encoded as RDF." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:time a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"time\".",
+        "URI is dateTime because OWL reasoners do not work with straight date or time" ;
+    skos:exactMatch "schema:Time"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "XSDTime" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Time"^^xsd:anyURI ;
+    linkml:description "A time object represents a (local) time of day, independent of any particular day" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#time"^^xsd:anyURI .
+
+jc:typObce a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/typObce"^^xsd:anyURI ;
+    linkml:description "The source column `typ_obce`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/typObce"^^xsd:anyURI .
+
+jc:uradOvZPICO a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/uradOvZPICO"^^xsd:anyURI ;
+    linkml:description "The source column `Úrad_OvZP_IČO`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/uradOvZPICO"^^xsd:anyURI .
+
+jc:uradOvZPOvZP a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/uradOvZPOvZP"^^xsd:anyURI ;
+    linkml:description "The source column `Úrad_OvZP_OvZP`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/uradOvZPOvZP"^^xsd:anyURI .
+
+jc:uriorcurie a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"uriorcurie\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "URIorCURIE" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Uriorcurie"^^xsd:anyURI ;
+    linkml:description "a URI or a CURIE" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#anyURI"^^xsd:anyURI .
+
+jc:uroven a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/uroven"^^xsd:anyURI ;
+    linkml:description "The source column `Úroveň`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/uroven"^^xsd:anyURI .
+
+jc:vYMERA a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/vYMERA"^^xsd:anyURI ;
+    linkml:description "The source column `VYMERA`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:float ;
+    linkml:slot_uri "https://joinedcontext.com/models/vYMERA"^^xsd:anyURI .
+
+jc:vecnaOblast a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/vecnaOblast"^^xsd:anyURI ;
+    linkml:description "The source column `Vecná_oblasť`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/vecnaOblast"^^xsd:anyURI .
+
+jc:zauzivanyNazov a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/zauzivanyNazov"^^xsd:anyURI ;
+    linkml:description "The source column `Zaužívaný_názov`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/zauzivanyNazov"^^xsd:anyURI .
+
+jc:zauzivanyNazovKratky a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/zauzivanyNazovKratky"^^xsd:anyURI ;
+    linkml:description "The source column `Zaužívaný_názov_krátky`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/zauzivanyNazovKratky"^^xsd:anyURI .
+
+jc:zauzivanyNazovUpraveny a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/zauzivanyNazovUpraveny"^^xsd:anyURI ;
+    linkml:description "The source column `Zaužívaný_názov_upravený`." ;
+    linkml:domain_of jc:PublicInvestment ;
+    linkml:owner jc:PublicInvestment ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/zauzivanyNazovUpraveny"^^xsd:anyURI .
+
+jc:id a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "https://uri.etsi.org/ngsi-ld/hasId"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "@id" ;
+            linkml:tag "jsonld_keyword"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/id"^^xsd:anyURI ;
+    linkml:description "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    linkml:domain_of jc:Entity ;
+    linkml:identifier true ;
+    linkml:owner jc:Entity ;
+    linkml:range jc:string ;
+    linkml:required true ;
+    linkml:slot_uri "https://uri.etsi.org/ngsi-ld/hasId"^^xsd:anyURI .
+
+jc:location a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "https://purl.org/geojson/vocab#geometry"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "GeoProperty" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/location"^^xsd:anyURI ;
+    linkml:description "Where the entity is, as GeoJSON geometry." ;
+    linkml:domain_of jc:Entity ;
+    linkml:owner jc:Entity ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://purl.org/geojson/vocab#geometry"^^xsd:anyURI .
+
+jc:observedAt a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "https://uri.etsi.org/ngsi-ld/observedAt"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/observedAt"^^xsd:anyURI ;
+    linkml:description "When the observation the entity reports was made." ;
+    linkml:domain_of jc:Entity ;
+    linkml:owner jc:Entity ;
+    linkml:range jc:datetime ;
+    linkml:slot_uri "https://uri.etsi.org/ngsi-ld/observedAt"^^xsd:anyURI .
+
+jc:type a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "https://uri.etsi.org/ngsi-ld/hasType"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "@type" ;
+            linkml:tag "jsonld_keyword"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/type"^^xsd:anyURI ;
+    linkml:description "The entity type, one class of a published data model." ;
+    linkml:domain_of jc:Entity ;
+    linkml:owner jc:Entity ;
+    linkml:range jc:string ;
+    linkml:required true ;
+    linkml:slot_uri "https://uri.etsi.org/ngsi-ld/hasType"^^xsd:anyURI .
+
+jc:uri a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://www.ietf.org/rfc/rfc3987.txt" ;
+    skos:closeMatch "schema:URL"^^xsd:anyURI ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"uri\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:note "in RDF serializations a slot with range of uri is treated as a literal or type xsd:anyURI unless it is an identifier or a reference to an identifier, in which case it is translated directly to a node" ;
+    linkml:base "URI" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Uri"^^xsd:anyURI ;
+    linkml:description "a complete URI" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#anyURI"^^xsd:anyURI .
+
+jc:datetime a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"datetime\"." ;
+    skos:exactMatch "schema:DateTime"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "XSDDateTime" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Datetime"^^xsd:anyURI ;
+    linkml:description "The combination of a date and time" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#dateTime"^^xsd:anyURI .
+
+jc:integer a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"integer\"." ;
+    skos:exactMatch "schema:Integer"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "int" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Integer"^^xsd:anyURI ;
+    linkml:description "An integer" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#integer"^^xsd:anyURI .
+
+jc:Entity a linkml:ClassDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "ngsi-ld:Entity"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:class_uri "https://uri.etsi.org/ngsi-ld/Entity"^^xsd:anyURI ;
+    linkml:definition_uri "https://joinedcontext.com/models/Entity"^^xsd:anyURI ;
+    linkml:description "The root every NGSI-LD entity class specialises." ;
+    linkml:slot_usage [ ] ;
+    linkml:slots jc:id,
+        jc:location,
+        jc:observedAt,
+        jc:type .
+
+jc:float a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"float\"." ;
+    skos:exactMatch "schema:Float"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "float" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Float"^^xsd:anyURI ;
+    linkml:description "A real number that conforms to the xsd:float specification" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#float"^^xsd:anyURI .
+
+jc:string a linkml:TypeDefinition ;
+    skos:editorialNote "In RDF serializations, a slot with range of string is treated as a literal or type xsd:string. If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"string\"." ;
+    skos:exactMatch "schema:Text"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/String"^^xsd:anyURI ;
+    linkml:description "A character string" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:PublicInvestment a linkml:ClassDefinition,
+        linkml:SchemaDefinition ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "PublicInvestment, an extension of dataModel.CPSV-AP/Cost" ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    skos:mappingRelation "jc:PublicInvestment"^^xsd:anyURI ;
+    sh:declare [ sh:namespace "https://uri.etsi.org/ngsi-ld/"^^xsd:anyURI ;
+            sh:prefix "ngsi-ld" ],
+        [ sh:namespace "http://www.w3.org/2001/XMLSchema#"^^xsd:anyURI ;
+            sh:prefix "xsd" ],
+        [ sh:namespace "https://w3id.org/linkml/"^^xsd:anyURI ;
+            sh:prefix "linkml" ],
+        [ sh:namespace "http://schema.org/"^^xsd:anyURI ;
+            sh:prefix "schema" ],
+        [ sh:namespace "https://purl.org/geojson/vocab#"^^xsd:anyURI ;
+            sh:prefix "geojson" ],
+        [ sh:namespace "https://smartdatamodels.org/"^^xsd:anyURI ;
+            sh:prefix "sdm" ],
+        [ sh:namespace "http://www.w3.org/ns/shex#"^^xsd:anyURI ;
+            sh:prefix "shex" ],
+        [ sh:namespace "https://joinedcontext.com/models/"^^xsd:anyURI ;
+            sh:prefix "jc" ] ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "https://smart-data-models.github.io/dataModel.CPSV-AP/Cost/schema.json" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:class_uri "https://joinedcontext.com/models/PublicInvestment"^^xsd:anyURI ;
+    linkml:classes jc:Entity,
+        jc:PublicInvestment ;
+    linkml:default_prefix "jc" ;
+    linkml:default_range jc:string ;
+    linkml:definition_uri "https://joinedcontext.com/models/PublicInvestment"^^xsd:anyURI ;
+    linkml:description "A public investment project, with its place where the source has one.",
+        "A public investment project, with its place where the source has one. Extends dataModel.CPSV-AP/Cost: CPSV-AP Cost is the official model of an amount a public body pays or charges (value, currency, identifier); no subject holds a contract, order, invoice, grant or procurement." ;
+    linkml:id "https://joinedcontext.com/models/sdm/extensions/PublicInvestment"^^xsd:anyURI ;
+    linkml:is_a jc:Entity ;
+    linkml:metamodel_version "1.11.0" ;
+    linkml:slot_usage [ ] ;
+    linkml:slots jc:adresa,
+        jc:aktivne,
+        jc:aktualnyStav,
+        jc:aktualnyStavUpraveny,
+        jc:celkovaZazmluvnenaSuma,
+        jc:cerpanieSpolu,
+        jc:dOW,
+        jc:dataProvider,
+        jc:datumZaniku,
+        jc:fACC,
+        jc:fLAT,
+        jc:fLON,
+        jc:gEOMLATBACKUP,
+        jc:gEOMLONBACKUP,
+        jc:iCO,
+        jc:iCOOrganizacia,
+        jc:iCOPrijimatela,
+        jc:iDN2,
+        jc:iDN3,
+        jc:iDN4,
+        jc:iDProjektu,
+        jc:id,
+        jc:identifier,
+        jc:index,
+        jc:isPartOf,
+        jc:kategoria,
+        jc:kodKraja,
+        jc:kodObce,
+        jc:kodOkresuKraja,
+        jc:lATJitter,
+        jc:lAU1,
+        jc:lAU1CODE,
+        jc:lAU2,
+        jc:lAU2CODE,
+        jc:lONJitter,
+        jc:location,
+        jc:miestoRealizacieProjektu,
+        jc:miestoRealizacieProjektuKraj,
+        jc:miestoRealizacieProjektuObec,
+        jc:nM2,
+        jc:nM3,
+        jc:nM4,
+        jc:nUTS1,
+        jc:nUTS1CODE,
+        jc:nUTS2,
+        jc:nUTS2CODE,
+        jc:nUTS3,
+        jc:nUTS3CODE,
+        jc:name,
+        jc:nazovKraja,
+        jc:nazovPrijimatela,
+        jc:oBJECTID1,
+        jc:obecNUTS,
+        jc:obecNazov,
+        jc:observedAt,
+        jc:obstaravaciaCena,
+        jc:oficialnyNazov,
+        jc:okresKraj,
+        jc:okresNazov,
+        jc:platnostProjektuOd,
+        jc:poznamka,
+        jc:rok,
+        jc:rokText,
+        jc:rokZaradenia,
+        jc:rozpocetAktualny,
+        jc:rozsahUzemiaProjektu,
+        jc:sUMCerpanieSpolu,
+        jc:sektorOvZPUpraveny,
+        jc:source,
+        jc:typObce,
+        jc:type,
+        jc:uradOvZPICO,
+        jc:uradOvZPOvZP,
+        jc:uroven,
+        jc:vYMERA,
+        jc:vecnaOblast,
+        jc:zauzivanyNazov,
+        jc:zauzivanyNazovKratky,
+        jc:zauzivanyNazovUpraveny ;
+    linkml:source_file_size 37298 ;
+    linkml:types jc:boolean,
+        jc:curie,
+        jc:date,
+        jc:date_or_datetime,
+        jc:datetime,
+        jc:decimal,
+        jc:double,
+        jc:float,
+        jc:integer,
+        jc:jsonpath,
+        jc:jsonpointer,
+        jc:ncname,
+        jc:nodeidentifier,
+        jc:objectidentifier,
+        jc:sparqlpath,
+        jc:string,
+        jc:time,
+        jc:uri,
+        jc:uriorcurie .
+

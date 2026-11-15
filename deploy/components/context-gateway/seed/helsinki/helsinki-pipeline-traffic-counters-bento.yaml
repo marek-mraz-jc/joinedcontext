@@ -1,0 +1,189 @@
+# The mapping of the traffic-counters pipeline (PL-03, T-5253): one TrafficFlowObserved per city
+# induction loop (LAM) station and direction with the motor vehicles it counted on the newest day
+# the source has closed (Helsinki time) and their mean speed, from the city's traffic measurement
+# API (lidotiku.api.hel.fi, CC BY 4.0), whose daily aggregate sums every class of vehicle. HEL116
+# counts bicycles ("Pyörämittaus" as its direction): its observation says so in vehicleType and
+# its id ends in -bicycle.
+#
+# The closed day, as the cycle-counters mapping finds it: the source loads every station in one
+# import about a day late (at 03:30 Helsinki time on 2026-10-23 the newest raw rows were of
+# 2026-10-21 23:45, and the aggregate of a day it has not finished is a partial sum). The newest
+# raw row of any station is where the import stopped; the closed day is the newest one that ends
+# at or before that row's quarter hour ends.
+#
+# Plausibility (owner 2026-10-22), as the cycle-counters mapping judges a station: no position,
+# outside Helsinki and a kilometre around it, a spare or a clone, a repeat, or nothing written for
+# three days leaves it out, its reason counted in one WARN line. A day's count below 0 or above
+# 300000 in one direction, or a direction the mapping does not know, leaves that row out; a mean
+# speed of 0 is a station that measures no speed and one above 150 km/h a broken reading: the
+# count stays and the speed is left out. A run that keeps no station fails, so the space keeps
+# the last counts instead of none; so does a run that writes no observation.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = if content().length() > 2097152 { throw("the counter list is %d bytes, more than the 2 MiB read".format(content().length())) } else { this }
+
+    - mapping: |
+        let box = { "w": 24.76, "s": 59.91, "e": 25.29, "n": 60.31 }
+        let all = this.results.features.or([]).map_each(f -> {
+          "id": f.properties.id.or(null),
+          "name": f.properties.name.or("").string().trim(),
+          "key": f.properties.name.or("").string().lowercase().re_replace_all("^[a-z]+ : ", "").trim(),
+          "lon": f.geometry.coordinates.index(0).catch(null),
+          "lat": f.geometry.coordinates.index(1).catch(null)
+        })
+        let judged = $all.enumerated().map_each(e -> e.value.assign({ "reason":
+          if e.value.id.type() != "number" { "noId" }
+          else if e.value.lon.type() != "number" || e.value.lat.type() != "number" { "noLocation" }
+          else if !(e.value.lon >= $box.w && e.value.lon <= $box.e && e.value.lat >= $box.s && e.value.lat <= $box.n) {
+            if e.value.lat >= $box.w && e.value.lat <= $box.e && e.value.lon >= $box.s && e.value.lon <= $box.n { "swappedCoordinates" } else { "outsideHelsinki" }
+          }
+          else if e.value.name.lowercase().re_match("clone|spare|logger|vaihtolaskin|varalaskin") { "spareOrClone" }
+          else if $all.slice(0, e.index).any(o -> o.id == e.value.id || (o.key == e.value.key && o.lon.type() == "number" && o.lat.type() == "number" && ((o.lon - e.value.lon) * 55660).pow(2) + ((o.lat - e.value.lat) * 111320).pow(2) < 400)) { "duplicate" }
+          else { null }
+        }))
+        root.counters = $judged.filter(c -> c.reason == null).map_each(c -> c.without("reason", "key"))
+        root.dropped = $judged.filter(c -> c.reason != null).fold({}, t -> t.tally.assign({ t.value.reason: t.tally.get(t.value.reason).or(0) + 1 }))
+
+    - switch:
+        - check: this.dropped.keys().length() > 0
+          processors:
+            - log: { level: WARN, message: 'traffic counters left out: ${! json("dropped") }' }
+
+    # A thrown message keeps its content: [] first, so nothing goes on to the stations.
+    - mapping: root = this.counters
+    - mapping: |
+        root = if this.length() == 0 { throw("no LAM station of the answer lies in Helsinki") } else { this }
+    - unarchive: { format: json_array }
+    - mapping: |
+        meta counter = this.id.string()
+        root = this
+
+    - branch:
+        request_map: root = ""
+        processors:
+          - try:
+              - http:
+                  url: https://lidotiku.api.hel.fi/api/observations/?counter=${! @counter }&page_size=1
+                  verb: GET
+                  headers: { Accept: application/json }
+                  timeout: 30s
+                  retries: 1
+              - mapping: |
+                  root = if content().length() > 65536 { throw("the newest row of a counter is more than 64 KiB") } else { { "rows": this.results.or([]) } }
+          - catch:
+              - log:
+                  level: WARN
+                  message: 'traffic counter ${! @counter } not read: ${! error() }'
+              - mapping: 'root = { "failed": true }'
+        result_map: root.latest = this
+
+    - mapping: |
+        root = this.without("latest")
+        root.failed = this.latest.failed.or(false)
+        root.newest = this.latest.rows.or([]).map_each(r -> r.datetime.ts_parse("2006-01-02T15:04:05Z07:00").ts_unix().catch(0)).fold(0, t -> if t.value > t.tally { t.value } else { t.tally })
+
+    - archive: { format: json_array }
+    - mapping: |
+        let now = now().ts_unix()
+        let cutoff = this.map_each(c -> c.newest).filter(t -> t <= $now + 86400).fold(0, t -> if t.value > t.tally { t.value } else { t.tally })
+        let next = ($cutoff + 900).ts_format("2006-01-02", "Europe/Helsinki")
+        let day = ($next + "T12:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_sub_iso8601("P1D").ts_format("2006-01-02", "UTC")
+        let from = (($day + "T00:00:00") + ($day + "T00:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_format("-07:00", "Europe/Helsinki")).ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+        let to = (($next + "T00:00:00") + ($next + "T00:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_format("-07:00", "Europe/Helsinki")).ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+        root = this.map_each(c -> c.assign({ "stale": c.newest < $now - 259200, "day": $day, "from": $from, "to": $to }))
+    - unarchive: { format: json_array }
+    - mapping: |
+        meta counter = this.id.string()
+        meta day = this.day
+        root = this
+
+    - branch:
+        request_map: root = if this.failed || this.stale { deleted() } else { "" }
+        processors:
+          - try:
+              - http:
+                  url: https://lidotiku.api.hel.fi/api/observations/aggregate/?counter=${! @counter }&period=day&measurementType=count&start_date=${! @day }&end_date=${! @day }&page_size=20
+                  verb: GET
+                  headers: { Accept: application/json }
+                  timeout: 30s
+                  retries: 1
+              - mapping: |
+                  root = if content().length() > 262144 { throw("the daily counts of a counter are more than 256 KiB") } else { { "rows": this.results.or([]) } }
+          - catch:
+              - log:
+                  level: WARN
+                  message: 'traffic counter ${! @counter } not read: ${! error() }'
+              - mapping: 'root = { "failed": true }'
+        result_map: root.counts = this
+
+    - branch:
+        request_map: root = if this.failed || this.stale { deleted() } else { "" }
+        processors:
+          - try:
+              - http:
+                  url: https://lidotiku.api.hel.fi/api/observations/aggregate/?counter=${! @counter }&period=day&measurementType=speed&start_date=${! @day }&end_date=${! @day }&page_size=20
+                  verb: GET
+                  headers: { Accept: application/json }
+                  timeout: 30s
+                  retries: 1
+              - mapping: |
+                  root = if content().length() > 262144 { throw("the daily speeds of a counter are more than 256 KiB") } else { { "rows": this.results.or([]) } }
+          - catch:
+              - mapping: 'root = { "rows": [] }'
+        result_map: root.speeds = this
+
+    - mapping: |
+        let directions = { "": null, "Pohjoiseen": "north", "Etelään": "south", "Itään": "east", "Länteen": "west", "IN": "inbound", "OUT": "outbound", "Pyörämittaus": null }
+        let day = this.day
+        let from = this.from
+        let to = this.to
+        let parse = this.counts.rows.or([]).filter(r -> r.startTime.type() == "string").map_each(r -> r.assign({ "t": r.startTime.ts_parse("2006-01-02T15:04:05Z07:00").ts_unix().catch(null) })).filter(r -> r.t != null)
+        let judged = $parse.filter(r -> r.t.ts_format("2006-01-02", "Europe/Helsinki") == $day).map_each(r -> r.assign({ "reason":
+          if r.aggregatedValue.type() != "number" || r.aggregatedValue < 0 || r.aggregatedValue > 300000 { "outOfRange" }
+          else if !$directions.keys().contains(r.direction.or("")) { "unknownDirection" }
+          else { null }
+        }))
+        let kept = $judged.filter(r -> r.reason == null)
+        let speeds = this.speeds.rows.or([]).filter(r -> r.startTime.type() == "string" && r.startTime.ts_parse("2006-01-02T15:04:05Z07:00").ts_unix().catch(0).ts_format("2006-01-02", "Europe/Helsinki") == $day)
+        let wild = $speeds.filter(r -> r.aggregatedValue.type() == "number" && r.aggregatedValue > 150).length()
+        let dropped = $judged.filter(r -> r.reason != null).fold(if $wild > 0 { { "speedOutOfRange": $wild } } else { {} }, t -> t.tally.assign({ t.value.reason: t.tally.get(t.value.reason).or(0) + 1 }))
+        let counter = this
+        let failed = this.failed || this.counts.failed.or(false)
+        let stale = this.stale
+        meta dropped = if $failed { "notRead" } else if $stale { "stale" } else if $kept.length() == 0 { "noCountForTheDay" } else if $dropped.keys().length() > 0 { $dropped.format_json(no_indent: true) } else { "" }
+        root = if $failed || $stale { [] } else {
+          $kept.map_each(r -> {
+            "d": r.direction.or(""),
+            "count": r.aggregatedValue.round(),
+            "speed": $speeds.filter(s -> s.direction.or("") == r.direction.or("") && s.aggregatedValue.type() == "number" && s.aggregatedValue > 0 && s.aggregatedValue <= 150).index(0).aggregatedValue.catch(null)
+          }).map_each(o -> {
+            "id": "urn:ngsi-ld:%v:%v:%v:lam-%v%v".format("TrafficFlowObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $counter.id.string(), if o.d == "Pyörämittaus" { "-bicycle" } else if $directions.get(o.d) == null { "" } else { "-" + $directions.get(o.d) }),
+            "type": "TrafficFlowObserved",
+            "name": { "type": "LanguageProperty", "languageMap": { "fi": $counter.name } },
+            "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [$counter.lon, $counter.lat] } },
+            "dateObserved": { "type": "Property", "value": $to },
+            "dateObservedFrom": { "type": "Property", "value": $from },
+            "dateObservedTo": { "type": "Property", "value": $to },
+            "intensity": { "type": "Property", "value": o.count, "observedAt": $to },
+            "averageVehicleSpeed": if o.speed == null { null } else { { "type": "Property", "value": (o.speed * 10).round() / 10, "unitCode": "KMH", "observedAt": $to } },
+            "vehicleType": if o.d == "Pyörämittaus" { { "type": "Property", "value": "bicycle" } } else { null },
+            "trafficDirection": if $directions.get(o.d) == null { null } else { { "type": "Property", "value": $directions.get(o.d) } },
+            "dataProvider": { "type": "Property", "value": "City of Helsinki, traffic measurement API (LAM)" },
+            "source": { "type": "Property", "value": "https://lidotiku.api.hel.fi/api/observations/aggregate/?counter=%v&period=day&measurementType=count".format($counter.id.string()) }
+          }.filter(entry -> entry.value != null))
+        }
+
+    - switch:
+        - check: '@dropped != ""'
+          processors:
+            - log:
+                level: WARN
+                message: 'traffic counter ${! @counter }: left out ${! @dropped }'
+
+    - archive: { format: json_array }
+    - mapping: root = this.flatten()
+    - mapping: |
+        root = if this.length() == 0 { throw("no LAM station wrote a count for the closed day") } else { this }
+    - unarchive: { format: json_array }

@@ -1,0 +1,92 @@
+# The mapping of the gtfs-routes pipeline (PL-03, T-3890): HSL's GTFS `agency.txt` and
+# `routes.txt`, as the archive read of `hsl-gtfs-routes` leaves them (one message per member, its
+# name in `archive_filename`, PL-72). One GtfsAgency per agency, one GtfsRoute per line with its
+# number, its name, what runs it and the agency that operates it. A line's stops in order and its
+# direction stay with PublicTransportRoute (transit-routes), since GTFS gives them only through
+# `trips.txt` and `stop_times.txt`, which are never read whole (T-3889 load budget).
+#
+# route_type is GTFS's extended code, kept as the basic one Smart Data Models allows: 0 and 900
+# run on rails in the street, 1 is the metro, 109 the commuter train, 4 a ferry, 3 and the 700s
+# buses.
+
+pipeline:
+  processors:
+    - mapping: |
+        map mode {
+          root = match this.string() {
+            "0" => "tram",
+            "900" => "tram",
+            "1" => "metro",
+            "109" => "train",
+            "4" => "ferry",
+            _ => "bus",
+          }
+        }
+        map basic {
+          root = match this.string() {
+            "900" => "0",
+            "109" => "2",
+            "0" => "0",
+            "1" => "1",
+            "2" => "2",
+            "4" => "4",
+            "5" => "5",
+            "6" => "6",
+            "7" => "7",
+            _ => "3",
+          }
+        }
+        map text {
+          root = this.or("").string().trim()
+        }
+        map urn {
+          root = "urn:ngsi-ld:%v:%v:%v:%v".format(this.type, env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id)
+        }
+        map link {
+          root = if this.re_match("^https?://[^\\s\"<>]+$") { { "type": "Property", "value": this } }
+        }
+        map agency {
+          let id = this.agency_id.apply("text")
+          root = if !$id.re_match("^[A-Za-z0-9._-]{1,64}$") || this.agency_name.apply("text") == "" { deleted() } else { {
+            "id": { "type": "GtfsAgency", "id": $id }.apply("urn"),
+            "type": "GtfsAgency",
+            "agencyName": { "type": "Property", "value": this.agency_name.apply("text") },
+            "page": this.agency_url.apply("text").apply("link"),
+            "timezone": if this.agency_timezone.apply("text") != "" { { "type": "Property", "value": this.agency_timezone.apply("text") } },
+            "language": if this.agency_lang.apply("text") != "" { { "type": "Property", "value": this.agency_lang.apply("text") } },
+            "phone": if this.agency_phone.apply("text") != "" { { "type": "Property", "value": this.agency_phone.apply("text") } },
+            "dataProvider": { "type": "Property", "value": "Helsinki Region Transport (HSL), GTFS" },
+            "source": { "type": "Property", "value": "https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip" }
+          }.filter(entry -> entry.value != null) }
+        }
+        map route {
+          let id = this.route_id.apply("text")
+          let agency = this.agency_id.apply("text")
+          root = if !$id.re_match("^[A-Za-z0-9._-]{1,64}$") { deleted() } else { {
+            "id": { "type": "GtfsRoute", "id": $id }.apply("urn"),
+            "type": "GtfsRoute",
+            "shortName": if this.route_short_name.apply("text") != "" { { "type": "Property", "value": this.route_short_name.apply("text") } },
+            "name": if this.route_long_name.apply("text") != "" { { "type": "LanguageProperty", "languageMap": { "fi": this.route_long_name.apply("text") } } },
+            "routeType": { "type": "Property", "value": this.route_type.apply("text").apply("basic") },
+            "transportMode": { "type": "Property", "value": this.route_type.apply("text").apply("mode") },
+            "operatedBy": if $agency.re_match("^[A-Za-z0-9._-]{1,64}$") { { "type": "Relationship", "object": { "type": "GtfsAgency", "id": $agency }.apply("urn") } },
+            "page": this.route_url.apply("text").apply("link"),
+            "dataProvider": { "type": "Property", "value": "Helsinki Region Transport (HSL), GTFS" },
+            "source": { "type": "Property", "value": "https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip" }
+          }.filter(entry -> entry.value != null) }
+        }
+        root = match @archive_filename.or("") {
+          "agency.txt" => content().string().parse_csv().map_each(r -> r.apply("agency")),
+          "routes.txt" => content().string().parse_csv().map_each(r -> r.apply("route")),
+          _ => [],
+        }
+
+    # One entity per message, and its URN into the runner's `gtfs` cache: hsl-hfp-vehicles links a
+    # vehicle only to a line or stop this read wrote (T-4052). The runner batches the messages
+    # back for the gateway as it does any array.
+    - unarchive: { format: json_array }
+    - cache:
+        resource: gtfs
+        operator: set
+        key: ${! json("id") }
+        value: '1'

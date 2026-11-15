@@ -1,0 +1,64 @@
+# The mapping of the tourist-stops and tourist-parking pipelines (PL-03): one OnStreetParking for
+# tourist coaches (allowedVehicleType bus) per stop of the open WFS layer
+# `Matkailuliikenne_pysakit_piste` and per parking place of `Matkailuliikenne_pysakointipaikat_piste`.
+# Both pipelines run this one text: the layer a record comes from, the prefix of its feature id,
+# gives its id, its kind and its source.
+#
+# A place is keyed by the layer's row id; its sign's number (a stop) or letter (a parking place) is
+# its zoneCode. The time limit (`aika`) makes it shortTerm; a place without one is public. The layers
+# write each text in Finnish, English and Russian; a stop's time limit has no English column, and
+# its digits read the same in English.
+#
+# `expiresAt` (NGSI-LD 4.22): a place leaves every read 21 days after the layer last listed it,
+# three weekly runs.
+
+pipeline:
+  processors:
+    - mapping: |
+        let lease = (now().ts_unix() + 1814400).ts_format("2006-01-02T15:04:05Z", "UTC")
+        # The WFS writes a field it has no value for as null or the string "None".
+        map text {
+          root = if this == null || this.string().trim() == "" || this.string() == "None" { null } else { this.string().trim().re_replace_all("\\s+", " ") }
+        }
+        root = this.features.or([]).filter(f -> f.id.or("").string().re_match("^Matkailuliikenne_(pysakit|pysakointipaikat)_piste[.][0-9]{1,10}$") && f.properties.id.or("").string().re_match("^[0-9]{1,10}$") && f.geometry.type.or("") == "Point" && f.properties.p_nimi.apply("text") != null).map_each(f -> {
+          "p": f.properties,
+          "layer": f.id.string().split(".").index(0),
+          "f": f
+        }).map_each(s -> s.assign({
+          "stop": s.layer == "Matkailuliikenne_pysakit_piste",
+          "code": s.p.p_numero.or(s.p.p_kirjain).apply("text"),
+          "time": s.p.aika.apply("text"),
+          "timeEn": s.p.aika_en.apply("text").or(if s.p.aika.apply("text").or("").re_match("^[0-9/ ]+(min|h)$") { s.p.aika.apply("text") } else { null }),
+          "season": s.p.kausi.apply("text").or("").re_replace_all("^\\((.*)\\)$", "$1").trim(),
+          "note": s.p.lisatieto.apply("text"),
+          "noteEn": s.p.lisati_eng.or(s.p.lisati_en).apply("text")
+        })).map_each(s -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v%v".format("OnStreetParking", env("JC_ORG_DOMAIN"), env("JC_SPACE"), if s.stop { "tourist-stop-" } else { "tourist-parking-" }, s.p.id.string()),
+          "type": "OnStreetParking",
+          "expiresAt": $lease,
+          "name": { "type": "LanguageProperty", "languageMap": {
+            "fi": s.p.p_nimi.apply("text"),
+            "en": s.p.p_nimi_en.apply("text"),
+            "ru": s.p.p_nimi_ven.apply("text")
+          }.filter(entry -> entry.value != null) },
+          "category": { "type": "Property", "value": if s.time.or("").re_match("[0-9]") { ["shortTerm"] } else { ["public"] } },
+          "allowedVehicleType": { "type": "Property", "value": ["bus"] },
+          "zoneCode": if s.code.or("").re_match("^[0-9A-Za-z]{1,3}$") { { "type": "Property", "value": s.code } } else { null },
+          "description": { "type": "LanguageProperty", "languageMap": {
+            "fi": [
+              if s.stop { "Matkailuliikenteen pysäkki." } else { "Matkailuliikenteen pysäköintipaikka." },
+              if s.time != null { "Aika: " + s.time } else { null },
+              if s.season != "" { "Kausi: " + s.season } else { null },
+              s.note
+            ].filter(l -> l != null).join("\n"),
+            "en": [
+              if s.stop { "Tourist coach stop." } else { "Tourist coach parking place." },
+              if s.timeEn != null { "Time: " + s.timeEn } else { null },
+              if s.season != "" { "Season: " + s.season } else { null },
+              s.noteEn
+            ].filter(l -> l != null).join("\n")
+          } },
+          "location": { "type": "GeoProperty", "value": s.f.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Urban Environment Division" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:" + s.layer }
+        }.filter(entry -> entry.value != null))

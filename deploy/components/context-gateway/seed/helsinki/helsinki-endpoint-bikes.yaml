@@ -1,0 +1,58 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-bikes
+  namespace: helsinki
+  title: { en: Helsinki city bike stations }
+  description:
+    fi: 'Helsingin ja Espoon kaupunkipyöräasemat: sijainti, kapasiteetti sekä juuri nyt vapaat pyörät ja telineet (operaattorin GBFS-syöte, ODbL 1.0); Vantaan kaupunkipyöräasemat: sijainti, osoite ja telineiden määrä ilman reaaliaikaista tilaa (HSL, CC BY 4.0).'
+    en: "Helsinki's and Espoo's city bike stations: location, capacity and the bikes and docks free right now (the operator's GBFS feed, ODbL 1.0); Vantaa's city bike stations: location, address and number of docks, without a live count (HSL, CC BY 4.0)."
+spec:
+  contextSpaceRef: helsinki
+  slug: scsd2eehkx42n53z2zyd6vshfh7s7irf
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-bikes
+  # `ogc-features` is the OGC API Features surface dev-smoke reads per Endpoint kind (T-3957).
+  enabledRepresentations: [ngsi-ld, csv, mcp, ogc-features, websocket, odata]
+  # The organizer's contact line stays in the space for the city's own coordination and is
+  # served by no public endpoint (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  # The catalogue entry (EP-62..EP-65): one dataset in the hel-fi catalogue, one resource per
+  # representation, and a DataStore mirror of the CSV rows reloaded on every publish run.
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: ODC_ODBL
+    attribution:
+      fi: Sisältää Kaupunkipyörät-syötteen dataa (Inurba), ODbL 1.0, ja Vantaan kaupunkipyöräasemat (HSL), CC BY 4.0
+      sv: Innehåller data från stadscykelflödet (Inurba), ODbL 1.0, och Vandas stadscykelstationer (HRT), CC BY 4.0
+      en: Contains data from the City Bikes feed (Inurba), ODbL 1.0, and City Bike Vantaa's stations (HSL), CC BY 4.0
+    themes: [TRAN]
+    keywords:
+      fi: [kaupunkipyörät, pyöräasemat, liikkuminen]
+      sv: [stadscyklar, cykelstationer, mobilitet]
+      en: [city bikes, bike stations, mobility]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: CONT
+    source:
+      - url: https://gbfs.theta.fifteen.eu/gbfs/2.2/helsinki/gbfs.json
+        title:
+          fi: Kaupunkipyörät, GBFS-syöte
+          en: City Bikes (Helsinki), GBFS feed
+        description:
+          fi: Operaattorin avoin GBFS 2.2 -syöte asemista ja niiden tilasta, ODbL 1.0.
+          en: The operator's open GBFS 2.2 feed of stations and their status, ODbL 1.0.
+      - url: https://hri.fi/data/en_GB/dataset/vantaan-kaupunkipyoraasemat
+        title: { fi: Vantaan kaupunkipyöräasemat, en: City bicycle stations of Vantaa }
+        description:
+          fi: HSL:n rekisteri Vantaan asemista, GeoJSON (WGS84), CC BY 4.0. Luetaan päivittäin (putki vantaa-bikes).
+          en: HSL's register of Vantaa's stations, as GeoJSON (WGS84), CC BY 4.0. Read daily (pipeline vantaa-bikes).
+    pipelineRef: { kind: Pipeline, name: citybikes-gbfs }

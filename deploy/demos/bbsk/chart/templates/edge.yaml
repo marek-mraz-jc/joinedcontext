@@ -1,0 +1,78 @@
+{{- /*
+  The demo's own public host (T-4687), serving its landing page (T-4740), on the cluster's ingress controller and not on the
+  platform's APISIX, so removing the demo touches no platform route. One explicit certificate by
+  HTTP-01 for the one name, as the platform edge does (T-0045). Every answer says noindex, so a
+  search engine never lists a demo as BBSK's site.
+*/}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$" .Values.host) }}
+{{- fail (printf "host: %q is not a host name (T-4687)" .Values.host) }}
+{{- end }}
+{{- $ns := .Release.Namespace }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: demo-bbsk
+  namespace: {{ $ns }}
+spec:
+  secretName: demo-bbsk-tls
+  issuerRef:
+    name: {{ .Values.clusterIssuer | quote }}
+    kind: ClusterIssuer
+  dnsNames:
+    - {{ .Values.host | quote }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: demo-bbsk-headers
+  namespace: {{ $ns }}
+spec:
+  headers:
+    stsSeconds: 31536000
+    contentTypeNosniff: true
+    referrerPolicy: no-referrer
+    customResponseHeaders:
+      X-Robots-Tag: "noindex, nofollow"
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: bsi-tr-02102
+  namespace: {{ $ns }}
+spec:
+  # The platform edge's policy (T-0044): TLS 1.2 and 1.3, forward-secret AEAD suites only.
+  minVersion: VersionTLS12
+  maxVersion: VersionTLS13
+  cipherSuites:
+    - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+    - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+    - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+  curvePreferences:
+    - CurveP384
+    - CurveP256
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-bbsk
+  namespace: {{ $ns }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-demo-bbsk-headers@kubernetescrd" $ns | quote }}
+    traefik.ingress.kubernetes.io/router.tls.options: {{ printf "%s-bsi-tr-02102@kubernetescrd" $ns | quote }}
+spec:
+  ingressClassName: {{ .Values.ingressClass | quote }}
+  tls:
+    - hosts: [{{ .Values.host | quote }}]
+      secretName: demo-bbsk-tls
+  rules:
+    - host: {{ .Values.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-bbsk-landing
+                port:
+                  number: 8080

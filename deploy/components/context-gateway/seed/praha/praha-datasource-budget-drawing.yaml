@@ -1,0 +1,15 @@
+# What the City of Prague has drawn of each line of its 2026 budget, 1612 lines, updated monthly (LKOD d8dab0f5).
+# No key. The catalogue declares the data free of any rights, as the budget's.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mhmp-budget-drawing
+  namespace: praha
+  title: { en: Budget execution 2026 (MHMP), cs: Čerpání rozpočtu hl. m. Prahy 2026 (MHMP) }
+spec:
+  type: http
+  http:
+    url: https://opendata-storage.praha.eu/UCT_cerpani_rozpoctu/cerpani_rozpoctu/Zdroje/2026/Cerpani_rozpoctu_MHMP_2026.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

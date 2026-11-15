@@ -1,0 +1,52 @@
+{
+ "type": "FeatureCollection",
+ "name": "fsv_cur_fsv_verejnawc_b_fsv_cur_fsv_verejnawc_b",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+  }
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "objectid": 5508,
+    "lokalita": "HLAVNÍ NÁDRAŽÍ (ČD) - WC  I",
+    "adresa": "Praha 2, Wilsonova 8",
+    "id_poskyt": 43,
+    "globalid": "{5A89B8AF-2FE2-4F0B-A484-9DA5A81D689C}",
+    "vozickari": 1,
+    "umisteni_podrob": "2",
+    "typ": 1
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.435155439000027,
+     50.08262204700003
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "objectid": 5509,
+    "lokalita": "Obchodní centrum Galerie Harfa- přízemí",
+    "adresa": "Praha 9, Českomoravská 2420/15a",
+    "id_poskyt": 43,
+    "globalid": "{25C9432F-59F5-4417-AAB5-872356745659}",
+    "vozickari": 1,
+    "umisteni_podrob": "4",
+    "typ": 3
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.49119859800004,
+     50.10426965500005
+    ]
+   }
+  }
+ ]
+}

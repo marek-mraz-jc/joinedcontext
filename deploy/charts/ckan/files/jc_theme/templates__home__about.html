@@ -1,0 +1,28 @@
+{% ckan_extends %}
+
+{# The installation's About page (T-3028). CKAN's stock text advertised CKAN and linked other
+   countries' portals; a sysadmin's own `ckan.site_about` still wins over this one. #}
+{% block about %}
+  {% if g.site_about %}
+    {{ super() }}
+  {% else %}
+    {% set about = h.jc_about_site() %}
+    <h1 class="page-heading">{{ h.jc_t('about_site') }}</h1>
+    <p class="jc-about-lead">{{ about.intro }}</p>
+    <p>{{ h.jc_t('about_data') }}</p>
+    <p><a class="btn btn-primary" href="{{ h.url_for(h.default_package_type() ~ '.search') }}">{{ h.jc_t('all_datasets') }}</a></p>
+    <h2 id="api">{{ h.jc_t('about_machines') }}</h2>
+    <dl class="jc-about-list">
+      <dt>{{ h.jc_t('catalogue_api') }}</dt>
+      <dd><a href="{{ h.url_for('api.action', logic_function='package_list', ver=3) }}">{{ h.url_for('api.action', logic_function='package_list', ver=3, qualified=True) }}</a><br>{{ h.jc_t('about_api') }}</dd>
+      {% if about.dcat %}
+        <dt>{{ h.jc_t('about_dcat') }}</dt>
+        <dd><a href="{{ h.url_for('/catalog.ttl') }}">{{ h.url_for('/catalog.ttl', qualified=True) }}</a><br>{{ h.jc_t('about_dcat_what') }}</dd>
+      {% endif %}
+      {% if about.email %}
+        <dt>{{ h.jc_t('about_contact') }}</dt>
+        <dd><a href="mailto:{{ about.email }}">{{ about.email }}</a></dd>
+      {% endif %}
+    </dl>
+  {% endif %}
+{% endblock %}

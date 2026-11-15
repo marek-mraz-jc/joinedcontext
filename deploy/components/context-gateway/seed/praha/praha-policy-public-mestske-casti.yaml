@@ -1,0 +1,29 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-mestske-casti
+  namespace: praha
+  title: { cs: 'Veřejné čtení: městské části' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-mestske-casti, and only
+  # its types: the space's other types stay with their own datasets (T-4344), and only the districts:
+  # the planning balance units (area-buc-) stay with praha-bilancni-celky (T-5426).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: AdministrativeArea
+          idPattern: ^urn:ngsi-ld:AdministrativeArea:[a-z0-9.-]+:praha-mesto:district-[0-9]{6}$

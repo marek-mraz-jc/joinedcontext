@@ -1,0 +1,44 @@
+# Population change in Bratislava's districts between 2000 and 2021: one public dataset of the hub (T-5274), item 7d708f03d1f743e89853b7177264f554, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-zmena-poctu-obyvatelov-v-okresoch-medzi
+  namespace: bratislava
+  title:
+    sk: Zmena počtu obyvateľov v okresoch Bratislavy medzi rokom 2000 a 2021
+    en: Population change in Bratislava's districts between 2000 and 2021
+  description:
+    sk: 'Ukazovatele tabuľky „Zmena počtu obyvateľov v okresoch Bratislavy medzi rokom 2000 a 2021“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Population change in Bratislava's districts between 2000 and 2021”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: tgsggea7y3pw24bm2ksr2ehfkvsyoo6p
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-zmena-poctu-obyvatelov-v-okresoch-medzi
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/7d708f03d1f743e89853b7177264f554
+        title:
+          sk: Zmena počtu obyvateľov v okresoch Bratislavy medzi rokom 2000 a 2021
+          en: Population change in Bratislava's districts between 2000 and 2021
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Zmena počtu obyvateľov v okresoch Bratislavy medzi rokom 2000 a 2021. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Population change in Bratislava's districts between 2000 and 2021. Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

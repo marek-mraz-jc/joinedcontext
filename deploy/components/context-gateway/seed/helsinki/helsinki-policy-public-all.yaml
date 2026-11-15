@@ -1,0 +1,62 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-all
+  namespace: helsinki
+  title: { en: 'Public read: everything in the space' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: role, id: public }
+  # Discovery beside the reads (T-4258, EP-116): which types and attributes the Endpoint holds,
+  # narrowed to this grant (EP-26), so an anonymous MCP client finds them before it queries.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Event
+        - type: BikeHireDockingStation
+        - type: Vehicle
+        - type: GtfsStop
+        - type: PublicTransportRoute
+        # HSL's GTFS static feed (T-3890).
+        - type: GtfsStation
+        - type: GtfsAgency
+        - type: GtfsDailyDepartures
+        - type: GtfsRoute
+        - type: GtfsShape
+        # Fintraffic LIIPI's park and ride sites of the HSL area (T-3894).
+        - type: OffStreetParking
+        # The city's open registers (T-2787), each CC-BY-4.0 and free of personal data by their
+        # mappings: the contact lines, applicants and contractors are never written.
+        - type: PointOfInterest
+        - type: OnStreetParking
+        - type: CityWork
+        - type: AdministrativeArea
+        # The cultural heritage maps (T-5670).
+        - type: HeritageArea
+        # The junctions with traffic lights and warning lights (T-5286).
+        - type: TrafficSignalJunction
+        # The noise survey and the tree register (T-5378).
+        - type: NoiseZone
+        - type: Tree
+        # The nature information system (T-5823).
+        - type: NatureSite
+        # The reports the city published in its feedback system (T-5257): the reporter's name, contact
+        # details and photos are never written.
+        - type: ServiceRequest
+    # Every attribute but refPointOfInterest, as public-water-quality (T-5089): a sensor's Service Map
+    # unit is often no entity a public Endpoint holds.
+    - entities:
+        - type: WaterQualityObserved
+      propertyNames: [dataProvider, dateObserved, location, name, source, temperature]

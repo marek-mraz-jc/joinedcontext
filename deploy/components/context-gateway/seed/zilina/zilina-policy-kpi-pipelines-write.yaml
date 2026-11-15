@@ -1,0 +1,16 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: kpi-pipelines-write
+  namespace: zilina
+  title: { sk: Kanály zapisujú priestor zilina-kpi, en: The pipelines write zilina-kpi }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-kpi }
+  assigner: did:web:zilina.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # deleteBatch and queryBatch for the stale-entity sweep: one pipeline writes this space and
+  # expires what its source no longer holds (PL-64).
+  operations: [upsertBatch, createBatch, queryBatch, queryEntity, deleteBatch]
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator

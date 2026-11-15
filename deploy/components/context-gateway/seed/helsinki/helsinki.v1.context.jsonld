@@ -1,0 +1,702 @@
+{
+  "@context": {
+    "@vocab": "https://smartdatamodels.org/",
+    "AdministrativeArea": {
+      "@id": "jc:AdministrativeArea"
+    },
+    "AirQualityObserved": {
+      "@id": "sdm:AirQualityObserved"
+    },
+    "Alert": {
+      "@id": "sdm:Alert"
+    },
+    "Article": {
+      "@id": "jc:Article"
+    },
+    "BikeHireDockingStation": {
+      "@id": "sdm:BikeHireDockingStation"
+    },
+    "CityWork": {
+      "@id": "sdm:CityWork"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "Event": {
+      "@id": "sdm:Event"
+    },
+    "GtfsAgency": {
+      "@id": "sdm:GtfsAgency"
+    },
+    "GtfsDailyDepartures": {
+      "@id": "jc:GtfsDailyDepartures"
+    },
+    "GtfsRoute": {
+      "@id": "sdm:GtfsRoute"
+    },
+    "GtfsShape": {
+      "@id": "sdm:GtfsShape"
+    },
+    "GtfsStation": {
+      "@id": "sdm:GtfsStation"
+    },
+    "GtfsStop": {
+      "@id": "sdm:GtfsStop"
+    },
+    "HeritageArea": {
+      "@id": "jc:HeritageArea"
+    },
+    "KeyPerformanceIndicator": {
+      "@id": "sdm:KeyPerformanceIndicator"
+    },
+    "KpiPeriod": {
+      "@id": "jc:KpiPeriod"
+    },
+    "NatureSite": {
+      "@id": "jc:NatureSite"
+    },
+    "NoiseZone": {
+      "@id": "jc:NoiseZone"
+    },
+    "OffStreetParking": {
+      "@id": "sdm:OffStreetParking"
+    },
+    "OnStreetParking": {
+      "@id": "sdm:OnStreetParking"
+    },
+    "PointOfInterest": {
+      "@id": "sdm:PointOfInterest"
+    },
+    "PostalAddress": {
+      "@id": "schema:PostalAddress"
+    },
+    "PublicTransportRoute": {
+      "@id": "sdm:PublicTransportRoute"
+    },
+    "Tree": {
+      "@id": "jc:Tree"
+    },
+    "Vehicle": {
+      "@id": "sdm:Vehicle"
+    },
+    "WaterQualityObserved": {
+      "@id": "sdm:WaterQualityObserved"
+    },
+    "WeatherObserved": {
+      "@id": "sdm:WeatherObserved"
+    },
+    "address": {
+      "@id": "schema:address"
+    },
+    "addressCountry": {
+      "@id": "schema:addressCountry"
+    },
+    "addressLocality": {
+      "@id": "schema:addressLocality"
+    },
+    "agencyName": {
+      "@id": "sdm:agencyName"
+    },
+    "airQualityIndex": {
+      "@id": "sdm:airQualityIndex",
+      "@type": "xsd:float"
+    },
+    "alertSource": {
+      "@id": "sdm:alertSource"
+    },
+    "allowedVehicleType": {
+      "@id": "sdm:allowedVehicleType"
+    },
+    "area": {
+      "@id": "sdm:area"
+    },
+    "areaHectares": {
+      "@id": "jc:areaHectares",
+      "@type": "xsd:float"
+    },
+    "assessmentPeriod": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:assessmentPeriod"
+    },
+    "availableBikeNumber": {
+      "@id": "sdm:availableBikeNumber",
+      "@type": "xsd:integer"
+    },
+    "availableSpotNumber": {
+      "@id": "sdm:availableSpotNumber",
+      "@type": "xsd:integer"
+    },
+    "calculatedBy": {
+      "@id": "sdm:calculatedBy"
+    },
+    "calculationFrequency": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "sdm:calculationFrequency"
+    },
+    "calculationPeriod": {
+      "@id": "sdm:calculationPeriod"
+    },
+    "capacityByType": {
+      "@id": "jc:capacityByType",
+      "@type": "@json"
+    },
+    "category": {
+      "@id": "sdm:category"
+    },
+    "cause": {
+      "@id": "jc:cause"
+    },
+    "contactPoint": {
+      "@id": "schema:contactPoint"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dateIssued": {
+      "@id": "sdm:dateIssued",
+      "@type": "xsd:dateTime"
+    },
+    "dateModified": {
+      "@id": "sdm:dateModified",
+      "@type": "xsd:dateTime"
+    },
+    "dateObserved": {
+      "@id": "sdm:dateObserved",
+      "@type": "xsd:dateTime"
+    },
+    "datePublished": {
+      "@id": "schema:datePublished",
+      "@type": "xsd:dateTime"
+    },
+    "delay": {
+      "@id": "jc:delay",
+      "@type": "xsd:integer"
+    },
+    "departures": {
+      "@id": "jc:departures",
+      "@type": "@json"
+    },
+    "description": {
+      "@container": "@language",
+      "@id": "schema:description"
+    },
+    "dimensionKey": {
+      "@id": "jc:dimensionKey"
+    },
+    "directionId": {
+      "@id": "jc:directionId",
+      "@type": "xsd:integer"
+    },
+    "distanceTravelled": {
+      "@id": "sdm:distanceTravelled",
+      "@type": "xsd:float"
+    },
+    "districtCode": {
+      "@id": "jc:districtCode"
+    },
+    "divisionLevel": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:divisionLevel"
+    },
+    "effect": {
+      "@id": "jc:effect"
+    },
+    "endDate": {
+      "@id": "schema:endDate",
+      "@type": "xsd:dateTime"
+    },
+    "eventStatus": {
+      "@id": "schema:eventStatus"
+    },
+    "fareZone": {
+      "@id": "jc:fareZone"
+    },
+    "fleetVehicleId": {
+      "@id": "sdm:fleetVehicleId"
+    },
+    "freeSlotNumber": {
+      "@id": "sdm:freeSlotNumber",
+      "@type": "xsd:integer"
+    },
+    "from": {
+      "@id": "sdm:from",
+      "@type": "xsd:date"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "hasParentStation": {
+      "@id": "sdm:hasParentStation",
+      "@type": "@id"
+    },
+    "hasStop": {
+      "@id": "sdm:hasStop",
+      "@type": "@id"
+    },
+    "heading": {
+      "@id": "sdm:heading",
+      "@type": "xsd:float"
+    },
+    "headsign": {
+      "@id": "jc:headsign"
+    },
+    "heritageCategory": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:heritageCategory"
+    },
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "image": {
+      "@id": "schema:image",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "junctionNumber": {
+      "@id": "jc:junctionNumber"
+    },
+    "kpiValue": {
+      "@id": "sdm:kpiValue",
+      "@type": "xsd:float"
+    },
+    "language": {
+      "@id": "sdm:language"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@container": "@language",
+      "@id": "schema:name"
+    },
+    "natureSiteCategory": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:natureSiteCategory"
+    },
+    "nearbyParking": {
+      "@id": "jc:nearbyParking",
+      "@type": "@id"
+    },
+    "nextStop": {
+      "@id": "jc:nextStop",
+      "@type": "@id"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "noiseLevelHigh": {
+      "@id": "jc:noiseLevelHigh",
+      "@type": "xsd:float"
+    },
+    "noiseLevelLow": {
+      "@id": "jc:noiseLevelLow",
+      "@type": "xsd:float"
+    },
+    "noiseSource": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:noiseSource"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "occupancy": {
+      "@id": "jc:occupancy",
+      "@type": "xsd:integer"
+    },
+    "onRoute": {
+      "@id": "jc:onRoute",
+      "@type": "@id"
+    },
+    "openingHours": {
+      "@container": "@language",
+      "@id": "schema:openingHours"
+    },
+    "operatedBy": {
+      "@id": "sdm:operatedBy",
+      "@type": "@id"
+    },
+    "organization": {
+      "@id": "sdm:organization"
+    },
+    "page": {
+      "@id": "sdm:page",
+      "@type": "xsd:anyURI"
+    },
+    "permitEnd": {
+      "@id": "jc:permitEnd",
+      "@type": "xsd:date"
+    },
+    "permitKind": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:permitKind"
+    },
+    "permitNumber": {
+      "@id": "jc:permitNumber"
+    },
+    "permitStart": {
+      "@id": "jc:permitStart",
+      "@type": "xsd:date"
+    },
+    "permitStatus": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:permitStatus"
+    },
+    "phone": {
+      "@id": "sdm:phone"
+    },
+    "plantingYear": {
+      "@id": "jc:plantingYear",
+      "@type": "xsd:integer"
+    },
+    "pm10": {
+      "@id": "sdm:pm10",
+      "@type": "xsd:float"
+    },
+    "pm25": {
+      "@id": "sdm:pm25",
+      "@type": "xsd:float"
+    },
+    "postalCode": {
+      "@id": "schema:postalCode"
+    },
+    "precipitation": {
+      "@id": "sdm:precipitation",
+      "@type": "xsd:float"
+    },
+    "process": {
+      "@id": "sdm:process"
+    },
+    "publicAreaPermits": {
+      "@id": "jc:publicAreaPermits",
+      "@type": "@id"
+    },
+    "refArea": {
+      "@id": "jc:refArea",
+      "@type": "@id"
+    },
+    "refDistrict": {
+      "@id": "jc:refDistrict",
+      "@type": "@id"
+    },
+    "refNearestStation": {
+      "@id": "jc:refNearestStation",
+      "@type": "@id"
+    },
+    "refPointOfInterest": {
+      "@id": "sdm:refPointOfInterest",
+      "@type": "@id"
+    },
+    "refRoute": {
+      "@id": "jc:refRoute",
+      "@type": "@id"
+    },
+    "refStop": {
+      "@id": "jc:refStop",
+      "@type": "@id"
+    },
+    "relativeHumidity": {
+      "@id": "sdm:relativeHumidity",
+      "@type": "xsd:float"
+    },
+    "roadSurfaceTemperature": {
+      "@id": "sdm:roadSurfaceTemperature",
+      "@type": "xsd:float"
+    },
+    "route": {
+      "@id": "sdm:route"
+    },
+    "routeAlerts": {
+      "@id": "jc:routeAlerts",
+      "@type": "@id"
+    },
+    "routeShortName": {
+      "@id": "jc:routeShortName"
+    },
+    "routeType": {
+      "@id": "sdm:routeType"
+    },
+    "routes": {
+      "@id": "jc:routes",
+      "@type": "@id"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "scheduledDepartures": {
+      "@id": "jc:scheduledDepartures",
+      "@type": "xsd:integer"
+    },
+    "serviceCategory": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:serviceCategory"
+    },
+    "severity": {
+      "@id": "sdm:severity"
+    },
+    "shex": "http://www.w3.org/ns/shex#",
+    "shortName": {
+      "@id": "sdm:shortName"
+    },
+    "signalKind": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:signalKind"
+    },
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "species": {
+      "@id": "jc:species"
+    },
+    "speed": {
+      "@id": "sdm:speed",
+      "@type": "xsd:float"
+    },
+    "startDate": {
+      "@id": "schema:startDate",
+      "@type": "xsd:dateTime"
+    },
+    "statisticsTable": {
+      "@id": "jc:statisticsTable"
+    },
+    "status": {
+      "@id": "sdm:status"
+    },
+    "stewardNote": {
+      "@id": "jc:stewardNote"
+    },
+    "stopAlerts": {
+      "@id": "jc:stopAlerts",
+      "@type": "@id"
+    },
+    "stopCode": {
+      "@id": "jc:stopCode"
+    },
+    "stopSequence": {
+      "@id": "jc:stopSequence"
+    },
+    "streetAddress": {
+      "@id": "schema:streetAddress"
+    },
+    "subCategory": {
+      "@id": "sdm:subCategory"
+    },
+    "temperature": {
+      "@id": "sdm:temperature",
+      "@type": "xsd:float"
+    },
+    "timezone": {
+      "@id": "sdm:timezone"
+    },
+    "to": {
+      "@id": "sdm:to",
+      "@type": "xsd:date"
+    },
+    "totalSlotNumber": {
+      "@id": "sdm:totalSlotNumber",
+      "@type": "xsd:integer"
+    },
+    "totalSpotNumber": {
+      "@id": "sdm:totalSpotNumber",
+      "@type": "xsd:integer"
+    },
+    "transportMode": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:transportMode"
+    },
+    "transportationType": {
+      "@id": "sdm:transportationType",
+      "@type": "xsd:integer"
+    },
+    "treeSetting": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:treeSetting"
+    },
+    "treeSite": {
+      "@id": "jc:treeSite"
+    },
+    "trunkDiameterClass": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:trunkDiameterClass"
+    },
+    "type": "@type",
+    "unknownReference": {
+      "@id": "jc:unknownReference"
+    },
+    "updatedAt": {
+      "@id": "sdm:updatedAt",
+      "@type": "xsd:dateTime"
+    },
+    "url": {
+      "@id": "schema:url",
+      "@type": "xsd:anyURI"
+    },
+    "validFrom": {
+      "@id": "sdm:validFrom",
+      "@type": "xsd:dateTime"
+    },
+    "validTo": {
+      "@id": "sdm:validTo",
+      "@type": "xsd:dateTime"
+    },
+    "valueClass": {
+      "@id": "jc:valueClass"
+    },
+    "vehicleType": {
+      "@id": "sdm:vehicleType"
+    },
+    "waterQualityObservations": {
+      "@id": "jc:waterQualityObservations",
+      "@type": "@id"
+    },
+    "wheelChairAccessible": {
+      "@id": "sdm:wheelChairAccessible"
+    },
+    "windDirection": {
+      "@id": "sdm:windDirection",
+      "@type": "xsd:float"
+    },
+    "windSpeed": {
+      "@id": "sdm:windSpeed",
+      "@type": "xsd:float"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zoneCode": {
+      "@id": "jc:zoneCode"
+    },
+    "ServiceRequest": {
+      "@id": "sdm:service_requests"
+    },
+    "address_string": {
+      "@id": "sdm:address_string"
+    },
+    "agency_responsible": {
+      "@id": "sdm:agency_responsible"
+    },
+    "expected_datetime": {
+      "@id": "sdm:expected_datetime",
+      "@type": "xsd:dateTime"
+    },
+    "isAccessibleForFree": {
+      "@id": "schema:isAccessibleForFree",
+      "@type": "xsd:boolean"
+    },
+    "requested_datetime": {
+      "@id": "sdm:requested_datetime",
+      "@type": "xsd:dateTime"
+    },
+    "service_code": {
+      "@id": "sdm:service_code"
+    },
+    "service_name": {
+      "@id": "sdm:service_name"
+    },
+    "service_request_id": {
+      "@id": "sdm:service_request_id"
+    },
+    "status_notes": {
+      "@id": "sdm:status_notes"
+    },
+    "subEvent": {
+      "@id": "sdm:subEvent",
+      "@type": "@id"
+    },
+    "superEvent": {
+      "@id": "sdm:superEvent",
+      "@type": "@id"
+    },
+    "thematic": {
+      "@id": "sdm:thematic"
+    },
+    "updated_datetime": {
+      "@id": "sdm:updated_datetime",
+      "@type": "xsd:dateTime"
+    },
+    "webSite": {
+      "@id": "sdm:webSite",
+      "@type": "xsd:anyURI"
+    },
+    "TrafficFlowObserved": {
+      "@id": "sdm:TrafficFlowObserved"
+    },
+    "TrafficSignalJunction": {
+      "@id": "jc:TrafficSignalJunction"
+    },
+    "averageVehicleSpeed": {
+      "@id": "sdm:averageVehicleSpeed",
+      "@type": "xsd:float"
+    },
+    "dateObservedFrom": {
+      "@id": "sdm:dateObservedFrom",
+      "@type": "xsd:dateTime"
+    },
+    "dateObservedTo": {
+      "@id": "sdm:dateObservedTo",
+      "@type": "xsd:dateTime"
+    },
+    "intensity": {
+      "@id": "sdm:intensity",
+      "@type": "xsd:integer"
+    },
+    "trafficDirection": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:trafficDirection"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

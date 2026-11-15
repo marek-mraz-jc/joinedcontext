@@ -1,0 +1,75 @@
+---
+{{- $thisNats := index .Values "demo-feeds" "nats" -}}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /healthz
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required
+# - [x] Named ports -> 4222 service mapped to 4222 targetPort
+# - [ ] Ingress with TLS -> not applicable, internal demo broker
+
+fullnameOverride: demo-nats
+nameOverride: demo-feeds-nats
+
+{{- $images := index .Values.images "demo-feeds" "nats" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+args:
+  - --port
+  - "4222"
+  - --http_port
+  - "8222"
+
+containerPort: 8222
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 5
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 4222
+  targetPort: 4222
+  name: nats
+  # The client proxy resolves the Service, so the opaque port has to sit on the Service too;
+  # on the pod alone, the feed's proxy waited for the client to speak and NATS never did.
+  annotations:
+    config.linkerd.io/opaque-ports: "4222"
+
+# NATS is a server-speaks-first protocol (the server sends INFO on connect), so Linkerd
+# protocol detection would stall every client until its connect timeout.
+podAnnotations:
+  config.linkerd.io/opaque-ports: "4222"
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

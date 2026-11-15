@@ -1,0 +1,97 @@
+# The mapping of the geo-machines pipeline (T-5424, PL-03), IPR layer 2b49ad1ad0bb4892bcb54acfb978456a (Parkovací automaty).
+# One FareCollectionSystem per parking machine of the paid parking zones (1,337 points on
+# 2026-10-24), keyed by the number TSK labels it with (pa, seven or eight digits), with its street (the
+# street name without TSK's segment code in brackets). The Golemio copy of the same machines is not
+# read twice.
+#
+# The parking layers of TSK hl. m. Prahy on the IPR geoportal share this mapping; the lets of the
+# second step and the attributes of the last differ. Ids: urn:ngsi-ld:FareCollectionSystem:{org}:{space}:
+# geo-machines-{key}; the Policy public-parkovaci-automaty names them.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without its key, with a geometry that is not
+# a point (a ring needs four positions and ends where it starts), with a vertex outside
+# Prague's box (the city plus about 1 km; a swapped or 0,0 position falls outside it) or a space
+# count outside 0..1000 or not whole is dropped; a second record of one key or of one geometry is
+# kept once; a height coordinate is dropped. The log line counts each reason. An answer that is not
+# a feature list, an empty one, or one where fewer than half the records survive (a projection or
+# schema change) fails the run, so what is written stays instead of being thinned out.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes; more than 16 MiB is not a parking layer".format(content().length())) } else { this }
+        - mapping: |
+            let set = "machines"
+            let item = "2b49ad1ad0bb4892bcb54acfb978456a"
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            map position {
+              root = if this.type() == "array" && this.length() >= 2 && this.index(0).type() == "number" && this.index(1).type() == "number" { this.slice(0, 2) } else { null }
+            }
+            map ring {
+              root = if this.type() == "array" && this.length() >= 4 { this.map_each(p -> p.apply("position")) } else { null }
+            }
+            map polygon {
+              root = if this.type() == "array" && this.length() >= 1 { this.map_each(r -> r.apply("ring")) } else { null }
+            }
+            map geometry {
+              let t = this.type.catch("")
+              let c = this.coordinates.catch(null)
+              root = if $t == "Point" {
+                { "type": "Point", "coordinates": $c.apply("position") }
+              } else if $t == "Polygon" {
+                { "type": "MultiPolygon", "coordinates": [$c.apply("polygon")] }
+              } else if $t == "MultiPolygon" && $c.type() == "array" && $c.length() >= 1 {
+                { "type": "MultiPolygon", "coordinates": $c.map_each(p -> p.apply("polygon")) }
+              } else { null }
+            }
+            let features = this.features.catch(null)
+            root = if $features.type() != "array" {
+              throw("IPR layer %v did not answer a feature list".format($item))
+            } else if $features.length() == 0 {
+              throw("IPR layer %v listed no record; the layer is never empty, so the download failed".format($item))
+            } else {
+              { "set": $set, "item": $item, "rows": $features.map_each(f -> {
+                "key": f.properties.pa.catch("").string().trim(),
+                "g": f.geometry.catch(null).apply("geometry"),
+                "n": null,
+                "street": f.properties.street.catch(null).apply("words").re_replace_all("\\s*\\([^)]*\\)", "").trim()
+              }) }
+            }
+        - mapping: |
+            let shape = "point"
+
+            let rows = this.rows
+            let keyed = $rows.filter(r -> r.key.re_match("^[0-9]{6,9}$") && true)
+            let shaped = $keyed.filter(r -> if r.g == null { false } else if $shape == "point" { r.g.type == "Point" && r.g.coordinates != null } else if r.g.type != "MultiPolygon" { false } else { r.g.coordinates.all(p -> if p == null { false } else { p.all(ring -> if ring == null { false } else { ring.all(q -> q != null) && ring.index(0) == ring.index(-1) }) }) })
+            let inside = $shaped.filter(r -> (if $shape == "point" { [r.g.coordinates] } else { r.g.coordinates.flatten().flatten() }).all(q -> q.index(0) >= 14.2 && q.index(0) <= 14.75 && q.index(1) >= 49.9 && q.index(1) <= 50.2))
+            let counted = $inside.filter(r -> if r.n == null { true } else if r.n.string().trim().re_match("^[0-9]{1,4}$") { r.n.string().trim().number() <= 1000 } else { false }).map_each(r -> r.assign({ "n": if r.n == null { null } else { r.n.string().trim().number().int64() } }))
+            let unique = $counted.unique(r -> r.key).unique(r -> r.g.format_json(no_indent: true))
+            meta read = $rows.length()
+            meta unkeyed = $rows.length() - $keyed.length()
+            meta unshaped = $keyed.length() - $shaped.length()
+            meta outside = $shaped.length() - $inside.length()
+            meta range = $inside.length() - $counted.length()
+            meta duplicate = $counted.length() - $unique.length()
+            meta set = this.set
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("IPR layer %v: only %v of %v records have a key, a geometry in Prague and a plausible space count".format(this.item, $unique.length(), $rows.length()))
+            } else { this.assign({ "rows": $unique }) }
+        - log:
+            level: INFO
+            message: 'geo-${! meta("set") }: read ${! meta("read") }, dropped ${! meta("unkeyed") } without a key, ${! meta("unshaped") } without a valid geometry, ${! meta("outside") } outside Prague, ${! meta("range") } with a space count out of range, ${! meta("duplicate") } duplicates'
+        - mapping: |
+
+            let set = this.set
+            let source = "https://geoportalpraha.cz/data-a-sluzby/" + this.item
+            root = this.rows.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:geo-%v-%v".format("FareCollectionSystem", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $set, r.key.lowercase()),
+              "type": "FareCollectionSystem",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": "Parkovací automat %v".format(r.key) } },
+              "equipmentId": { "type": "Property", "value": r.key },
+              "address": if r.street != "" { { "type": "Property", "value": { "streetAddress": r.street, "addressLocality": "Praha", "addressCountry": "CZ" } } } else { null },
+              "location": { "type": "GeoProperty", "value": r.g },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)" },
+              "source": { "type": "Property", "value": $source }
+            }.filter(kv -> kv.value != null))

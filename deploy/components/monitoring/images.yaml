@@ -1,0 +1,4 @@
+---
+# The component ships no workload of its own: it renders Prometheus Operator custom
+# resources that tell an existing Prometheus what to scrape.
+monitoring: {}

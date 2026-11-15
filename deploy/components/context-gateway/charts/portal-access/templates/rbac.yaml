@@ -1,0 +1,43 @@
+{{- $portalNamespace := required "portal.namespace is the Portal's namespace" .Values.portal.namespace }}
+{{- /*
+  What the Portal writes in the gateway's namespace (DM-121): the Secret `personal-data-keys`,
+  each space's resolved `spec.personalData.keyRef`, which the gateway mounts read-only. Server-side
+  apply needs get + create + patch; `get` and `patch` name the Secret, and `create` cannot be bound
+  to a name in RBAC, which is why the admission policy `{release}-portal-secrets` (portal
+  namespaces chart) refuses any other name. Nothing is listed, watched or deleted.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: portal-personal-data-keys
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: context-gateway
+    app.kubernetes.io/component: portal-access
+    app.kubernetes.io/part-of: joinedcontext
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["personal-data-keys"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: portal-personal-data-keys
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: context-gateway
+    app.kubernetes.io/component: portal-access
+    app.kubernetes.io/part-of: joinedcontext
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: portal-personal-data-keys
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.portal.serviceAccount }}
+    namespace: {{ $portalNamespace }}

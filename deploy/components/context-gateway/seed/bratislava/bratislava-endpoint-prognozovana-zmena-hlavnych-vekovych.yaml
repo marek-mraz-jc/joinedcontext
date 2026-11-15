@@ -1,0 +1,44 @@
+# Projected change of the main age groups in Bratislava's districts, 2022 and 2035: one public dataset of the hub (T-5274), item 7fbde44412344fe5abbb3b8c452a6873, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-prognozovana-zmena-hlavnych-vekovych
+  namespace: bratislava
+  title:
+    sk: Prognózovaná zmena hlavných vekových skupín obyvateľstva okresov BA v rokoch 2022 a 2035
+    en: Projected change of the main age groups in Bratislava's districts, 2022 and 2035
+  description:
+    sk: 'Ukazovatele tabuľky „Prognózovaná zmena hlavných vekových skupín obyvateľstva okresov BA v rokoch 2022 a 2035“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Projected change of the main age groups in Bratislava's districts, 2022 and 2035”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: kg76hl2v4cxhhovxbfv7ovjjcwtytulv
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-prognozovana-zmena-hlavnych-vekovych
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/7fbde44412344fe5abbb3b8c452a6873
+        title:
+          sk: Prognózovaná zmena hlavných vekových skupín obyvateľstva okresov BA v rokoch 2022 a 2035
+          en: Projected change of the main age groups in Bratislava's districts, 2022 and 2035
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Prognózovaná zmena hlavných vekových skupín obyvateľstva okresov BA v rokoch 2022 a 2035. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Projected change of the main age groups in Bratislava's districts, 2022 and 2035. Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

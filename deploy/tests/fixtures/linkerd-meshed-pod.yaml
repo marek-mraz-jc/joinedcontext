@@ -1,0 +1,43 @@
+---
+# The shape Linkerd injects: an init container that adds NET_ADMIN and NET_RAW to program
+# the pod's iptables, while still dropping everything else. This is why the chart deploys
+# drop-all-capabilities and not disallow-capabilities-strict — the strict policy forbids
+# adding capabilities at all and would reject every meshed pod on the cluster.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: linkerd-meshed-pod
+  namespace: dev
+spec:
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: linkerd-init
+      image: cr.l5d.io/linkerd/proxy-init:v2.4.1@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { memory: 64Mi }
+      securityContext:
+        allowPrivilegeEscalation: false
+        privileged: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65534
+        capabilities:
+          add: [NET_ADMIN, NET_RAW]
+          drop: [ALL]
+  containers:
+    - name: app
+      image: nginx:1.27@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { memory: 64Mi }
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 1000
+        capabilities:
+          drop: [ALL]

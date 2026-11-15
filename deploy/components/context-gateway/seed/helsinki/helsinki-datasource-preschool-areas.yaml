@@ -1,0 +1,17 @@
+# The preschool admission areas (esiopetusalueet), Finnish- and Swedish-language, of the running and the coming
+# school year: four open WFS layers in one GET (GeoServer reads (a)(b) as several layers), in WGS84. No key. CC-BY-4.0,
+# read from the HRI catalogue (package helsingin-kaupungin-peruskoulujen-oppilaaksiottoaluerajat). 140 areas on 2026-10-27,
+# 70 per school year; the layers name each area's school year (lukuvuosi), so the pipeline needs no layer name.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-preschool-areas
+  namespace: helsinki
+  title: { en: Preschool admission areas, fi: Esiopetusalueet }
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=(avoindata:Esiopetusalue_suomi)(avoindata:Esiopetusalue_suomi_tuleva)(avoindata:Esiopetusalue_ruotsi)(avoindata:Esiopetusalue_ruotsi_tuleva)
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

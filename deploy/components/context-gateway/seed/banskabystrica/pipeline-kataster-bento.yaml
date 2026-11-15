@@ -1,0 +1,102 @@
+# The mapping of the kataster pipeline (T-4697): the parcels of the cadastre of Slovakia in Banská
+# Bystrica, one CadastralParcel per parcel, once a week.
+#
+# Source: the INSPIRE Cadastral Parcels service of ÚGKK SR as OGC API Features, register C
+# (cp:CP.CadastralParcel), CC BY 4.0. Each cadastral area is asked for by its code
+# (`nationalCadastralReference LIKE '801062_%'`), one page of 1,000 at a time: the service's
+# firewall refuses one long filter over several areas. The service pages in its own stable order.
+#
+# Scope: the zone list below. The city's nine cadastral areas are 801062 Banská Bystrica, 801101
+# Sásová, 801241 Radvaň, 801283 Podlavice, 801381 Kremnička, 801402 Šalková, 801411 Senica,
+# 801453 Kostiviarska and 866423 Uľanka (the zoning layer, each area's centre inside the city's
+# outline). Loaded: 801062 alone, the integrator's capacity call of 2026-10-19; adding an area is
+# one line here.
+#
+# Ids: urn:ngsi-ld:CadastralParcel:banskabystrica.sk:{space}:{area}_{number with - for /}.{register},
+# the cadastre's own reference, so a parcel keeps its entity from week to week.
+#
+# A page that does not come, answers no feature list, or an area that answers no parcel on its
+# first page fails the run before that page is written. An area with more parcels than the pages
+# asked for fails the run too, so a cut is seen and never silent. Only the number, register,
+# cadastral area, area and outline are kept: the service carries no owner, and nothing else of
+# a feature is copied.
+
+pipeline:
+  processors:
+    - mapping: |
+        # code -> name of each cadastral area loaded.
+        let zones = {
+          "801062": "Banská Bystrica"
+        }
+        # 30 pages of 1,000: the largest area of the city has 19,773 parcels.
+        let pages = 30
+        # A run writes one third of the pages, so it ends inside the Portal's 15 min run limit:
+        # 14 pages of parcels with outlines took the whole limit on dev (T-4697). The three runs
+        # of a Sunday (02:41, 10:41, 18:41) fall in three different 8 h slots of the day and so
+        # write the three thirds. A mapping reads no variable of its own (PL-16, PL-50): the Portal
+        # refused the run while it read one to name a third by hand (T-4753).
+        let thirds = 3
+        let third = (timestamp_unix() / 28800).floor() % $thirds
+        let size = ($pages / $thirds).ceil()
+        root = $zones.keys().sort().map_each(code -> range($third * $size, [($third + 1) * $size, $pages].min(), 1).map_each(page -> { "code": code, "name": $zones.get(code), "start": page * 1000, "pages": $pages })).flatten()
+    - unarchive: { format: json_array }
+    - mapping: |
+        meta code = this.code
+        meta zone = this.name
+        meta start = this.start.string()
+        meta pages = this.pages.string()
+        meta filter = "nationalCadastralReference LIKE '%v_%%'".format(this.code).escape_url_query()
+        root = ""
+    - http:
+        url: https://inspirews.skgeodesy.sk/geoserver/cp/ogc/features/v1/collections/cp:CP.CadastralParcel/items?filter=${! @filter }&filter-lang=cql-text&limit=1000&startIndex=${! @start }
+        verb: GET
+        headers:
+          Accept: application/geo+json
+          User-Agent: joinedcontext-banskabystrica/1.0 (+https://dev.joinedcontext.com)
+        timeout: 90s
+        retries: 2
+        rate_limit: pipeline_egress
+    - mapping: |
+        let code = @code
+        let start = @start.number()
+        let pages = @pages.number()
+        let asked = $pages * 1000
+        root = if errored() {
+          throw("the cadastre's page %v of area %v did not come: %v".format($start, $code, error()))
+        } else if this.features.or(null) == null {
+          throw("the cadastre answered no feature list for area %v at %v".format($code, $start))
+        } else if this.numberMatched.or(0) > $asked {
+          throw("area %v has %v parcels, more than the %v pages asked for hold (%v)".format($code, this.numberMatched, $pages, $asked))
+        } else if $start == 0 && this.features.length() == 0 {
+          throw("the cadastre answered no parcel for area %v".format($code))
+        } else { this }
+    - mapping: |
+        let code = @code
+        let zone = @zone
+        let parcels = if errored() { [] } else { this.features }.filter(f -> f.properties.nationalCadastralReference.or("").string().re_match("^%v_[0-9]+(/[0-9]+)?\\.[CE]$".format($code)) && ["Polygon", "MultiPolygon"].contains(f.geometry.type.or(""))).map_each(f -> {
+          "reference": f.properties.nationalCadastralReference.string(),
+          "number": f.properties.nationalCadastralReference.string().re_replace_all("^[0-9]{6}_|\\.[CE]$", ""),
+          "register": f.properties.nationalCadastralReference.string().slice(-1),
+          "area": f.properties.areaValue.value.or(null),
+          "id": f.id.or("").string(),
+          "geometry": f.geometry
+        }).map_each(p -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("CadastralParcel", "banskabystrica.sk", env("JC_SPACE"), p.reference.replace_all("/", "-")),
+          "type": "CadastralParcel",
+          "name": { "type": "LanguageProperty", "languageMap": {
+            "sk": "Parcela %v %v, k. ú. %v".format(p.register, p.number, $zone),
+            "en": "Parcel %v %v, cadastral area %v".format(p.register, p.number, $zone)
+          } },
+          "parcelNumber": { "type": "Property", "value": p.number },
+          "register": { "type": "Property", "value": p.register },
+          "cadastralAreaCode": { "type": "Property", "value": $code },
+          "cadastralAreaName": { "type": "Property", "value": $zone },
+          "nationalCadastralReference": { "type": "Property", "value": p.reference },
+          "areaValue": if p.area.type() == "number" && p.area >= 0 { { "type": "Property", "value": p.area, "unitCode": "MTK" } } else { null },
+          "location": { "type": "GeoProperty", "value": p.geometry },
+          "dataProvider": { "type": "Property", "value": "Úrad geodézie, kartografie a katastra SR, INSPIRE Katastrálne parcely (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://inspirews.skgeodesy.sk/geoserver/cp/ogc/features/v1/collections/cp:CP.CadastralParcel/items/%v".format(p.id) }
+        }.filter(entry -> entry.value != null))
+        # A page past the area's last parcel is empty: nothing to write. A page that failed above
+        # stays failed, so the run reports it and nothing of it is written.
+        root = if errored() { throw(error()) } else if $parcels.length() == 0 { deleted() } else { $parcels }

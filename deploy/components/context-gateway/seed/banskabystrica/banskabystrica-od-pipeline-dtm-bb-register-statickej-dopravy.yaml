@@ -1,0 +1,24 @@
+# One OffStreetParking per row of "DTM_BB-register-statickej-dopravy" (T-4255); the definition point of each car park off the street (DTM_BB).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-dtm-bb-register-statickej-dopravy
+  namespace: banskabystrica
+  title:
+    sk: DTM_BB-register-statickej-dopravy
+    en: DTM_BB-register-statickej-dopravy
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 28 1 * * 4
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-dtm-bb-register-statickej-dopravy
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-otvorene-data:banskabystrica-otvorene-data
+  output:
+    type: OffStreetParking
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

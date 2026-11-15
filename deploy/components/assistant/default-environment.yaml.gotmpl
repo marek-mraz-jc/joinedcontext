@@ -1,0 +1,8 @@
+---
+assistant:
+  worker:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "assistant") }}
+    # The model the chat's completions name, through jc-agent-proxy's key (T-3055): the one the
+    # Portal's assistant and the app builder use (components/agent-runner/seed).
+    llm: google/gemini-3.8-flash

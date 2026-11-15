@@ -1,0 +1,86 @@
+{
+ "type": "FeatureCollection",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "EPSG:4326"
+  }
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     19.152021,
+     48.739126
+    ]
+   },
+   "properties": {
+    "IČO_samosprávy": "37828100",
+    "Názov_samosprávy": "Banskobystrický samosprávny kraj",
+    "IČO_organizácie": "35985381",
+    "Názov_organizácie": "Bábkové divadlo na Rázcestí",
+    "ID_adresy": null,
+    "Adresa_organizácie": "Skuteckého 127/14, Banská Bystrica",
+    "Obec": "Banská Bystrica",
+    "Okres": "Banská Bystrica",
+    "Ulica_a_číslo_domu": "Skuteckého 127/14",
+    "LAT": 48.7391259496281,
+    "LON": 19.1520214503371,
+    "Forma_podnikania": "Príspevková organizácia",
+    "Kód_formy_podnikania": "331"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     19.127488,
+     48.578595
+    ]
+   },
+   "properties": {
+    "IČO_samosprávy": "37828100",
+    "Názov_samosprávy": "Banskobystrický samosprávny kraj",
+    "IČO_organizácie": "35989572",
+    "Názov_organizácie": "Divadlo Jozefa Gregora Tajovského",
+    "ID_adresy": null,
+    "Adresa_organizácie": "Divadelná 1727/3, Zvolen",
+    "Obec": "Zvolen",
+    "Okres": "Zvolen",
+    "Ulica_a_číslo_domu": "Divadelná 1727/3",
+    "LAT": 48.5785950760552,
+    "LON": 19.1274881273036,
+    "Forma_podnikania": "Príspevková organizácia",
+    "Kód_formy_podnikania": "331"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     19.14824,
+     48.741985
+    ]
+   },
+   "properties": {
+    "IČO_samosprávy": "37828100",
+    "Názov_samosprávy": "Banskobystrický samosprávny kraj",
+    "IČO_organizácie": "35989611",
+    "Názov_organizácie": "Divadlo Štúdio tanca",
+    "ID_adresy": null,
+    "Adresa_organizácie": "Komenského 12, Banská Bystrica",
+    "Obec": "Banská Bystrica",
+    "Okres": "Banská Bystrica",
+    "Ulica_a_číslo_domu": "Komenského 12",
+    "LAT": 48.7419846263176,
+    "LON": 19.1482403188303,
+    "Forma_podnikania": "Príspevková organizácia",
+    "Kód_formy_podnikania": "331"
+   }
+  }
+ ]
+}

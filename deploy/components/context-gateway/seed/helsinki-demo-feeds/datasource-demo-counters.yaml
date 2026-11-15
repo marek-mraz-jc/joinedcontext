@@ -1,0 +1,16 @@
+# The demo NATS broker of the `demo-feeds` component (T-0477, PL-50): a synthetic counter on
+# `helsinki.demo.counters` every ten seconds. The broker has no authentication, so the source
+# names no secret. `DEMO_FEEDS_NAMESPACE` is the component's namespace, written in by the forge
+# bootstrap values (components/gitea/values/bootstrap/development-values.yaml.gotmpl).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: demo-feed-counters
+  namespace: helsinki
+  title: { en: 'Demo feed: synthetic counters (not a city measurement)' }
+spec:
+  type: nats
+  input:
+    urls:
+      - nats://demo-nats.DEMO_FEEDS_NAMESPACE.svc.cluster.local:4222
+    subject: helsinki.demo.counters

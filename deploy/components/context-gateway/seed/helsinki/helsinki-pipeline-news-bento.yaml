@@ -1,0 +1,40 @@
+# The mapping of the hel-news pipeline (PL-03): the fifteen newest items of the City of
+# Helsinki's English RSS feed, one fetch is the whole feed. RSS is XML: the first processor
+# turns it into JSON (an element's attributes become `-name` members, its text `#text`).
+
+pipeline:
+  processors:
+    - xml: { operator: to_json, cast: false }
+
+    # One item is an object, several are an array.
+    - mapping: |
+        let items = this.rss.channel.item.or([])
+        root = if $items.type() == "array" { $items } else { [$items] }
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        let domain = env("JC_ORG_DOMAIN")
+        let raw_guid = this.guid.or("")
+        let guid = if $raw_guid.type() == "object" { $raw_guid."#text".or("") } else { $raw_guid }
+        let published = this.pubDate.or("").ts_parse("Mon, 02 Jan 2006 15:04:05 -0700").ts_format("2006-01-02T15:04:05Z07:00", "UTC").catch(null)
+        let summary = this.description.or("").string().trim()
+        let image = this.enclosure."-url".or(null)
+        root = if $guid == "" { deleted() } else {
+          {
+            "id": "urn:ngsi-ld:%v:%v:%v:%v".format("Article", $domain, env("JC_SPACE"), $guid),
+            "type": "Article",
+            "identifier": { "type": "Property", "value": $guid },
+            "name": { "type": "LanguageProperty", "languageMap": { "en": this.title.string().trim() } },
+            "description": if $summary == "" { null } else {
+              { "type": "LanguageProperty", "languageMap": { "en": $summary } }
+            },
+            "url": this.link.or("").string().trim().(u -> if u.re_match("^https?://[^\\s/]+\\.[^\\s]+$") { { "type": "Property", "value": u } } else { null }),
+            "datePublished": if $published == null { null } else {
+              { "type": "Property", "value": $published }
+            },
+            "image": if $image == null { null } else { { "type": "Property", "value": $image } },
+            "source": { "type": "Property", "value": "https://www.hel.fi/en/news/rss" }
+          }.filter(entry -> entry.value != null)
+        }
+
+    - archive: { format: json_array }

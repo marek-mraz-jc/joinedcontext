@@ -1,0 +1,18 @@
+# One NatureSite per site of `hel-nature`, written into the city space (T-5823).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: nature
+  namespace: helsinki
+  title:
+    en: Nature information system, protected and valuable sites
+spec:
+  class: auto
+  # The system is republished every few days (paivitetty_tietopalveluun 2026-10-24 on every site); one read a day keeps up.
+  period: 24h
+  schedule: '35 2 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-nature }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: NatureSite, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

@@ -1,0 +1,23 @@
+---
+# How often every target is scraped (OPS-16). One interval for the whole platform: a per-target
+# interval is a knob nobody has needed, and mixed intervals make rate() windows inconsistent.
+interval: 15s
+scrapeTimeout: 10s
+
+# Targets reached through their Service. Each entry renders one ServiceMonitor in the target's
+# own namespace:
+#   name:      metadata.name of the monitor and of the Service it selects
+#   namespace: where both the Service and the monitor live
+#   selector:  labels of the Service (app.kubernetes.io/name is enough on this platform)
+#   port:      NAME of the service port, never its number — a renamed port must break the
+#              monitor loudly rather than scrape the wrong one
+#   path:      metrics path, /metrics unless the exporter says otherwise
+serviceMonitors: []
+
+# Targets without a Service of their own (the CloudNativePG instances): the same fields as a
+# ServiceMonitor, the selector matching pod labels. Each renders one PodMonitor.
+podMonitors: []
+
+# Alerting rules, grouped. Each group is `{name, rules: [...]}` in the Prometheus Operator's
+# own shape, so a rule is copied from a runbook without translation.
+alertGroups: []

@@ -1,0 +1,16 @@
+# The city's air sensors' broker (T-4857, MF-54, ADR-N-048): devices reach it over mqtts at
+# ovzdusie.banskabystrica.mqtt.<domain>:8883 with their own Keycloak token, and each publishes
+# only on ovzdusie/<its client id>/air. The ACL's last rule denies the rest; nothing is retained.
+apiVersion: joinedcontext.com/v1alpha1
+kind: MqttBroker
+metadata:
+  name: ovzdusie
+  namespace: banskabystrica
+  title: { sk: Senzory ovzdušia mesta, en: The city's air sensors }
+spec:
+  roles:
+    - name: senzory
+      serviceAccounts: [senzor-namestie]
+      publish:
+        - ovzdusie/${clientid}/air
+  limits: { maxMessageBytes: 1024, messagesPerSecond: 1, maxConnections: 20 }

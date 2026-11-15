@@ -1,0 +1,16 @@
+# The city's 60 districts (kaupunginosat) as an open WFS layer, in WGS84. No key. CC-BY-4.0, read from the HRI catalogue
+# (package helsingin-piirijako). The layer also holds the territorial sea, which has no district number and is
+# not a district.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-districts
+  namespace: helsinki
+  title: { en: City districts (kaupunginosat), fi: Kaupunginosajako }
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Kaupunginosajako
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

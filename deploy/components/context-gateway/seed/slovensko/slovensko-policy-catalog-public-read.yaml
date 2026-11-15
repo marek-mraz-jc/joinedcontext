@@ -1,0 +1,24 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: catalog-public-read
+  namespace: slovensko
+  title: { sk: Katalóg číta každý, en: Anyone reads the catalogue }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: catalog }
+  assigner: did:web:joinedcontext.com
+  assignee: { kind: role, id: public }
+  # Read only: records of public Endpoints as the anonymous caller already reads them (EP-84).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+  information:
+    - entities:
+        - type: Dataset
+        - type: DataService
+        - type: Organization

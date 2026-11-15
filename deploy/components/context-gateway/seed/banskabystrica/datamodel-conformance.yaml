@@ -1,0 +1,19 @@
+# The conformance space's one model (DM-61, F-BNT1-002): bb-air-quality's class under its own
+# name, so the fixtures the smoke run and the ETSI suite write are the type they wrote before.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: conformance-air-quality
+  namespace: banskabystrica
+  title: { sk: Testovacie merania ovzdušia, en: Air quality test fixtures }
+spec:
+  contextSpaceRef: conformance
+  linkml: ./conformance-air-quality.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [AirQualityObserved]
+  artifacts:
+    jsonSchema: ./conformance-air-quality.v1.schema.json
+    context: ./conformance-air-quality.v1.context.jsonld
+    docs: ./conformance-air-quality.v1.md
+    example: ./conformance-air-quality.v1.example.jsonld

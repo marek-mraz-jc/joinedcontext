@@ -45,7 +45,7 @@ use common::*;
 async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backchannel_logout() {
     let (state, _store, _kek) = setup_dev_realm_state().await;
     state.guard().insert_mock(
-        "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout",
+        "https://portal.dev.example.test/api/v1/auth/backchannel-logout",
         204,
         Vec::new(),
     );
@@ -748,6 +748,89 @@ async fn mcp_portal_stays_refused_for_realm_clients_without_it() {
         );
         assert!(!location.contains("code="), "{client_id}: {location}");
     }
+}
+
+/// T-6974: under a path prefix (slug mode, `/id` on a host Apps share a domain with) the sign-in
+/// cookies are `__Host-` with `Path=/` and no `Domain`, and an SSO cookie under the old
+/// `__Secure-wk_sso` name, which a sibling host can plant with `Domain=`, is never read.
+#[tokio::test]
+async fn a_sign_in_cookie_planted_from_a_sibling_host_is_never_read() {
+    let (state, _store, _kek) = setup_dev_realm_state().await;
+    let slug = router(
+        state.clone(),
+        Mount::new("kaisatsu", "https", "city.example", "/id").unwrap(),
+    );
+    state
+        .store()
+        .upsert_sso_session(SsoSession {
+            id: "sso-planted-1".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            handle_hash: sha256_hex("h-planted-1"),
+            user_id: "de300000-0000-4000-8000-00000000000f".into(),
+            username: "demo.orgmember@hel.fi".into(),
+            ip_address: "127.0.0.1".into(),
+            user_agent: String::new(),
+            start: 1000,
+            last_access: 1000,
+            auth_time: chrono::Utc::now().timestamp(),
+            acr: "pwd".into(),
+            amr: vec!["pwd".into()],
+            clients: Default::default(),
+            idle_expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            max_expires_at: chrono::Utc::now() + chrono::Duration::hours(10),
+        })
+        .await
+        .unwrap();
+    let authorize = |cookie: Option<&'static str>| {
+        let mut req = Request::builder()
+            .uri("/realms/dev/protocol/openid-connect/auth?client_id=portal-ui&redirect_uri=https%3A%2F%2Fportal.dev.example.test%2Fcb&response_type=code&scope=openid&code_challenge=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&code_challenge_method=S256")
+            .header("host", "city.example");
+        if let Some(cookie) = cookie {
+            req = req.header("cookie", cookie);
+        }
+        slug.clone().oneshot(req.body(Body::empty()).unwrap())
+    };
+    let location = |res: &axum::response::Response| {
+        res.headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+
+    // The cookie a sibling host could plant: never read, so the person meets the login page.
+    let planted = authorize(Some("__Secure-wk_sso=h-planted-1"))
+        .await
+        .unwrap();
+    let to = location(&planted);
+    assert!(
+        to.contains("/login-actions/authenticate")
+            && !to.starts_with("https://portal.dev.example.test/cb"),
+        "a planted cookie signed in: {to}"
+    );
+    let set: Vec<String> = planted
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(str::to_owned))
+        .collect();
+    let auth = set
+        .iter()
+        .find(|c| c.starts_with("__Host-wk_auth="))
+        .unwrap_or_else(|| panic!("a __Host- auth cookie: {set:?}"));
+    assert!(
+        auth.contains("; Path=/;") && !auth.to_ascii_lowercase().contains("domain="),
+        "{auth}"
+    );
+
+    // The same session under the `__Host-` name, which only this host can set, is read.
+    let own = authorize(Some("__Host-wk_sso=h-planted-1")).await.unwrap();
+    let to = location(&own);
+    assert!(
+        to.starts_with("https://portal.dev.example.test/cb?code="),
+        "{to}"
+    );
 }
 
 #[tokio::test]

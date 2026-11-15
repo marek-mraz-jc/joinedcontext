@@ -1,0 +1,12 @@
+---
+# The minimal profile (T-4856) as CI renders it: the broker behind the Portal, Keycloak and the
+# APISIX edge, nothing else. The component list comes from componentProfiles.minimal in
+# defaults/environment/global.yaml; this file only names the profile and the installation.
+componentProfile: minimal
+global:
+  domain: joinedcontext.test
+  profile: development
+  instanceSlug: minimal
+  ingress:
+    # TLS at the edge: the apisix-edge Certificate the APISIX Ingress terminates on.
+    enabled: true

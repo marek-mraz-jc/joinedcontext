@@ -1,0 +1,79 @@
+# The mapping of the parking-places pipeline (PL-03): one OnStreetParking per parking place of the
+# city's street parking map, the open WFS layer `Pysakointipaikat_alue` (inner city and resident
+# parking zones), keyed by the layer's row id.
+#
+# The layer's parking class (`luokka`, named in `luokka_nimi`) becomes the Smart Data Model's
+# categories; its place type (`tyyppi`) adds a category (a disabled, charging, loading or taxi place)
+# or names what parks there (motorcycle, bicycle, bus, other for e-scooters). An area of the type
+# `Pysäköintikielto` is a no-parking area the map draws, no parking place, and is not written. The
+# resident permit letter is its zoneCode; the places it holds (`paikat_ala`) are the city's estimate
+# from the drawn area (the package's note). The class name, the hours, the time limit, the season and
+# the note make its Finnish description.
+#
+# `expiresAt` (NGSI-LD 4.22): a place leaves every read 21 days after the layer last listed it,
+# three weekly runs, so a place the city removes does not stay on the map.
+
+pipeline:
+  processors:
+    - mapping: |
+        let lease = (now().ts_unix() + 1814400).ts_format("2006-01-02T15:04:05Z", "UTC")
+        # The WFS writes a field it has no value for as null or the string "None"; `0` stands for none in
+        # the season and the note.
+        map text {
+          root = if this == null || this.string().trim() == "" || this.string() == "None" || this.string() == "0" { null } else { this.string().trim().re_replace_all("\\s+", " ") }
+        }
+        let classes = {
+          "1": ["free", "shortTerm"],
+          "2": ["free"],
+          "3": ["feeCharged", "shortTerm"],
+          "4": ["feeCharged", "shortTerm"],
+          "5": ["feeCharged", "shortTerm"],
+          "6": ["feeCharged", "forResidents"],
+          "7": ["feeCharged", "shortTerm", "forResidents"],
+          "8": ["shortTerm", "forResidents"],
+          "10": ["feeCharged"],
+          "11": ["onlyWithPermit"]
+        }
+        let types = {
+          "Inva": "forDisabled",
+          "Sähköauto": "forElectricalCharging",
+          "Kuormauspaikka": "forLoadUnload",
+          "Taxi": "taxiStop",
+          "CD": "onlyWithPermit"
+        }
+        let vehicles = {
+          "Matkailuliikenne": "bus",
+          "Moottoripyörä": "motorcycle",
+          "Polkupyörä": "bicycle",
+          "Sähköpotkulauta": "other"
+        }
+        root = this.features.or([]).filter(f -> f.properties.id.or("").string().re_match("^[0-9]{1,10}$") && ["Polygon", "MultiPolygon"].contains(f.geometry.type.or("")) && f.properties.tyyppi.apply("text").or("") != "Pysäköintikielto").map_each(f -> {
+          "p": f.properties,
+          "kind": f.properties.tyyppi.apply("text"),
+          "f": f
+        }).map_each(s -> s.assign({
+          "category": ($classes.get(s.p.luokka.or("").string()).or([]).append($types.get(s.kind.or("")).or(null)).filter(c -> c != null).unique()).(c -> if c.length() == 0 { ["public"] } else { c }),
+          "vehicle": $vehicles.get(s.kind.or("")).or(null),
+          "lines": [
+            s.p.luokka_nimi.apply("text"),
+            if s.kind != null { "Tyyppi: " + s.kind } else { null },
+            if s.p.voimassaolo.apply("text") != null { "Voimassa: " + s.p.voimassaolo.apply("text") } else { null },
+            if s.p.kesto.apply("text") != null { "Enimmäisaika: " + s.p.kesto.apply("text") } else { null },
+            if s.p.kausi.apply("text") != null { "Kausi: " + s.p.kausi.apply("text").re_replace_all("^\\((.*)\\)$", "$1") } else { null },
+            if s.p.paikan_asento.apply("text") != null { "Paikan asento: " + s.p.paikan_asento.apply("text") } else { null },
+            # A bare number in the note is a sign or plan reference, no text for a reader.
+            if s.p.lisatieto.apply("text").or("").re_match("\\pL") { s.p.lisatieto.apply("text") } else { null }
+          ].filter(l -> l != null)
+        })).map_each(s -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:parking-place-%v".format("OnStreetParking", env("JC_ORG_DOMAIN"), env("JC_SPACE"), s.p.id.string()),
+          "type": "OnStreetParking",
+          "expiresAt": $lease,
+          "category": { "type": "Property", "value": s.category },
+          "allowedVehicleType": if s.vehicle != null { { "type": "Property", "value": [s.vehicle] } } else { null },
+          "totalSpotNumber": if s.p.paikat_ala.type() == "number" && s.p.paikat_ala > 0 { { "type": "Property", "value": s.p.paikat_ala.number().int64() } } else { null },
+          "zoneCode": if s.p.asukaspysakointitunnus.apply("text").or("").re_match("^[A-Z]{1,2}$") { { "type": "Property", "value": s.p.asukaspysakointitunnus.apply("text") } } else { null },
+          "description": if s.lines.length() > 0 { { "type": "LanguageProperty", "languageMap": { "fi": s.lines.join("\n") } } } else { null },
+          "location": { "type": "GeoProperty", "value": s.f.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Urban Environment Division" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Pysakointipaikat_alue" }
+        }.filter(entry -> entry.value != null))

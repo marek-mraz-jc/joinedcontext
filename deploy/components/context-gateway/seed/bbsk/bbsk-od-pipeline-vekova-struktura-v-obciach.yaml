@@ -1,0 +1,24 @@
+# One KeyPerformanceIndicator per row of "Veková štruktúra v obciach (1996 - 2022)" (T-4255); one row per area (and year).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-vekova-struktura-v-obciach
+  namespace: bbsk
+  title:
+    sk: Veková štruktúra v obciach (1996 - 2022)
+    en: Veková štruktúra v obciach (1996 - 2022)
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 17 4 16 * *
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-vekova-struktura-v-obciach
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: KeyPerformanceIndicator
+    mode: replace
+  quotas:
+    maxMemoryMb: 256
+    cpuMillicores: 100

@@ -1,0 +1,18 @@
+# One AdministrativeArea per record of the IPR layer Bilanční územní celky (BUC) into the city space (T-5426).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: area-buc
+  namespace: praha
+  title: { en: Planning balance units (BUC), cs: Bilanční územní celky (BUC) }
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '55 2 * * 5'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-area-buc }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: AdministrativeArea, mode: upsert }
+  # 2337589 bytes on 2026-10-25.
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

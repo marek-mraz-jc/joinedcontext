@@ -1,0 +1,91 @@
+/*
+ * The joinedcontext look on keycloak.v2's PatternFly (UI-82). Every colour and font is a
+ * custom property of branding.css, which the chart writes from the branding block (OPS-46):
+ * this file names no colour of its own and loads nothing from another origin.
+ */
+
+.login-pf body {
+    background: var(--jc-background);
+    color: var(--jc-text);
+    font-family: var(--jc-font-body);
+}
+
+:root {
+    --pf-v5-global--FontFamily--text: var(--jc-font-body);
+    --pf-v5-global--FontFamily--heading: var(--jc-font-heading);
+    --pf-v5-global--primary-color--100: var(--jc-primary);
+    --pf-v5-global--primary-color--200: var(--jc-primary);
+    --pf-v5-global--link--Color: var(--jc-primary);
+    --pf-v5-global--link--Color--hover: var(--jc-primary);
+    --pf-v5-c-button--m-primary--BackgroundColor: var(--jc-primary);
+    --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--jc-primary);
+    --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--jc-primary);
+    --pf-v5-c-button--m-primary--active--BackgroundColor: var(--jc-primary);
+    --pf-v5-c-button--m-primary--Color: var(--jc-primary-fg);
+    --pf-v5-c-button--m-primary--hover--Color: var(--jc-primary-fg);
+    --pf-v5-c-button--m-primary--focus--Color: var(--jc-primary-fg);
+    --pf-v5-c-button--m-primary--active--Color: var(--jc-primary-fg);
+    --keycloak-card-top-color: var(--jc-primary);
+}
+
+/* 34rem is wider than a phone: the card shrinks with the screen, down to 320 px. */
+.pf-v5-c-login__container {
+    grid-template-columns: minmax(0, 34rem);
+    padding-inline: var(--pf-v5-global--spacer--md);
+}
+
+#kc-header-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--pf-v5-global--spacer--sm);
+    color: var(--jc-text) !important;
+    font-family: var(--jc-font-heading);
+    font-size: var(--pf-v5-global--FontSize--xl);
+    letter-spacing: normal;
+    text-transform: none;
+}
+
+.jc-logo {
+    max-height: 3.5rem;
+    max-width: 100%;
+}
+
+.jc-context {
+    margin: 0 0 var(--pf-v5-global--spacer--xs);
+    color: var(--jc-text);
+    font-size: var(--pf-v5-global--FontSize--sm);
+}
+
+#kc-page-title {
+    font-family: var(--jc-font-heading);
+    font-size: var(--pf-v5-global--FontSize--2xl);
+    overflow-wrap: anywhere;
+}
+
+.pf-v5-c-login__main-header {
+    border-top-color: var(--jc-primary);
+}
+
+/* A visible focus ring on everything that takes focus (WCAG 2.4.7). */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+.pf-v5-c-button:focus-visible {
+    outline: 3px solid var(--jc-primary);
+    outline-offset: 2px;
+}
+
+a {
+    color: var(--jc-primary);
+    text-decoration: underline;
+}
+
+#kc-error-message .pf-v5-c-button,
+#kc-info-message .pf-v5-c-button,
+#kc-logout-confirm .pf-v5-c-button,
+#instruction1 + p .pf-v5-c-button {
+    margin-block-start: var(--pf-v5-global--spacer--md);
+    text-decoration: none;
+}

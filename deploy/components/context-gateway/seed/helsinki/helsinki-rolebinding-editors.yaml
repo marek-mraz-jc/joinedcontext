@@ -1,0 +1,15 @@
+# The demo editor (DEMO.md, components/keycloak/demo-users.yaml) proposes and approves across
+# the organization and deletes nothing: the fourth demo person T-2231 added, so the plain
+# self-approval refusal (CC-34) and the refusal of a grant wider than one's own rights (PF-50)
+# can be played on dev by somebody they apply to. They hold this role and no other, which is
+# strictly less than the steward, who also holds `org-admin`.
+apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: editors
+  namespace: org
+spec:
+  subjects:
+    - user: de300000-0000-4000-8000-000000000004 # demo.editor
+  role: editor
+  scope: { organization: hel }

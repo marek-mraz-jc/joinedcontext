@@ -1,0 +1,45 @@
+# The mapping of the park-and-ride-occupancy pipeline (PL-03): the free and the occupied spaces of
+# each car park Golemio counts, written onto the OffStreetParking the `park-and-ride` pipeline keeps
+# from IPR. The gateway's upsert merges attributes, so the name, capacity and outline stay IPR's.
+#
+# TSK and IPR share no key: `pairs` maps TSK's car park id to IPR's globalid, matched by name and
+# checked by distance (all under 200 m) on 2026-09-25. P+R Roztyly has no IPR record and is left
+# out; a car park TSK adds is left out until it is paired here.
+# ponytail: a hand-kept table of 22 pairs; a shared register id replaces it when IPR or TSK
+# publishes one.
+
+pipeline:
+  processors:
+    - mapping: |
+        let pairs = {
+          "ae77736b-399d-462e-901d-bf91ef7ab96c": "a7c9a9af-a0fb-4005-8baf-c9a202b763ad",
+          "52551797-f7f0-44e0-8e06-988c96ab319f": "7ebeedd4-8076-4c57-bbd8-d26004c86cb2",
+          "0a25bd51-0851-4766-b884-e5bf8cf0aac7": "8bb9fac8-1596-4968-8a95-25611e6c6a2a",
+          "519a4124-9f6c-49c9-89f3-da28b8192ca1": "78c02cf0-f946-42d3-887c-20bd3c82e4a6",
+          "bba3106f-e408-466f-8f75-bbd919ee4efa": "8e869f78-c4e5-41fc-a316-ccff35083fdc",
+          "eef53536-16f5-4772-b28e-466e9d4fa6c1": "310a24bd-d995-4c13-89ed-3242d289d506",
+          "f01831c1-415d-463d-b51f-1a91ba7bd4ed": "bf2f566d-d084-45ee-a2a6-1c62697da50a",
+          "65aa512b-5bdc-4406-82e9-cb58228f2b58": "4d42e533-868b-467b-a4c5-1eae509fa3c3",
+          "fdd03b59-cf7f-4cb2-a59c-7c39c2baee5b": "ab0b2d0d-6272-42f2-93d1-d053bd9f4376",
+          "6b737fe9-6f24-450c-9868-819cb9377ad8": "c28f8c13-d527-467b-885f-fe4a633fdcb7",
+          "32ae10fd-9167-4edb-b838-0c5c3e2fca11": "90e7dbdb-1060-4533-8cd4-bdf82c3ae80f",
+          "b398b3b9-0a0a-46d1-92ca-a9786106e851": "25a9212a-51f7-4298-94fe-10bf748dfc4b",
+          "8f1abd57-4366-41a3-b800-3604400a1ec0": "74aaffa2-52e9-48a6-a8e5-788b868fc012",
+          "50dc39c5-692a-4bfa-bd3d-ca0924e076f9": "3209befa-5a33-497e-b3ed-949c4dba1293",
+          "aef526ea-f034-4930-9a14-1e6b91ba051e": "8fe9e93a-9772-453d-b322-7a34fe540c90",
+          "ff998b13-61fa-4f1a-8fbf-798dd8676de3": "951565b1-7a77-479a-b6c8-7918991d1c89",
+          "4145ef72-c325-41c9-8b34-2af23290f942": "707550aa-0b4b-4af2-8f17-f8bb9a9a9cc6",
+          "3b8555c7-4f54-42bb-b2c5-443a83eeef87": "3c5a8f6a-8d21-4145-b73a-947861c9530b",
+          "46dc7a8d-9e0a-4359-993b-68d16a64de1e": "6fe6a2f5-6a35-4394-a68b-98207f808bd7",
+          "f589ef8e-1209-4793-87ba-7e405839f506": "64218728-9c25-486f-964b-927218273de9",
+          "6ec30a03-7e0a-44a5-9d96-074d5a4e0049": "b01a1c87-47b5-415c-a362-eea47aaa1978",
+          "58b9c5cc-02e0-468d-b8a6-a3e49a528025": "716a0398-a88b-4809-b40f-3a93c2fd8610"
+        }
+        root = this.or([]).filter(m -> $pairs.get(m.primary_source_id.or("").string().lowercase()) != null).map_each(m -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:ipr-%v".format("OffStreetParking", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $pairs.get(m.primary_source_id.string().lowercase())),
+          "type": "OffStreetParking",
+          "availableSpotNumber": if m.free_spot_number.type() == "number" && m.free_spot_number >= 0 && m.free_spot_number == m.free_spot_number.floor() { { "type": "Property", "value": m.free_spot_number } } else { null },
+          "totalSpotNumber": if m.total_spot_number.type() == "number" && m.total_spot_number >= 0 && m.total_spot_number == m.total_spot_number.floor() { { "type": "Property", "value": m.total_spot_number } } else { null },
+          "occupiedSpotNumber": if m.occupied_spot_number.type() == "number" && m.occupied_spot_number >= 0 && m.occupied_spot_number == m.occupied_spot_number.floor() { { "type": "Property", "value": m.occupied_spot_number } } else { null },
+          "dateModified": if m.last_updated.or("").string().re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") { { "type": "Property", "value": m.last_updated.ts_format("2006-01-02T15:04:05Z07:00", "UTC") } } else { null }
+        }.filter(entry -> entry.value != null)).filter(e -> e.keys().length() > 2)

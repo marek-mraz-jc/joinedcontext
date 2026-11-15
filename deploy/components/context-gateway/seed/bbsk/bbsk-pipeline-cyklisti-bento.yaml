@@ -1,0 +1,68 @@
+# The mapping of the cyklisti pipeline (PL-03, T-5930): one KeyPerformanceIndicator per bicycle counter per month,
+# the sum of the layer's hourly counts. The DataSource answers the months the layer holds (Rok + Mesiac, its row
+# count, first and last day); each month is then read whole (at most 744 hours, under the layer's 2000-row page) and
+# summed here, because the layer refuses a sum over its text columns. A counter whose every hour of the month is
+# empty gets no row: an empty cell is not a zero.
+# A counter the region adds is a new column: it reaches this space when its column joins the URL and COUNTERS below.
+
+pipeline:
+  processors:
+    # An answer with an error or no month list is the layer failing: the run fails where it can be seen.
+    - mapping: |
+        root = if this.error.or(null) != null || this.features.or(null) == null { throw("the layer answered no months: %v".format(this.error.message.or(""))) } else {
+          this.features.map_each(f -> f.attributes).filter(m -> m.hodiny.or(0) > 0).map_each(m -> {
+            "rok": m.Rok, "mesiac": m.Mesiac, "hodiny": m.hodiny, "od": m.od, "do": m.do,
+            "where": "Rok='%v' AND Mesiac='%v'".format(m.Rok, m.Mesiac).escape_url_query()
+          })
+        }
+    - unarchive: { format: json_array }
+    - mapping: |
+        meta where = this.where
+        meta month = this.without("where").format_json(no_indent: true)
+        root = ""
+    - http:
+        url: https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Scitace_new/FeatureServer/0/query?where=${! @where }&outFields=Hali%C4%8D,Kl%C3%A1tna,Kr%C3%A1%C4%BEova_ho%C4%BEa,O%C5%BEdiansky_tunel,Pastierska,Polt%C3%A1r,Rimava,Rimavsk%C3%A1_Sobota,Rove%C5%88,Sedlo_Javoriny,Ve%C4%BEk%C3%A1_L%C3%BAka,%C5%A0portov%C3%A1,Vlkanov%C3%A1&returnGeometry=false&resultRecordCount=2000&orderByFields=FID&f=json
+        verb: GET
+        headers: { Accept: application/json }
+        timeout: 60s
+        retries: 2
+        rate_limit: pipeline_egress
+    - mapping: |
+        # Column -> the counter's place as od-cykloscitace-miesta names it (Miesto) and its ID there.
+        let COUNTERS = {
+          "Halič": ["Halič", "300021968"],
+          "Klátna": ["Klátna", "300042364"],
+          "Kráľova_hoľa": ["Kráľova Hoľa", "300029132"],
+          "Oždiansky_tunel": ["Oždiansky tunel", "300036678"],
+          "Pastierska": ["Pastierska", "300041235"],
+          "Poltár": ["Poltár", "300034552"],
+          "Rimava": ["Rimava", "300041334"],
+          "Rimavská_Sobota": ["Rimavská Sobota", "300036680"],
+          "Roveň": ["Roveň", "300042312"],
+          "Sedlo_Javoriny": ["Sedlo Javoriny", "300041254"],
+          "Veľká_Lúka": ["Veľká Lúka", "300041219"],
+          "Športová": ["Športová", "300021910"],
+          "Vlkanová": ["Vlkanová", "300066305"]
+        }
+        let m = @month.parse_json()
+        let source_url = "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Scitace_new/FeatureServer/0"
+        let rows = if errored() { throw("the month %v %v did not come: %v".format($m.rok, $m.mesiac, error())) } else if this.features.or(null) == null { throw("the month %v %v answered no rows: %v".format($m.rok, $m.mesiac, this.error.message.or(""))) } else { this.features.map_each(f -> f.attributes) }
+        # A month answered short would be summed short and look like a quiet month.
+        let checked = if $rows.length() != $m.hodiny { throw("the month %v %v answered %v hours where the layer counts %v".format($m.rok, $m.mesiac, $rows.length(), $m.hodiny)) } else { $rows }
+        let period = $m.od.slice(0, 7)
+        let at = $m.do + "T23:00:00Z"
+        root = $COUNTERS.keys().sort().map_each(col -> {
+          "col": col,
+          "values": $checked.map_each(r -> r.get(col)).filter(v -> v != null).map_each(v -> v.string().number())
+        }).filter(c -> c.values.length() > 0).map_each(c -> {
+          "id": "urn:ngsi-ld:KeyPerformanceIndicator:%v:%v:scitace-new-%v-%v".format("bbsk.sk", env("JC_SPACE"), $COUNTERS.get(c.col).index(1), $period),
+          "type": "KeyPerformanceIndicator",
+          "dataSet": { "type": "Property", "value": "Scitace_new" },
+          "indicator": { "type": "Property", "value": "pocet-cyklistov" },
+          "refArea": { "type": "Property", "value": $COUNTERS.get(c.col).index(0) },
+          "refPeriod": { "type": "Property", "value": $period },
+          "kpiValue": { "type": "Property", "value": c.values.sum(), "unitCode": "C62", "observedAt": $at },
+          "unitText": { "type": "Property", "value": "cyklisti za mesiac" },
+          "source": { "type": "Property", "value": $source_url },
+          "dateObserved": { "type": "Property", "value": $at }
+        })

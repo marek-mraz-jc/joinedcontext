@@ -1,0 +1,16 @@
+# How the city's indicators reach the region's application (EP-15, EP-77). The consumer project
+# declares the reference; the source Endpoint's audience and Policy decide what it may do, so
+# naming the endpoint by project and name rather than by slug keeps it readable and widens
+# nothing. The region reads and cannot write: `banskabystrica-kpi` grants retrieveOps to the
+# group `bbsk` and the city's own write policy is not shared.
+apiVersion: joinedcontext.com/v1alpha1
+kind: SharedSpaceReference
+metadata:
+  name: mesto-kpi
+  namespace: bbsk
+  title: { sk: Ukazovatele mesta Banská Bystrica, en: Indicators of the city of Banská Bystrica }
+spec:
+  alias: mesto-kpi
+  endpointRef: { project: banskabystrica, name: banskabystrica-kpi }
+  schedule:
+    interval: 24h

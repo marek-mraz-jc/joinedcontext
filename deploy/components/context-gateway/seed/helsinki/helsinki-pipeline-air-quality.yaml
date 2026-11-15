@@ -1,0 +1,15 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: air-quality
+  namespace: helsinki
+  title: { en: Air quality around Helsinki from FMI }
+spec:
+  class: auto
+  # FMI publishes hourly averages; twice an hour catches each within half an hour.
+  period: 30m
+  schedule: '*/30 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: fmi-air-quality }
+  targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

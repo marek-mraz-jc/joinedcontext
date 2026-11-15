@@ -1,0 +1,390 @@
+{
+  "gateway": [
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "Alert",
+        "offset": "0",
+        "options": "keyValues"
+      },
+      "file": "host-test/alerts.json"
+    }
+  ],
+  "steps": [
+    {
+      "call": "GET /api/weeks",
+      "status": 200,
+      "expect": {
+        "/stale": false,
+        "/weeks/0/week": "2026-10-12",
+        "/weeks/1/week": "2026-10-05",
+        "/weeks/1/alerts": 3,
+        "/weeks/1/places/0/count": 3,
+        "/weeks/1/places/0/name": "Hämeentie 3"
+      },
+      "length": {
+        "/weeks": 2,
+        "/weeks/0/places": 0
+      }
+    },
+    {
+      "call": "GET /api/weeks",
+      "status": 200,
+      "length": {
+        "/weeks": 2
+      }
+    },
+    {
+      "call": "POST /api/reports",
+      "body": {
+        "title": " ",
+        "view": "",
+        "kept": 0
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/reports",
+      "body": {
+        "title": "Road works, Mondays at 7",
+        "view": "?kind=roadWorks&day=0&hour=7&lang=en",
+        "kept": 3,
+        "places": [
+          {
+            "name": "Hämeentie 3",
+            "lon": 24.95,
+            "lat": 60.17,
+            "count": 3
+          }
+        ]
+      },
+      "status": 201,
+      "save": {
+        "report": "/id"
+      },
+      "expect": {
+        "/view": "kind=roadWorks&day=0&hour=7&lang=en",
+        "/has_snapshot": false
+      }
+    },
+    {
+      "call": "GET /api/reports/{report}",
+      "status": 200,
+      "expect": {
+        "/title": "Road works, Mondays at 7",
+        "/kept": 3,
+        "/places/0/name": "Hämeentie 3"
+      }
+    },
+    {
+      "call": "GET /api/reports/{report}/snapshot",
+      "status": 404
+    },
+    {
+      "call": "POST /api/reports/{report}/snapshot",
+      "status": 200,
+      "upload": "/url",
+      "expect": {
+        "/method": "PUT"
+      }
+    },
+    {
+      "call": "POST /api/reports/{report}/snapshot",
+      "status": 409
+    },
+    {
+      "call": "GET /api/reports/{report}/snapshot",
+      "status": 200,
+      "download": "/url"
+    },
+    {
+      "call": "GET /api/reports",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/has_snapshot": true
+      }
+    },
+    {
+      "call": "GET /api/reports",
+      "as": "second",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/reports/{report}",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/filters",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "POST /api/filters",
+      "caller": "anonymous",
+      "body": {
+        "name": "Mondays",
+        "view": "?kind=roadWorks&day=0&hour=7"
+      },
+      "status": 401,
+      "rows": {
+        "filters": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/filters",
+      "caller": "viewer",
+      "body": {
+        "name": "Mondays",
+        "view": "<x>"
+      },
+      "status": 400,
+      "rows": {
+        "filters": 0
+      }
+    },
+    {
+      "call": "POST /api/filters",
+      "caller": "viewer",
+      "body": {
+        "name": "Mondays",
+        "view": "?kind=roadWorks&day=0&hour=7",
+        "owner_id": "u-2"
+      },
+      "status": 400,
+      "rows": {
+        "filters": 0
+      }
+    },
+    {
+      "call": "POST /api/filters",
+      "caller": "viewer",
+      "body": {
+        "name": "Mondays",
+        "view": "?kind=roadWorks&day=0&hour=7"
+      },
+      "status": 201,
+      "expect": {
+        "/name": "Mondays",
+        "/view": "kind=roadWorks&day=0&hour=7"
+      },
+      "save": {
+        "filter": "/id"
+      },
+      "rows": {
+        "filters": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "GET /api/filters",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      }
+    },
+    {
+      "call": "GET /api/filters",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "DELETE /api/filters/{filter}",
+      "caller": "viewer@u-2",
+      "status": 404,
+      "rows": {
+        "filters": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "GET /api/acks",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "POST /api/acks",
+      "caller": "anonymous",
+      "body": {
+        "alert": "urn:ngsi-ld:Alert:a1",
+        "comment": "crew on site"
+      },
+      "status": 401,
+      "rows": {
+        "acks": 0
+      }
+    },
+    {
+      "call": "POST /api/acks",
+      "caller": "viewer",
+      "body": {
+        "alert": "urn:ngsi-ld:Alert:a1",
+        "comment": "crew on site"
+      },
+      "status": 403,
+      "rows": {
+        "acks": 0,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "POST /api/acks",
+      "caller": "steward+viewer",
+      "body": {
+        "alert": "urn:ngsi-ld:Event:1",
+        "comment": "crew on site"
+      },
+      "status": 400,
+      "rows": {
+        "acks": 0
+      }
+    },
+    {
+      "call": "POST /api/acks",
+      "caller": "steward+viewer",
+      "body": {
+        "alert": "urn:ngsi-ld:Alert:a1",
+        "comment": "crew on site"
+      },
+      "status": 201,
+      "expect": {
+        "/alert": "urn:ngsi-ld:Alert:a1",
+        "/ownerName": "Person u-steward"
+      },
+      "save": {
+        "ack": "/id"
+      },
+      "rows": {
+        "acks": 1,
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "POST /api/acks",
+      "caller": "steward+viewer",
+      "body": {
+        "alert": "urn:ngsi-ld:Alert:a1",
+        "comment": "again"
+      },
+      "status": 409,
+      "rows": {
+        "acks": 1,
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "GET /api/acks",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/comment": "crew on site",
+        "/0/ownerName": "Person u-steward"
+      }
+    },
+    {
+      "call": "DELETE /api/acks/{ack}",
+      "caller": "viewer",
+      "status": 403,
+      "rows": {
+        "acks": 1
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "steward+viewer",
+      "status": 200,
+      "length": {
+        "": 2
+      },
+      "expect": {
+        "/0/summary": "acknowledged a1: crew on site",
+        "/0/actorName": "Person u-steward"
+      }
+    },
+    {
+      "call": "DELETE /api/acks/{ack}",
+      "caller": "steward+viewer",
+      "status": 204,
+      "rows": {
+        "acks": 0,
+        "app_audit": 3
+      }
+    },
+    {
+      "call": "DELETE /api/acks/{ack}",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "app_audit": 3
+      }
+    },
+    {
+      "call": "DELETE /api/filters/{filter}",
+      "caller": "viewer",
+      "status": 204,
+      "rows": {
+        "filters": 0,
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "GET /api/acks",
+      "as": "second",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/reports/{report}/snapshot",
+      "as": "second",
+      "status": 404
+    }
+  ]
+}

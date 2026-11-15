@@ -1,0 +1,138 @@
+# Barcelona statistics, population (T-5266): the KeyPerformanceIndicator entities of the
+# statistics pipeline whose id carries the theme `population`, one per indicator and area, the newest
+# period as the value and every period since the first run in the history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: statistics-population
+  namespace: barcelona
+  title:
+    ca: Població — estadístiques de Barcelona
+    es: Población — estadísticas de Barcelona
+    en: Population — Barcelona statistics
+  description:
+    ca: "Població per barri, districte i ciutat segons el Padró Municipal d'Habitants: total, sexe, edat quinquennal, nacionalitat, nivell d'estudis i lloc de naixement a 1 de gener; naixements, defuncions, immigrants, emigrants, altes per omissió i baixes per inscripció indeguda de cada any. Un KeyPerformanceIndicator dels Smart Data Models per indicador i àrea. Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0."
+    es: 'Población por barrio, distrito y ciudad según el Padrón Municipal de Habitantes: total, sexo, edad quinquenal, nacionalidad, nivel de estudios y lugar de nacimiento a 1 de enero; nacimientos, defunciones, inmigrantes, emigrantes, altas por omisión y bajas por inscripción indebida de cada año. Un KeyPerformanceIndicator de los Smart Data Models por indicador y área. Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0.'
+    en: "Population by barri, district and city from the Municipal Register of Inhabitants (Padró): total, sex, five-year age group, nationality, level of education and birthplace on 1 January; births, deaths, immigrants, emigrants, registrations by omission and cancellations of each year. One Smart Data Models KeyPerformanceIndicator per indicator and area, the newest period as kpiValue and the earlier periods in its history. Properties beyond the model: districtCode (the city's two-digit code of the district or barri), divisionLevel (city, district or neighbourhood), refArea (the AdministrativeArea), statisticsTable and dimensionKey (the source dataset and breakdown). Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0."
+spec:
+  contextSpaceRef: barcelona
+  slug: o45h3owqwgklqyyzqz4k77slqndnryk2
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-statistics-population
+  # The NGSI-LD door also answers the temporal API, the series per indicator. An indicator has
+  # no geometry of its own: OGC API Features serves it as a feature without one.
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [SOCI, REGI]
+    keywords:
+      ca: [padró, població, demografia, estadística]
+      es: [padrón, población, demografía, estadística]
+      en: [population register, population, demography, statistics]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: ANNUAL
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_mdbas
+        title: { ca: Open Data BCN pad_mdbas, en: Open Data BCN dataset pad_mdbas }
+        description:
+          ca: Conjunt de dades pad_mdbas de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_mdbas on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_mdbas_sexe
+        title: { ca: Open Data BCN pad_mdbas_sexe, en: Open Data BCN dataset pad_mdbas_sexe }
+        description:
+          ca: Conjunt de dades pad_mdbas_sexe de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_mdbas_sexe on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_mdbas_edat-q
+        title: { ca: Open Data BCN pad_mdbas_edat-q, en: Open Data BCN dataset pad_mdbas_edat-q }
+        description:
+          ca: Conjunt de dades pad_mdbas_edat-q de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_mdbas_edat-q on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_mdbas_nacionalitat-g_sexe
+        title:
+          ca: Open Data BCN pad_mdbas_nacionalitat-g_sexe
+          en: Open Data BCN dataset pad_mdbas_nacionalitat-g_sexe
+        description:
+          ca: Conjunt de dades pad_mdbas_nacionalitat-g_sexe de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_mdbas_nacionalitat-g_sexe on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_mdbas_niv-educa-esta_sexe
+        title:
+          ca: Open Data BCN pad_mdbas_niv-educa-esta_sexe
+          en: Open Data BCN dataset pad_mdbas_niv-educa-esta_sexe
+        description:
+          ca: Conjunt de dades pad_mdbas_niv-educa-esta_sexe de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_mdbas_niv-educa-esta_sexe on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_mdbas_lloc-naix_sexe
+        title:
+          ca: Open Data BCN pad_mdbas_lloc-naix_sexe
+          en: Open Data BCN dataset pad_mdbas_lloc-naix_sexe
+        description:
+          ca: Conjunt de dades pad_mdbas_lloc-naix_sexe de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_mdbas_lloc-naix_sexe on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_nai_mdbas
+        title: { ca: Open Data BCN pad_nai_mdbas, en: Open Data BCN dataset pad_nai_mdbas }
+        description:
+          ca: Conjunt de dades pad_nai_mdbas de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_nai_mdbas on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_def_mdbas
+        title: { ca: Open Data BCN pad_def_mdbas, en: Open Data BCN dataset pad_def_mdbas }
+        description:
+          ca: Conjunt de dades pad_def_mdbas de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_def_mdbas on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_imm_mdbas
+        title: { ca: Open Data BCN pad_imm_mdbas, en: Open Data BCN dataset pad_imm_mdbas }
+        description:
+          ca: Conjunt de dades pad_imm_mdbas de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_imm_mdbas on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_emi_mdbas
+        title: { ca: Open Data BCN pad_emi_mdbas, en: Open Data BCN dataset pad_emi_mdbas }
+        description:
+          ca: Conjunt de dades pad_emi_mdbas de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_emi_mdbas on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_alt_mdbas
+        title: { ca: Open Data BCN pad_alt_mdbas, en: Open Data BCN dataset pad_alt_mdbas }
+        description:
+          ca: Conjunt de dades pad_alt_mdbas de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_alt_mdbas on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_bai_mdbas
+        title: { ca: Open Data BCN pad_bai_mdbas, en: Open Data BCN dataset pad_bai_mdbas }
+        description:
+          ca: Conjunt de dades pad_bai_mdbas de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_bai_mdbas on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_mdbas_nacionalitat-continent_sexe
+        title:
+          ca: Open Data BCN pad_mdbas_nacionalitat-continent_sexe
+          en: Open Data BCN dataset pad_mdbas_nacionalitat-continent_sexe
+        description:
+          ca: Conjunt de dades pad_mdbas_nacionalitat-continent_sexe de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_mdbas_nacionalitat-continent_sexe on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_imm_mdbas_nacionalitat-g
+        title:
+          ca: Open Data BCN pad_imm_mdbas_nacionalitat-g
+          en: Open Data BCN dataset pad_imm_mdbas_nacionalitat-g
+        description:
+          ca: Conjunt de dades pad_imm_mdbas_nacionalitat-g de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_imm_mdbas_nacionalitat-g on its open data portal Open Data BCN. Licence CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/pad_emi_mdbas_nacionalitat-g
+        title:
+          ca: Open Data BCN pad_emi_mdbas_nacionalitat-g
+          en: Open Data BCN dataset pad_emi_mdbas_nacionalitat-g
+        description:
+          ca: Conjunt de dades pad_emi_mdbas_nacionalitat-g de l'Ajuntament de Barcelona al portal Open Data BCN. Llicència CC BY 4.0.
+          en: The City of Barcelona's dataset pad_emi_mdbas_nacionalitat-g on its open data portal Open Data BCN. Licence CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: statistics }

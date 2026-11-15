@@ -1,0 +1,75 @@
+# The mapping of the golemio-shared-cars pipeline (T-5680, PL-03): one Vehicle per car-sharing car
+# free to rent in Prague, from Golemio's Shared Cars v2, with its model, company and where it
+# stands. Golemio lists only the cars free right now (availability "ihned" for all 949 of
+# 2026-10-25), so a car someone rents leaves the list.
+#
+# Ids: urn:ngsi-ld:Vehicle:{org}:{space}:sharedcar-{Golemio's key without its cesky-carsharing-
+# prefix} ("sharedcar-8ab4387"): the companies' fleet key is the car's registration plate, a
+# company car's, not a person's.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a position outside Prague's box (the city plus about
+# 1 km, the space's in-area rule) or at 0,0 and a car without a key are dropped; two reports of one
+# car keep the newer. The run logs how many it dropped and why.
+#
+# An answer that is not a feature list, an empty one (three companies with no free car in all of
+# Prague is Golemio failing) or one whose newest report is older than 30 minutes fails the run: the
+# last cars stay and expire on their own. Each Vehicle carries expiresAt 15 minutes after its
+# report (NGSI-LD 4.22), three runs, so a rented car leaves the map.
+pipeline:
+  processors:
+    # One try: the first refusal ends the message there, so its reason is the one the run reports.
+    - try:
+        - mapping: |
+            map at {
+              root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            let features = this.features.catch(null)
+            let n = if $features.type() == "array" { $features.length() } else { -1 }
+            let newest = if $n > 0 { $features.map_each(f -> f.properties.updated_at.apply("at").catch("")).sort().index(-1) } else { "" }
+            root = if $n < 0 {
+              throw("Golemio's shared cars are not a feature list")
+            } else if $n == 0 {
+              throw("Golemio listed no shared car in Prague; the feed failed")
+            } else if $newest == "" || $newest.ts_parse("2006-01-02T15:04:05Z").ts_unix() < now().ts_unix() - 1800 {
+              throw("Golemio's newest shared car report (%v) is older than 30 minutes".format($newest))
+            } else { $features }
+        - mapping: |
+            map at {
+              root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            let rows = this.map_each(f -> {
+              "c": f.geometry.coordinates.catch(null),
+              "p": f.properties.catch({}),
+              "key": f.properties.id.catch("").string().lowercase().trim_prefix("cesky-carsharing-"),
+              "at": f.properties.updated_at.apply("at").catch(null)
+            })
+            let usable = $rows.filter(r -> r.at != null && r.key.re_match("^[a-z0-9]{1,20}$"))
+            let located = $usable.filter(r -> r.c.type() == "array" && r.c.length() == 2 && r.c.index(0).type() == "number" && r.c.index(1).type() == "number")
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let unique = $inside.sort_by(r -> 0 - r.at.ts_parse("2006-01-02T15:04:05Z").ts_unix()).unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            root = $unique
+        - log:
+            level: INFO
+            message: 'golemio-shared-cars: read ${! meta("read") }, dropped ${! meta("unusable") } without time or key, ${! meta("outside") } outside Prague, ${! meta("duplicate") } duplicate reports'
+        - mapping: |
+            root = this.map_each(r -> r.merge({
+              "words": r.p.name.or("").string().trim().split(" ").filter(w -> w != "")
+            })).map_each(r -> r.merge({
+              "model": if r.words.length() > 1 && r.words.index(0) == r.words.index(1) { r.words.slice(1).join(" ") } else { r.words.join(" ") }
+            })).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:sharedcar-%v".format("Vehicle", env("JC_ORG_DOMAIN"), env("JC_SPACE"), v.key),
+              "type": "Vehicle",
+              "name": if v.model != "" { { "type": "LanguageProperty", "languageMap": { "cs": v.model, "en": v.model } } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": v.c }, "observedAt": v.at },
+              "vehicleType": { "type": "Property", "value": "car" },
+              "category": { "type": "Property", "value": ["tracked"] },
+              "operatorName": if v.p.company.name.or("").string().trim() != "" { { "type": "Property", "value": v.p.company.name.string().trim() } } else { null },
+              "dateObserved": { "type": "Property", "value": v.at },
+              "dataProvider": { "type": "Property", "value": "Golemio, Operátor ICT, a.s.; car4way, Anytime, Bolt" },
+              "source": { "type": "Property", "value": "https://api.golemio.cz/v2/sharedcars" },
+              "expiresAt": (v.at.ts_parse("2006-01-02T15:04:05Z").ts_unix() + 900).ts_format("2006-01-02T15:04:05Z", "UTC")
+            }.filter(kv -> kv.value != null))

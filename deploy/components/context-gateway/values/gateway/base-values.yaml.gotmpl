@@ -1,0 +1,357 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /healthz and /livez
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required
+# - [x] Named ports -> 8080 container mapped to 8080 service
+# - [ ] Ingress with TLS -> not applicable, gateway is fronted by APISIX
+
+fullnameOverride: context-gateway
+nameOverride: context-gateway-gateway
+
+{{- $images := index .Values.images "context-gateway" "gateway" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+command:
+  - context-gateway
+
+containerPort: 8080
+
+# The gateway's pods by address: a space move copies only once every pod's /metrics shows the
+# hold, so no replica still takes writes under the copy (JC_PORTAL_GATEWAY_PODS_URL, F-POR4-014).
+headlessService:
+  name: context-gateway-pods
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  name: http
+  # The internal listener (JC_GATEWAY_INTERNAL_BIND): the MQTT brokers' CONNECT check and
+  # nothing else (PL-75); only broker pods reach it (components/mqtt-brokers/networkpolicies).
+  extraPorts:
+    - name: internal
+      port: 8082
+      targetPort: 8082
+      protocol: TCP
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /livez
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 10
+
+# JC_GATEWAY_BROKER_URL and JC_GATEWAY_ORG_DOMAIN are both required: the binary exits 1
+# without either. The org domain is the middle segment of every entity URN the write guard
+# checks (PF-42), so a wrong value turns every write into a 400.
+# The issuer is what tokens carry in `iss`; the JWKS is fetched in-cluster over plain http,
+# which the gateway insists on (a TLS client behind the mesh would verify nothing useful).
+# JC_GATEWAY_PUBLIC_URL makes the RFC 8707 resource indicator https://{host}/api/endpoint/{slug}
+# an accepted audience next to the bare slug (PF-45); it is the public data host `api.{domain}`
+# (ADR-N-052 §2.1, EP-128, T-4630), the issuer of the gateway's anonymous OAuth server too.
+# The anonymous OAuth server's signing key (ADR-N-052 §2.2.6, T-4630), from the Secret
+# components/context-gateway/secrets.yaml generates; never a value in this file.
+envSecret:
+  JC_GATEWAY_OAUTH_KEY:
+    secret: context-gateway-oauth-key
+    key: key
+env:
+  JC_GATEWAY_BROKER_URL: "http://context-broker.{{ (index .Values "context-broker" "broker" "namespace") }}.svc.cluster.local:8080"
+  # Every ContextBroker beside `main`, `{broker}` its name (ADR-N-046 §2.3, T-3989): the release
+  # components/context-broker adds per entry of global.contextBrokers. The variable above stays
+  # the implicit `main`, whose Service keeps its old name.
+  JC_GATEWAY_BROKER_URL_TEMPLATE: "http://context-broker-{broker}.{{ (index .Values "context-broker" "broker" "namespace") }}.svc.cluster.local:8080"
+  JC_GATEWAY_ORG_DOMAIN: {{ $global.orgDomain | quote }}
+  JC_GATEWAY_INTERNAL_BIND: "0.0.0.0:8082"
+  # The spaces' personal-data keys the Portal writes (the personal-keys volume below, DM-121).
+  JC_GATEWAY_PERSONAL_KEYS: /var/run/secrets/jc/personal-keys
+  # The runner's headless Service: a broker admits a tokenless CONNECT only from its pods (T-4004).
+  JC_GATEWAY_MQTT_RUNNER_HOST: "pipeline-runner-pods.{{ index .Values "pipeline-runner" "runner" "namespace" }}.svc.cluster.local"
+  # The Portal's headless Service: a capture broker admits its tokenless subscriber only from
+  # its pods (ADR-N-048 §2.10, T-4880).
+  JC_GATEWAY_MQTT_PORTAL_HOST: "portal-pods.{{ .Values.portal.portal.namespace }}.svc.cluster.local"
+  {{- with dig "mqtt-brokers" "brokers" "namespace" "" .Values }}
+  # The brokers' headless Service: under the mesh a broker sees its internal listener's clients at
+  # its own address, so the runner and the capture are admitted from these pods too (T-5893).
+  JC_GATEWAY_MQTT_BROKER_HOST: "mqtt-broker-pods.{{ . }}.svc.cluster.local"
+  {{- end }}
+  # The anonymous OAuth server redirects to Google's relay alone: OAuth is for Gemini only, Claude,
+  # ChatGPT and Grok read the open data without a token (owner 2026-10-18, ADR-N-052 §2.3, T-4630).
+  JC_GATEWAY_OAUTH_REDIRECT_HOSTS: oauth-redirect.googleusercontent.com
+  # glibc raises its mmap threshold to the largest block freed (up to 32 MiB), so after the first
+  # big broker answer every 1-8 MiB body comes from the heap and stays there once the load ends:
+  # prod idled at 929 Mi of 1 Gi after T-4754's 100 req/s. A fixed 128 KiB threshold maps each
+  # large body on its own and hands it back on free (T-4782, measured in context-gateway's
+  # in_flight_tests: idle +9 MiB with it, about +100 MiB without).
+  MALLOC_MMAP_THRESHOLD_: "131072"
+  JC_GATEWAY_PUBLIC_URL: "https://api.{{ $global.domain }}"
+  # The edge keeps an anonymous read of data 60 s (T-5900, the api-context-endpoint and
+  # api-context-endpoint-history proxy-caches): every anonymous caller is the Endpoint's one
+  # anonymous subject, so a repeated public read is answered at the edge instead of by the
+  # gateway, Antares and PostgreSQL. T-6185 raised it from 5 s to the gateway's bound (60 s): a
+  # chart's history window starts on the whole hour, and its views share one read only for as long
+  # as the edge keeps it. A revoked public grant or a changed value reaches anonymous readers at
+  # most 60 s late; a read with a token or a cookie is never kept. A platform image older than T-5900 ignores the key and keeps every
+  # answer private, which the edge then never stores.
+  JC_GATEWAY_PUBLIC_MAX_AGE: "60"
+  JC_OIDC_ISSUER: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}"
+  # The gateway's own client on the Portal's internal listener (T-1500, PF-46, AG-52), proved by
+  # this pod's projected token and no secret (PF-47, T-2868; the volume below).
+  JC_OIDC_CLIENT_ASSERTION_FILE: /var/run/secrets/jc/keycloak/token
+  # The client the secret above belongs to: with the issuer it is what the gateway asks the realm
+  # for its own token with (client_credentials), to read the Portal's preview list.
+  JC_OIDC_CLIENT_ID: "context-gateway"
+  JC_OIDC_JWKS_URL: "http://keycloak-app-keycloakx-http.{{ .Values.keycloak.app.namespace }}.svc.cluster.local:80{{ .Values.keycloak.app.pathPrefix | trimSuffix "/" }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/certs"
+  # And the token endpoint on the same Service, for the same reason the JWKS URL is not the
+  # issuer's: the issuer is the address a browser uses, and this single node cannot dial its own
+  # ingress hostname from a pod — the gateway asked and got nothing for as long as it ran (T-1500).
+  # The token's `iss` is still the public issuer, because the realm's frontend URL decides that,
+  # so the Portal verifies it against JC_OIDC_ISSUER unchanged.
+  JC_OIDC_TOKEN_URL: "http://keycloak-app-keycloakx-http.{{ .Values.keycloak.app.namespace }}.svc.cluster.local:80{{ .Values.keycloak.app.pathPrefix | trimSuffix "/" }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/token"
+{{- if has "gitea" .Values.components }}
+  # The endpoint table is a projection of the configuration repository (CC-08), and the
+  # repository lives in the forge: git-sync below keeps a checkout under /repo and the gateway
+  # reads the `current` link and follows it (pdp::reaper, one poll a second), so an Endpoint a
+  # steward merges in the Portal serves within one sync period and a revoked Policy stops
+  # within the next (T-0278, EP-19, OPS-45).
+  JC_GATEWAY_REPO_DIR: /repo/current
+{{- if eq (toString ($global.configRepo.layout | default 1)) "2" }}
+  # Layout 2 (CC-86): each registered project's checkout, kept by the checkouts sidecar, and
+  # the directory the gateway assembles the organization into.
+  JC_GATEWAY_PROJECTS_DIR: /projects
+  # One level inside the volume: the gateway renders into a sibling `.current.next` and swaps it
+  # in, and a sibling of the mount itself would sit on the read-only root (T-2647).
+  JC_GATEWAY_ASSEMBLY_DIR: /assembly/current
+{{- end }}
+{{- if has "agent-runner" .Values.components }}
+  # The running workspace previews, served beside main on slugs of their own (CC-78,
+  # Architecture/06 §7.2). The Portal opens its internal listener only beside an agent runner.
+  JC_GATEWAY_PREVIEWS_URL: "http://portal.{{ .Values.portal.portal.namespace }}.svc.cluster.local:9090/internal/previews"
+  JC_GATEWAY_PREVIEWS_DIR: /previews
+  # The Organization's domain state, read from the same listener with the same token (PF-41,
+  # Architecture/03 §3). Only `enforce` reads it.
+  JC_GATEWAY_DOMAIN_VERIFICATIONS_URL: "http://portal.{{ .Values.portal.portal.namespace }}.svc.cluster.local:9090/internal/domain-verifications"
+  # A person's own MCP connectors, read from the same listener with the same token, so
+  # `/api/mcp/me/{name}` answers (EP-123, T-4538, T-4546); unset, no personal address is served.
+  JC_GATEWAY_CONNECTORS_URL: "http://portal.{{ .Values.portal.portal.namespace }}.svc.cluster.local:9090/internal/connectors"
+  # Answered calls per Endpoint and surface, posted every five minutes with the same token for the
+  # publishers' Usage tab (T-5118): names and numbers, no address or person.
+  JC_GATEWAY_USAGE_URL: "http://portal.{{ .Values.portal.portal.namespace }}.svc.cluster.local:9090/internal/usage"
+{{- end }}
+{{- if has "portal" .Values.components }}
+  # The subjects the Portal revoked (a person disabled, deleted or signed out, a ServiceAccount
+  # removed), polled every ten seconds with the same token: their unexpired tokens are refused on
+  # every door within one poll (T-5568, TR-03187 AR-6). Beside every Portal, agent runner or
+  # not: a gateway with a realm and no list refuses to start (T-5869, F-SEC1-024).
+  JC_GATEWAY_REVOCATIONS_URL: "http://portal.{{ .Values.portal.portal.namespace }}.svc.cluster.local:9090/internal/revocations"
+{{- end }}
+{{- if has "observability" .Values.components }}
+  # Each MCP tool call, as an OTLP log record to the collector, which posts it to the Portal's
+  # Activity (T-5322): caller, tool, Endpoint and outcome, never arguments or values.
+  JC_GATEWAY_ACTIVITY_URL: "http://observability-collector.{{ .Values.observability.collector.namespace }}.svc.cluster.local:4318/v1/logs"
+{{- end }}
+{{- if has "assistant" .Values.components }}
+  # `search_documents` (EP-133, EP-134, T-4659): the assistant's public-passage search on its
+  # internal path, which the edge never routes (AG-119); without the URL the tool is listed
+  # nowhere. The hub searches the cities' websites; a project's MCP server names its own
+  # sources in `spec.knowledgeSources` (MF-57). An `eval-*` source is never named here
+  # (test_seed_knowledge_sources_never_serve_an_eval_source).
+  JC_GATEWAY_ASSISTANT_URL: "http://jc-assistant.{{ .Values.assistant.worker.namespace }}.svc.cluster.local:8080"
+  JC_GATEWAY_HUB_KNOWLEDGE_SOURCES: "banskabystrica/web,bbsk/web,zilina/web,praha/web,helsinki/web"
+{{- end }}
+  # `report` records and shows the domain state and refuses nothing; `enforce` refuses a write
+  # to a space until the Organization's domain is verified, and needs the URL above. The
+  # owner's switch once the seeds verify (T-2572).
+  JC_GATEWAY_DOMAIN_VERIFICATION: report
+{{- end }}
+
+{{- if has "gitea" .Values.components }}
+{{- $forge := printf "http://gitea-http.%s.svc.cluster.local:3000/%s/%s.git" .Values.gitea.forge.namespace $global.configRepo.owner $global.configRepo.name }}
+{{- $gitSync := index .Values.images "context-gateway" "git-sync" }}
+{{- $gitSyncEnv := list
+  (dict "name" "GITSYNC_REPO" "value" $forge)
+  (dict "name" "GITSYNC_REF" "value" "main")
+  (dict "name" "GITSYNC_ROOT" "value" "/repo")
+  (dict "name" "GITSYNC_GIT_CONFIG" "value" "safe.directory:/repo")
+  (dict "name" "GITSYNC_LINK" "value" "current")
+  (dict "name" "GITSYNC_DEPTH" "value" "1")
+  (dict "name" "GITSYNC_USERNAME" "value" "git-sync")
+  (dict "name" "GITSYNC_PASSWORD" "valueFrom" (dict "secretKeyRef" (dict "name" "gitea-token-gateway" "key" "token")))
+  (dict "name" "HOME" "value" "/tmp") }}
+{{- $gitSyncSecurity := dict "runAsNonRoot" true "runAsUser" 65533 "runAsGroup" 65533 "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault") }}
+{{- $gitSyncMounts := list (dict "name" "repo" "mountPath" "/repo") (dict "name" "tmp" "mountPath" "/tmp") }}
+{{- /* T-5113: prod's checkouts sidecar held 107-109Mi of 128Mi (2026-10-21); the jc-assistant
+       pod's git-sync, same image and repo, was OOMKilled at 128Mi. */}}
+{{- $gitSyncResources := dict "requests" (dict "cpu" "10m" "memory" "128Mi") "limits" (dict "cpu" "200m" "memory" "256Mi") }}
+{{- $layout2 := eq (toString ($global.configRepo.layout | default 1)) "2" }}
+{{- $checkouts := index .Values.images "context-gateway" "checkouts" }}
+{{- $checkoutsArgs := list "--org-dir" "/repo/current" "--projects-dir" "/projects" "--forge" (printf "http://gitea-http.%s.svc.cluster.local:3000/%s" .Values.gitea.forge.namespace $global.configRepo.owner) "--token-file" "/var/run/forge/token" }}
+{{- $checkoutsSecurity := dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault") }}
+{{- $checkoutsMounts := list (dict "name" "repo" "mountPath" "/repo" "readOnly" true) (dict "name" "projects" "mountPath" "/projects") (dict "name" "forge-token" "mountPath" "/var/run/forge" "readOnly" true) (dict "name" "tmp" "mountPath" "/tmp") }}
+{{- $checkoutsEnv := list (dict "name" "HOME" "value" "/tmp") }}
+
+# The checkout the gateway reads. git-sync (image pinned by digest, images.yaml) clones the
+# forge's repository with the read-only token the forge bootstrap minted (gitea-token-gateway,
+# T-0399) and swaps the `current` link on every new commit; the username is not checked by the
+# forge when the password is an access token. The same container runs once before the gateway
+# (GITSYNC_ONE_TIME), so the gateway never starts on an empty table and crashloops until the
+# first clone lands. git-sync's own user is 65533; the shared emptyDir is world-readable, which
+# is all the gateway (user 1000) needs. Nothing is written outside /repo and /tmp, so the root
+# filesystem stays read-only like every other container here.
+extraVolumes:
+  - name: repo
+    emptyDir: {}
+  # The token the `context-gateway` client proves itself with (PF-47, T-2868): this pod's ServiceAccount,
+  # bound to the realm as its audience so it opens nothing else, ten minutes long; the kubelet
+  # renews it in place and the gateway reads it again at every grant.
+  - name: keycloak-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            audience: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}"
+            expirationSeconds: 600
+            path: token
+  # Each space's `spec.personalData.keyRef`, one file per space segment, which the Portal's
+  # reconciler writes (DM-121). Optional: the gateway starts before the first sync and refuses a
+  # hashed write 503 while a space's file is missing. No subPath, so the kubelet swaps a rotated
+  # key in and the gateway reads it at its next hashed write. 0444 because the pod sets no
+  # fsGroup for the gateway's user 1000; only the gateway container mounts the volume.
+  - name: personal-keys
+    secret:
+      secretName: personal-data-keys
+      optional: true
+      defaultMode: 0444
+  # The previews the gateway fetched; at most two on the node, each a branch's manifests.
+  - name: previews
+    emptyDir:
+      sizeLimit: 64Mi
+{{- if $layout2 }}
+  # Layout 2 (CC-86, T-2646): the checkouts sidecar writes every registered project here and
+  # the gateway only reads it; the gateway assembles the organization into /assembly. The
+  # forge token is the read-only one git-sync already uses (T-0399), mounted as a file
+  # because `jcctl checkouts` reads it from one and never from its environment.
+  - name: projects
+    emptyDir:
+      sizeLimit: 256Mi
+  - name: assembly
+    emptyDir:
+      sizeLimit: 256Mi
+  - name: forge-token
+    secret:
+      secretName: gitea-token-gateway
+      items:
+        - { key: token, path: token }
+{{- end }}
+
+extraVolumeMounts:
+  - { name: repo, mountPath: /repo, readOnly: true }
+  - { name: previews, mountPath: /previews }
+  - { name: keycloak-token, mountPath: /var/run/secrets/jc/keycloak, readOnly: true }
+  - { name: personal-keys, mountPath: /var/run/secrets/jc/personal-keys, readOnly: true }
+{{- if $layout2 }}
+  - { name: projects, mountPath: /projects, readOnly: true }
+  - { name: assembly, mountPath: /assembly }
+{{- end }}
+
+extraInitContainers:
+  - name: git-sync-init
+    image: "{{ $gitSync.repository }}:{{ $gitSync.tag }}@{{ $gitSync.digest }}"
+    imagePullPolicy: IfNotPresent
+    env:
+{{ append $gitSyncEnv (dict "name" "GITSYNC_ONE_TIME" "value" "true") | toYaml | indent 6 }}
+    securityContext:
+{{ $gitSyncSecurity | toYaml | indent 6 }}
+    volumeMounts:
+{{ $gitSyncMounts | toYaml | indent 6 }}
+    resources:
+{{ $gitSyncResources | toYaml | indent 6 }}
+{{- if $layout2 }}
+  # One pass after the organization's first clone, so the gateway starts with every project
+  # it can reach; a project whose fetch fails is reported and the others start (CC-86).
+  - name: checkouts-init
+    image: "{{ $checkouts.repository }}:{{ $checkouts.tag }}@{{ $checkouts.digest }}"
+    imagePullPolicy: IfNotPresent
+    args:
+{{ append $checkoutsArgs "--once" | toYaml | indent 6 }}
+    env:
+{{ $checkoutsEnv | toYaml | indent 6 }}
+    securityContext:
+{{ $checkoutsSecurity | toYaml | indent 6 }}
+    volumeMounts:
+{{ $checkoutsMounts | toYaml | indent 6 }}
+    resources:
+{{ $gitSyncResources | toYaml | indent 6 }}
+{{- end }}
+
+extraContainers:
+  - name: git-sync
+    image: "{{ $gitSync.repository }}:{{ $gitSync.tag }}@{{ $gitSync.digest }}"
+    imagePullPolicy: IfNotPresent
+    env:
+    # GITSYNC_MAX_FAILURES -1 (T-2978): after the first clone a failed fetch keeps the last
+    # checkout and retries each period. The default exits on the first one, and a crash-looping
+    # sidecar made the only gateway pod NotReady whenever the forge or its Postgres restarted.
+{{ concat $gitSyncEnv (list (dict "name" "GITSYNC_PERIOD" "value" "10s") (dict "name" "GITSYNC_HTTP_BIND" "value" ":9092") (dict "name" "GITSYNC_MAX_FAILURES" "value" "-1")) | toYaml | indent 6 }}
+    # git-sync's own endpoint: 5xx until the first clone landed, 200 after (the readiness
+    # every container must declare, ci/policies/base/probes.yaml).
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 9092
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    securityContext:
+{{ $gitSyncSecurity | toYaml | indent 6 }}
+    volumeMounts:
+{{ $gitSyncMounts | toYaml | indent 6 }}
+    resources:
+{{ $gitSyncResources | toYaml | indent 6 }}
+{{- if $layout2 }}
+  # Every registered project at its ref, relinked one atomic rename at a time (CC-86); the
+  # gateway's reaper sees the new commit and reloads.
+  - name: checkouts
+    image: "{{ $checkouts.repository }}:{{ $checkouts.tag }}@{{ $checkouts.digest }}"
+    imagePullPolicy: IfNotPresent
+    args:
+{{ concat $checkoutsArgs (list "--interval" "10") | toYaml | indent 6 }}
+    env:
+{{ $checkoutsEnv | toYaml | indent 6 }}
+    # No port of its own: ready once the first pass left the projects directory behind.
+    readinessProbe:
+      exec:
+        command: ["test", "-d", "/projects"]
+      periodSeconds: 30
+      timeoutSeconds: 3
+    securityContext:
+{{ $checkoutsSecurity | toYaml | indent 6 }}
+    volumeMounts:
+{{ $checkoutsMounts | toYaml | indent 6 }}
+    resources:
+{{ $gitSyncResources | toYaml | indent 6 }}
+{{- end }}
+{{- end }}
+
+podSecurityContext:
+  {{ merge (dict "runAsUser" 1000) .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

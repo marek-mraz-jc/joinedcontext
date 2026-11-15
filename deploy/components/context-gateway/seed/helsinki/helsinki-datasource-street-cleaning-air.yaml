@@ -1,0 +1,19 @@
+# Forum Virium Helsinki's street cleaning air quality pilot (LIIDI2, Swarco sensors): every reading of
+# a street washer, a brush machine and the fixed point in Rastila, 7 Apr to 24 May 2023, 14,421
+# readings. The pilot is over and the file has not changed since 15 Jun 2023; it is read gzipped
+# (1.5 MB, 10 MB inflated). No key. CC-BY-4.0, read from the HRI catalogue (package
+# datankeruukokeilu-helsingissa-ilmanlaatu-katujen-siivouksen-aikana). T-5255.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: fvh-swarco-street-cleaning-air
+  namespace: helsinki
+  title:
+    en: Air quality during street cleaning (Forum Virium Helsinki pilot)
+    fi: Ilmanlaatu katujen siivouksen aikana (Forum Virium Helsinki, kokeilu)
+spec:
+  type: http
+  http:
+    url: https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz
+    verb: GET
+    timeout: 60s

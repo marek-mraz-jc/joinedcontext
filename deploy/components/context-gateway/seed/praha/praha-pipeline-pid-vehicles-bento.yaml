@@ -1,0 +1,107 @@
+# The mapping of the pid-vehicles pipeline (T-5268, PL-03): one Vehicle per PID vehicle in service
+# inside Prague, from Golemio's vehicle positions, with its line, where it heads, its next stop,
+# how late it runs and, where the vehicle reports them, its speed and heading. About 800 of the
+# 1,100 vehicles of an evening run inside the city; the regional rest stays out of the city space.
+#
+# Ids: urn:ngsi-ld:Vehicle:{org}:{space}:{operator}-{fleet number} ("dp-praha-9099"), so a vehicle
+# keeps its entity across trips and days. The metro and the trains report no fleet number: they
+# are keyed by their GTFS trip ("trip-17-39152-261007"), one entity per run.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a position outside Prague's box (the city plus about
+# 1 km, the space's in-area rule) or at 0,0 is dropped; two reports of one vehicle keep the newer;
+# a speed outside 0..150 km/h, a heading outside 0..359 and a delay over three hours either way
+# leave that attribute out and keep the position. The run logs how many it dropped and why.
+#
+# An answer that is not a feature list, an empty one (PID runs night lines, so an empty Prague is
+# Golemio failing) or one whose newest report is older than 15 minutes fails the run: the last
+# positions stay and expire on their own. Each Vehicle carries expiresAt five minutes after its
+# report (NGSI-LD 4.22), so a vehicle that leaves service leaves the map.
+pipeline:
+  processors:
+    # One try: the first refusal ends the message there, so its reason is the one the run reports.
+    - try:
+        # A response size cap: 10,000 vehicles at about 1.2 KB each.
+        - mapping: |
+            root = if content().length() > 16777216 { throw("Golemio answered %v bytes; more than 16 MiB is not the vehicle list".format(content().length())) } else { this }
+        - mapping: |
+            map at {
+              root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            let features = this.features.catch(null)
+            let n = if $features.type() == "array" { $features.length() } else { -1 }
+            let newest = if $n > 0 { $features.map_each(f -> f.properties.last_position.origin_timestamp.apply("at").catch("")).sort().index(-1) } else { "" }
+            root = if $n < 0 {
+              throw("Golemio's vehicle positions are not a feature list")
+            } else if $n == 0 {
+              throw("Golemio listed no PID vehicle; PID runs day and night, so the feed failed")
+            } else if $newest == "" || $newest.ts_parse("2006-01-02T15:04:05Z").ts_unix() < now().ts_unix() - 900 {
+              throw("Golemio's newest vehicle report (%v) is older than 15 minutes".format($newest))
+            } else { $features }
+        - mapping: |
+            map at {
+              root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            map slug {
+              root = this.string().lowercase().replace_all_many([
+                "á", "a", "č", "c", "ď", "d", "é", "e", "ě", "e", "í", "i", "ň", "n", "ó", "o",
+                "ř", "r", "š", "s", "ť", "t", "ú", "u", "ů", "u", "ý", "y", "ž", "z"
+              ]).re_replace_all("[^a-z0-9]+", "-").trim("-")
+            }
+            let rows = this.map_each(f -> {
+              "c": f.geometry.coordinates.catch(null),
+              "t": f.properties.trip.catch({}),
+              "p": f.properties.last_position.catch({}),
+              "at": f.properties.last_position.origin_timestamp.apply("at").catch(null)
+            }).map_each(r -> r.merge({
+              "key": if r.t.vehicle_registration_number.type() == "number" && r.t.agency_name.real.type() == "string" {
+                "%v-%v".format(r.t.agency_name.real.apply("slug"), r.t.vehicle_registration_number.int64())
+              } else if r.t.gtfs.trip_id.type() == "string" {
+                "trip-" + r.t.gtfs.trip_id.apply("slug")
+              } else { "" }
+            }))
+            let usable = $rows.filter(r -> r.at != null && r.key != "")
+            let located = $usable.filter(r -> r.c.type() == "array" && r.c.length() == 2 && r.c.index(0).type() == "number" && r.c.index(1).type() == "number")
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let unique = $inside.sort_by(r -> 0 - r.at.ts_parse("2006-01-02T15:04:05Z").ts_unix()).unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $located.length() - $inside.length() + $usable.length() - $located.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta speed_range = $unique.filter(r -> r.p.speed.type() == "number" && (r.p.speed < 0 || r.p.speed > 150)).length()
+            meta heading_range = $unique.filter(r -> r.p.bearing.type() == "number" && (r.p.bearing < 0 || r.p.bearing >= 360)).length()
+            meta delay_range = $unique.filter(r -> r.p.delay.actual.type() == "number" && (r.p.delay.actual < -10800 || r.p.delay.actual > 10800)).length()
+            root = $unique
+        - log:
+            level: INFO
+            message: 'pid-vehicles: read ${! meta("read") }, dropped ${! meta("unusable") } without time or id, ${! meta("outside") } outside Prague, ${! meta("duplicate") } duplicate reports; left out ${! meta("speed_range") } speeds, ${! meta("heading_range") } headings, ${! meta("delay_range") } delays out of range'
+        - mapping: |
+            let modes = { "0": "tram", "1": "metro", "2": "train", "3": "bus", "4": "ferry", "7": "funicular", "11": "trolleybus" }
+            let kinds = { "tram": "tram", "bus": "bus", "trolleybus": "trolley" }
+            root = this.map_each(r -> {
+              "mode": $modes.get(r.t.gtfs.route_type.string().catch("")).catch(null),
+              "line": r.t.gtfs.route_short_name.catch(null),
+              "r": r
+            }).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:%v".format("Vehicle", env("JC_ORG_DOMAIN"), env("JC_SPACE"), v.r.key),
+              "type": "Vehicle",
+              "name": { "type": "LanguageProperty", "languageMap": {
+                "cs": "Linka %v, směr %v".format(v.line.or("?"), v.r.t.gtfs.trip_headsign.or("?")),
+                "en": "Line %v to %v".format(v.line.or("?"), v.r.t.gtfs.trip_headsign.or("?")) } },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": v.r.c }, "observedAt": v.r.at },
+              "vehicleType": { "type": "Property", "value": $kinds.get(v.mode.or("")).or("other") },
+              "category": { "type": "Property", "value": ["public", "tracked"] },
+              "transportMode": if v.mode != null { { "type": "Property", "value": v.mode } } else { null },
+              "lineName": if v.line.type() == "string" && v.line != "" { { "type": "Property", "value": v.line } } else { null },
+              "direction": if v.r.t.gtfs.trip_headsign.type() == "string" && v.r.t.gtfs.trip_headsign != "" { { "type": "Property", "value": v.r.t.gtfs.trip_headsign } } else { null },
+              "nextStop": if v.r.p.next_stop.id.type() == "string" && v.r.p.next_stop.id != "" { { "type": "Property", "value": v.r.p.next_stop.id, "observedAt": v.r.at } } else { null },
+              "delay": if v.r.p.delay.actual.type() == "number" && v.r.p.delay.actual >= -10800 && v.r.p.delay.actual <= 10800 { { "type": "Property", "value": v.r.p.delay.actual.round(), "unitCode": "SEC", "observedAt": v.r.at } } else { null },
+              "speed": if v.r.p.speed.type() == "number" && v.r.p.speed >= 0 && v.r.p.speed <= 150 { { "type": "Property", "value": v.r.p.speed, "unitCode": "KMH", "observedAt": v.r.at } } else { null },
+              "heading": if v.r.p.bearing.type() == "number" && v.r.p.bearing >= 0 && v.r.p.bearing < 360 { { "type": "Property", "value": v.r.p.bearing.floor(), "unitCode": "DD", "observedAt": v.r.at } } else { null },
+              "fleetVehicleId": if v.r.t.vehicle_registration_number.type() == "number" { { "type": "Property", "value": v.r.t.vehicle_registration_number.int64().string() } } else { null },
+              "operatorName": if v.r.t.agency_name.real.type() == "string" { { "type": "Property", "value": v.r.t.agency_name.real } } else { null },
+              "wheelchairAccessible": if v.r.t.wheelchair_accessible.type() == "bool" { { "type": "Property", "value": v.r.t.wheelchair_accessible } } else { null },
+              "dateObserved": { "type": "Property", "value": v.r.at },
+              "dataProvider": { "type": "Property", "value": "Golemio, Operátor ICT, a.s.; PID (ROPID)" },
+              "source": { "type": "Property", "value": "https://api.golemio.cz/v2/vehiclepositions" },
+              "expiresAt": (v.r.at.ts_parse("2006-01-02T15:04:05Z").ts_unix() + 300).ts_format("2006-01-02T15:04:05Z", "UTC")
+            }.filter(kv -> kv.value != null))

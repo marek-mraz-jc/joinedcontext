@@ -1,0 +1,77 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//centralslovakia.eu - ECPv6.18.0//NONSGML v1.0//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:centralslovakia.eu
+X-ORIGINAL-URL:https://centralslovakia.eu
+X-WR-CALDESC:Udalosti pre centralslovakia.eu
+REFRESH-INTERVAL;VALUE=DURATION:PT1H
+X-Robots-Tag:noindex
+X-PUBLISHED-TTL:PT1H
+BEGIN:VTIMEZONE
+TZID:Europe/Bratislava
+BEGIN:DAYLIGHT
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+TZNAME:CEST
+DTSTART:20250330T010000
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+TZNAME:CET
+DTSTART:20251026T010000
+END:STANDARD
+BEGIN:DAYLIGHT
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+TZNAME:CEST
+DTSTART:20260329T010000
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+TZNAME:CET
+DTSTART:20261025T010000
+END:STANDARD
+BEGIN:DAYLIGHT
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+TZNAME:CEST
+DTSTART:20270328T010000
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+TZNAME:CET
+DTSTART:20271031T010000
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20260522
+DTEND;VALUE=DATE:20261026
+DTSTAMP:20260803T090821Z
+CREATED:20260803T090821Z
+LAST-MODIFIED:20260803T090821Z
+UID:49090-1779408000-1792972799@centralslovakia.eu
+SUMMARY:Moháč 500SK
+DESCRIPTION:Na Zvolenskom zámku je sprístupnená výstava Moháč 500 s podtitulom Obraz osmanskej prítomnosti. Projekt pripomína 500. výročie bitky pri Moháči a približuje obdobie osmanskej prítomnosti v strednej Európe. \nVýstava sa venuje tomu\, ako sa osmanská expanzia a jej dôsledky premietli do historickej pamäti\, vizuálnej kultúry a umeleckých diel. Návštevníkom ponúka možnosť spoznať udalosti a súvislosti\, ktoré zásadne ovplyvnili vývoj regiónu. \nExpozícia prepája historické pramene\, umelecké predmety a obrazové materiály\, prostredníctvom ktorých predstavuje rôzne podoby vnímania Osmanskej ríše a jej prítomnosti na území strednej Európy. \nInformácie o podujatí📅 Trvanie výstavy: 22. máj – 25. október 2026📍 Miesto: SNG – Zvolenský zámok\, Námestie SNP 1\, Zvolen🖼️ Názov výstavy: Moháč 500 – Obraz osmanskej prítomnosti🏛️ Organizátor: Slovenská národná galéria \nVýstava Moháč 500 ponúka príležitosť nahliadnuť na významnú historickú udalosť v širších súvislostiach a spoznať jej odraz v umení\, kultúre a kolektívnej pamäti. 🏰🖼️📜
+URL:https://centralslovakia.eu/podujatie/mohac-500sk/
+LOCATION:SNG Zvolen
+ATTACH;FMTTYPE=image/png:https://centralslovakia.eu/wp-content/uploads/2026/08/699731119_1533297608797993_2922173918155817527_n.png
+END:VEVENT
+BEGIN:VEVENT
+DTSTART;TZID=Europe/Bratislava:20261114T083000
+DTEND;TZID=Europe/Bratislava:20261114T113000
+DTSTAMP:20261016T105257Z
+CREATED:20260216T122814Z
+LAST-MODIFIED:20261016T105257Z
+UID:48543-1794645000-1794655800@centralslovakia.eu
+SUMMARY:Coffee Tour Banská Bystrica
+DESCRIPTION:Pre lepší zážitok z kávy. \n\n\nStočím si turka\, zalejem nesku\, alebo si pripravím domáce espresso. Ranná káva je rituálom skoro každého z nás\, a každý ju máme radi po svojom. Či už ste milovníkom kvalitnej výberovej kávy alebo sa o nej chcete dozvedieť viac\, pripravili sme pre vás Coffee Tour v Banskej Bystrici.  \nPrejdite si s nami 2 obľúbené bystrické kaviarne a jednu lokálnu pražiareň. Naučte sa viac o pražení\, postupe prípravy kvalitnej výberovej kávy\, napeňovaní mlieka a vychutnajte si pravú írsku kávu od dvojnásobného majstra Slovenska v baristike! \nKedy a kde?  \nVždy 1 sobota v mesiaci od 8:30 – 11:30 na bystrickom námestí. Coffee Tour v Banskej Bystrici v UŽ V PREDAJI. \nLístky zakúpiš tu: https://centralslovakia.eu/zazitky/coffee-tour-banska-bystrica/coffe
+URL:https://centralslovakia.eu/podujatie/coffee-tour-banska-bystrica-9/
+LOCATION:Banská Bystrica\, Banská Bystrica\, 97401\, Slovenská republika
+ATTACH;FMTTYPE=image/jpeg:https://centralslovakia.eu/wp-content/uploads/2023/04/2023-04-15-kavova-tour-143-e1719743074476.jpg
+END:VEVENT
+END:VCALENDAR

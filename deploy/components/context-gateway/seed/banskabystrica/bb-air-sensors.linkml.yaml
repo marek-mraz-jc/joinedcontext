@@ -1,0 +1,149 @@
+id: https://banskabystrica.sk/models/senzory/bb-air-sensors
+name: bb-air-sensors
+title: Demo air sensors in Banská Bystrica
+description: >-
+  The air-quality observation the demo sensors of the `senzory` space publish over MQTT
+  (DM-01): the slots of bb-air-quality, the model of the `ovzdusie` space, so a reading
+  of a sensor and of the EEA station compare term by term (DM-04, DM-16).
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  sdm: https://smartdatamodels.org/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+  # The vocabularies the unit mappings cite; a CURIE under an undeclared prefix dangles in
+  # every artifact that carries it (DM-59).
+  ucefact: https://vocabulary.uncefact.org/UnitMeasureCode#
+  qudt-unit: http://qudt.org/vocab/unit/
+  qudt-quantkind: http://qudt.org/vocab/quantitykind/
+default_prefix: sdm
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+
+slots:
+  name:
+    slot_uri: schema:name
+    description: The station's name, per language, as the readings of verejne name it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov
+          cs: Název
+          en: Name
+          de: Name
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: LanguageProperty
+      upstream_source: https://schema.org/name
+  dateObserved:
+    slot_uri: sdm:dateObserved
+    description: When the reading was taken, ISO 8601 with a time zone.
+    range: datetime
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Čas merania
+          cs: Čas měření
+          en: Observed at
+          de: Messzeitpunkt
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  pm10:
+    slot_uri: sdm:pm10
+    description: Particulate matter up to 10 µm.
+    range: float
+    minimum_value: 0
+    unit:
+      ucum_code: ug/m3
+      exact_mappings:
+        - ucefact:GQ
+        - qudt-unit:MicroGM-PER-M3
+      has_quantity_kind: qudt-quantkind:MassDensity
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PM10
+          cs: PM10
+          en: PM10
+          de: PM10
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  pm25:
+    slot_uri: sdm:pm25
+    description: Particulate matter up to 2.5 µm.
+    range: float
+    minimum_value: 0
+    unit:
+      ucum_code: ug/m3
+      exact_mappings:
+        - ucefact:GQ
+        - qudt-unit:MicroGM-PER-M3
+      has_quantity_kind: qudt-quantkind:MassDensity
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PM2,5
+          cs: PM2,5
+          en: PM2.5
+          de: PM2,5
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  reliability:
+    slot_uri: sdm:reliability
+    description: >-
+      How much the operator trusts this reading, 0 to 1. Operational quality data: the public
+      grant does not reach it.
+    range: float
+    minimum_value: 0
+    maximum_value: 1
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Spoľahlivosť
+          cs: Spolehlivost
+          en: Reliability
+          de: Zuverlässigkeit
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  refDevice:
+    slot_uri: sdm:refDevice
+    description: >-
+      The device that produced the reading. An internal asset reference: the public grant does
+      not reach it either.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zariadenie
+          cs: Zařízení
+          en: Device
+          de: Gerät
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Relationship
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+
+classes:
+  AirQualityObserved:
+    class_uri: sdm:AirQualityObserved
+    description: One air-quality reading of one station.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+      label:
+        tag: label
+        value:
+          sk: Meranie kvality ovzdušia
+          cs: Měření kvality ovzduší
+          en: Air quality reading
+          de: Luftqualitätsmessung
+    slots: [name, dateObserved, pm10, pm25, reliability, refDevice]

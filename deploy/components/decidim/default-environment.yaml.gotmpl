@@ -1,0 +1,59 @@
+---
+{{- $ns := include "jc.namespace" (dict "global" .Values.global "suffix" "decidim") }}
+decidim:
+  web:
+    enabled: true
+    namespace: {{ $ns }}
+    # participacia.{domain}: its own host, because Decidim builds every link from the
+    # organization's host (ADR-N-065).
+    subDomain: participacia
+    # The organization the bootstrap creates on the first rollout: its name per the default
+    # locale, the locales it offers, the prefix of every reference (JC-PROP-2026-11-1).
+    organization:
+      name: Participácia
+      defaultLocale: sk
+      locales: [sk, en]
+      referencePrefix: JC
+    # The e-mail address of the realm person who administers the organization. The bootstrap
+    # gives that address an admin account with no usable password: it is reached only by
+    # signing in through the realm with the same verified address. Empty: no admin yet.
+    adminEmail: ""
+    # The AssistantDeployment whose launcher every public page carries (components/decidim/seed,
+    # T-6449). Empty: no launcher.
+    assistantPublicId: participacia
+    # The city's site of images/decidim/site.rb after the bootstrap: name, colours, logo, home page
+    # and the seeded processes. Off until an owner looks at it. `demoNotice` marks the site as a
+    # demo copy in the banner and the footer (T-6453).
+    site:
+      content: false
+      demoNotice: false
+    # The context space Publish to context space writes to (the gem decidim-joinedcontext, T-6458):
+    # an admin picks this row. `endpointSlug` is the Endpoint slovensko-participacia-zapis, and space,
+    # instance, scope, locality and provider equal the harvester's row participacia of
+    # seeds/decidim/instances.csv, so pull and push write one id and one text.
+    publish:
+      name: participacia
+      title: Participácia občanov na Slovensku
+      endpointSlug: o6av726lj6atb4mn5o5ptnujabssdilo
+      space: slovensko-participacia
+      instance: participacia
+      scope: /SK/participacia
+      locality: Slovensko
+      provider: Platforma joinedcontext
+    # Outgoing mail (confirmations, notifications). Empty `address`: Decidim sends none.
+    # The password comes from a Secret the operator creates (`passwordSecret`, key `password`).
+    smtp:
+      address: ""
+      port: 587
+      username: ""
+      from: ""
+      passwordSecret: ""
+  sidekiq:
+    enabled: true
+    namespace: {{ $ns }}
+  sync:
+    enabled: true
+    namespace: {{ $ns }}
+  redis:
+    enabled: true
+    namespace: {{ $ns }}

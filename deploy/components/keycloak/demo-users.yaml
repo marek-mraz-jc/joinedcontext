@@ -1,0 +1,160 @@
+---
+# Human demo logins (DEMO.md), seeded into the realm by the development profile only; every
+# other identity is a ServiceAccount client. Each user's password is generated per cluster
+# into Secret keycloak-user-<name> (defaults/environment/secrets.yaml.gotmpl) and reaches
+# keycloak-config-cli through the environment, never through Git.
+#
+# `id` is the person's Keycloak user id, fixed so the seeds can name them by it (PF-126,
+# ADR-N-061): a manifest names a person by id and never by e-mail. keycloak-config-cli drops an
+# id it is given, so the people Job (charts/people) creates each person with theirs before
+# the realm import. The `de300000-` prefix marks a demo person: production renders refuse it.
+demo.steward:
+  id: de300000-0000-4000-8000-000000000001
+  firstName: Demo
+  lastName: Steward
+  # A realm role names the person only; what they may do is the RoleBinding under users/
+  # in the configuration repository (seed/helsinki/helsinki-rolebinding-*.yaml, PF-50).
+  realmRoles: [portal-approver]
+  # The person who keeps the city's data is one of the city's own, which is a group and not a
+  # role: the gateway resolves a human's project out of the `groups` claim and refuses an
+  # endpoint whose audience is a list of projects before it reads any Policy at all
+  # (context-gateway app.rs, EP-14, EP-15). Without this the steward opened the city's own
+  # indicator space in the Portal and got `403` for every row of the numbers the city itself
+  # publishes (T-2456). `helsinki` for the same reason in the city of the demo: every sample App
+  # reads through an Endpoint of project-list audience, and without it the steward of
+  # helsinki-alerts was refused every alert (T-2672). `bbsk`, `helsinki-mobility` and `praha` for
+  # the seeded city Apps whose default group holds them (bbsk-mosty, bbsk-zaznamy, bike-stations,
+  # praha-odpad): without them every row was `403 Access Denied by Policy` (T-3595, T-3598).
+  groups: [banskabystrica, bbsk, helsinki, helsinki-mobility, praha, slovensko]
+# The demo people's RoleBindings are organization-wide (seed/helsinki/helsinki-rolebinding-*.yaml),
+# so the Portal opens both projects to each of them; their groups say the same to the gateway,
+# or every project-list read is a 403 the Portal cannot explain (T-2672, EP-14).
+demo.viewer:
+  id: de300000-0000-4000-8000-000000000002
+  firstName: Demo
+  lastName: Viewer
+  realmRoles: []
+  groups: [banskabystrica, bbsk, helsinki, helsinki-mobility, praha, slovensko]
+# A second approver, so a change one demo person proposes can be approved by another on
+# camera: the Portal refuses an approval of one's own proposal (CC-34).
+demo.approver:
+  id: de300000-0000-4000-8000-000000000003
+  firstName: Demo
+  lastName: Approver
+  realmRoles: [portal-approver]
+  groups: [banskabystrica, bbsk, helsinki, helsinki-mobility, praha, slovensko]
+# The person who proposes and administers nothing (T-2231): bound to `editor` alone
+# (seed/helsinki/helsinki-rolebinding-editors.yaml), so their own change is the plain CC-34
+# refusal and not the PF-58 administrator exception the steward gets. No `portal-approver`
+# realm role, because the refusal is the point.
+demo.editor:
+  id: de300000-0000-4000-8000-000000000004
+  firstName: Demo
+  lastName: Editor
+  realmRoles: []
+  groups: [banskabystrica, bbsk, helsinki, helsinki-mobility, praha, slovensko]
+# Mesto Žilina's organization administrator (ADR-N-058, T-5242): org-admin of the Organization
+# `zilina` alone (seed/zilina/zilina-rolebinding-admins.yaml), so the PF-123 pair is walkable:
+# this person approves in zilina and is refused in Helsinki's projects, the steward the reverse.
+# The group is the Organization's subtree root, which also makes them one of project zilina's
+# own to the gateway and the forge. `portal-approver` because an org admin approves (CC-70).
+demo.zilina:
+  id: de300000-0000-4000-8000-000000000005
+  firstName: Žilina
+  lastName: Admin
+  realmRoles: [portal-approver]
+  groups: [zilina]
+# Ajuntament de Barcelona's organization administrator (ADR-N-058, T-5260): org-admin of the
+# Organization `barcelona` alone (seed/barcelona/barcelona-rolebinding-admins.yaml), as demo.zilina
+# is of Žilina; the group is the Organization's subtree root and project barcelona's own.
+demo.barcelona:
+  id: de300000-0000-4000-8000-000000000006
+  firstName: Barcelona
+  lastName: Admin
+  realmRoles: [portal-approver]
+  groups: [barcelona]
+# Hlavné mesto SR Bratislava's organization administrator (ADR-N-058, T-5271): org-admin of the
+# Organization `bratislava` alone (seed/bratislava/bratislava-rolebinding-admins.yaml), as
+# demo.zilina is of Žilina; the group is the Organization's subtree root and project bratislava's own.
+demo.bratislava:
+  id: de300000-0000-4000-8000-000000000007
+  firstName: Bratislava
+  lastName: Admin
+  realmRoles: [portal-approver]
+  groups: [bratislava]
+# The residue sweep's approver (T-2627): bound to `janitor` alone, which approves and deletes only
+# journey- and take-named resources of helsinki. No realm role and no project group, so the
+# gateway admits it to no context data.
+demo.janitor:
+  id: de300000-0000-4000-8000-000000000008
+  firstName: Demo
+  lastName: Janitor
+  realmRoles: []
+  groups: []
+# The App probe (T-2795, AP-136): opens every published App as that App's own people do. The
+# project groups admit it to the gateway's project-list Endpoints, each App's default group
+# (components/gitea/apps/*/grants/users/groups/*-viewer.yaml) to a `roles` App, and the seed's
+# `viewers` binding names it a viewer of `hel` (T-6415); it proposes and approves nothing.
+demo.probe:
+  id: de300000-0000-4000-8000-000000000009
+  firstName: Demo
+  lastName: Probe
+  realmRoles: []
+  groups: [banskabystrica, bbsk, helsinki, helsinki-mobility, praha, slovensko]
+# The App sharing matrix's test people (T-4911, components/context-gateway/seed/sharing/README.md).
+# `platformReaders: false` keeps each out of the realm's default group: its organization-wide
+# `viewer` binding would make every one of them a reader of every project and hide the difference
+# the matrix measures. What each may do is the binding or group the seed gives them, on the public
+# city-bike stations only; none holds a realm role.
+demo.outsider:
+  id: de300000-0000-4000-8000-00000000000a
+  firstName: Sharing
+  lastName: Outsider
+  realmRoles: []
+  groups: []
+  platformReaders: false
+demo.neighbour:
+  id: de300000-0000-4000-8000-00000000000b
+  firstName: Sharing
+  lastName: Neighbour
+  realmRoles: []
+  groups: [sharing-other]
+  platformReaders: false
+demo.member:
+  id: de300000-0000-4000-8000-00000000000c
+  firstName: Sharing
+  lastName: Member
+  realmRoles: []
+  groups: [sharing]
+  platformReaders: false
+demo.author:
+  id: de300000-0000-4000-8000-00000000000d
+  firstName: Sharing
+  lastName: Author
+  realmRoles: []
+  groups: [sharing]
+  platformReaders: false
+demo.bearer:
+  id: de300000-0000-4000-8000-00000000000e
+  firstName: Sharing
+  lastName: Bearer
+  realmRoles: []
+  groups: []
+  platformReaders: false
+# An Organization member with no project and no RoleBinding (ADR-N-067 2.2, T-6408): their token
+# carries `jc_org: [helsinki]` and `jc_groups: [/helsinki/members]`, and `groups` holds
+# `helsinki/members`, which matches no project, Group or grant name. demo.member is the T-4911
+# sharing person, so this one is demo.orgmember.
+demo.orgmember:
+  id: de300000-0000-4000-8000-00000000000f
+  firstName: Organization
+  lastName: Member
+  realmRoles: []
+  groups: [helsinki/members]
+# The same member in the data-access group /helsinki/traffic-analysts (ADR-N-067 2.7).
+demo.analyst:
+  id: de300000-0000-4000-8000-000000000010
+  firstName: Traffic
+  lastName: Analyst
+  realmRoles: []
+  groups: [helsinki/members, helsinki/traffic-analysts]

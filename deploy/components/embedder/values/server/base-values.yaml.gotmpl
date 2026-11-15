@@ -1,0 +1,98 @@
+{{- $e := .Values.embedder.server }}
+{{- if not $e.deployments }}
+{{- fail "embedder.server.deployments: name at least one calling deployment (name, issuer, jwksUrl, clients, maxTextsPerMinute) in the environment's embedder values" }}
+{{- end }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`; writable: /tmp only. No volume
+#       holds a text: the service stores nothing
+# - [x] Health probes -> readiness and liveness /healthz (answered once the model loaded)
+# - [x] Graceful shutdown -> jc-embedder drains on SIGTERM
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> no API token
+# - [x] Named ports -> 8089 http (POST /v1/embeddings behind each deployment's token)
+# - [x] No Ingress: the caller is jc's pod in this cluster, admitted by NetworkPolicy and, meshed,
+#       by its Linkerd identity (meshAuthorization)
+
+fullnameOverride: embedder
+nameOverride: embedder-server
+
+{{- $images := index .Values.images "embedder" "server" | default dict }}
+{{- if not $images.digest }}
+{{- fail "embedder.server: components/embedder/images.yaml pins no digest yet; pin the one the monorepo's image-embedder.yml signed before deploying embedder" }}
+{{- end }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+args: ["--config", "/etc/jc-embedder/embedder.toml"]
+
+containerPort: 8089
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8089
+  targetPort: 8089
+  name: http
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    # The model loads (and its files are hashed) before the listener opens: a few seconds.
+    initialDelaySeconds: 10
+
+configMap:
+  enabled: true
+  mountPath: /etc/jc-embedder
+  data:
+    embedder.toml: |
+      listen_addr = "0.0.0.0:8089"
+      model_path = "/models/e5-small"
+      threads = {{ $e.threads }}
+
+      [limits]
+      max_texts = {{ $e.maxTexts }}
+      max_text_bytes = {{ $e.maxTextBytes }}
+      timeout_secs = {{ $e.timeoutSeconds }}
+      max_in_flight = {{ $e.maxInFlight }}
+      {{- range $e.deployments }}
+
+      [[deployments]]
+      name = {{ .name | toJson }}
+      issuer = {{ .issuer | toJson }}
+      jwks_url = {{ .jwksUrl | toJson }}
+      clients = {{ .clients | toJson }}
+      max_texts_per_minute = {{ .maxTextsPerMinute }}
+      {{- end }}
+
+env:
+  ORT_DYLIB_PATH: /opt/onnxruntime/libonnxruntime.so
+  RUST_LOG: info
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and (.Values.global.serviceMesh.enable | default false) (eq (.Values.global.serviceMesh.type | default "") "linkerd") }}
+
+# Meshed, only jc's identity of each caller namespace reaches 8089 (the kubelet's probes still do).
+meshAuthorization:
+  port: 8089
+  clients:
+    {{- range ($e.callerNamespaces | default (list .Values.jc.server.namespace)) }}
+    - serviceAccount: jc
+      namespace: {{ . }}
+    {{- end }}

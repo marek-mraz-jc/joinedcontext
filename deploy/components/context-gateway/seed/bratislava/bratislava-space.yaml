@@ -1,0 +1,127 @@
+# The open data of the City of Bratislava (data.bratislava.sk, CC BY 4.0) as Smart Data Models,
+# one space the city's pipelines write (T-5271). T-5273 adds the counters and the bike stations; each batch
+# of the ranked matrix (T-5272) adds its types to the model, the Policies and the retention below.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: bratislava
+  namespace: bratislava
+  title:
+    sk: Bratislava — otvorené údaje
+    en: Bratislava, open data
+  description:
+    sk: Otvorené údaje hlavného mesta SR Bratislavy (data.bratislava.sk, CC BY 4.0) ako entity NGSI-LD podľa Smart Data Models.
+    en: The open data of the City of Bratislava (data.bratislava.sk, CC BY 4.0) as NGSI-LD entities of the Smart Data Models.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: bratislava
+  isSandbox: false
+  # Its one model: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: bratislava }
+  defaultLocale: sk
+  # A measurement series: thirty days of history, the seed's default for a measurement, one row
+  # per change and one a day for what a read repeats (DM-82, DM-108, DM-109).
+  retention:
+    - entityType: AirQualityObserved
+      history: P30D
+      attributes:
+        dateObserved: { record: onChange, heartbeat: P1D }
+        location: { record: onChange, heartbeat: P1D }
+        name: { record: onChange, heartbeat: P1D }
+    - entityType: TrafficFlowObserved
+      history: P30D
+      # One write a day, its intensity observed at the day's end; the site's name and place
+      # repeat it: one row per change and one a week (T-5273, DM-108).
+      attributes:
+        dataProvider: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        dateObservedFrom: { record: onChange, heartbeat: P7D }
+        dateObservedTo: { record: onChange, heartbeat: P7D }
+        laneDirection: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        vehicleType: { record: onChange, heartbeat: P7D }
+    - entityType: CrowdFlowObserved
+      history: P30D
+      # As TrafficFlowObserved: the day's counts observed at its end, the rest one row per change.
+      attributes:
+        dataProvider: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        dateObservedFrom: { record: onChange, heartbeat: P7D }
+        dateObservedTo: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+    - entityType: BikeHireDockingStation
+      history: P30D
+      # Written every five minutes without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        availableBikeNumber: { record: onChange, heartbeat: P7D }
+        dataProvider: { record: onChange, heartbeat: P7D }
+        # dateModified is the pipeline's refresh stamp, new on every write: no history of its own (DM-132, T-5848).
+        dateModified: { record: never }
+        freeSlotNumber: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        status: { record: onChange, heartbeat: P7D }
+        totalSlotNumber: { record: onChange, heartbeat: P7D }
+    # The public transport network from DPB's GTFS: the current timetable only (T-5273).
+    - entityType: GtfsAgency
+      history: 'off'
+    - entityType: GtfsRoute
+      history: 'off'
+    - entityType: GtfsStop
+      history: 'off'
+    # The tourist coach stops of the city's list: a register, its current state only (T-5435).
+    - entityType: OnStreetParking
+      history: 'off'
+    # A district, a place and a figure of one period are records, not measurements: their current
+    # state only; an indicator's history is its periods, one entity each (T-5274).
+    - entityType: AdministrativeArea
+      history: 'off'
+    - entityType: PointOfInterest
+      history: 'off'
+    - entityType: KeyPerformanceIndicator
+      history: 'off'
+  # The municipality of Bratislava (OSM relation, lon 16.946..17.285, lat 48.007..48.265) with a
+  # 1 km margin (owner 2026-10-22T18:10Z); an entity outside it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area-air-quality-observed
+      entityType: AirQualityObserved
+      kind: area
+      attribute: location
+      bbox: [16.93, 47.99, 17.3, 48.28]
+    - name: in-area-traffic-flow-observed
+      entityType: TrafficFlowObserved
+      kind: area
+      attribute: location
+      bbox: [16.93, 47.99, 17.3, 48.28]
+    - name: in-area-crowd-flow-observed
+      entityType: CrowdFlowObserved
+      kind: area
+      attribute: location
+      bbox: [16.93, 47.99, 17.3, 48.28]
+    - name: in-area-bike-hire-docking-station
+      entityType: BikeHireDockingStation
+      kind: area
+      attribute: location
+      bbox: [16.93, 47.99, 17.3, 48.28]
+    - name: in-area-gtfs-stop
+      entityType: GtfsStop
+      kind: area
+      attribute: location
+      bbox: [16.93, 47.99, 17.3, 48.28]
+    - name: in-area-coach-stop
+      entityType: OnStreetParking
+      kind: area
+      attribute: location
+      bbox: [16.93, 47.99, 17.3, 48.28]
+    # Rule names are unique per space (DM-87): one duplicate makes the Portal refuse the whole space.
+    - name: in-area-places
+      entityType: PointOfInterest
+      kind: area
+      attribute: location
+      bbox: [16.93, 47.99, 17.3, 48.28]

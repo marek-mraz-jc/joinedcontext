@@ -1,0 +1,12 @@
+# The Keycloak service account of the `jc-build-lane` client (components/gitea-runner), whose
+# token the `propose` job of every application's workflow presents as `JC_LANE_TOKEN`.
+apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: build-lane
+  namespace: org
+spec:
+  subjects:
+    - user: service-account-jc-build-lane
+  role: build-lane
+  scope: { organization: hel }

@@ -1,0 +1,76 @@
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem` -> the messages live in memory
+# - [x] Health probes -> /livez and /readyz on the API port
+# - [x] Standard labels
+# - [x] ServiceAccount without an API token
+# - [x] Named ports -> smtp 1025, http 8025
+# - [ ] Ingress with TLS -> not applicable, reached from the Portal and a port-forward alone
+
+fullnameOverride: mail-catcher
+nameOverride: mail-catcher
+
+{{- $image := index .Values.images "portal" "mail-catcher" }}
+image:
+  repository: {{ $image.repository }}
+  tag: {{ $image.tag | quote }}
+  digest: {{ $image.digest }}
+  pullPolicy: IfNotPresent
+
+# The last 500 messages, in memory: a restart empties the catcher, which holds nothing worth
+# keeping (T-3583).
+env:
+  MP_SMTP_BIND_ADDR: "0.0.0.0:1025"
+  MP_UI_BIND_ADDR: "0.0.0.0:8025"
+  MP_MAX_MESSAGES: "500"
+  MP_DISABLE_VERSION_CHECK: "true"
+
+containerPort: 8025
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8025
+  targetPort: 8025
+  name: http
+  extraPorts:
+    - name: smtp
+      port: 1025
+      targetPort: 1025
+      protocol: TCP
+  # SMTP speaks first: a meshed client's proxy would wait for the client's bytes before it knew
+  # the protocol, and the client waits for the greeting.
+  annotations:
+    config.linkerd.io/opaque-ports: "1025"
+
+probes:
+  readiness:
+    path: /readyz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /livez
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 5
+
+preStopSleepSeconds: 0
+meshDrainSeconds: 0
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+# Outside the mesh: nothing it serves is a platform call, and its policy admits the Portal alone.
+# The namespace injects every pod (linkerd.io/inject: enabled), so leaving the annotation out is
+# not enough: a meshed catcher's proxy finds no egress to the control plane, its startup probe
+# gets a 403 and the rollout never finishes.
+serviceMesh:
+  enabled: false
+podAnnotations:
+  linkerd.io/inject: disabled
+  # Kyverno's autogen-opt-out-needs-reason refuses an opt-out without one.
+  mesh.joinedcontext.com/opt-out-reason: "SMTP speaks first; the Portal reaches the catcher on 1025 unmeshed and nothing it serves is a platform call (T-3583, T-3930)"

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sample-apps
+description: The sample applications' files, one ConfigMap per application, that the bootstrap Job pushes into the forge
+type: application
+version: 0.1.0
+appVersion: '1.0.0'

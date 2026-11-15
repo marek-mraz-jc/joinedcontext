@@ -1,0 +1,22 @@
+# Checklist:
+# - [x] Minimal Resources -> one crawl at a time; kreuzberg holds a PDF and its text in memory
+# - [x] Minimal storage -> the index lives in PostgreSQL
+# - [x] 1 Replica -> the queue would let more claim jobs, one is what a city's sites need
+
+replicaCount: 1
+
+resources:
+  # T-3053 measured 490 MB resident at rest and 679 MB at peak (the embedding model loaded):
+  # the request says so, so the scheduler does not overbook the node.
+  requests:
+    cpu: 50m
+    # T-5282: 637Mi on dev, 627Mi on prod (2026-10-22 20:40-21:28Z), + 20 %.
+    memory: 768Mi
+  limits:
+    cpu: '1'
+    memory: 1Gi
+
+env:
+  # glibc keeps up to 8 malloc arenas per core, and a tokio service holds freed memory in them;
+  # two arenas trade a little allocation contention for that memory (T-4351, measured on dev).
+  MALLOC_ARENA_MAX: "2"

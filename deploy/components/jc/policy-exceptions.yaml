@@ -1,0 +1,25 @@
+---
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: jc-recreate-strategy
+  annotations:
+    reason: >-
+      One jc process per database: Antares inside jc runs an in-process bus (ANTARES_BUS=local)
+      whose matcher would double-fire notifications beside a second process, and jc refuses to
+      start without ANTARES_ALLOW_SHARED_LOCAL=1. A rolling update with maxUnavailable 0 starts
+      the second process; Recreate stops the old pod first, as for context-broker. Re-check when
+      a NATS bus allows two replicas.
+spec:
+  exceptions:
+    - policyName: require-rolling-update
+      ruleNames:
+        - require-rolling-update-deployment
+        - autogen-require-rolling-update-deployment
+  match:
+    any:
+      - resources:
+          kinds:
+            - Deployment
+          names:
+            - jc

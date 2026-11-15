@@ -1,0 +1,74 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "PurchaseOrder": {
+      "@id": "jc:PurchaseOrder"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "datumVystavenia": {
+      "@id": "jc:datumVystavenia"
+    },
+    "datumZverejnenia": {
+      "@id": "jc:datumZverejnenia"
+    },
+    "dodavatel": {
+      "@id": "jc:dodavatel"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "iCO": {
+      "@id": "jc:iCO"
+    },
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "mena": {
+      "@id": "jc:mena"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "objednavkaSpolu": {
+      "@id": "jc:objednavkaSpolu"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "predmetObjednavky": {
+      "@id": "jc:predmetObjednavky"
+    },
+    "rok": {
+      "@id": "jc:rok"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "suma": {
+      "@id": "jc:suma",
+      "@type": "xsd:float"
+    },
+    "textObjednavky": {
+      "@id": "jc:textObjednavky"
+    },
+    "type": "@type",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

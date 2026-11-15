@@ -1,0 +1,44 @@
+# Share of the international component in total migration turnover of Bratislava's city districts (%): one public dataset of the hub (T-5274), item 91b48ecef18d4480b9765e328c78f75f, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-podiel-zahranicnej-zlozky-na-celkovom
+  namespace: bratislava
+  title:
+    sk: Podiel zahraničnej zložky na celkovom migračnom obrate mestských častí BA (v %)
+    en: Share of the international component in total migration turnover of Bratislava's city districts (%)
+  description:
+    sk: 'Ukazovatele tabuľky „Podiel zahraničnej zložky na celkovom migračnom obrate mestských častí BA (v %)“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Share of the international component in total migration turnover of Bratislava's city districts (%)”, one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: ehtuhiuw3pdmp7ay4z5ss5q66xchzwo6
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-podiel-zahranicnej-zlozky-na-celkovom
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/91b48ecef18d4480b9765e328c78f75f
+        title:
+          sk: Podiel zahraničnej zložky na celkovom migračnom obrate mestských častí BA (v %)
+          en: Share of the international component in total migration turnover of Bratislava's city districts (%)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Podiel zahraničnej zložky na celkovom migračnom obrate mestských častí BA (v %). Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Share of the international component in total migration turnover of Bratislava's city districts (%). Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics }

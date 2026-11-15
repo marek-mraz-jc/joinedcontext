@@ -1,0 +1,669 @@
+{
+ "police-activity": {
+  "012025": {},
+  "082025": {
+   "Počty zjištěných přestupků": {
+    "Veřejný pořádek a zeleň": {
+     "Celkem": "6 698",
+     "z toho § 4/2 zák. 251/2016 Sb.": "3 605"
+    },
+    "Doprava": {
+     "Celkem": "140 292",
+     "zákaz vjezdu": "5 056",
+     "zákaz zastavení": "9 319",
+     "zákaz stání": "909",
+     "pěší zóna": "993",
+     "stání na chodníku": "3 997",
+     "modrá zóna": "26 751",
+     "zelená a oranžová zóna": "2 774",
+     "fialová zóna": "40 308",
+     "zákaz vjezdu os. přepravníků": "1",
+     "stání na přechodu pro chodce": "725",
+     "stání v křižovatce": "1 165",
+     "stání ve druhé řadě": "143",
+     "jízda na červenou": "2 417",
+     "přestupky chodců": "442",
+     "přestupky cyklistů": "564",
+     "překročení rychlosti o 10 km/h a více": "24 230",
+     "překročení rychlosti o 20 až 39 km/h": "5 986",
+     "překročení rychlosti o 40 km/h a více": "266"
+    },
+    "Ostatní přestupky": {
+     "Celkem": "1 279",
+     "proti majetku": "267",
+     "Tabákový zákon": "792",
+     "Psi neoznačení čipem": "10",
+     "Tržní řád": "2",
+     "Přestupky žebrajících osob": "660",
+     "Přestupky řidičičů TAXI": "410",
+     "Přestupky parkoviště invalidů": "659"
+    },
+    "Počty přestupků celkem": "148 269"
+   },
+   "Procentické zastoupení přestupků": {
+    "Veřejný pořádek a zeleň": "4,5",
+    "Doprava": "94,6",
+    "Ostatní přestupky": "0,9"
+   },
+   "Počet uložených pokut": {
+    "Veřejný pořádek a zeleň": "658",
+    "Doprava": "7 373",
+    "Ostatní přestupky": "306",
+    "BP v hotovosti": "6 231",
+    "BP na místě nezaplacené": "2 106",
+    "Počet pokut celkem": "8 337"
+   },
+   "Uložené pokuty v Kč": {
+    "Veřejný pořádek a zeleň": "525 200",
+    "Doprava": "3 891 350",
+    "Ostatní přestupky": "574 900",
+    "BP v hotovosti": "2 935 350",
+    "BP na místě nezaplacené": "2 056 100",
+    "Výše pokut celkem": "4 991 450"
+   },
+   "Další formy řešení přestupků": {
+    "Oznámení přestupku": {
+     "Celkem": "129 754",
+     "Z toho VP a zeleň": "1 282"
+    },
+    "Domluva": {
+     "Celkem": "9 850",
+     "Z toho VP a zeleň": "4 421"
+    },
+    "Vydané VOPP": "2 613",
+    "Vyrozumění OPSP": "25 425"
+   },
+   "Počty ostatních aktivit": {
+    "Nasazeno TPZOV": "1 126",
+    "Počet kontrolovaných osob": "27 629",
+    "Předvedeno na PČR": "29",
+    "Předvedeno ÚMČ a jiné": "5",
+    "Zjištěno hledaných osob": "20",
+    "Odejmuto věci": "69",
+    "Omezeno osob na os. svobodě": "37",
+    "Zajištěno míst trestného činu": "27",
+    "Náhradní doručení": "77",
+    "Asistence": "44",
+    "Zjištěno vraků mot. vozidel": "110",
+    "Zjištěno nepovolených skládek": "94",
+    "Počet lustrovaných vozidel": "38 007",
+    "Nalezeno odcizených vozidel": "6",
+    "Nalezeno hledaných RZ (SPZ)": "5"
+   },
+   "Odtahy vozidel": {
+    "Celkem": "670",
+    "Úplné": "665",
+    "Neúplné": "5",
+    "Odtahy překážka": "116",
+    "Odtahy vyhrazená parkoviště invalidů": "29",
+    "Odtahy vyhrazená parkoviště modrá zóna": "479",
+    "Odtahy vyhrazená parkoviště ostatní": "46"
+   },
+   "Tabák a alkohol": {
+    "Porušení zákazu kouření": "783",
+    "Dechová zkouška na alkohol": "251",
+    "Zjištění alkoholu u řidičů": "6",
+    "Zjištění alkoholu u mladistvých ": "4",
+    "Zjištění alkoholu - ostatní": "1"
+   },
+   "Použití": {
+    "Donucovací prostředky": "40",
+    "Pes": "0",
+    "Služební zbraň": "0"
+   },
+   "Linka 156": {
+    "Oznámení": {
+     "Celkem": "19 137",
+     "Přestupky": "9 588",
+     "Trestné činy": "6"
+    },
+    "Omezeno osob na os. svobodě": "8"
+   }
+  },
+  "092025": {
+   "Počty zjištěných přestupků": {
+    "Veřejný pořádek a zeleň": {
+     "Celkem": "6 627",
+     "z toho § 4/2 zák. 251/2016 Sb.": "3 330"
+    },
+    "Doprava": {
+     "Celkem": "151 802",
+     "zákaz vjezdu": "5 744",
+     "zákaz zastavení": "18 336",
+     "zákaz stání": "1 709",
+     "pěší zóna": "1 167",
+     "stání na chodníku": "5 866",
+     "modrá zóna": "24 348",
+     "zelená a oranžová zóna": "3 676",
+     "fialová zóna": "38 165",
+     "zákaz vjezdu os. přepravníků": "9",
+     "stání na přechodu pro chodce": "1 305",
+     "stání v křižovatce": "2 125",
+     "stání ve druhé řadě": "165",
+     "jízda na červenou": "2 147",
+     "přestupky chodců": "592",
+     "přestupky cyklistů": "755",
+     "překročení rychlosti o 10 km/h a více": "20 819",
+     "překročení rychlosti o 20 až 39 km/h": "5 383",
+     "překročení rychlosti o 40 km/h a více": "335"
+    },
+    "Ostatní přestupky": {
+     "Celkem": "1 300",
+     "proti majetku": "287",
+     "Tabákový zákon": "831",
+     "Psi neoznačení čipem": "8",
+     "Tržní řád": "3",
+     "Přestupky žebrajících osob": "676",
+     "Přestupky řidičičů TAXI": "379",
+     "Přestupky parkoviště invalidů": "846"
+    },
+    "Počty přestupků celkem": "159 729"
+   },
+   "Procentické zastoupení přestupků": {
+    "Veřejný pořádek a zeleň": "4,1",
+    "Doprava": "95,0",
+    "Ostatní přestupky": "0,8"
+   },
+   "Počet uložených pokut": {
+    "Veřejný pořádek a zeleň": "574",
+    "Doprava": "8 325",
+    "Ostatní přestupky": "366",
+    "BP v hotovosti": "6 917",
+    "BP na místě nezaplacené": "2 348",
+    "Počet pokut celkem": "9 265"
+   },
+   "Uložené pokuty v Kč": {
+    "Veřejný pořádek a zeleň": "467 920",
+    "Doprava": "4 354 430",
+    "Ostatní přestupky": "716 500",
+    "BP v hotovosti": "3 097 750",
+    "BP na místě nezaplacené": "2 441 100",
+    "Výše pokut celkem": "5 538 850"
+   },
+   "Další formy řešení přestupků": {
+    "Oznámení přestupku": {
+     "Celkem": "150 701",
+     "Z toho VP a zeleň": "1 487"
+    },
+    "Domluva": {
+     "Celkem": "11 123",
+     "Z toho VP a zeleň": "4 277"
+    },
+    "Vydané VOPP": "3 332",
+    "Vyrozumění OPSP": "41 601"
+   },
+   "Počty ostatních aktivit": {
+    "Nasazeno TPZOV": "1 227",
+    "Počet kontrolovaných osob": "30 604",
+    "Předvedeno na PČR": "33",
+    "Předvedeno ÚMČ a jiné": "1",
+    "Zjištěno hledaných osob": "25",
+    "Odejmuto věci": "18",
+    "Omezeno osob na os. svobodě": "35",
+    "Zajištěno míst trestného činu": "25",
+    "Náhradní doručení": "65",
+    "Asistence": "114",
+    "Zjištěno vraků mot. vozidel": "108",
+    "Zjištěno nepovolených skládek": "93",
+    "Počet lustrovaných vozidel": "49 502",
+    "Nalezeno odcizených vozidel": "4",
+    "Nalezeno hledaných RZ (SPZ)": "13"
+   },
+   "Odtahy vozidel": {
+    "Celkem": "517",
+    "Úplné": "513",
+    "Neúplné": "4",
+    "Odtahy překážka": "190",
+    "Odtahy vyhrazená parkoviště invalidů": "28",
+    "Odtahy vyhrazená parkoviště modrá zóna": "215",
+    "Odtahy vyhrazená parkoviště ostatní": "85"
+   },
+   "Tabák a alkohol": {
+    "Porušení zákazu kouření": "813",
+    "Dechová zkouška na alkohol": "231",
+    "Zjištění alkoholu u řidičů": "3",
+    "Zjištění alkoholu u mladistvých ": "0",
+    "Zjištění alkoholu - ostatní": "3"
+   },
+   "Použití": {
+    "Donucovací prostředky": "42",
+    "Pes": "0",
+    "Služební zbraň": "0"
+   },
+   "Linka 156": {
+    "Oznámení": {
+     "Celkem": "19 325",
+     "Přestupky": "10 262",
+     "Trestné činy": "5"
+    },
+    "Omezeno osob na os. svobodě": "5"
+   }
+  }
+ },
+ "police-units": {
+  "012025": {},
+  "092025": {
+   "OŘ1": {
+    "Počty zjištěných přestupků": {
+     "Veřejný pořádek a zeleň": {
+      "Celkem": "842",
+      "z toho: porušení nočního klidu": "56",
+      "vzbuzování veřejného pohoršení": "0",
+      "znečištění veřejného prostranství": "19",
+      "neoprávněný zábor nebo poškozování veřejného prostranství": "6",
+      "porušení OZV: požívání alkoh. nápojů na veř. prostranstvích": "175",
+      "žebrání v rozporu s vyhláškou": "500"
+     },
+     "Doprava": {
+      "Celkem": "6382",
+      "zákaz vjezdu": "483",
+      "zákaz zastavení": "1566",
+      "zákaz stání": "97",
+      "pěší zóna": "673",
+      "stání na chodníku": "710",
+      "modrá zóna": "341",
+      "zelená a oranžová zóna": "3",
+      "fialová zóna": "79",
+      "zákaz vjezdu os. přepravníků": "0",
+      "stání na přechodu pro chodce": "81",
+      "stání v křižovatce": "156",
+      "stání ve druhé řadě": "12",
+      "jízda na červenou": "2",
+      "přestupky chodců": "6",
+      "přestupky cyklistů": "49",
+      "překročení rychlosti o 10 km/h a více": "0",
+      "překročení rychlosti o 20 až 39 km/h": "0",
+      "překročení rychlosti o 40 km/h a více": "0"
+     },
+     "Ostatní přestupky": {
+      "Celkem": "32",
+      "proti majetku": "24",
+      "Tabákový zákon": "1",
+      "Psi neoznačení čipem": "0",
+      "Tržní řád": "1",
+      "Přestupky řidičičů TAXI": "62",
+      "Přestupky parkoviště invalidů": "152"
+     },
+     "Počty přestupků celkem": "7256"
+    },
+    "Počet uložených pokut": {
+     "Veřejný pořádek a zeleň": "153",
+     "Doprava": "2163",
+     "Ostatní přestupky": "12",
+     "BP v hotovosti": "1561",
+     "BP na místě nezaplacené": "767",
+     "Počet pokut celkem": "2328"
+    },
+    "Uložené pokuty v Kč": {
+     "Veřejný pořádek a zeleň": "95420",
+     "Doprava": "1163580",
+     "Ostatní přestupky": "35200",
+     "BP v hotovosti": "743650",
+     "BP na místě nezaplacené": "550550",
+     "Výše pokut celkem": "1294200"
+    },
+    "Další formy řešení přestupků": {
+     "Oznámení přestupku": {
+      "Celkem": "199",
+      "Z toho VP a zeleň": "124"
+     },
+     "Domluva": {
+      "Celkem": "827",
+      "Z toho VP a zeleň": "563"
+     },
+     "Vydané VOPP": "105",
+     "Vyrozumění OPSP": "3799"
+    }
+   },
+   "Hlídkový útvar": {
+    "Počty zjištěných přestupků": {
+     "Veřejný pořádek a zeleň": {
+      "Celkem": "671",
+      "z toho: porušení nočního klidu": "4",
+      "vzbuzování veřejného pohoršení": "14",
+      "znečištění veřejného prostranství": "330",
+      "neoprávněný zábor nebo poškozování veřejného prostranství": "4",
+      "porušení OZV: požívání alkoh. nápojů na veř. prostranstvích": "184",
+      "žebrání v rozporu s vyhláškou": "111"
+     },
+     "Doprava": {
+      "Celkem": "1401",
+      "zákaz vjezdu": "599",
+      "zákaz zastavení": "316",
+      "zákaz stání": "18",
+      "pěší zóna": "26",
+      "stání na chodníku": "14",
+      "modrá zóna": "0",
+      "zelená a oranžová zóna": "0",
+      "fialová zóna": "0",
+      "zákaz vjezdu os. přepravníků": "0",
+      "stání na přechodu pro chodce": "74",
+      "stání v křižovatce": "8",
+      "stání ve druhé řadě": "0",
+      "jízda na červenou": "3",
+      "přestupky chodců": "27",
+      "přestupky cyklistů": "5",
+      "překročení rychlosti o 10 km/h a více": "0",
+      "překročení rychlosti o 20 až 39 km/h": "0",
+      "překročení rychlosti o 40 km/h a více": "0"
+     },
+     "Ostatní přestupky": {
+      "Celkem": "361",
+      "proti majetku": "0",
+      "Tabákový zákon": "265",
+      "Psi neoznačení čipem": "0",
+      "Tržní řád": "2",
+      "Přestupky řidičičů TAXI": "299",
+      "Přestupky parkoviště invalidů": "17"
+     },
+     "Počty přestupků celkem": "2433"
+    },
+    "Počet uložených pokut": {
+     "Veřejný pořádek a zeleň": "11",
+     "Doprava": "787",
+     "Ostatní přestupky": "130",
+     "BP v hotovosti": "859",
+     "BP na místě nezaplacené": "69",
+     "Počet pokut celkem": "928"
+    },
+    "Uložené pokuty v Kč": {
+     "Veřejný pořádek a zeleň": "5900",
+     "Doprava": "281490",
+     "Ostatní přestupky": "164900",
+     "BP v hotovosti": "371490",
+     "BP na místě nezaplacené": "80800",
+     "Výše pokut celkem": "452290"
+    },
+    "Další formy řešení přestupků": {
+     "Oznámení přestupku": {
+      "Celkem": "13",
+      "Z toho VP a zeleň": "4"
+     },
+     "Domluva": {
+      "Celkem": "1096",
+      "Z toho VP a zeleň": "638"
+     },
+     "Vydané VOPP": "88",
+     "Vyrozumění OPSP": "305"
+    }
+   }
+  }
+ },
+ "budget-drawing": {
+  "data": {
+   "row": [
+    {
+     "rok": "2026",
+     "oblast": "12",
+     "odpa": "003529",
+     "pol": "5331",
+     "uz": "000000091",
+     "nazev_oblast": "Zdravotnictví",
+     "nazev_odpa": "Ostatní ústavní péče",
+     "nazev_pol": "Neinvestiční příspěvky zřízeným příspěvkovým organ",
+     "nazev_uz": "Neivestiční dotace z prostředků HMP",
+     "rozpocet_aktualni": "136088.20",
+     "cerpani": "91972.30"
+    },
+    {
+     "rok": "2026",
+     "oblast": "11",
+     "odpa": "006409",
+     "pol": "5904",
+     "uz": "000033155",
+     "nazev_oblast": "Veřejná správa",
+     "nazev_odpa": "Ostatní činnosti jinde nezařazené",
+     "nazev_pol": "Převody domněle neop.použ.dotací zpět poskytovat.",
+     "nazev_uz": "Dotace pro soukromé školy",
+     "rozpocet_aktualni": "2629.10",
+     "cerpani": "2629.09"
+    },
+    {
+     "rok": "2026",
+     "oblast": "10",
+     "odpa": "003421",
+     "pol": "5222",
+     "uz": "000000115",
+     "nazev_oblast": "Tělovýchova a zájmová činnost",
+     "nazev_odpa": "Využití volného času dětí a mládeže",
+     "nazev_pol": "neinv. trans.spolkům",
+     "nazev_uz": "Neinvestiční granty",
+     "rozpocet_aktualni": "45607.10",
+     "cerpani": "45449.30"
+    },
+    {
+     "rok": "2026",
+     "oblast": "08",
+     "odpa": "000000",
+     "pol": "8115",
+     "uz": "000000025",
+     "nazev_oblast": "Financování",
+     "nazev_odpa": "ČNB dotace OPP",
+     "nazev_pol": "Změny stavu krátkodobých prostředků na bank.účtech",
+     "nazev_uz": "Záloha na přebyt.hospodař. minulých let",
+     "rozpocet_aktualni": "2925208.90",
+     "cerpani": "0.00"
+    }
+   ]
+  }
+ },
+ "district-transfers": {
+  "data": {
+   "row": [
+    {
+     "rok": "2026",
+     "mc_ic": "00063410",
+     "mc_nazev": "HMP-MČ PRAHA 1",
+     "odpa": "006330",
+     "pol": "4137",
+     "uz": "000000000",
+     "nazev_odpa": "Převody vlastním fondům v rozpočtech územní úrovně",
+     "nazev_pol": "Neinv.přev.mezi stat.mě.vč.hl.m.Prahy a jejich m.o",
+     "nazev_zdroj": "Hlavní město Praha",
+     "rozpocet_schvaleny": "0.00",
+     "rozpocet_upraveny": "1455.80",
+     "cerpani": "1455.84"
+    },
+    {
+     "rok": "2026",
+     "mc_ic": "00063410",
+     "mc_nazev": "HMP-MČ PRAHA 1",
+     "odpa": "006330",
+     "pol": "4137",
+     "uz": "000000115",
+     "nazev_odpa": "Převody vlastním fondům v rozpočtech územní úrovně",
+     "nazev_pol": "Neinv.přev.mezi stat.mě.vč.hl.m.Prahy a jejich m.o",
+     "nazev_zdroj": "Hlavní město Praha",
+     "rozpocet_schvaleny": "0.00",
+     "rozpocet_upraveny": "0.00",
+     "cerpani": "113.60"
+    },
+    {
+     "rok": "2026",
+     "mc_ic": "00063410",
+     "mc_nazev": "HMP-MČ PRAHA 1",
+     "odpa": "006330",
+     "pol": "4137",
+     "uz": "000000118",
+     "nazev_odpa": "Převody vlastním fondům v rozpočtech územní úrovně",
+     "nazev_pol": "Neinv.přev.mezi stat.mě.vč.hl.m.Prahy a jejich m.o",
+     "nazev_zdroj": "Hlavní město Praha",
+     "rozpocet_schvaleny": "0.00",
+     "rozpocet_upraveny": "115.10",
+     "cerpani": "115.07"
+    },
+    {
+     "rok": "2026",
+     "mc_ic": "00063410",
+     "mc_nazev": "HMP-MČ PRAHA 1",
+     "odpa": "006330",
+     "pol": "4137",
+     "uz": "000033092",
+     "nazev_odpa": "Převody vlastním fondům v rozpočtech územní úrovně",
+     "nazev_pol": "Neinv.přev.mezi stat.mě.vč.hl.m.Prahy a jejich m.o",
+     "nazev_zdroj": "Státní rozpočet",
+     "rozpocet_schvaleny": "0.00",
+     "rozpocet_upraveny": "38.80",
+     "cerpani": "38.72"
+    }
+   ]
+  }
+ },
+ "road-works": {
+  "count": 5,
+  "data": [
+   {
+    "id": 2621,
+    "name": "VÝSTAVBA METRO I.D (OBLAST KŘIŽOVATKY NA STRŽI X BRANICKÁ X SULICKÁ X V PODZÁMČÍ)",
+    "street": "Na Strži, V Podzámčí, Sulická, Jižní spojka",
+    "start": "2026-09-14T00:00:00",
+    "end": "2026-11-25T23:59:00",
+    "dt_format": "TIME",
+    "severity": "RED",
+    "subject": "CONSTRUCTION",
+    "state": "ACTIVE",
+    "lat": 50.036318800000004,
+    "lon": 14.445993900000001,
+    "investor": "Dopravní podnik hl. m. Prahy, a.s.",
+    "hidden": false,
+    "approved": true,
+    "city_part": [
+     "4"
+    ],
+    "investor_responsible": "Jan Testovací",
+    "investor_phone": "600 100 200",
+    "contractor": "Sdružení Metro I.D - vedoucí společník Subterra a.s.",
+    "contractor_responsible": "Jan Testovací",
+    "contractor_phone": "600 100 200",
+    "responsible": "Jan Testovací",
+    "responsible_phone": "600 100 200",
+    "responsible_email": "jan.testovaci@example.cz",
+    "description": "<p>Kontakt: Jan Testovací, 600 100 200</p>",
+    "limitations": "<p>uzavírka</p>",
+    "detours": null
+   },
+   {
+    "id": 2684,
+    "name": "Roztocká - rekonstrukce ČSOV",
+    "street": "Roztocká",
+    "start": "2026-10-26T00:00:00",
+    "end": "2026-11-01T23:59:00",
+    "dt_format": "DAY",
+    "severity": "YELLOW",
+    "subject": "CONSTRUCTION",
+    "state": "FUTURE",
+    "lat": 50.12712705,
+    "lon": 14.3990846,
+    "investor": "Pražská vodohospodářská společnost a.s.",
+    "hidden": false,
+    "approved": true,
+    "city_part": [
+     "6"
+    ],
+    "investor_responsible": "Jan Testovací",
+    "investor_phone": "600 100 200",
+    "contractor": "ZEPRIS s.r.o.",
+    "contractor_responsible": "Jan Testovací",
+    "contractor_phone": "600 100 200",
+    "responsible": "Jan Testovací",
+    "responsible_phone": "600 100 200",
+    "responsible_email": "jan.testovaci@example.cz",
+    "description": "<p>Kontakt: Jan Testovací, 600 100 200</p>",
+    "limitations": "<p>uzavírka</p>",
+    "detours": null
+   },
+   {
+    "id": 2111,
+    "name": "KONCERT AC DC",
+    "street": "",
+    "start": "2025-06-26T09:00:00",
+    "end": "2025-06-26T23:59:00",
+    "dt_format": "TIME",
+    "severity": "RED",
+    "subject": "CULTURAL",
+    "state": "DONE",
+    "lat": 50.12566144699707,
+    "lon": 14.515250176191332,
+    "investor": "Live Nation Czech Republic s.r.o.",
+    "hidden": false,
+    "approved": true,
+    "city_part": [
+     "9",
+     "18",
+     "19"
+    ],
+    "investor_responsible": "Jan Testovací",
+    "investor_phone": "600 100 200",
+    "contractor": "Live Nation Czech Republic s.r.o.",
+    "contractor_responsible": "Jan Testovací",
+    "contractor_phone": "600 100 200",
+    "responsible": "Jan Testovací",
+    "responsible_phone": "600 100 200",
+    "responsible_email": "jan.testovaci@example.cz",
+    "description": "<p>Kontakt: Jan Testovací, 600 100 200</p>",
+    "limitations": "<p>uzavírka</p>",
+    "detours": null
+   },
+   {
+    "id": 2314,
+    "name": "Hostivařské náměstí - kanalizační přípojka",
+    "street": "Hostivařské náměstí / K Horkám",
+    "start": "2025-10-27T00:00:00",
+    "end": "2025-11-02T23:59:00",
+    "dt_format": "DAY",
+    "severity": "YELLOW",
+    "subject": "CONSTRUCTION",
+    "state": "DONE",
+    "lat": 50.050444270511974,
+    "lon": 14.525864916668908,
+    "investor": "Soukromá osoba",
+    "hidden": false,
+    "approved": true,
+    "city_part": [
+     "15"
+    ],
+    "investor_responsible": "Jan Testovací",
+    "investor_phone": "600 100 200",
+    "contractor": "Strašík SZP s.r.o.",
+    "contractor_responsible": "Jan Testovací",
+    "contractor_phone": "600 100 200",
+    "responsible": "Jan Testovací",
+    "responsible_phone": "600 100 200",
+    "responsible_email": "jan.testovaci@example.cz",
+    "description": "<p>Kontakt: Jan Testovací, 600 100 200</p>",
+    "limitations": "<p>uzavírka</p>",
+    "detours": null
+   },
+   {
+    "id": 2352,
+    "name": "Rekonstrukce komunikace Plzeňská v úseku Mozartova - Pod Kotlářkou",
+    "street": "Plzeňská, Podbělohorská, Holečkova",
+    "start": "2026-02-16T00:00:00",
+    "end": "2026-08-28T23:59:00",
+    "dt_format": "DAY",
+    "severity": "RED",
+    "subject": "CONSTRUCTION",
+    "state": "DONE",
+    "lat": 50.07110593748608,
+    "lon": 14.380781650543215,
+    "investor": "Technická správa komunikací hl. m. Prahy, a.s.",
+    "hidden": false,
+    "approved": true,
+    "city_part": [
+     "5"
+    ],
+    "investor_responsible": "Jan Testovací",
+    "investor_phone": "600 100 200",
+    "contractor": "Společnost STRABAG Silnice – INPROS PRAHA, a. s.",
+    "contractor_responsible": "Jan Testovací",
+    "contractor_phone": "600 100 200",
+    "responsible": "Jan Testovací",
+    "responsible_phone": "600 100 200",
+    "responsible_email": "jan.testovaci@example.cz",
+    "description": "<p>Kontakt: Jan Testovací, 600 100 200</p>",
+    "limitations": "<p>uzavírka</p>",
+    "detours": null
+   }
+  ]
+ }
+}

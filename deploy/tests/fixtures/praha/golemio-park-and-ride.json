@@ -1,0 +1,35 @@
+[
+ {
+  "parking_id": "tsk-offstreet-ae77736b-399d-462e-901d-bf91ef7ab96c",
+  "primary_source": "tsk-offstreet",
+  "primary_source_id": "ae77736b-399d-462e-901d-bf91ef7ab96c",
+  "has_free_spots": true,
+  "total_spot_number": 78,
+  "free_spot_number": 23,
+  "closed_spot_number": 0,
+  "occupied_spot_number": 55,
+  "last_updated": "2026-09-25T13:34:01.000Z"
+ },
+ {
+  "parking_id": "tsk-offstreet-bba3106f-e408-466f-8f75-bbd919ee4efa",
+  "primary_source": "tsk-offstreet",
+  "primary_source_id": "bba3106f-e408-466f-8f75-bbd919ee4efa",
+  "has_free_spots": true,
+  "total_spot_number": 186,
+  "free_spot_number": 37,
+  "closed_spot_number": 0,
+  "occupied_spot_number": 149,
+  "last_updated": "2026-09-25T13:34:01.000Z"
+ },
+ {
+  "parking_id": "tsk-offstreet-b567b2eb-b89c-4549-846a-e82cbda1dcf9",
+  "primary_source": "tsk-offstreet",
+  "primary_source_id": "b567b2eb-b89c-4549-846a-e82cbda1dcf9",
+  "has_free_spots": true,
+  "total_spot_number": 202,
+  "free_spot_number": 127,
+  "closed_spot_number": 0,
+  "occupied_spot_number": 75,
+  "last_updated": "2026-09-25T13:34:01.000Z"
+ }
+]

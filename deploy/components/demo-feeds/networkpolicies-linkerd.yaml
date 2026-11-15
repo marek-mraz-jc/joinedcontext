@@ -1,0 +1,110 @@
+---
+demo-nats-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: demo-feeds-nats
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: demo-feeds-feed
+          componentNamespace: demo-feeds.feed
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner.runner
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+demo-nats-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: demo-feeds-nats
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+demo-feed-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: demo-feeds-feed
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+# Meshed traffic to the broker enters through its inbound proxy on 4143, so both clients need
+# that port beside 4222.
+demo-feed-to-nats-proxy:
+  podSelector:
+    app.kubernetes.io/name: demo-feeds-feed
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: demo-feeds-nats
+          componentNamespace: demo-feeds.nats
+      ports:
+        - protocol: TCP
+          port: 4143
+
+pipeline-runner-to-demo-nats-proxy:
+  componentNamespace: pipeline-runner.runner
+  podSelector:
+    app.kubernetes.io/name: pipeline-runner-runner
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: demo-feeds-nats
+          componentNamespace: demo-feeds.nats
+      ports:
+        - protocol: TCP
+          port: 4143
+
+hsl-bridge-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: demo-feeds-hsl-bridge
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090

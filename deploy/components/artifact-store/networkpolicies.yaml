@@ -1,0 +1,97 @@
+---
+# The store has no ingress route and no reason to call anything: it is a volume with an S3 API
+# that two workloads read (Architecture/17 §3). Writers — `jcctl` and CI — run outside the
+# cluster and reach it through the same mesh boundary, which today means they do not reach it
+# at all until a route exists for them; that is the strict end of PF-32 rather than a gap.
+artifact-store:
+  podSelector:
+    app.kubernetes.io/component: store
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        # jc, which carries the Portal where an environment runs it (components/jc).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+          componentNamespace: jc
+        # A shard of the WASM host (ADR-N-044 §2.7, T-3361).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+        # The bucket bootstrap, which creates the bucket and its object-lock configuration
+        # from inside this namespace after every apply.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: bucket
+          componentNamespace: artifact-store
+        # The Postgres instances archiving base backups and WAL to the backup bucket, and the
+        # restore drill's copy reading them back (T-5289). Their key reaches that bucket only.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster-drill
+          componentNamespace: postgres
+        # apps-db archiving under its own prefix with its own key (T-5662).
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 9000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The bootstrap talks to one address and resolves one name.
+artifact-store-bucket:
+  podSelector:
+    app.kubernetes.io/component: bucket
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 9000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

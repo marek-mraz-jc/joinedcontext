@@ -333,6 +333,99 @@ async fn a_views_id_pattern_over_a_whole_type_is_counted_in_the_store() {
     assert_eq!(count.as_deref(), Some("164003"));
     assert!(read <= 10, "read {read} Entity rows for a count");
 
+    // T-6971: bratislava's dataset views each narrow its 128 678 KPIs by
+    // one pattern, zs-kapacita to 17 of them. Under the view's own Policy the
+    // count is the slice and a page of five reads its six rows, sparse or
+    // dense; jc-dev's 128 678 and 10 s came from a view the engine decided
+    // by every Policy of the space.
+    let mut tx = pool.begin().await.expect("tx");
+    antares_sql::sqlx::query("SELECT set_config('antares.tenant', $1, true)")
+        .bind(&tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("tenant setting");
+    antares_sql::sqlx::query("SET LOCAL statement_timeout = 0")
+        .execute(&mut *tx)
+        .await
+        .expect("seed timeout");
+    antares_sql::sqlx::query(
+        "INSERT INTO entities (tenant_id, id, entity, types, created_at, modified_at)
+         SELECT $1, i, jsonb_build_object('id', i, 'type', jsonb_build_array($2 || 'KeyPerformanceIndicator'),
+                    $2 || 'name', jsonb_build_array(
+                        jsonb_build_object('type', 'Property', 'value', 'miesta'))),
+                ARRAY[$2 || 'KeyPerformanceIndicator'], now(), now()
+           FROM (SELECT 'urn:ngsi-ld:KeyPerformanceIndicator:'
+                            || CASE WHEN n % 7 = 0 THEN 'bbsk.sk' ELSE 'hel.fi' END
+                            || ':bratislava:'
+                            || CASE WHEN n <= 17 THEN 'zs-kapacita'
+                                    WHEN n <= 5117 THEN 'demografia'
+                                    ELSE 'zs-ziaci-' || (n % 431)::text END
+                            || '.miesta.' || n::text || '.2021'
+                   FROM generate_series(1, 128678) AS n) AS e(i)",
+    )
+    .bind(&tenant)
+    .bind(DEFAULT)
+    .execute(&mut *tx)
+    .await
+    .expect("kpis");
+    tx.commit().await.expect("commit");
+    antares_sql::sqlx::query("ANALYZE entities")
+        .execute(&pool)
+        .await
+        .expect("analyze");
+    for (dataset, n) in [("zs-kapacita", "17"), ("demografia", "5100"), ("none", "0")] {
+        let view = Filter {
+            rules: vec![Rule {
+                types: vec![iri("KeyPerformanceIndicator")],
+                id_patterns: vec![format!(
+                    "^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:{dataset}[.][a-z0-9.-]+$"
+                )],
+                attributes: vec![iri("name")],
+                ..Rule::default()
+            }],
+            ..Filter::default()
+        };
+        let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+            pool.clone(),
+        ));
+        let mut st = AppState::with_store("me".into(), Arc::new(store), "postgres")
+            .with_policy(Arc::new(Narrowing(view)));
+        antares_api::wire(&mut st).await;
+        for query in [
+            "type=KeyPerformanceIndicator&limit=0&count=true",
+            "type=KeyPerformanceIndicator&limit=5",
+            "type=KeyPerformanceIndicator&limit=5&count=true",
+        ] {
+            rows.take();
+            let (code, count, body, took) = get(&st, &tenant, query).await;
+            let read = rows.take();
+            eprintln!("{dataset} {query}: {code} {count:?} in {took:?}, {read} Entity rows read");
+            assert_eq!(code, StatusCode::OK, "{dataset} {query}: {body}");
+            if query.contains("count=true") {
+                assert_eq!(count.as_deref(), Some(n), "{dataset} {query}");
+            }
+            let ids: Vec<&str> = body
+                .as_array()
+                .map(|a| a.iter().filter_map(|e| e["id"].as_str()).collect())
+                .unwrap_or_default();
+            assert!(
+                ids.iter()
+                    .all(|i| i.contains(&format!(":bratislava:{dataset}."))),
+                "{dataset} {query}: {ids:?}"
+            );
+            let page = if query.contains("limit=0") { 0 } else { 5 };
+            assert_eq!(
+                ids.len(),
+                page.min(n.parse().unwrap_or(0)),
+                "{dataset} {query}"
+            );
+            assert!(
+                read <= 10,
+                "{dataset} {query} read {read} Entity rows for a page"
+            );
+        }
+    }
+
     antares_sql::sqlx::query("DELETE FROM entities WHERE tenant_id = $1")
         .bind(&tenant)
         .execute(&pool)

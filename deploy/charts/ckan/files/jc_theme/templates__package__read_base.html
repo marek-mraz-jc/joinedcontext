@@ -1,0 +1,36 @@
+{% ckan_extends %}
+
+{# The publisher is a bar above the dataset, not a sidebar (owner, 2026-10-12): the tables and the
+   usage boxes take the page's whole width. The sidebar's other parts (T-3009: a follower count of
+   zero, share buttons, the licence the About list already names) stay gone. #}
+{# The dataset as schema.org for search engines' dataset indexes (T-5123), checked by
+   scripts/check-schema-org.py. #}
+{% block head_extras %}
+  {{- super() }}
+  <script type="application/ld+json">{{ h.jc_schema_org(pkg) | safe }}</script>
+  {# A feed reader given this page finds each feed output (EP-150, T-5203). #}
+  {% for feed in h.jc_subscriptions(pkg).news %}
+  <link rel="alternate" type="{{ feed.mimetype }}" title="{{ feed.name }}" href="{{ feed.url }}">
+  {% endfor %}
+{% endblock %}
+{% block pre_primary %}
+  {% if pkg.organization %}
+    {% snippet "package/snippets/jc_publisher.html", organization=h.get_organization(pkg.organization.id) %}
+  {% endif %}
+  {% snippet "package/snippets/jc_subscribe.html", subscriptions=h.jc_subscriptions(pkg) %}
+{% endblock %}
+{% block secondary %}{% endblock %}
+{% block primary %}
+  <div class="primary col-12" role="main">
+    {{ self.primary_content() }}
+  </div>
+{% endblock %}
+
+{# The dataset's tabs (T-4217): its topics only once the catalogue has one, and under the word
+   the navigation and the search filter use. CKAN's block, from the pinned 2.11 image. #}
+{% block content_primary_nav %}
+  {{ h.build_nav_icon(dataset_type ~ '.read', _('Dataset'), id=pkg.name, icon='sitemap') }}
+  {% if h.jc_has_topics() %}
+    {{ h.build_nav_icon(dataset_type ~ '.groups', h.jc_t('nav_topics'), id=pkg.name, icon='users') }}
+  {% endif %}
+{% endblock %}

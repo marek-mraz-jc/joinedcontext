@@ -43,10 +43,12 @@ pub use dpop::{
 pub use dpop_guard::{
     external_htu, into_dpop_aware_response, parse_authz_header, verify_resource_dpop,
 };
-pub use guard::{ClusterCredentials, OutboundGuard, OutboundPolicy};
+pub use guard::{
+    ClusterCredentials, KUBERNETES_API_HOSTS, OutboundGuard, OutboundPolicy, PrivateHost,
+};
 pub use handlers::{
     OidcState, dispatch_backchannel_logout, dummy_verify_off_runtime, oidc_router, password_work,
-    read_cookie, redirect_with_params,
+    read_cookie, redirect_with_params, sign_in_cookie, sign_in_cookie_name,
 };
 pub use redirect::{validate_post_logout_redirect_uri, validate_redirect_uri};
 pub use second_factor::{

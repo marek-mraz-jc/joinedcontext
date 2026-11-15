@@ -1,0 +1,71 @@
+# The mapping of the stop-boardings pipeline (PL-03, T-5254): one KeyPerformanceIndicator per HSL stop or
+# station, its average boardings per weekday (Monday to Friday) in November 2016, as HSL counted them from
+# travel card validations and automatic counters. `name` is the local id (the indicator space's contract):
+# `hsl-boardings-` + the stop's name as a slug + HSL's record number, since one name stands for each
+# direction's stop. `location` is the stop. The value is a plain count; its window is `calculationPeriod`, never an
+# `observedAt`, so a daily rewrite of the one 2016 count adds no history row. HSL publishes the
+# stop's sign code (`Lyhyt_tunn`, a GtfsStop's `stopCode` such as H0227) but no stop id, and the sign code is
+# blank for 317 of 6 708 stops; the formula names the code where there is one, and no relationship is written.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a stop without a position or outside HSL's area plus its regional
+# lines' ends (23.9..25.75 E, 59.85..60.65 N), a count below 0 or above 200 000 (the busiest station, the
+# Central railway station, had 56 005), a stop without a name, or a second record of one id or a copy of one
+# record (same name, position and count) is dropped and counted by reason in a WARN line of the run. An answer with no stop fails the
+# run, so the stored indicators stay. Two stops of one name within 20 m are kept: HSL counts each platform
+# (Elielinaukio's two had 1 014 and 1 153), so a name-and-distance rule would drop real counts.
+
+pipeline:
+  processors:
+    # One `try`: a refused answer stops at its throw, so no later step writes over it (Bento runs later
+    # processors on an errored message otherwise).
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("the HSL boardings answer is %d bytes, more than the 16 MiB read".format(content().length())) } else { this }
+        - mapping: |
+            root = if this.features.or([]).length() == 0 { throw("the HSL boardings answer holds no stop: the run fails and the stored indicators stay") } else { this }
+        - mapping: |
+            let ran = now().ts_format("2006-01-02T15:04:05Z", "UTC")
+            let rows = this.features.map_each(f -> {
+              "f": f,
+              "lon": f.geometry.coordinates.index(0).number().catch(null),
+              "lat": f.geometry.coordinates.index(1).number().catch(null),
+              "count": f.properties.Nousijamaa.number().catch(null),
+              "name": f.properties.Nimi.or("").string().trim()
+            }).map_each(r -> r.merge({
+              "reason": if r.lon == null || r.lat == null || r.f.geometry.type.or("") != "Point" { "noLocation" }
+                else if r.lon < 23.9 || r.lon > 25.75 || r.lat < 59.85 || r.lat > 60.65 { "outOfArea" }
+                else if r.count == null || r.count < 0 || r.count > 200000 { "outOfRange" }
+                else if r.name == "" || r.f.properties.OBJECTID.or(null) == null { "noName" }
+                else { null }
+            }))
+            let valid = $rows.filter(r -> r.reason == null)
+            let kept = $valid.unique(r -> r.f.properties.OBJECTID.string()).unique(r -> "%v|%v|%v|%v".format(r.name, r.lon, r.lat, r.count))
+            let reasons = $rows.filter(r -> r.reason != null).map_each(r -> r.reason)
+            root.dropped = {
+              "noLocation": $reasons.filter(x -> x == "noLocation").length(),
+              "outOfArea": $reasons.filter(x -> x == "outOfArea").length(),
+              "outOfRange": $reasons.filter(x -> x == "outOfRange").length(),
+              "noName": $reasons.filter(x -> x == "noName").length(),
+              "duplicate": $valid.length() - $kept.length()
+            }
+            root.entities = $kept.map_each(r -> r.merge({
+              "local": "hsl-boardings-%v-%v".format(r.name.lowercase().replace_all("ä", "a").replace_all("ö", "o").replace_all("å", "a").replace_all("é", "e").replace_all("ü", "u").re_replace_all("[^a-z0-9]+", "-").trim("-"), r.f.properties.OBJECTID.string())
+            })).map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.local),
+              "type": "KeyPerformanceIndicator",
+              "name": { "type": "Property", "value": r.local },
+              "currentValue": { "type": "Property", "value": r.count.int64() },
+              "calculationPeriod": { "type": "Property", "value": { "start": "2016-11-01T00:00:00Z", "end": "2016-11-30T23:59:59Z" } },
+              "calculationFormula": { "type": "Property", "value": "Average boardings per weekday (Monday to Friday) at the stop %v in November 2016, by HSL from travel card validations and automatic passenger counters".format(if r.f.properties.Lyhyt_tunn.or("").string().trim() == "" { r.name } else { "%v (%v)".format(r.name, r.f.properties.Lyhyt_tunn.string().trim()) }) },
+              "derivedFrom": { "type": "Property", "value": "https://hri.fi/data/en_GB/dataset/hsl-n-nousijamaarat-pysakeittain" },
+              "computedBy": { "type": "Property", "value": "urn:ngsi-ld:Pipeline:%v:helsinki:stop-boardings".format(env("JC_ORG_DOMAIN")) },
+              "updatedAt": { "type": "Property", "value": $ran },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [ r.lon, r.lat ] } }
+            })
+        - switch:
+            - check: this.dropped.values().sum() > 0
+              processors:
+                - log:
+                    level: WARN
+                    message: 'stop-boardings: ${! json("entities").length() } indicators written, dropped by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.entities

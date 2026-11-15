@@ -1,0 +1,37 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-read
+  namespace: barcelona
+  title: { ca: Lectura pública, es: Lectura pública, en: Public read }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  # Read only, the types of the space with a history (OnStreetParking keeps none and is read
+  # through barcelona-parking): open data under CC BY 4.0, nothing about a person.
+  # Discovery beside the reads (T-4258, EP-116), so an anonymous MCP client finds the types first.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # As far back as the space keeps it (T-4372).
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: AirQualityObserved
+        - type: WeatherObserved
+        - type: WeatherForecast
+        - type: PhreaticObserved
+        - type: TrafficFlowObserved
+        - type: EVChargingStation

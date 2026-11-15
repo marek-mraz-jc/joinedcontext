@@ -1,0 +1,52 @@
+---
+{{- $this := .Values.apisix.apisix }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage -> not applicable, uses external etcd
+# - [x] 2+ Replicas or HorizontalPodAutoscaler
+# - [x] Rolling updates `maxUnavailable: 0`, `maxSurge: 25%`
+# - [x] PodDisruptionBudget (at least `minAvailable: 1`)
+
+replicaCount: 2
+
+apisix:
+  nginx:
+    # Pin worker count to the CPU limit (2000m -> 2). NEVER use the chart default
+    # "auto": nginx reads the host's core count, not the pod CPU limit, so on a
+    # many-core node it spawns one worker per host core. Scale this together with
+    # the CPU and memory limits below.
+    workerProcesses: "2"
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 25%
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: apisix

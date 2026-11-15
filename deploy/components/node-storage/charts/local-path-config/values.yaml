@@ -1,0 +1,6 @@
+image:
+  repository: rancher/mirrored-library-busybox
+  tag: '1.37.0'
+  digest: ''
+# The node directory every volume lives under, k3s's default.
+path: /var/lib/rancher/k3s/storage

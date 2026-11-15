@@ -1,0 +1,79 @@
+# The mapping of the dog-areas pipeline (PL-03, T-5413): one PointOfInterest per dog area of Open
+# Data BCN's arees_gossos_i_esbarjo_gossos.csv (dataset arees-esbarjo-gossos-bcn, 92 areas on
+# 2026-10-23, every one of kind tipus_id 76 "ÀREA DE GOSSOS"): its id, the park or square it lies
+# in (espai_verd), its address (adreca), barri and district, its centre in WGS84 (latitud,
+# longitud) and its fenced area in m² (superficie_m2). The id carries the prefix dog-area-, so the
+# areas never meet a facility of the register (equipaments) and the Endpoint dog-areas reads them
+# by idPattern. Written: name ("Àrea de gossos, <park>"), category [animals-plants, dog-area],
+# address (street, district) and source. Left out: the polygon (GEOM_WGS84; the places Endpoint
+# shows every PointOfInterest as a point), the barri (PointOfInterest has no refNeighbourhood) and
+# the area (no PointOfInterest slot; it only gates plausibility).
+#
+# Plausibility (owner 2026-10-22): a row whose id is no number, whose kind is not 76, whose point
+# is no number or lies outside the municipality's 1 km margin (the space's in-area bbox), whose
+# area is 0, below or above 50,000 m², and a second row of one id or of one point (within ~1 m, 5
+# decimals of a degree) are each dropped and counted by reason in `dropped`, which the next step
+# logs. A file with no area at all fails the run, so the areas stand instead of going quiet.
+# `expiresAt`: an area the file drops leaves every read three weeks (three weekly runs) after the
+# file last listed it.
+
+pipeline:
+  processors:
+    - mapping: |
+        let text = if content().length() > 2097152 { throw("the dog areas file is %d bytes, more than the 2 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿") }
+        let bbox = [2.04, 41.3, 2.24, 41.48]
+        let rows = $text.replace_all("\r", "").parse_csv(true, ",")
+        let placed = $rows.map_each(r -> {
+          "id": r.id.or("").trim(),
+          "kind": r.tipus_id.or("").trim(),
+          "park": r.espai_verd.or("").trim(),
+          "street": r.adreca.or("").trim(),
+          "district": r.nom_districte.or("").trim(),
+          "lon": r.longitud.or("").trim().number().catch(null),
+          "lat": r.latitud.or("").trim().number().catch(null),
+          "area": r.superficie_m2.or("").trim().number().catch(null)
+        })
+        let coded = $placed.filter(a -> a.id.re_match("^[0-9]{1,12}$") && a.kind == "76")
+        let pointed = $coded.filter(a -> a.lon != null && a.lat != null)
+        let inside = $pointed.filter(a -> a.lon >= $bbox.index(0) && a.lon <= $bbox.index(2) && a.lat >= $bbox.index(1) && a.lat <= $bbox.index(3))
+        let sized = $inside.filter(a -> a.area != null && a.area > 0 && a.area <= 50000)
+        # One area per id, then per ~1 m cell: sorted, so a repeat sits beside its first.
+        let by_id = $sized.sort_by(a -> a.id)
+        let ids = $by_id.enumerated().filter(e -> e.index == 0 || $by_id.index(e.index - 1).id != e.value.id).map_each(e -> e.value)
+        let by_cell = $ids.map_each(a -> a.assign({ "cell": "%.5f %.5f".format(a.lon, a.lat) })).sort_by(a -> a.cell + " " + a.id)
+        let unique = $by_cell.enumerated().filter(e -> e.index == 0 || $by_cell.index(e.index - 1).cell != e.value.cell).map_each(e -> e.value)
+        root.dropped = {
+          "noIdOrKind": $placed.length() - $coded.length(),
+          "noPoint": $coded.length() - $pointed.length(),
+          "outsideTheCity": $pointed.length() - $inside.length(),
+          "areaOutOfRange": $inside.length() - $sized.length(),
+          "duplicateId": $sized.length() - $ids.length(),
+          "samePoint": $ids.length() - $unique.length()
+        }
+        root.areas = if $unique.length() == 0 { throw("the dog areas file holds no dog area") } else { $unique.map_each(a -> a.without("cell", "kind")) }
+    - log:
+        level: INFO
+        message: 'dog areas: ${! json("areas").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.areas
+    - unarchive: { format: json_array }
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44); the run's clock is
+        # bcn_now when a test sets it.
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:dog-area-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
+          "type": "PointOfInterest",
+          "expiresAt": ($now + 21 * 86400).ts_format("2006-01-02T15:04:05Z", "UTC"),
+          "name": { "type": "Property", "value": if this.park == "" { "Àrea de gossos" } else { "Àrea de gossos, " + this.park } },
+          "category": { "type": "Property", "value": ["animals-plants", "dog-area"] },
+          "location": { "type": "GeoProperty", "value": {
+            "type": "Point", "coordinates": [(this.lon * 1000000).round() / 1000000, (this.lat * 1000000).round() / 1000000]
+          } },
+          "address": { "type": "Property", "value": {
+            "streetAddress": this.street,
+            "addressLocality": "Barcelona",
+            "district": this.district,
+            "addressCountry": "ES"
+          }.filter(entry -> entry.value != "") },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/arees-esbarjo-gossos-bcn" }
+        }

@@ -1,0 +1,16 @@
+# Set by components/keycloak/values/people; the defaults name what each one is.
+image: ""
+keycloakUrl: ""
+realm: ""
+serviceAccount: keycloak-app-keycloakx
+admin:
+  username: ""
+  existingSecret: keycloak-admin-user
+  existingSecretKey: password
+# The people to hold a fixed id: {id, username, recreate}. `recreate` lets the Job delete and
+# create again a person who holds another id: true only for the demo people of the development
+# profile; a production owner is never deleted, the Job fails naming the id to set instead.
+users: []
+securityDefaults:
+  podSecurityContext: {}
+  securityContext: {}

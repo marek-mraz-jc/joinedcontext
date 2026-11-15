@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: scitace-read
+  namespace: zilina
+  title: { sk: 'Verejné čítanie: sčítače dopravy', en: 'Public read: traffic counters' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-doprava }
+  assigner: did:web:zilina.sk
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint zilina-scitace, and only
+  # its type (T-4344), with its history as far back as the space keeps it (T-4372).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: TrafficFlowObserved

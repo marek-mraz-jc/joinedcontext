@@ -1,0 +1,16 @@
+---
+# Two replicas, because losing the collector loses the Activity stream for as long as it is
+# down and a rollout must not do that. The memory limit and the collector's own
+# `limit_percentage` are one setting in two places: raising this without raising that gives
+# the pod headroom it will never use.
+replicaCount: 2
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: '2'
+    memory: 1Gi

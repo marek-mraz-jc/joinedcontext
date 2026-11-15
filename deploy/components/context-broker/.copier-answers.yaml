@@ -1,0 +1,8 @@
+---
+# Changes here will be overwritten by Copier.
+_commit: e167757
+_src_path: ..
+componentName: ContextBroker
+componentSlug: context-broker
+releases: broker
+shortDescription: Antares NGSI-LD context broker

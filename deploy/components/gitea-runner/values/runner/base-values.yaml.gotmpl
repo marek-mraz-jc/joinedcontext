@@ -1,0 +1,125 @@
+{{- $global := .Values.global }}
+{{- /* One file for both parts: `runner` (node-22) and `rust` (rust-1.90), told apart by the
+       release, gitea-runner-runner or gitea-runner-rust. */}}
+{{- $part := .Release.Name | trimPrefix "gitea-runner-" }}
+{{- $this := index .Values "gitea-runner" $part }}
+{{- $images := index .Values.images "gitea-runner" $part }}
+{{- $digest := required (printf "gitea-runner.%s needs its image digest in components/gitea-runner/images.yaml" $part) $images.digest }}
+{{- $forge := printf "http://gitea-http.%s.svc.cluster.local:3000" .Values.gitea.forge.namespace }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem` -> /tmp is the one writable path
+# - [ ] Health probes -> none: the process between two jobs is a registration, and the runner's
+#       health is "online" in the forge, which dev-smoke reads (/orgs/{org}/actions/runners)
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> no Kubernetes token at all (AP-81)
+# - [ ] Named ports, Service, Ingress -> not applicable, it only dials out
+#
+# The forge's Actions runner (ADR-N-028 §3.3, AP-81). Host mode on the builder image: a job's
+# steps run in this container, so this pod is the untrusted zone of T-1707. What walls it in:
+# no Kubernetes token, no container runtime, no privilege, egress to the forge and the Portal
+# API only (networkpolicies.yaml), and the loop of `runner` (builder/runner.sh in the portal
+# repository): one ephemeral registration per job, the registration token read once and
+# deleted, every process a job leaves behind killed before the next job.
+
+# Both parts carry app.kubernetes.io/name gitea-runner, so the walls of networkpolicies.yaml hold
+# for each; the Deployment of the second is gitea-runner-rust.
+fullnameOverride: {{ if eq $part "runner" }}gitea-runner{{ else }}gitea-runner-{{ $part }}{{ end }}
+nameOverride: gitea-runner
+
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $digest }}
+  pullPolicy: IfNotPresent
+
+command:
+  - /usr/local/bin/runner
+
+service:
+  enabled: false
+
+probes:
+  enabled: false
+  # Ready while it holds a registration: runner.sh writes /tmp/runner/.runner when it registers
+  # and wipes it after each job, so a runner the forge keeps refusing reads not ready. No
+  # liveness: a restart would find the registration token already deleted (runner.sh).
+  readinessExec: ["test", "-s", "/tmp/runner/.runner"]
+  readiness:
+    periodSeconds: 10
+    failureThreshold: 6
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+env:
+  GITEA_INSTANCE: {{ $forge | quote }}
+
+# The job's view of the platform: in-cluster addresses, because a job's `gitea.server_url` is
+# the public host and this pod's egress does not reach it.
+configMap:
+  enabled: true
+  mountPath: /opt/runner
+  data:
+    runner.yaml: |
+      log:
+        level: info
+      runner:
+        file: /tmp/runner/.runner
+        capacity: 1
+        # A build past this is a build that hangs; the forge's own job limit is longer.
+        timeout: {{ $this.timeout }}
+        labels: ["{{ $this.label }}:host"]
+        envs:
+          JC_FORGE_URL: {{ $forge | quote }}
+          {{- if has "portal" .Values.components }}
+          JC_PORTAL_URL: "http://portal.{{ .Values.portal.portal.namespace }}.svc.cluster.local:8080"
+          {{- end }}
+      # One repository's cache is never another repository's input.
+      cache:
+        enabled: false
+
+# The organization's registration token, written by the gitea bootstrap Job. Only this init
+# container mounts the Secret: it copies the token into memory, and the runner reads it once
+# and deletes it before the first job, so no job finds it on disk.
+extraInitContainers:
+  - name: registration-token
+    image: "{{ $images.repository }}:{{ $images.tag }}@{{ $digest }}"
+    command: [/bin/sh, -c, "cp /secret/token /tmp/runner-secret/token"]
+    securityContext:
+      {{- .Values.securityDefaults.securityContext | toYaml | nindent 6 }}
+    resources:
+      requests: { cpu: 10m, memory: 16Mi }
+      limits: { cpu: 100m, memory: 64Mi }
+    volumeMounts:
+      - name: registration
+        mountPath: /secret
+        readOnly: true
+      - name: runner-secret
+        mountPath: /tmp/runner-secret
+
+extraVolumes:
+  - name: registration
+    secret:
+      secretName: gitea-runner-registration
+      items:
+        - key: token
+          path: token
+  - name: runner-secret
+    emptyDir:
+      medium: Memory
+      sizeLimit: 1Mi
+
+extraVolumeMounts:
+  - name: runner-secret
+    mountPath: /tmp/runner-secret
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

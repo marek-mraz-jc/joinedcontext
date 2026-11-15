@@ -1,0 +1,88 @@
+name: image-grafana
+# Grafana with the NGSI-LD datasource built in from one pinned commit (images/grafana, T-6504).
+# Built when its files change and once a month for the base image's fixes; the repository is
+# public, so its minutes are not metered (T-3289).
+on:
+  # Dispatch only until the cut-over (T-6988): the deployment repository still builds these images,
+  # and the owner first grants this repository write access to the ghcr package. Then the two
+  # commented triggers come back.
+  # push: { branches: [jc-portal-1], paths: ["deploy/images/grafana/**", ".github/workflows/image-grafana.yml"] }
+  # schedule: [{ cron: "0 4 1 * *" }]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency: { group: "image-grafana", cancel-in-progress: true }
+jobs:
+  build:
+    # the one job that pushes and signs (keyless) holds the two publish grants (T-5564)
+    permissions: { contents: read, packages: write, id-token: write }
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: deploy/images/grafana
+          file: deploy/images/grafana/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/joinedcontext-grafana:12.4.14
+            ghcr.io/${{ github.repository_owner }}/joinedcontext-grafana:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      # Signed like every image this platform deploys: the cluster's policy verifies the
+      # signature, so an unsigned Grafana image would be refused at admission (OPS-27).
+      - run: cosign sign --yes ghcr.io/${{ github.repository_owner }}/joinedcontext-grafana@${{ steps.push.outputs.digest }}
+      # OPS-41 asks for the bill of materials in CycloneDX; `sbom: true` above attaches
+      # BuildKit's SPDX one. The CycloneDX document is read off the pushed digest and attested
+      # to it, because an uploaded artifact expires and an attestation travels with the image
+      # (T-2412).
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: "ghcr.io/${{ github.repository_owner }}/joinedcontext-grafana@${{ steps.push.outputs.digest }}"
+          format: cyclonedx
+          output: sbom.cdx.json
+      - run: cosign attest --yes --type cyclonedx --predicate sbom.cdx.json ghcr.io/${{ github.repository_owner }}/joinedcontext-grafana@${{ steps.push.outputs.digest }}
+      # Read back what was just attested, by the same digest and under the identity of this
+      # workflow: a lane that stops attesting, or attests under another identity, goes red here
+      # instead of publishing an image nothing describes. Before the vulnerability gate below,
+      # because an image that fails that gate is the one whose contents somebody needs.
+      - run: |
+          cosign verify-attestation --type cyclonedx \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/image-grafana.yml@${{ github.ref }}" \
+            "ghcr.io/${{ github.repository_owner }}/joinedcontext-grafana@${{ steps.push.outputs.digest }}" > /dev/null
+      # The digest to pin in components/grafana/images.yaml; nothing deploys until it is pinned. Before
+      # the gate, so that a new finding still leaves a digest to read it on.
+      - run: |
+          {
+            echo "pin this in components/grafana/images.yaml:"
+            echo '```yaml'
+            echo "    repository: 'ghcr.io/${{ github.repository_owner }}/joinedcontext-grafana'"
+            echo "    tag: '12.4.14'"
+            echo "    digest: '${{ steps.push.outputs.digest }}'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # The same reviewed, expiring excuses pinned-images.yml applies to the upstream Grafana: its
+      # binary is this image's, and the plugin adds no Go code. An expired row turns this red.
+      - run: |
+          python3 - <<'PY' > .trivyignore
+          import datetime, yaml
+          today = datetime.date.today()
+          for row in yaml.safe_load(open("deploy/ci/pinned-images-ignore.yaml")):
+              if row["image"] == "docker.io/grafana/grafana" and row["expires"] >= today:
+                  print(row["cve"])
+          PY
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: "ghcr.io/${{ github.repository_owner }}/joinedcontext-grafana@${{ steps.push.outputs.digest }}"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+          trivyignores: .trivyignore

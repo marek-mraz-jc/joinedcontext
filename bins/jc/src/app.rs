@@ -73,6 +73,8 @@ pub struct MountPlan {
     /// with the entry's prefix stripped, on its later entries as on its first, because a module
     /// router is written relative to its mount and the entry's `Mount` names that prefix.
     pub at_root: bool,
+    /// The entries under the module's old name ([`Module::renamed_from`]), each answering `308`.
+    pub renamed: Vec<Renamed>,
 }
 
 impl MountPlan {
@@ -80,6 +82,105 @@ impl MountPlan {
     pub fn specs(&self) -> impl Iterator<Item = &MountSpec> {
         std::iter::once(&self.spec).chain(&self.also)
     }
+}
+
+/// An entry under a module's old name (T-6992): every request answers `308` to the same path and
+/// query under the current name. `to` comes from the configuration alone: the scheme and host of
+/// the renamed host entry (`https://embed.city.example`), or the new path prefix (`/embed`), which
+/// replaces the old one in the request's public prefix. No header of the request chooses it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Renamed {
+    pub spec: MountSpec,
+    pub to: String,
+}
+
+/// The old-name entries of `module`'s `specs`: `<new>.<rest>` also at `<old>.<rest>`, a prefix
+/// starting with the segment `/<new>` also at `/<old>`. One the configuration already places
+/// (`taken`) is left to it.
+fn renamed_specs(cfg: &Config, module: Module, specs: &[MountSpec]) -> Vec<Renamed> {
+    let Some(old) = module.renamed_from() else {
+        return Vec::new();
+    };
+    let new = module.slug();
+    let mut out = Vec::new();
+    for spec in specs {
+        let prefix = spec.path_prefix.as_deref().unwrap_or_default();
+        let renamed = if let Some(rest) = spec
+            .host
+            .as_deref()
+            .and_then(|h| h.strip_prefix(new)?.strip_prefix('.'))
+        {
+            let host = spec.host.as_deref().unwrap_or_default();
+            Renamed {
+                spec: MountSpec {
+                    host: Some(format!("{old}.{rest}")),
+                    ..spec.clone()
+                },
+                to: format!("{}://{host}{prefix}", cfg.scheme),
+            }
+        } else if let Some(tail) = prefix
+            .strip_prefix('/')
+            .and_then(|p| p.strip_prefix(new))
+            .filter(|t| t.is_empty() || t.starts_with('/'))
+        {
+            Renamed {
+                spec: MountSpec {
+                    path_prefix: Some(format!("/{old}{tail}")),
+                    ..spec.clone()
+                },
+                to: prefix.to_owned(),
+            }
+        } else {
+            continue;
+        };
+        out.push(renamed);
+    }
+    out
+}
+
+/// The router of a [`Renamed`] entry: `308` to `to` with the request's path below the entry and
+/// its query. A host-relative `to` takes the place of the entry's prefix in the request's public
+/// prefix, so a shared host's `/{org}` stays in front.
+fn moved(renamed: &Renamed) -> Router {
+    let to = renamed.to.clone();
+    let old = renamed.spec.path_prefix.clone().unwrap_or_default();
+    Router::new().fallback(move |req: Request| {
+        let base = if to.starts_with('/') {
+            let public = req
+                .extensions()
+                .get::<Mount>()
+                .map(|m| m.path_prefix.clone())
+                .unwrap_or_default();
+            match public.strip_suffix(old.as_str()) {
+                Some(head) => format!("{head}{to}"),
+                None => to.clone(),
+            }
+        } else {
+            to.clone()
+        };
+        let path = req.uri().path();
+        let location = match req.uri().query() {
+            Some(q) => format!("{base}{path}?{q}"),
+            None => format!("{base}{path}"),
+        };
+        async move {
+            (
+                StatusCode::PERMANENT_REDIRECT,
+                [(header::LOCATION, location)],
+            )
+        }
+    })
+}
+
+/// Mounts every old-name entry of `plan`.
+fn mount_renamed(mut builder: JcRouterBuilder, plan: &MountPlan) -> JcRouterBuilder {
+    for renamed in &plan.renamed {
+        builder = builder.mount(
+            renamed.spec.clone(),
+            access::layer(plan.module.name(), moved(renamed)),
+        );
+    }
+    builder
 }
 
 /// One router-table entry of `module`, its host lowercased and its prefix normalized.
@@ -204,6 +305,7 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
         .chain(organization_specs(cfg, module))
         .collect::<Vec<_>>();
         check_entries(cfg.mode, module, &specs)?;
+        let renamed = renamed_specs(cfg, module, &specs);
         let mut specs = specs.into_iter();
         let spec = specs
             .next()
@@ -226,7 +328,19 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
             mount,
             also: specs.collect(),
             at_root,
+            renamed,
         });
+    }
+    // An old name the configuration places itself (`[mounts.viz] host = "viz.<domain>"` beside
+    // the new one) stays the configuration's.
+    let placed: Vec<(Option<String>, Option<String>)> = plans
+        .iter()
+        .flat_map(MountPlan::specs)
+        .map(|s| (s.host.clone(), s.path_prefix.clone()))
+        .collect();
+    for plan in &mut plans {
+        plan.renamed
+            .retain(|r| !placed.contains(&(r.spec.host.clone(), r.spec.path_prefix.clone())));
     }
     check_organization_hosts(cfg, &plans)?;
     // Dry run of the router table: overlap is refused before any module state exists.
@@ -236,6 +350,9 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     }
     for spec in plans.iter().flat_map(MountPlan::specs) {
         dry = dry.mount(spec.clone(), Router::new());
+    }
+    for plan in &plans {
+        dry = mount_renamed(dry, plan);
     }
     dry.build()?;
     Ok(plans)
@@ -249,13 +366,33 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
     if cfg.organizations.is_empty() {
         return Ok(None);
     }
-    let mut table = HostTable::new();
+    let mut table = HostTable::new().reserving(jc_core::names::RESERVED_LABELS);
     let mut bound = std::collections::BTreeSet::new();
     for org in &cfg.organizations {
-        table = table.organization(&org.name)?;
-        for (_, host) in org.hosts.by_module() {
-            table = table.bound(host, &org.name, "/")?;
-            bound.insert(host.split(':').next().unwrap_or(host).to_owned());
+        table = match &org.id {
+            Some(id) => table.organization_id(&org.name, id.as_str())?,
+            None => table.organization(&org.name)?,
+        };
+        for m in org.hosts.by_module() {
+            if m.bound {
+                table = table.bound(m.host, &org.name, "/")?;
+                bound.insert(m.host.split(':').next().unwrap_or(m.host).to_owned());
+            }
+            if let Some(role) = m.role {
+                table = table.role(m.host, role)?;
+            }
+        }
+        // A page on another group's host moves to the host that serves it (T-6991 §7).
+        if org.hosts.opendata.is_some() {
+            table = table.move_pages(
+                &org.hosts.portal,
+                crate::config::DATAROOM_ON_WORKING_HOST,
+                &org.opendata_base(),
+                false,
+            )?;
+        }
+        if let Some(api) = org.hosts.api.as_deref().filter(|_| !org.hosts.shared) {
+            table = table.move_pages(api, "/", &org.hosts.portal, true)?;
         }
     }
     for row in &cfg.hosts {
@@ -266,11 +403,20 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
         )?;
         bound.insert(row.host.split(':').next().unwrap_or(&row.host).to_owned());
     }
-    let mounted = plans
+    let mounted: Vec<(&str, &str)> = plans
         .iter()
-        .flat_map(MountPlan::specs)
-        .filter_map(|spec| spec.host.as_deref());
-    for host in mounted.chain([cfg.base_host.as_str(), "localhost", "127.0.0.1", "[::1]"]) {
+        .flat_map(|p| p.specs().chain(p.renamed.iter().map(|r| &r.spec)))
+        .filter_map(|spec| Some((spec.module.as_str(), spec.host.as_deref()?)))
+        .collect();
+    for &(module, host) in &mounted {
+        if apps_wildcard(host).is_some() {
+            table = table.role(host, jc_router::HostRole::Apps)?;
+        } else if module == Module::Kaisatsu.name() && host == cfg.login_host {
+            table = table.role(host, jc_router::HostRole::SignIn)?;
+        }
+    }
+    let hosts = mounted.iter().map(|&(_, h)| h);
+    for host in hosts.chain([cfg.base_host.as_str(), "localhost", "127.0.0.1", "[::1]"]) {
         if !bound.contains(host.split(':').next().unwrap_or(host)) {
             table = table.shared(host)?;
         }
@@ -278,25 +424,26 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
     Ok(Some(table))
 }
 
-/// The entries of `module` on the `[[organizations]]` hosts: each answers its whole host, and
-/// the gateway also answers its root paths on the Organization's Portal host, as on dev, where
-/// the Portal's pages read the gateway as the person on their own host.
+/// The entries of `module` on the `[[organizations]]` hosts (`OrganizationHosts::by_module`):
+/// each answers its whole host or its prefix there, once even when several `auto`
+/// Organizations share the host.
 fn organization_specs(cfg: &Config, module: Module) -> Vec<MountSpec> {
-    let spec = |host: &str, prefix: Option<&str>| MountSpec {
-        module: module.name().to_owned(),
-        host: Some(host.to_owned()),
-        path_prefix: prefix.map(str::to_owned),
-    };
-    let mut out = Vec::new();
+    let mut out: Vec<MountSpec> = Vec::new();
     for org in &cfg.organizations {
-        for (m, host) in org.hosts.by_module() {
-            if m == module {
-                out.push(spec(host, None));
-            }
-        }
-        if module == Module::Gateway && cfg.roles.contains(&Module::Portal) {
-            for prefix in ["/cs", "/api/endpoint", "/api/mcp"] {
-                out.push(spec(&org.hosts.portal, Some(prefix)));
+        for m in org.hosts.by_module() {
+            let spec = MountSpec {
+                module: module.name().to_owned(),
+                host: Some(m.host.to_owned()),
+                path_prefix: m.prefix.map(str::to_owned),
+            };
+            // The gateway's paths on the working host serve the Portal's pages there; a jc
+            // without the Portal leaves them to the one with it, unless there is no API host.
+            let beside_portal = module == Module::Gateway
+                && m.host == org.hosts.portal
+                && org.hosts.api.is_some()
+                && !cfg.roles.contains(&Module::Portal);
+            if m.module == module && !beside_portal && !out.contains(&spec) {
+                out.push(spec);
             }
         }
     }
@@ -314,7 +461,7 @@ fn check_organization_hosts(cfg: &Config, plans: &[MountPlan]) -> Result<(), Sta
             org.hosts
                 .by_module()
                 .into_iter()
-                .map(|(_, host)| (bare(host), org.name.as_str()))
+                .map(|m| (bare(m.host), org.name.as_str()))
         })
         .collect();
     let placed: Vec<MountSpec> = cfg
@@ -519,6 +666,7 @@ pub async fn build_router(
                 "mounted"
             );
         }
+        builder = mount_renamed(builder, &plan);
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
             let state = modules::shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
@@ -711,10 +859,16 @@ fn split_credentials(cfg: &Config) -> Vec<crate::setup::Secret> {
     let served = crate::config::SPLIT_MODULES
         .into_iter()
         .filter(|m| cfg.door.is_some() && cfg.roles.contains(m));
-    served
+    let mut out: Vec<_> = served
         .chain(cfg.remote_modules.keys().copied())
         .filter_map(crate::setup::Secret::service_credential)
-        .collect()
+        .collect();
+    // The Portal registers its hooks on a shako in another container with the webhook secret and
+    // checks their deliveries with it, so it keeps that secret (on disk) without shako beside it.
+    if cfg.roles.contains(&Module::Portal) && cfg.remote_modules.contains_key(&Module::Shako) {
+        out.push(crate::setup::Secret::ForgeWebhookSecret);
+    }
+    out
 }
 
 /// One loopback forwarder per `[remote.modules]` entry, each added to `siblings` so the Portal
@@ -1281,27 +1435,235 @@ mod tests {
         Config::merge(cli, file).unwrap()
     }
 
-    /// Which module the planned router table sends `host` `path` to, and the path it hands over.
+    /// A Portal whose shako runs in another container holds the forge webhook secret beside the
+    /// shako token: without it the Portal got no `JC_SHAKO_*` group and never started (T-7014).
+    #[test]
+    fn a_portal_with_a_remote_shako_holds_the_forge_webhook_secret() {
+        use crate::setup::Secret;
+        let cfg = dev_config(
+            "kaisatsu,portal",
+            "[remote]\ntoken_url = \"http://id/token\"\nclient_id = \"portal-remote\"\n\
+             [remote.modules]\nshako = \"https://git.city.test\"\n",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let setup = Setup::prepare_with(
+            &state,
+            &cfg.roles,
+            &std::collections::BTreeMap::new(),
+            &split_credentials(&cfg),
+        )
+        .unwrap();
+        assert!(setup.value(Secret::ShakoToken).is_some());
+        assert!(setup.value(Secret::ForgeWebhookSecret).is_some());
+        assert!(
+            state.join("forge-webhook-secret").is_file(),
+            "kept across restarts"
+        );
+    }
+
+    /// Which module the planned router table sends `host` `path` to, and the path it hands over
+    /// (a `308`'s `Location` instead).
     async fn routed(plans: &[MountPlan], host: &str, path: &str) -> (StatusCode, String) {
+        routed_with(plans, None, host, path, &[]).await
+    }
+
+    /// [`routed`] with request headers and, from `cfg`, the host registry `start` builds.
+    async fn routed_with(
+        plans: &[MountPlan],
+        cfg: Option<&Config>,
+        host: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, String) {
         let mut builder = JcRouterBuilder::new("https", "city.test");
+        if let Some(table) = cfg.and_then(|cfg| host_table(cfg, plans).unwrap()) {
+            builder = builder.hosts(table);
+        }
         for plan in plans {
             let name = plan.module.name();
             let router = Router::new().fallback(move |uri: axum::http::Uri| async move {
                 format!("{name} {}", uri.path())
             });
             builder = mount_all(builder, plan, &router);
+            builder = mount_renamed(builder, plan);
         }
-        let req = Request::builder()
-            .uri(path)
-            .header(header::HOST, host)
-            .body(axum::body::Body::empty())
-            .unwrap();
+        let mut req = Request::builder().uri(path).header(header::HOST, host);
+        for (name, value) in headers {
+            req = req.header(*name, *value);
+        }
+        let req = req.body(axum::body::Body::empty()).unwrap();
         let resp = builder.build().unwrap().dispatch(req, None).await;
         let status = resp.status();
+        if status == StatusCode::PERMANENT_REDIRECT {
+            let location = resp.headers().get(header::LOCATION).unwrap();
+            return (status, location.to_str().unwrap().to_owned());
+        }
         let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
             .await
             .unwrap();
         (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// T-6974: every name jc places (the first path segment of each mount in slug mode, host
+    /// mode, dev's edge table and the two-Organization fixture, each module's slug, root paths
+    /// and host label, jc's own pages and the Portal's page roots) is in jc-core's
+    /// `RESERVED_LABELS`, so no Organization can take it from the service.
+    #[test]
+    fn every_placed_segment_and_host_label_is_reserved() {
+        fn first_segment(path: &str) -> &str {
+            path.trim_start_matches('/')
+                .split('/')
+                .next()
+                .unwrap_or_default()
+        }
+        let mut placed = std::collections::BTreeSet::new();
+        let mut label = |host: &str, base: &str| {
+            let host = host.split(':').next().unwrap_or(host);
+            let host = host.strip_prefix("*.").unwrap_or(host);
+            if let Some(sub) = host.strip_suffix(base).and_then(|h| h.strip_suffix('.')) {
+                placed.insert(sub.split('.').next().unwrap_or(sub).to_owned());
+            }
+        };
+        let configs = [
+            ("all", "mode = \"slug\"\nbase_host = \"city.test\"\n"),
+            ("all", "mode = \"host\"\nbase_host = \"city.test\"\n"),
+            ("all", DEV_MOUNTS),
+        ];
+        let mut segments = std::collections::BTreeSet::new();
+        for (roles, file) in configs {
+            let cfg = dev_config(roles, file);
+            for plan in plan_mounts(&cfg).expect("plans") {
+                for spec in plan.specs() {
+                    if let Some(host) = spec.host.as_deref() {
+                        label(host, &cfg.base_host);
+                    }
+                    segments.insert(
+                        first_segment(spec.path_prefix.as_deref().unwrap_or_default()).to_owned(),
+                    );
+                }
+            }
+        }
+        for org in
+            dev_config("dataroom", include_str!("../tests/fixtures/two-orgs.toml")).organizations
+        {
+            for m in org.hosts.by_module() {
+                placed.insert(m.host.split('.').next().unwrap_or(m.host).to_owned());
+            }
+        }
+        for module in Module::ALL {
+            placed.insert(module.slug().to_owned());
+            placed.insert(module.host_label().to_owned());
+            segments.extend(
+                module
+                    .root_paths()
+                    .iter()
+                    .map(|p| first_segment(p).to_owned()),
+            );
+        }
+        // jc's own pages (`/closed`, `/healthz`, `/metrics`) and the Portal's server and page roots.
+        segments
+            .extend(["closed", "healthz", "metrics", "api", "assets", "docs"].map(str::to_owned));
+        let pages = include_str!("../../../crates/portal/ui/src/router.tsx");
+        segments.extend(pages.split("path: \"/").skip(1).map(|rest| {
+            rest.split(['/', '"', '$'])
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        }));
+        placed.extend(segments);
+        // A name with a dot or an underscore (`.well-known`, `catalog.jsonld`) is no Organization
+        // name, so it needs no entry.
+        let missing: Vec<_> = placed
+            .iter()
+            .filter(|n| jc_core::names::validate_dns1123_label(n).is_ok())
+            .filter(|n| !jc_core::names::RESERVED_LABELS.contains(&n.as_str()))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "add to jc_core::names::RESERVED_LABELS: {missing:?}"
+        );
+    }
+
+    /// T-6992: the embed module answers as `embed` in slug mode; `/viz/...` answers `308` to the
+    /// same path and query under `/embed`, an Organization's prefix on a shared host kept.
+    #[tokio::test]
+    async fn slug_mode_serves_embed_and_moves_viz_with_path_and_query() {
+        let plans = plan_mounts(&dev_config(
+            "viz",
+            "mode = \"slug\"\nbase_host = \"city.test\"\n",
+        ))
+        .unwrap();
+        let ok = routed(&plans, "city.test", "/embed/explore.html").await;
+        assert_eq!(ok, (StatusCode::OK, "viz /explore.html".into()));
+        for (path, location) in [
+            (
+                "/viz/embed.html?lang=sk&x=1",
+                "/embed/embed.html?lang=sk&x=1",
+            ),
+            ("/viz", "/embed/"),
+            ("/viz//evil.example/x", "/embed//evil.example/x"),
+        ] {
+            let moved = routed(&plans, "city.test", path).await;
+            assert_eq!(
+                moved,
+                (StatusCode::PERMANENT_REDIRECT, location.into()),
+                "{path}"
+            );
+        }
+        let orgs = format!(
+            "mode = \"slug\"\nbase_host = \"city.test\"\n{}",
+            include_str!("../tests/fixtures/two-orgs.toml")
+        );
+        let cfg = dev_config("viz", &orgs);
+        let plans = plan_mounts(&cfg).unwrap();
+        let path = "/alpha/viz/explore.html?x=1";
+        let moved = routed_with(&plans, Some(&cfg), "city.test", path, &[]).await;
+        let want = "/alpha/embed/explore.html?x=1";
+        assert_eq!(moved, (StatusCode::PERMANENT_REDIRECT, want.into()));
+    }
+
+    /// T-6992: in host mode the label is `embed.`; `viz.` answers `308` to the configured
+    /// `embed.` host with path and query, whatever Host or `X-Forwarded-Host` the request names.
+    #[tokio::test]
+    async fn host_mode_moves_the_viz_host_to_the_configured_embed_host() {
+        let plans = plan_mounts(&dev_config(
+            "viz",
+            "mode = \"host\"\nbase_host = \"city.test\"\n",
+        ))
+        .unwrap();
+        let ok = routed(&plans, "embed.city.test", "/embed.html").await;
+        assert_eq!(ok, (StatusCode::OK, "viz /embed.html".into()));
+        let spoofed = [
+            ("x-forwarded-host", "evil.example"),
+            ("x-forwarded-proto", "http"),
+        ];
+        for (path, headers) in [
+            ("/embed.html?lang=sk#x", &[][..]),
+            ("/embed.html?lang=sk", &spoofed[..]),
+            ("//evil.example/x", &[][..]),
+        ] {
+            let (status, location) =
+                routed_with(&plans, None, "viz.city.test", path, headers).await;
+            assert_eq!(status, StatusCode::PERMANENT_REDIRECT, "{path}");
+            let want = format!("https://embed.city.test{}", path.split('#').next().unwrap());
+            assert_eq!(location, want, "{path}");
+        }
+    }
+
+    /// T-6992: a configuration that names the host itself keeps it: today's deployment mounts
+    /// viz at `viz.<domain>` (served, no redirect), and one naming both `embed.` and `viz.`
+    /// starts with both served.
+    #[tokio::test]
+    async fn a_configured_viz_host_is_served_and_never_moved() {
+        for file in [
+            "mode = \"host\"\nbase_host = \"city.test\"\n[mounts.viz]\nhost = \"viz.city.test\"\n",
+            "mode = \"host\"\nbase_host = \"city.test\"\n[[mounts.viz]]\nhost = \"embed.city.test\"\n[[mounts.viz]]\nhost = \"viz.city.test\"\n",
+        ] {
+            let plans = plan_mounts(&dev_config("viz", file)).unwrap();
+            let served = routed(&plans, "viz.city.test", "/embed.html").await;
+            assert_eq!(served, (StatusCode::OK, "viz /embed.html".into()), "{file}");
+        }
     }
 
     /// T-6705: host mode routes by name, so the kubelet's probe names a host jc serves:
@@ -1679,6 +2041,72 @@ mod tests {
                 .unwrap();
             let got = format!("{status} {}", String::from_utf8_lossy(&body));
             assert_eq!(got, want, "{host}{path}");
+        }
+        // T-7007 (EP-186): with an id, the shared host's segment is the id; the old name moves
+        // a page there and answers an API call in place.
+        let file = format!(
+            "mode = \"slug\"\nbase_host = \"city.test\"\n{}",
+            TWO_ORGS.replacen(
+                "name = \"alpha\"\n",
+                "name = \"alpha\"\nid = \"test_alpha\"\n",
+                1
+            )
+        );
+        let cfg = dev_config("kaisatsu,portal,dataroom,gateway", &file);
+        let plans = plan_mounts(&cfg).unwrap();
+        let mut builder = JcRouterBuilder::new("https", "city.test")
+            .hosts(host_table(&cfg, &plans).unwrap().expect("a registry"));
+        for plan in &plans {
+            let name = plan.module.name();
+            let router = Router::new().fallback(
+                move |org: Option<axum::Extension<jc_router::Organization>>,
+                      axum::Extension(mount): axum::Extension<Mount>| async move {
+                    let org = org.map_or_else(|| "-".to_owned(), |o| o.0.0);
+                    format!("{name} {org} {}", mount.public_base())
+                },
+            );
+            builder = mount_all(builder, plan, &router);
+        }
+        let ids = builder.build().unwrap();
+        for (path, accept, want) in [
+            (
+                "/test_alpha/opendata/dataset/x",
+                "application/json",
+                "200 dataroom alpha https://city.test/test_alpha/opendata",
+            ),
+            (
+                "/alpha/opendata/dataset/x?q=1",
+                "text/html",
+                "308 /test_alpha/opendata/dataset/x?q=1",
+            ),
+            (
+                "/alpha/opendata/dataset/x",
+                "application/json",
+                "200 dataroom alpha https://city.test/alpha/opendata",
+            ),
+            (
+                "/test_gamma/opendata/x",
+                "application/json",
+                "404 unmounted path",
+            ),
+        ] {
+            let req = Request::builder()
+                .uri(path)
+                .header(header::HOST, "city.test")
+                .header(header::ACCEPT, accept)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let resp = ids.dispatch(req, None).await;
+            let status = resp.status().as_u16();
+            let location = resp.headers().get(header::LOCATION).cloned();
+            let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+                .await
+                .unwrap();
+            let got = match location {
+                Some(l) => format!("{status} {}", l.to_str().unwrap()),
+                None => format!("{status} {}", String::from_utf8_lossy(&body)),
+            };
+            assert_eq!(got, want, "{path}");
         }
         // Without Organizations there is no registry: every host answers as before.
         let one = dev_config(

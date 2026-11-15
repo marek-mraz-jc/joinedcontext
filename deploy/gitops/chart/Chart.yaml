@@ -1,0 +1,5 @@
+apiVersion: v2
+name: gitops-dev
+description: The root of Argo CD's app of apps for one environment (ADR-N-056 §2.3)
+type: application
+version: 0.1.0

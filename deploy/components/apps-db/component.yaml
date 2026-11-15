@@ -1,0 +1,14 @@
+---
+component: apps-db
+parts:
+  # The database of the server WASM Apps (ADR-N-044, AP-149, T-3344): a CloudNativePG cluster of
+  # its own, apart from the platform's, run by the platform's operator. One schema and two roles
+  # per App, made by the Portal; the shards of jc-wasm-host log in as `wasm_host_<shard>`. The
+  # operator is the operators layer's, applied before this one, so no `needs` names it.
+  - name: cluster
+  # A nightly pg_dumpall onto a node volume (F-DEP1-018): the postgres component's `databases`
+  # chart, whose templates/local-backup.yaml it renders for this cluster. Off unless an
+  # environment without the object store enables it.
+  - name: backup
+    needs:
+      - apps-db.cluster

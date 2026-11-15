@@ -1,0 +1,42 @@
+# The mapping of the parkovanie pipeline (T-5232): one OffStreetParking per car park the city's
+# open data portal lists (opendata.zilina.sk dataset 57), with its free and total spaces now.
+# One car park on 2026-10-22 (Antona Bernoláka, 62 spaces); a car park the portal adds is written
+# from its next read.
+#
+# Ids: urn:ngsi-ld:OffStreetParking:zilina.sk:{space}:invipo-{portal id}, the portal's own 24-hex
+# id, so a car park keeps its entity and its history from read to read. The portal gives no time
+# of its own for a count, so dateObserved and observedAt are the read's time; the space records
+# availableSpotNumber on change only (zilina-space-doprava.yaml).
+#
+# An answer that is not a list, or an empty one, is the portal failing, not the city closing its
+# car parks: the run fails before anything is written and the last counts stay. More than 500
+# car parks is not this city's answer and fails the same way.
+
+pipeline:
+  processors:
+    # A response size cap: the count caps below bound the work only once the answer is parsed.
+    - mapping: |
+        root = if content().length() > 1048576 { throw("the portal answered %v bytes; more than 1048576 is not the car park list".format(content().length())) } else { this }
+    - mapping: |
+        let n = if this.type() == "array" { this.length() } else { 0 }
+        root = if $n == 0 { throw("the portal listed no car park") } else if $n > 500 { throw("the portal listed %v car parks; more than 500 is not Žilina's answer".format($n)) } else { this }
+    - mapping: |
+        map count {
+          root = if this.type() == "number" && this >= 0 && this == this.floor() { this } else { null }
+        }
+        let read = now().ts_format("2006-01-02T15:04:05Z", "UTC")
+        root = this.filter(p -> p.id.or("").string().re_match("^[0-9a-f]{24}$") && p.lat.type() == "number" && p.lng.type() == "number").map_each(p -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:invipo-%v".format("OffStreetParking", "zilina.sk", env("JC_SPACE"), p.id),
+          "type": "OffStreetParking",
+          "name": { "type": "LanguageProperty", "languageMap": { "sk": p.name.or("").string() } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [p.lng, p.lat] } },
+          "free": p.occupancy.overall.free.apply("count").catch(null),
+          "total": p.occupancy.overall.total.or(p.capacity.total).apply("count").catch(null)
+        }).map_each(e -> e.without("free", "total").merge({
+          "availableSpotNumber": if e.free != null { { "type": "Property", "value": e.free, "observedAt": $read } } else { null },
+          "totalSpotNumber": if e.total != null { { "type": "Property", "value": e.total } } else { null },
+          "occupiedSpotNumber": if e.free != null && e.total != null && e.free <= e.total { { "type": "Property", "value": e.total - e.free, "observedAt": $read } } else { null },
+          "dateObserved": { "type": "Property", "value": $read },
+          "dataProvider": { "type": "Property", "value": "Mesto Žilina, ODbL" },
+          "source": { "type": "Property", "value": "https://opendata.zilina.sk/sk/dataset-list/detail/57" }
+        }).filter(kv -> kv.value != null))

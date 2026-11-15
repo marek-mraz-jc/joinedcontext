@@ -1,0 +1,175 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "Piirijako_osaalue.113006",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       24.9783609,
+       60.17839425
+      ],
+      [
+       24.97852714,
+       60.17876081
+      ],
+      [
+       24.9826936,
+       60.18223578
+      ],
+      [
+       24.97651565,
+       60.18297704
+      ],
+      [
+       24.97534544,
+       60.18333165
+      ],
+      [
+       24.9721301,
+       60.18077254
+      ],
+      [
+       24.97185386,
+       60.18055266
+      ],
+      [
+       24.96648584,
+       60.17627907
+      ],
+      [
+       24.97682044,
+       60.17499734
+      ],
+      [
+       24.9783609,
+       60.17839425
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 113006,
+    "aluejako": "OSA-ALUE",
+    "kunta": "091",
+    "tunnus": "103",
+    "nimi_fi": "Sompasaari",
+    "nimi_se": "Sumparn",
+    "yhtluontipvm": null,
+    "yhtmuokkauspvm": "2019-12-04",
+    "yhtdatanomistaja": null,
+    "kokotunnus": "0913301103",
+    "paivitetty_tietopalveluun": "2026-09-24",
+    "datanomistaja": "Helsinki/Kami"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Piirijako_osaalue.112981",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       25.0204255,
+       60.15826548
+      ],
+      [
+       25.0183104,
+       60.15836572
+      ],
+      [
+       25.00519515,
+       60.15898641
+      ],
+      [
+       24.961805,
+       60.15157338
+      ],
+      [
+       24.95718076,
+       60.153019
+      ],
+      [
+       24.95628086,
+       60.15330029
+      ],
+      [
+       24.95340083,
+       60.15125555
+      ],
+      [
+       24.95242148,
+       60.14662361
+      ],
+      [
+       24.95331773,
+       60.14617463
+      ],
+      [
+       24.99946778,
+       60.12303037
+      ],
+      [
+       25.01035836,
+       60.11756163
+      ],
+      [
+       25.02945336,
+       60.11881283
+      ],
+      [
+       25.02800383,
+       60.1376085
+      ],
+      [
+       25.02217294,
+       60.14102375
+      ],
+      [
+       25.02219046,
+       60.14670336
+      ],
+      [
+       25.02222588,
+       60.15818013
+      ],
+      [
+       25.0204255,
+       60.15826548
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 112981,
+    "aluejako": "OSA-ALUE",
+    "kunta": "091",
+    "tunnus": "520",
+    "nimi_fi": "Suomenlinna",
+    "nimi_se": "Sveaborg",
+    "yhtluontipvm": null,
+    "yhtmuokkauspvm": null,
+    "yhtdatanomistaja": null,
+    "kokotunnus": "0911102520",
+    "paivitetty_tietopalveluun": "2026-09-24",
+    "datanomistaja": "Helsinki/Kami"
+   }
+  }
+ ],
+ "totalFeatures": 148,
+ "numberMatched": 148,
+ "numberReturned": 2,
+ "timeStamp": "2026-09-25T05:12:22.313Z",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:EPSG::4326"
+  }
+ }
+}

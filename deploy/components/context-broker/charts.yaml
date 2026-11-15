@@ -1,0 +1,10 @@
+---
+context-broker:
+  broker:
+    chart: ../../charts/workload
+  # The CloudNativePG cluster of each further broker (global.contextBrokers); Renovate bumps it
+  # here, as components/postgres/charts.yaml for the platform's own cluster.
+  db:
+    repository: https://cloudnative-pg.github.io/charts
+    chart: cnpg/cluster
+    version: '0.7.0'

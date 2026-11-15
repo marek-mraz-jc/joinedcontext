@@ -1,0 +1,78 @@
+{
+ "1000-Electricity": [
+  {
+   "timestamp": "2026-09-30T00:00:00",
+   "reportingGroup": "Electricity",
+   "locationName": "1000 Hakaniemen kauppahalli",
+   "value": 1459.8170000000002,
+   "unit": "kWh"
+  }
+ ],
+ "1000-Heat": [
+  {
+   "timestamp": "2026-09-30T00:00:00",
+   "reportingGroup": "Heat",
+   "locationName": "1000 Hakaniemen kauppahalli",
+   "value": 28797.0,
+   "unit": "kWh"
+  }
+ ],
+ "1000-Water": {
+  "errorNote": "No data found with the given parameters",
+  "errorCode": "MissingSettingsException"
+ },
+ "1037-Electricity": [
+  {
+   "timestamp": "2026-09-30T00:00:00",
+   "reportingGroup": "Electricity",
+   "locationName": "1037 Vuotalo",
+   "value": 58954.598000000005,
+   "unit": "kWh"
+  }
+ ],
+ "1037-Heat": [
+  {
+   "timestamp": "2026-09-30T00:00:00",
+   "reportingGroup": "Heat",
+   "locationName": "1037 Vuotalo",
+   "value": 19779.0,
+   "unit": "kWh"
+  }
+ ],
+ "1037-Water": [
+  {
+   "timestamp": "2026-09-30T00:00:00",
+   "reportingGroup": "Water",
+   "locationName": "1037 Vuotalo",
+   "value": 5166.0,
+   "unit": "M3"
+  }
+ ],
+ "1716-Electricity": [
+  {
+   "timestamp": "2026-09-30T00:00:00",
+   "reportingGroup": "Electricity",
+   "locationName": "1716 Töölön virastotalo",
+   "value": 22946.592,
+   "unit": "kWh"
+  }
+ ],
+ "1716-Heat": [
+  {
+   "timestamp": "2026-09-30T00:00:00",
+   "reportingGroup": "Heat",
+   "locationName": "1716 Töölön virastotalo",
+   "value": 42340.0,
+   "unit": "kWh"
+  }
+ ],
+ "1716-Water": [
+  {
+   "timestamp": "2026-09-30T00:00:00",
+   "reportingGroup": "Water",
+   "locationName": "1716 Töölön virastotalo",
+   "value": 30.88236000000001,
+   "unit": "M3"
+  }
+ ]
+}

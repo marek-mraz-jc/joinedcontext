@@ -1,0 +1,7 @@
+{{- if .Values.linkerd.enabled }}
+{{ .Files.Get "files/require-linkerd-sidecar.yaml" | replace "KYVERNO_FAILURE_ACTION" .Values.failureAction }}
+{{ .Files.Get "files/require-meshed-namespace-inbound-policy.yaml" | replace "KYVERNO_FAILURE_ACTION" .Values.failureAction }}
+{{ .Files.Get "files/justify-linkerd-inject-opt-out.yaml" | replace "KYVERNO_FAILURE_ACTION" .Values.failureAction }}
+{{ .Files.Get "files/exclude-acme-solver-from-mesh.yaml" }}
+{{ .Files.Get "files/explain-linkerd-cni-opt-out.yaml" }}
+{{- end }}

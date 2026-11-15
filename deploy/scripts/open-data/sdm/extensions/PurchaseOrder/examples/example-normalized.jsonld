@@ -1,0 +1,78 @@
+{
+  "id": "urn:ngsi-ld:PurchaseOrder:joinedcontext.com:example:1",
+  "type": "PurchaseOrder",
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "datumVystavenia": {
+    "type": "Property",
+    "value": "datumVystavenia"
+  },
+  "datumZverejnenia": {
+    "type": "Property",
+    "value": "datumZverejnenia"
+  },
+  "dodavatel": {
+    "type": "Property",
+    "value": "dodavatel"
+  },
+  "iCO": {
+    "type": "Property",
+    "value": "iCO"
+  },
+  "identifier": {
+    "type": "Property",
+    "value": "identifier"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "mena": {
+    "type": "Property",
+    "value": "mena"
+  },
+  "objednavkaSpolu": {
+    "type": "Property",
+    "value": "objednavkaSpolu"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "predmetObjednavky": {
+    "type": "Property",
+    "value": "predmetObjednavky"
+  },
+  "rok": {
+    "type": "Property",
+    "value": "rok"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "suma": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "textObjednavky": {
+    "type": "Property",
+    "value": "textObjednavky"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/PurchaseOrder/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

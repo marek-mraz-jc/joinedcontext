@@ -1,0 +1,6 @@
+apiVersion: v2
+name: bootstrap
+description: Creates the organization repository in the forge and the two tokens that read and write it
+type: application
+version: 0.1.0
+appVersion: '1.0.0'

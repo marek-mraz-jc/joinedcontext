@@ -1,0 +1,24 @@
+{#
+  One dataset's map as a page of its own, for any site to frame (T-4639): no header, no footer,
+  no form and no CKAN script. The edge route for /map/ allows every frame ancestor and strips
+  the session cookie; the data is read anonymously by the visitor's browser.
+#}
+<!doctype html>
+<html lang="{{ h.lang() }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ jc_map_config.title }} | {{ h.jc_site_title() }}</title>
+  {% snippet 'snippets/jc_styles.html' %}
+</head>
+<body class="jc-embed">
+  <main class="jc-map-page">
+    {% snippet 'snippets/jc_map.html', jc_map_config=jc_map_config %}
+    <p class="jc-map-links">
+      <a href="{{ jc_map_config.dataset }}" target="_blank" rel="noopener">{{ h.jc_t('map_in_catalogue') }}</a>
+      <a href="{{ jc_map_config.dataset }}#jc-preview-title" target="_blank" rel="noopener">{{ h.jc_t('map_as_table') }}</a>
+    </p>
+  </main>
+  <script type="module" src="{{ h.url_for_static('/jc-map.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,116 @@
+{
+ "success": true,
+ "result": {
+  "count": 5,
+  "sort": "fecha_publicacion desc",
+  "facets": {},
+  "results": [
+   {
+    "metadata_modified": "2026-04-28T06:55:23.287658",
+    "resources": [
+     {
+      "id": "796504f6-7602-41a7-82a9-d3bd47e68dee",
+      "name": "2025_accidents_causa_conductor_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/29d1b774-a83e-4c1e-91f7-1b9ad042ea83/resource/796504f6-7602-41a7-82a9-d3bd47e68dee/download",
+      "datastore_active": true
+     },
+     {
+      "id": "8cfddcbe-3403-4a6c-8897-c13238da900e",
+      "name": "2024_accidents_causa_conductor_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/29d1b774-a83e-4c1e-91f7-1b9ad042ea83/resource/8cfddcbe-3403-4a6c-8897-c13238da900e/download",
+      "datastore_active": true
+     }
+    ],
+    "name": "accidents_causa_conductor_gu_bcn",
+    "title": "Accidents by driver cause managed by the Guàrdia Urbana in the city of Barcelona"
+   },
+   {
+    "metadata_modified": "2026-05-19T16:00:47.690620",
+    "resources": [
+     {
+      "id": "7921ef46-5a4e-4f77-8c91-9d315664a6e4",
+      "name": "2025_accidents_vehicles_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/317e3743-fb79-4d2f-a128-5f12d2c9a55a/resource/7921ef46-5a4e-4f77-8c91-9d315664a6e4/download",
+      "datastore_active": true
+     },
+     {
+      "id": "9fc2416f-49f5-4865-812e-5edd4eed86c1",
+      "name": "2024_accidents_vehicles_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/317e3743-fb79-4d2f-a128-5f12d2c9a55a/resource/9fc2416f-49f5-4865-812e-5edd4eed86c1/download",
+      "datastore_active": true
+     }
+    ],
+    "name": "accidents-vehicles-gu-bcn",
+    "title": "Vehicles involved in accidents handled by the police in the city of Barcelona "
+   },
+   {
+    "metadata_modified": "2026-05-27T15:27:33.414695",
+    "resources": [
+     {
+      "id": "c939e28f-9662-4d71-b375-658e47dbb96b",
+      "name": "2025_accidents_causes_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/719b1054-4166-4692-b63e-622b621b4293/resource/c939e28f-9662-4d71-b375-658e47dbb96b/download",
+      "datastore_active": true
+     },
+     {
+      "id": "9f23364c-5ba4-4165-ab72-869fc3ea9935",
+      "name": "2024_accidents_causes_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/719b1054-4166-4692-b63e-622b621b4293/resource/9f23364c-5ba4-4165-ab72-869fc3ea9935/download",
+      "datastore_active": false
+     }
+    ],
+    "name": "accidents-causes-gu-bcn",
+    "title": "Accidents by mediate cause managed by the Guàrdia Urbana in the city of Barcelona"
+   },
+   {
+    "metadata_modified": "2026-05-27T15:15:29.685993",
+    "resources": [
+     {
+      "id": "e7363470-3b6f-46d6-8cdc-57dabb69c6a6",
+      "name": "2025_accidents_tipus_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/834b8920-0685-4e16-8e20-faf13645f4f3/resource/e7363470-3b6f-46d6-8cdc-57dabb69c6a6/download",
+      "datastore_active": true
+     },
+     {
+      "id": "2b722222-d131-4e38-832b-471c7e7fd71c",
+      "name": "2024_accidents_tipus_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/834b8920-0685-4e16-8e20-faf13645f4f3/resource/2b722222-d131-4e38-832b-471c7e7fd71c/download",
+      "datastore_active": true
+     }
+    ],
+    "name": "accidents-tipus-gu-bcn",
+    "title": "Accidents  by type managed by the Guàrdia Urbana in the city of Barcelona "
+   },
+   {
+    "metadata_modified": "2026-04-28T07:07:29.323136",
+    "resources": [
+     {
+      "id": "8e7388ee-ffbd-446e-a8ad-c427a99da48d",
+      "name": "2025_accidents_persones_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/87aa433e-fef8-4ff4-8f9a-d66e9beefff6/resource/8e7388ee-ffbd-446e-a8ad-c427a99da48d/download",
+      "datastore_active": true
+     },
+     {
+      "id": "c78c2bf7-88a6-4db9-a1e9-429f0ce14e88",
+      "name": "2024_accidents_persones_gu_bcn.csv",
+      "format": "CSV",
+      "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/87aa433e-fef8-4ff4-8f9a-d66e9beefff6/resource/c78c2bf7-88a6-4db9-a1e9-429f0ce14e88/download",
+      "datastore_active": true
+     }
+    ],
+    "name": "accidents-persones-gu-bcn",
+    "title": "People involved in accidents managed by the Police in the city of Barcelona "
+   }
+  ],
+  "search_facets": {}
+ }
+}

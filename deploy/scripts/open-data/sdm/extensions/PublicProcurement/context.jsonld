@@ -1,0 +1,149 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "PublicProcurement": {
+      "@id": "jc:PublicProcurement"
+    },
+    "adresaNajvyhodnejsiehoUchadza": {
+      "@id": "jc:adresaNajvyhodnejsiehoUchadza"
+    },
+    "cPVCastiNazov": {
+      "@id": "jc:cPVCastiNazov"
+    },
+    "cPVNazov": {
+      "@id": "jc:cPVNazov"
+    },
+    "cisloSpisu": {
+      "@id": "jc:cisloSpisu"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "datumSpustenia": {
+      "@id": "jc:datumSpustenia",
+      "@type": "xsd:dateTime"
+    },
+    "datumUkoncenia": {
+      "@id": "jc:datumUkoncenia"
+    },
+    "druhKomoditAleboSluzieb": {
+      "@id": "jc:druhKomoditAleboSluzieb"
+    },
+    "druhObstaravania": {
+      "@id": "jc:druhObstaravania"
+    },
+    "druhPostupu": {
+      "@id": "jc:druhPostupu"
+    },
+    "elektronickaAukcia": {
+      "@id": "jc:elektronickaAukcia"
+    },
+    "financovanie": {
+      "@id": "jc:financovanie"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "hlavnyCPV": {
+      "@id": "jc:hlavnyCPV"
+    },
+    "hlavnyCPVCasti": {
+      "@id": "jc:hlavnyCPVCasti"
+    },
+    "iDZakazky": {
+      "@id": "jc:iDZakazky",
+      "@type": "xsd:integer"
+    },
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "lehotaNaPredkladanie": {
+      "@id": "jc:lehotaNaPredkladanie",
+      "@type": "xsd:dateTime"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "mena": {
+      "@id": "jc:mena"
+    },
+    "najvyhodnejsiUchadzac": {
+      "@id": "jc:najvyhodnejsiUchadzac"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "nazovCasti": {
+      "@id": "jc:nazovCasti"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "obstaravatel": {
+      "@id": "jc:obstaravatel"
+    },
+    "pHZ": {
+      "@id": "jc:pHZ",
+      "@type": "xsd:float"
+    },
+    "pocetUchadzacov": {
+      "@id": "jc:pocetUchadzacov",
+      "@type": "xsd:integer"
+    },
+    "pocetZaujemcov": {
+      "@id": "jc:pocetZaujemcov",
+      "@type": "xsd:integer"
+    },
+    "ponukaUchadzaca": {
+      "@id": "jc:ponukaUchadzaca",
+      "@type": "xsd:float"
+    },
+    "predpokladanaHodnota": {
+      "@id": "jc:predpokladanaHodnota"
+    },
+    "rok": {
+      "@id": "jc:rok"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "socialneZodpovedneObstaravani": {
+      "@id": "jc:socialneZodpovedneObstaravani"
+    },
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "spolocenskyZodpovedneVerejne": {
+      "@id": "jc:spolocenskyZodpovedneVerejne"
+    },
+    "stav": {
+      "@id": "jc:stav"
+    },
+    "typKomodity": {
+      "@id": "jc:typKomodity"
+    },
+    "typVydavku": {
+      "@id": "jc:typVydavku"
+    },
+    "type": "@type",
+    "utvarOvZP": {
+      "@id": "jc:utvarOvZP"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zeleneObstaravanie": {
+      "@id": "jc:zeleneObstaravanie"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

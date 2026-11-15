@@ -1,0 +1,17 @@
+# Stage reads prod's public Endpoint bbsk-otvorene-data for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-bbsk-otvorene-data
+  namespace: bbsk
+  title: Prod bbsk-otvorene-data
+spec:
+  contextSpaceRef: bbsk-otvorene-data
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/6b4yqhzqieutqcoeew5rnxrx5udqeert
+  information:
+    - entities:
+        - type: Contract
+        - type: CouncilVote
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

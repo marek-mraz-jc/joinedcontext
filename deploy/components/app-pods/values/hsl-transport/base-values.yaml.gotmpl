@@ -1,0 +1,85 @@
+{{- $app := index .Values "app-pods" "hsl-transport" }}
+{{- $global := .Values.global }}
+{{- if not $app.endpointSlug }}
+{{- fail "app-pods.hsl-transport.endpointSlug: name the slug of the public Endpoint the App reads in the environment's values" }}
+{{- end }}
+# Checklist:
+# - [x] Containers run as non-root (65532, the image's user) with `readOnlyRootFilesystem`;
+#       writable: /tmp only. The App stores nothing
+# - [x] Health probes -> readiness and liveness /healthz
+# - [x] Graceful shutdown -> the kubelet's preStop sleep, then SIGTERM
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> no API token
+# - [x] Named ports -> 8080 http
+# - [x] No Ingress: the caller is jc's Portal on the App's host, admitted by NetworkPolicy and,
+#       meshed, by its Linkerd identity (meshAuthorization)
+
+fullnameOverride: app-hsl-transport
+nameOverride: app-hsl-transport
+
+{{- $images := index .Values.images "app-pods" "hsl-transport" | default dict }}
+{{- if not $images.digest }}
+{{- fail "app-pods.hsl-transport: components/app-pods/images.yaml pins no digest yet; pin the one the monorepo's image-apps.yml signed before deploying app-pods" }}
+{{- end }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+containerPort: 8080
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  name: http
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 5
+
+# What prod's reconciler set on the pod, the Endpoint now jc's gateway on jc's apps listener (8083:
+# GET/HEAD /api/endpoint/... alone, components/jc base-values JCBIN_APPS_LISTEN).
+env:
+  JC_BIND_ADDRESS: "0.0.0.0:8080"
+  JC_BASE_PATH: "/"
+  JC_ENDPOINT_URL: "http://jc.{{ .Values.jc.server.namespace }}.svc.cluster.local:8083/api/endpoint/{{ $app.endpointSlug }}/"
+  JC_APP_CONFIG: {{ dict
+      "appName" "hsl-transport"
+      "basemap" (printf "https://portal.%s/api/v1/projects/%s/basemap/default/style.json" $global.domain $app.project)
+      "endpointName" "app-hsl-transport"
+      "endpoints" (list (dict "name" "app-hsl-transport" "slug" $app.endpointSlug "space" $app.project "types" (list "Vehicle" "GtfsStop" "PublicTransportRoute" "Alert")))
+      "orgDomain" $global.orgDomain
+      "portal" (printf "https://portal.%s/projects/%s" $global.domain $app.project)
+      "slug" $app.endpointSlug
+      "space" $app.project
+      "transport" "origin" | toJson | quote }}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+meshAuthorization:
+  port: 8080
+  clients:
+    - serviceAccount: jc
+      namespace: {{ .Values.jc.server.namespace }}

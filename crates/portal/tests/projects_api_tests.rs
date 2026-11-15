@@ -390,6 +390,68 @@ async fn a_name_that_is_taken_or_not_a_label_is_refused_before_anything_is_writt
     assert!(written(&shako).await.is_empty(), "nothing was written");
 }
 
+/// Project names are unique in the installation (the URL is `/api/v1/projects/{project}`): a name
+/// another Organization's project holds is `409` "not available", naming neither that
+/// Organization nor anything of the project; an own project's name still says it exists (PF-67).
+#[tokio::test]
+async fn a_name_another_organization_holds_is_not_available_and_names_nothing_of_it() {
+    let shako = forge_with_no_open_projects().await;
+    let state = common::state_on(&shako);
+    state.mirror.upsert(envelope(
+        "Organization",
+        "bb",
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "domain": "banskabystrica.sk", "installation": true }),
+    ));
+    for (name, domain) in [("ctl-a", "ctl-a.example"), ("ctl-b", "ctl-b.example")] {
+        state.mirror.upsert(envelope(
+            "Organization",
+            name,
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            json!({ "domain": domain, "projects": { "creation": "anyone" } }),
+        ));
+    }
+    // The opener is a member of ctl-a: "anyone" there is every member of it (PF-65).
+    state.mirror.upsert(envelope(
+        "Role",
+        "reader",
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "nobody-in-ctl-a",
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "nobody@hel.fi" }], "role": "reader",
+                "scope": { "organization": "ctl-a" } }),
+    ));
+    for (name, owner) in [("isocheck-b", "ctl-b"), ("isocheck-own", "ctl-a")] {
+        state.mirror.upsert(envelope(
+            "Project",
+            name,
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": owner }),
+        ));
+    }
+
+    let ask = |name: &str| json!({ "name": name, "organization": "ctl-a" });
+    let (status, body) = open(&state, person("nobody"), ask("isocheck-b")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body.contains("project name 'isocheck-b' is not available (PF-67)"),
+        "{body}"
+    );
+    assert!(
+        !body.contains("ctl-b") && !body.contains("exists"),
+        "{body}"
+    );
+
+    let (status, body) = open(&state, person("nobody"), ask("isocheck-own")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("already exists"), "{body}");
+    assert!(written(&shako).await.is_empty(), "nothing was written");
+}
+
 #[tokio::test]
 async fn a_name_another_open_change_already_reserved_is_refused() {
     let shako = common::forge().await;

@@ -1,0 +1,19 @@
+# One Garden per record of the IPR layer Sdílená data o zeleni – základní plochy zeleně into the city space (T-5425).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: green-green-areas
+  namespace: praha
+  title:
+    en: 'Shared green register: basic green areas'
+    cs: Sdílená data o zeleni – základní plochy zeleně
+spec:
+  class: auto
+  # IPR republishes the green register every few weeks; one read a week keeps up.
+  period: 168h
+  schedule: '30 3 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-green-green-areas }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: Garden, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

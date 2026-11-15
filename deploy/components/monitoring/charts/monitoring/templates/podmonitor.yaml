@@ -1,0 +1,23 @@
+{{- range .Values.podMonitors }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "monitoring.labels" $ | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- toYaml .selector | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .namespace }}
+  podMetricsEndpoints:
+    - port: {{ .port }}
+      path: {{ .path | default "/metrics" }}
+      scheme: http
+      interval: {{ $.Values.interval }}
+      scrapeTimeout: {{ $.Values.scrapeTimeout }}
+{{- end }}

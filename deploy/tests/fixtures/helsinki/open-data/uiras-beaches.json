@@ -1,0 +1,119 @@
+{
+ "type": "FeatureCollection",
+ "meta": {},
+ "features": [
+  {
+   "type": "Feature",
+   "id": "70B3D57050001AB9",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.983821,
+     60.227704
+    ]
+   },
+   "properties": {
+    "name": "Pikkukosken uimaranta",
+    "location": "Pikkukoski",
+    "district": "Veräjämäki",
+    "servicemap_url": "https://palvelukartta.hel.fi/unit/41960",
+    "site_url": "",
+    "links": {
+     "geojson": {
+      "type": "application/geojson",
+      "rel": "data",
+      "title": "Data for P7D/P30D/P730D days in GeoJSON format, version 2",
+      "href": "https://bri3.fvh.io/opendata/uiras/70B3D57050001AB9.geojson"
+     },
+     "servicemap": {
+      "type": "text/html",
+      "rel": "external",
+      "title": "Palvelukartta",
+      "href": "https://palvelukartta.hel.fi/unit/41960"
+     }
+    },
+    "installation depth": -0.2,
+    "installation platform": "pier",
+    "installation method": "floating",
+    "measurement": {
+     "time": "2026-09-25T07:50:17.141000+03:00",
+     "batt": 5.163,
+     "temp_in": 11.6,
+     "temp_water": 11.81
+    }
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "70B3D57050001BBE",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.114849,
+     60.207977
+    ]
+   },
+   "properties": {
+    "name": "Rastilan uimaranta",
+    "location": "Vartiokylänlahti",
+    "district": "Rastila",
+    "servicemap_url": "https://palvelukartta.hel.fi/fi/unit/40157",
+    "site_url": "https://www.kuhat.com/talviuinti/",
+    "site_title": "Uintiseura Kuhat Ry",
+    "links": {
+     "geojson": {
+      "type": "application/geojson",
+      "rel": "data",
+      "title": "Data for P7D/P30D/P730D days in GeoJSON format, version 2",
+      "href": "https://bri3.fvh.io/opendata/uiras/70B3D57050001BBE.geojson"
+     },
+     "servicemap": {
+      "type": "text/html",
+      "rel": "external",
+      "title": "Palvelukartta",
+      "href": "https://palvelukartta.hel.fi/fi/unit/40157"
+     },
+     "site": {
+      "type": "text/html",
+      "rel": "external",
+      "title": "Uintiseura Kuhat Ry",
+      "href": "https://www.kuhat.com/talviuinti/"
+     }
+    },
+    "installation depth": -0.2,
+    "installation platform": "pier",
+    "installation method": "floating",
+    "measurement": {
+     "time": "2026-09-25T07:58:44.791000+03:00",
+     "batt": 5.19,
+     "temp_in": 13.2,
+     "temp_water": 14.06
+    }
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "70B3D5705001148E",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.951225,
+     60.153153
+    ]
+   },
+   "properties": {
+    "name": "Uunisaari",
+    "location": "Pohjoinen Uunisaari",
+    "district": "Ullanlinna",
+    "servicemap_url": "https://palvelukartta.hel.fi/fi/unit/40356",
+    "site_url": "",
+    "site_title": "",
+    "info": "Alhaisen vedenkorkeuden vallitessa  mittari voi mitata välillä ilman lämpötilaa.",
+    "valid_from": "2023-06-19T11:00:00Z",
+    "installation depth": -0.5,
+    "installation platform": "steps",
+    "installation method": "static"
+   }
+  }
+ ]
+}

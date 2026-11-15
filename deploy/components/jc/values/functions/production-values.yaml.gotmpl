@@ -1,0 +1,12 @@
+---
+# Each invocation runs in its own runtime capped at 64 MiB and 5 s, at most 16 at once
+# (components/functions README.md sizing).
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: '1'
+    memory: 1Gi

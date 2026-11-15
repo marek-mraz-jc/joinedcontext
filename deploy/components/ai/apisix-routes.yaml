@@ -1,0 +1,9 @@
+---
+# The standalone assistant on its own host, ai.{domain} (T-4694). `subDomain` also puts the host
+# on the edge Ingress and in the certificate's SAN list. Anonymous, static, GET only.
+ai:
+  name: ai
+  description: The standalone assistant, a static copy of the widget for every public deployment
+  upstream: ai-app.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "ai") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  subDomain: ai
+  uri: '/*'

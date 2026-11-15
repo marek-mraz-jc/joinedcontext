@@ -1,0 +1,42 @@
+{#
+  One search filter (T-3048), CKAN 2.11.6's own snippet with two changes: a filter with nothing
+  to choose is left out, where CKAN printed "There are no Topic that match this search"; and a
+  label is shown whole and wraps, where CKAN cut every one at 22 characters and three licences
+  all read "Creative Commons..."; and the footer is printed only when it holds a link.
+#}
+{% block facet_list %}
+  {% with items = items or h.get_facet_items_dict(name, search_facets) %}
+    {% if items %}
+      <section class="module module-narrow module-shallow">
+        <h2 class="module-heading"><i class="fa fa-filter" aria-hidden="true"></i> {{ title }}</h2>
+        <nav aria-label="{{ title }}">
+          <ul class="list-unstyled nav nav-simple nav-facet">
+            {% for item in items %}
+              {% set href = h.remove_url_param(name, item.name, extras=extras, alternative_url=alternative_url) if item.active else h.add_url_param(new_params={name: item.name}, extras=extras, alternative_url=alternative_url) %}
+              {% set label = label_function(item) if label_function else item.display_name %}
+              {% set count = count_label(item['count']) if count_label else ('%d' % item['count']) %}
+              <li class="nav-item{% if item.active %} active{% endif %}">
+                <a href="{{ href }}"{% if item.active %} aria-current="true"{% endif %}>
+                  <span class="item-label">{{ label }}</span>
+                  <span class="item-count badge">{{ count }}</span>
+                  {% if item.active %}<span class="facet-close" aria-hidden="true"> <i class="fa fa-solid fa-circle-xmark"></i></span>{% endif %}
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        </nav>
+        {# The footer only when it holds a link: an empty one drew a bordered strip under the list. #}
+        {% set limited = h.get_param_int('_%s_limit' % name) %}
+        {% if not limited or h.has_more_facets(name, search_facets) %}
+          <p class="module-footer">
+            {% if limited %}
+              <a href="{{ h.remove_url_param('_%s_limit' % name, replace=0, extras=extras, alternative_url=alternative_url) }}" class="read-more">{{ _('Show More {facet_type}').format(facet_type=title) }}</a>
+            {% else %}
+              <a href="{{ h.remove_url_param('_%s_limit' % name, extras=extras, alternative_url=alternative_url) }}" class="read-more">{{ _('Show Only Popular {facet_type}').format(facet_type=title) }}</a>
+            {% endif %}
+          </p>
+        {% endif %}
+      </section>
+    {% endif %}
+  {% endwith %}
+{% endblock %}

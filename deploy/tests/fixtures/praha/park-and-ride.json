@@ -1,0 +1,54 @@
+{
+ "type": "FeatureCollection",
+ "name": "dop_cur_dop_zachparkoviste_b_dop_cur_dop_zachparkovi",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+  }
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "objectid": 1,
+    "typ": 1,
+    "stav": 1,
+    "nazev": "Běchovice",
+    "kapacita": 92,
+    "kapacita_vyhled": 300,
+    "poskyt": "HMP-IPR",
+    "id_poskyt": 43,
+    "globalid": "{E043E8F3-A67D-402D-863E-776A39442CF5}"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.596779481000056,
+     50.080758754000044
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "objectid": 2,
+    "typ": 1,
+    "stav": 1,
+    "nazev": "Černý Most II",
+    "kapacita": 131,
+    "kapacita_vyhled": null,
+    "poskyt": "HMP-IPR",
+    "id_poskyt": 43,
+    "globalid": "{707550AA-0B4B-4AF2-8F17-F8BB9A9A9CC6}"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.581984179000074,
+     50.110403147000056
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,21 @@
+{{- /* Branch previews (ADR-N-062, T-5548): the pods of a namespace labelled
+       sandbox.joinedcontext.com/lifecycle=preview reach this component for token calls to the realm `preview`.
+       The other half is the preview's own egress rule (components/preview). Rendered only
+       where global.branchPreviews.enabled, which the production guard refuses. */}}
+{{- if (dig "branchPreviews" "enabled" false $.Values.global) }}
+keycloak-from-branch-previews:
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              sandbox.joinedcontext.com/lifecycle: preview
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 4143
+{{- end }}

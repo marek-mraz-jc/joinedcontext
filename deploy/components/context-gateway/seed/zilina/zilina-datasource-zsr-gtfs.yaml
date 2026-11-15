@@ -1,0 +1,17 @@
+# The national train timetable as GTFS (all operators on the ŽSR network, compiled by iTranSys for
+# ŽSR), a ZIP of 290 kB the national catalogue serves as `text/csv`. The copy on zsr.sk moved and
+# answers an HTML page, so the catalogue's copy is the one read. No key. CC BY 1.0 on the
+# catalogue's record (Research/zilina-open-data-sources.md §2).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: zsr-gtfs
+  namespace: zilina
+  title: { sk: Grafikon vlakovej dopravy (GTFS), en: Train timetable (GTFS) }
+spec:
+  type: http
+  http:
+    url: https://data.slovensko.sk/download?id=a5503f2c-c7cc-4a9a-a713-511e7406800d
+    verb: GET
+    headers: { Accept: application/zip }
+    timeout: 60s

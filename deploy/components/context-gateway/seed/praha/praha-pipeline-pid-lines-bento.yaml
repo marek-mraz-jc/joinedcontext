@@ -1,0 +1,92 @@
+# The mapping of the pid-lines pipeline (T-5423, PL-03): one PublicTransportRoute per PID line of the IPR
+# layer Pražská integrovaná doprava - linky (819 on 2026-10-24), read from its FeatureServer with the
+# geometry simplified to about 5 m (7.3 MB instead of the 30.2 MB of the full download).
+#
+# Ids: urn:ngsi-ld:PublicTransportRoute:{org}:{space}:pid-{route_id}, the GTFS route_id ROPID gives the
+# line (L22), lowercased; the Policy public-linky-pid names them.
+#
+# Read: the line's number (linka), its termini (trasa), what it runs (druh, the GTFS route type), its
+# page on pid.cz (odkaz, left out unless it is an https URL of printable ASCII) and its line. The GTFS
+# basic types of the Smart Data Model stop at 7, so a trolleybus (11) is transportationType 3 and
+# transportMode trolleybus.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a route_id or a number, of a route type GTFS
+# does not list, without a line, with a vertex outside the PID area (Prague and Central Bohemia plus
+# about 30 km) or with more than 20,000 vertices is dropped, and so is a second record of one route_id;
+# the log line counts each reason. An answer that is not a feature list, an empty one, one the server
+# cut at its record limit, or one where fewer than half the lines survive fails the run, so the lines
+# already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes; more than 16 MiB is not the PID line layer".format(content().length())) } else { this }
+        - mapping: |
+            let features = this.features.catch(null)
+            root = if this.exceededTransferLimit.catch(false) == true {
+              throw("IPR cut the PID line layer at its record limit; the run would miss lines")
+            } else if $features.type() != "array" {
+              throw("IPR's PID line layer did not answer a feature list")
+            } else if $features.length() == 0 {
+              throw("IPR's PID line layer listed no line; the layer is never empty, so the read failed")
+            } else {
+              $features.map_each(f -> {
+                "p": f.properties.catch({}),
+                "key": f.properties.route_id.catch("").string().trim(),
+                "number": f.properties.linka.catch("").string().trim().re_replace_all("\\s+", " "),
+                "mode": f.properties.druh.catch(null),
+                "g": f.geometry.catch(null)
+              }).map_each(r -> r.assign({
+                "points": if r.g.type.catch("") == "LineString" { r.g.coordinates.catch([]) } else if r.g.type.catch("") == "MultiLineString" { r.g.coordinates.catch([]).flatten() } else { [] }
+              }))
+            }
+        - mapping: |
+            let rows = this
+            let usable = $rows.filter(r -> r.key.re_match("^L[0-9]{1,6}$") && r.number != "" && r.number.length() <= 20)
+            let typed = $usable.filter(r -> [0, 1, 2, 3, 4, 7, 11].contains(r.mode))
+            let drawn = $typed.filter(r -> r.points.length() >= 2 && r.points.length() <= 20000)
+            let inside = $drawn.filter(r -> r.points.all(c -> c.type() == "array" && c.length() >= 2 && c.index(0).type() == "number" && c.index(1).type() == "number" && c.index(0) >= 12.0 && c.index(0) <= 16.6 && c.index(1) >= 48.8 && c.index(1) <= 51.3))
+            let unique = $inside.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta untyped = $usable.length() - $typed.length()
+            meta undrawn = $typed.length() - $drawn.length()
+            meta outside = $drawn.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("IPR's PID line layer: only %v of %v lines have a route id, a number, a route type and a line in the PID area".format($unique.length(), $rows.length()))
+            } else { $unique }
+        - log:
+            level: INFO
+            message: 'pid-lines: read ${! meta("read") }, dropped ${! meta("unusable") } without route id or number, ${! meta("untyped") } of an unknown route type, ${! meta("undrawn") } without a line or over 20000 vertices, ${! meta("outside") } outside the PID area, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            let modes = { "0": "tram", "1": "metro", "2": "train", "3": "bus", "4": "ferry", "7": "funicular", "11": "trolleybus" }
+            root = this.map_each(r -> {
+              "r": r,
+              "route": r.p.trasa.catch(null).apply("words"),
+              "web": [r.p.odkaz.catch(null)].filter(w -> w.type() == "string").map_each(w -> w.trim()).filter(w -> w.re_match("^https://[^\\s/]+\\.[\\x21-\\x7e]+$"))
+            }).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:pid-%v".format("PublicTransportRoute", env("JC_ORG_DOMAIN"), env("JC_SPACE"), v.r.key.lowercase()),
+              "type": "PublicTransportRoute",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": "Linka " + v.r.number } },
+              "routeCode": { "type": "Property", "value": v.r.key },
+              "shortRouteCode": { "type": "Property", "value": v.r.number },
+              "transportationType": { "type": "Property", "value": if v.r.mode == 11 { 3 } else { v.r.mode } },
+              "transportMode": { "type": "Property", "value": $modes.get(v.r.mode.string()) },
+              "description": if v.route != "" { { "type": "Property", "value": v.route } } else { null },
+              "url": if v.web.length() > 0 { { "type": "Property", "value": v.web.index(0) } } else { null },
+              "location": { "type": "GeoProperty", "value": {
+                "type": v.r.g.type,
+                "coordinates": if v.r.g.type == "LineString" { v.r.g.coordinates.map_each(c -> c.slice(0, 2)) } else { v.r.g.coordinates.map_each(l -> l.map_each(c -> c.slice(0, 2))) }
+              } },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+              "source": { "type": "Property", "value": "https://geoportalpraha.cz/data-a-sluzby/9dc0e8136fb347858f3d36b36413c532" }
+            }.filter(kv -> kv.value != null))
+        # 50 lines per request to the endpoint: the largest line is about 60 KB, so one write stays far
+        # under the broker's 4 MiB body limit.
+        - unarchive: { format: json_array }
+        - split: { size: 50 }
+        - archive: { format: json_array }

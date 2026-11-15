@@ -1,0 +1,8 @@
+# Global IPv4 addresses (or CIDRs) deploy/ci/public-check.py lets into this public repository, one per
+# line with the reason after a #: numbers that are no address. The board copy (tasks/public-check.allow)
+# holds the same entries.
+# Baseline over the deployment tree that moves to jc deploy/ (T-6982, 2026-11-15): ETSI clause numbers.
+6.4.3.1 # ETSI GS CIM 009 clause, scripts/test-deployment-variants.sh
+6.5.3.1 # ETSI GS CIM 009 clause, scripts/test-deployment-variants.sh
+6.8.3.1 # ETSI GS CIM 009 clause, scripts/test-deployment-variants.sh
+5.9.2.4 # ETSI GS CIM 009 clause, components/context-gateway/seed/stage-reads-prod/index.yaml

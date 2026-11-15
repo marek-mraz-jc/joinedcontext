@@ -1,0 +1,129 @@
+# A Bento flow that polls a JSON resource and writes one entity type into a space (PL-01,
+# PL-04, CC-23..CC-27). The gallery card the steward runs from the Flows view; it renders the
+# DataSource and the Pipeline of one fetch, the same pair the Linked Events feed is made of.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: http-json-feed
+  namespace: org
+  title:
+    en: Poll a JSON feed into a Context Space
+    fi: Lue JSON-syöte kontekstitilaan
+    sk: Načítavať kanál JSON do kontextového priestoru
+    cs: Načítat kanál JSON do kontextového prostoru
+    de: Einen JSON-Feed in einen Kontextbereich abfragen
+  description:
+    en: Fetches a JSON resource on a schedule and writes its records as entities of one type; the record-to-entity mapping is added in the Pipeline editor.
+    sk: Podľa plánu načíta zdroj JSON a jeho záznamy zapíše ako entity jedného typu; mapovanie záznamu na entitu doplníte v editore Pipeline.
+    cs: Podle plánu načte zdroj JSON a jeho záznamy zapíše jako entity jednoho typu; mapování záznamu na entitu doplníte v editoru Pipeline.
+    de: Ruft eine JSON-Ressource nach Zeitplan ab und schreibt ihre Datensätze als Entitäten eines Typs; die Abbildung eines Datensatzes auf eine Entität ergänzen Sie im Pipeline-Editor.
+spec:
+  version: 1.0.0
+  category: ingestion
+  riskClass: yellow
+  allowedRoles: [portal-approver]
+  parameterSchema:
+    type: object
+    required: [name, url, entityType, period]
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+        title: Flow name
+        x-jc-title: { sk: Názov toku, cs: Název toku, de: Name des Ablaufs }
+        pattern: ^[a-z][a-z0-9-]{1,40}$
+        description: Names the DataSource and the Pipeline, one word with hyphens.
+        x-jc-description:
+          sk: Pomenuje zdroj údajov a pipelinu, jedno slovo so spojovníkmi.
+          cs: Pojmenuje zdroj dat a pipeline, jedno slovo se spojovníky.
+          de: Benennt die Datenquelle und die Pipeline, ein Wort mit Bindestrichen.
+      url:
+        type: string
+        title: URL of the JSON resource
+        x-jc-title: { sk: URL zdroja JSON, cs: URL zdroje JSON, de: URL der JSON-Ressource }
+        format: uri
+      entityType:
+        type: string
+        title: Entity type written
+        x-jc-title:
+          sk: Zapisovaný typ entity
+          cs: Zapisovaný typ entity
+          de: Geschriebener Entitätstyp
+        pattern: ^[A-Z][A-Za-z0-9]+$
+        default: Event
+      period:
+        type: string
+        title: Poll every
+        x-jc-title: { sk: Načítať každých, cs: Načíst každých, de: Abfragen alle }
+        default: 30m
+        oneOf:
+          - const: '1m'
+            title: Minute
+            x-jc-title: { sk: Minútu, cs: Minutu, de: Minute }
+          - const: '5m'
+            title: '5 minutes'
+            x-jc-title: { sk: '5 minút', cs: '5 minut', de: '5 Minuten' }
+          - const: '15m'
+            title: '15 minutes'
+            x-jc-title: { sk: '15 minút', cs: '15 minut', de: '15 Minuten' }
+          - const: '30m'
+            title: '30 minutes'
+            x-jc-title: { sk: '30 minút', cs: '30 minut', de: '30 Minuten' }
+          - const: '1h'
+            title: Hour
+            x-jc-title: { sk: Hodinu, cs: Hodinu, de: Stunde }
+          - const: '1d'
+            title: Day
+            x-jc-title: { sk: Deň, cs: Den, de: Tag }
+      schedule:
+        type: string
+        title: Cron schedule
+        x-jc-title: { sk: Plán cron, cs: Plán cron, de: Cron-Zeitplan }
+        default: '*/30 * * * *'
+        pattern: ^[0-9*/,-]+( [0-9*/,-]+){4}$
+        description: The cron line of the period above.
+        x-jc-description:
+          sk: Riadok cron pre interval vyššie.
+          cs: Řádek cron pro interval výše.
+          de: Die Cron-Zeile des Intervalls oben.
+      targetEndpoint:
+        type: string
+        title: Endpoint the flow writes through
+        x-jc-title:
+          sk: Endpoint, cez ktorý tok zapisuje
+          cs: Endpoint, přes který tok zapisuje
+          de: Endpoint, über den der Ablauf schreibt
+        default: urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all
+  templates:
+    - name: datasource
+      template: |
+        apiVersion: joinedcontext.com/v1alpha1
+        kind: DataSource
+        metadata:
+          name: "{{ name }}"
+          title: { en: "{{ name }} ({{ entityType }})" }
+        spec:
+          type: http
+          http:
+            url: "{{ url }}"
+            verb: GET
+            headers: { Accept: application/json }
+            timeout: 30s
+    - name: pipeline
+      template: |
+        apiVersion: joinedcontext.com/v1alpha1
+        kind: Pipeline
+        metadata:
+          name: "{{ name }}"
+          title: { en: "{{ entityType }} from {{ name }}" }
+        spec:
+          class: auto
+          period: "{{ period }}"
+          schedule: "{{ schedule }}"
+          source:
+            dataSourceRef: { kind: DataSource, name: "{{ name }}" }
+          targetEndpoint: "{{ targetEndpoint }}"
+          output: { type: "{{ entityType }}", mode: upsert }
+          quotas:
+            maxMemoryMb: 128
+            cpuMillicores: 100

@@ -1,0 +1,17 @@
+# One AirQualityObserved per record of `chmi-air-quality`, written into the city space (T-2785).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: air-quality
+  namespace: praha
+  title: { en: Air quality from ČHMÚ }
+spec:
+  class: auto
+  # ČHMÚ publishes hourly means; twice an hour catches each within half an hour.
+  period: 30m
+  schedule: '*/30 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: chmi-air-quality }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: AirQualityObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

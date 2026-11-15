@@ -1,0 +1,23 @@
+# The whole portal's public data as one read-only MCP connector (T-5367, ADR-N-043):
+# `https://{domain}/api/mcp/org/open-data`. It selects every public Endpoint of the installation,
+# every publisher's, resolved on each call; it reads each Endpoint where it lives and copies no
+# data. Every call is still that Endpoint's own call under its anonymous Policy, and a public
+# server lists read tools only, whoever calls (EP-141). The publishers' own connectors are
+# `{project}/otvorene-data` (barcelona/dades-obertes).
+apiVersion: joinedcontext.com/v1alpha1
+kind: McpServer
+metadata:
+  name: open-data
+  namespace: org
+  # What an AI client reads as serverInfo and initialize.instructions (EP-92).
+  title:
+    sk: Otvorené údaje — všetci vydavatelia
+    en: Open data, every publisher
+  description:
+    sk: 'Všetky verejné údaje portálu, len na čítanie: Žilina, Banská Bystrica, Banskobystrický samosprávny kraj, Bratislava, Slovensko, Praha, Helsinki a Barcelona. Začnite nástrojom search, potom query_entities s jedným endpoint. Pri citovaní uveďte zdroj, ktorý Endpoint uvádza.'
+    en: 'Every public dataset of the portal, read-only: Žilina, Banská Bystrica, the Banská Bystrica Region, Bratislava, Slovakia, Prague, Helsinki and Barcelona. Start with search (the question in plain words, place or theme), then query_entities naming the endpoint a hit names, with a small limit. Credit the source each Endpoint names when you quote it.'
+spec:
+  # Every public Endpoint of every project, resolved on each call (MF-55, T-5367).
+  select:
+    accessLevel: [public]
+  audience: public

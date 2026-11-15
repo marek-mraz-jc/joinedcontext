@@ -1,0 +1,44 @@
+# Lifelong-learning providers in Bratislava: one public dataset of the hub (T-5274), item 346027a40f62416aba2f5b413d5bb68c, written by the places pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-celozivotne-vzdelavanie
+  namespace: bratislava
+  title:
+    sk: Poskytovatelia celoživotného vzdelávania v Bratislave
+    en: Lifelong-learning providers in Bratislava
+  description:
+    sk: 'Súkromní, školskí, univerzitní, mestskí a štátni poskytovatelia vzdelávania dospelých s oblasťou, adresou a webom. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'Private, school, university, city and state providers of adult education with their field, address and web site. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: boiy7vzue5pgiovbrzlcif3h6okfakm6
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-celozivotne-vzdelavanie
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: WEEKLY
+    source:
+      - url: https://data.bratislava.sk/datasets/346027a40f62416aba2f5b413d5bb68c
+        title:
+          sk: Poskytovatelia celoživotného vzdelávania v Bratislave
+          en: Lifelong-learning providers in Bratislava
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Poskytovatelia celoživotného vzdelávania v Bratislave. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Lifelong-learning providers in Bratislava. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: places }

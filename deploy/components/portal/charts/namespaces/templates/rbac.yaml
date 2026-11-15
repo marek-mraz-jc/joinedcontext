@@ -1,0 +1,61 @@
+{{- $release := required "release is the installation's release name" .Values.release }}
+{{- $sa := .Values.serviceAccount }}
+{{- $saNamespace := required "serviceAccount.namespace is the Portal's namespace" $sa.namespace }}
+{{- /*
+  What an App's four objects need in its project's namespace. Bound nowhere here: the Portal
+  binds it in each `{release}-{project}-apps` it creates (AP-116), which the admission policy
+  in policy.yaml allows in those namespaces only.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $release }}-portal-apps
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # By name only, as in the Portal's own namespace (T-2479): nothing lists or watches Secrets.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+{{- /*
+  Namespaces and RoleBindings are asked for cluster-wide because RBAC cannot name a prefix. The
+  admission policy in policy.yaml is the bound: a namespace the Portal creates, changes or deletes must
+  be `{release}-{project}-apps` with the labels that say so, and a RoleBinding it writes must sit
+  in such a namespace and name `{release}-portal-apps`, the one role it may bind.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $release }}-portal-namespaces
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "create", "patch", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["bind"]
+    resourceNames: ["{{ $release }}-portal-apps"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $release }}-portal-namespaces
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $release }}-portal-namespaces
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa.name }}
+    namespace: {{ $saNamespace }}

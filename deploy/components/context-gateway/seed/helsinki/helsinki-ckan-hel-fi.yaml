@@ -1,0 +1,15 @@
+# The open-data catalogue the Helsinki endpoints publish to (EP-62, EP-67). The API token is
+# a reference the publisher resolves at run time; nothing here holds it. The gateway mounts
+# it and ignores it; `jcctl publish ckan` and the Portal read it (T-0487).
+apiVersion: joinedcontext.com/v1alpha1
+kind: CkanInstance
+metadata:
+  name: hel-fi
+  namespace: helsinki
+  title: { en: Helsinki Region Context }
+spec:
+  url: https://opendata.dev.joinedcontext.com
+  organizationDefault: hel-fi
+  # The reconciler resolves the reference from the secret store; a run from a shell reads
+  # the variable named here instead, which is how the integrator publishes from the sandbox.
+  apiTokenRef: { name: ckan-api-token, key: token, envVar: CKAN_API_TOKEN }

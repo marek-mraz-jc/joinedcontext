@@ -1,0 +1,20 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: local-trees
+  namespace: barcelona
+  title:
+    ca: Arbres d'interès local de Barcelona, cada setmana
+    es: Árboles de interés local de Barcelona, cada semana
+    en: Barcelona trees of local interest, weekly
+spec:
+  class: auto
+  # The register changes a few trees a year (newest change 2026-09-15); a weekly run finds it.
+  schedule: '35 6 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-local-trees }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert, as the equipaments: both write PointOfInterest, so a replace would delete the other's.
+  # A tree the register drops leaves by its expiresAt, three weeks after its last listing.
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

@@ -1,0 +1,26 @@
+{{- /*
+  The namespace is the preview's unit of lifetime: the sandbox reaper deletes it once it is
+  older than `ttl` (OPS-44, PF-19), and `just dev-preview-down` deletes it with the database,
+  role and Keycloak client that live outside it. Restricted Pod Security, as every sandbox.
+*/}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "preview.namespace" . }}
+  labels:
+    {{- include "preview.labels" . | nindent 4 }}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+  annotations:
+    sandbox.joinedcontext.com/ttl: {{ .Values.ttl | quote }}
+    linkerd.io/inject: enabled
+    # Meshed callers only, as every dev namespace (global.serviceMesh.defaultInboundPolicy); the
+    # Portal's pod opens its own port to the unmeshed ingress controller below.
+    config.linkerd.io/default-inbound-policy: cluster-authenticated
+    # The proxy's own size, so the LimitRange's 1Gi default never lands on a sidecar and the
+    # quota below holds two pods with their proxies (Deployment/17 section 2).
+    config.linkerd.io/proxy-cpu-request: 10m
+    config.linkerd.io/proxy-memory-request: 64Mi
+    config.linkerd.io/proxy-memory-limit: 128Mi

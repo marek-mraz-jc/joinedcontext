@@ -1,0 +1,57 @@
+# Helsinki welfare statistics (T-5258): the KeyPerformanceIndicator entities of the statistics
+# pipeline whose id carries the theme `welfare`, read from the city's welfare database
+# (Hyvinvointitilastot): children and young people, working-age and elderly residents, by basic
+# district where the table has one. The newest period as the value, earlier ones in the history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-statistics-welfare
+  namespace: helsinki
+  title:
+    fi: Hyvinvointi — Helsingin hyvinvointitilastot
+    sv: Välfärd — Helsingfors välfärdsstatistik
+    en: Welfare — Helsinki welfare statistics
+  description:
+    fi: 'Helsingin hyvinvointitilastot: lasten ja nuorten, työikäisten ja ikääntyneiden hyvinvointi, koulutus, työ, terveys ja toimeentulo; kaupungin, suurpiirien ja peruspiirien tasolla. Yksi Smart Data Models KeyPerformanceIndicator kutakin tunnuslukua ja aluetta kohden. Lähde: Helsingin kaupunki, kaupunkitutkimus ja -tilastot (Hyvinvointitilastot), CC BY 4.0.'
+    sv: 'Helsingfors välfärdsstatistik: barns och ungas, personer i arbetsför ålder och äldres välfärd, utbildning, arbete, hälsa och utkomst; för staden, stordistrikten och distrikten. En Smart Data Models KeyPerformanceIndicator per nyckeltal och område. Källa: Helsingfors stad, stadsforskning och statistik (Hyvinvointitilastot), CC BY 4.0.'
+    en: 'Helsinki welfare statistics: the welfare, education, work, health and income of children and young people, working-age and elderly residents; for the city, its major districts and basic districts. One Smart Data Models KeyPerformanceIndicator per indicator and area, the newest period as kpiValue and the earlier periods in its history. Properties beyond the model: districtCode (the code of the area in the statistics of the city), divisionLevel (city, majorDistrict or basicDistrict), statisticsTable and dimensionKey (the source table and cell). Source: City of Helsinki, Urban Research and Statistics (Hyvinvointitilastot), CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: n7eqxs3kybuh66al65cxadjqp6zxlm3f
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-welfare
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, kaupunkitutkimus ja -tilastot (Hyvinvointitilastot), CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, stadsforskning och statistik (Hyvinvointitilastot), CC BY 4.0'
+      en: 'Source: City of Helsinki, Urban Research and Statistics (Hyvinvointitilastot), CC BY 4.0'
+    themes: [SOCI, HEAL, EDUC]
+    keywords:
+      fi: [hyvinvointi, lapset ja nuoret, toimeentulo, terveys]
+      sv: [välfärd, barn och unga, utkomst, hälsa]
+      en: [welfare, children and young people, income support, health]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: ANNUAL
+    source:
+      - url: https://stat.hel.fi/pxweb/fi/Hyvinvointitilastot/
+        title: { fi: Hyvinvointitilastot, en: Welfare statistics database }
+        description:
+          fi: Helsingin hyvinvointitilastot (71 taulua)
+          en: Helsinki welfare statistics (71 tables)
+      - url: https://hri.fi/data/fi/dataset/lasten-ja-nuorten-hyvinvointi-helsingissa
+        title:
+          fi: Lasten ja nuorten hyvinvointi Helsingissä
+          en: Health and welfare statistics (HRI)
+        description: { fi: HRI-aineisto, en: HRI dataset }
+    pipelineRef: { kind: Pipeline, name: statistics }

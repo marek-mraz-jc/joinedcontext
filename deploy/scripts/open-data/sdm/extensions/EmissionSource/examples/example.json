@@ -1,0 +1,23 @@
+{
+  "coEmission": 0.0,
+  "dataProvider": "dataProvider",
+  "fuelType": "fuelType",
+  "id": "urn:ngsi-ld:EmissionSource:joinedcontext.com:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": "name",
+  "noxEmission": 0.0,
+  "observedAt": "2026-01-01T00:00:00Z",
+  "pm10Emission": 0.0,
+  "pm25Emission": 0.0,
+  "registerCategory": "registerCategory",
+  "so2Emission": 0.0,
+  "source": "https://example.org/source",
+  "type": "EmissionSource",
+  "vocEmission": 0.0
+}

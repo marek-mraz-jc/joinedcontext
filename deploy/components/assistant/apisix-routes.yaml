@@ -1,0 +1,35 @@
+---
+# The knowledge assistant's chat on its own host, assistant.{domain} (Architecture/22 §4,
+# API/05, T-3055). No login in front: a public deployment answers anyone on its allowed
+# origins, and jc-assistant checks the Origin, limits the deployment and each client per minute
+# and stops at the deployment's day and conversation budgets (AG-100, AG-101, AG-110).
+assistant-chat:
+  name: assistant-chat
+  description: The chat route of the knowledge assistant's public deployments
+  upstream: jc-assistant.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "assistant") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/v1/d/*'
+  subDomain: assistant
+  priority: 10
+
+# The widget a site frames (API/05 §1.6, AG-114): one page per public deployment and its
+# script and style. jc-assistant answers the page with its own `frame-ancestors` from the
+# deployment's allowedOrigins and its own Cache-Control, so the edge sets neither.
+assistant-widget:
+  name: assistant-widget
+  description: The knowledge assistant's widget page, script and style
+  upstream: jc-assistant.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "assistant") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/d/*'
+  subDomain: assistant
+  priority: 10
+
+# Any other path on the assistant host (T-4200): a page in words, in Slovak and English, instead
+# of APISIX's `{"error_msg":"404 Route Not Found"}`. The lowest priority, so the chat and the
+# widget keep their paths; the edge answers it (apisix-plugins.yaml) and never dials jc-assistant,
+# which is named only because every route has an upstream.
+assistant-unknown:
+  name: assistant-unknown
+  description: Any other path on the assistant host, a 404 page in words
+  upstream: jc-assistant.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "assistant") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/*'
+  subDomain: assistant
+  priority: 0

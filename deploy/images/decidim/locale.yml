@@ -1,0 +1,43 @@
+# Decidim 0.32.2's strings that read wrong on the site (T-6453).
+sk:
+  activemodel:
+    attributes:
+      # Decidim's sk text says Štát, a country, for a proposal's state (T-6449).
+      collaborative_draft:
+        state: Stav
+      proposal:
+        state: Stav
+  decidim:
+    proposals:
+      models:
+        proposal:
+          fields:
+            official_proposal: Oficiálny návrh
+            state: Stav
+      proposals:
+        filters:
+          state: Stav
+        orders:
+          label: "Zoradiť návrhy podľa:"
+    participatory_spaces:
+      highlighted_meetings:
+        # Decidim's sk text carries %{count}, which the view never passes.
+        see_all: Zobraziť všetky stretnutia
+    participatory_space:
+      labels:
+        # Missing in Decidim's sk file: the page shows a broken aria-label.
+        reference: Odkaz
+    pages:
+      home:
+        footer_sub_hero:
+          # Decidim's sk text has no space after "na".
+          footer_sub_hero_headline: Vitajte na platforme %{organization}.
+  time:
+    # Slovak clocks run 24 hours; Decidim's formats print %p after %H.
+    am: ""
+    pm: ""
+en:
+  time:
+    # Decidim's formats print %p after a 24-hour %H: "17:00 PM".
+    am: ""
+    pm: ""

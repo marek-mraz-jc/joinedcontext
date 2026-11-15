@@ -1,0 +1,40 @@
+# Needle drop points in Bratislava: one public dataset of the hub (T-5274), item a8ef3fba66c14f9aa6664ee8549dc2f7, written by the places pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-fixpointy
+  namespace: bratislava
+  title: { sk: Fixpointy pre ľudí v núdzi v Bratislave, en: Needle drop points in Bratislava }
+  description:
+    sk: 'Miesta a nádoby na bezpečný zber použitých injekčných striekačiek a výmenu striekačiek. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'Places and containers for the safe disposal of used syringes and for needle exchange. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: itfwijh6gla7fjoouelrfsnw6zdu4tra
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-fixpointy
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [HEAL]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: WEEKLY
+    source:
+      - url: https://data.bratislava.sk/datasets/a8ef3fba66c14f9aa6664ee8549dc2f7
+        title: { sk: Fixpointy pre ľudí v núdzi v Bratislave, en: Needle drop points in Bratislava }
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Fixpointy pre ľudí v núdzi v Bratislave. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Needle drop points in Bratislava. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: places }

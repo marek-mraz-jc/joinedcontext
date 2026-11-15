@@ -1,0 +1,92 @@
+# The mapping of the traffic-state pipeline (PL-03, T-5262): one TrafficFlowObserved per street
+# section of Open Data BCN `trams`, with its line and name from `transit-relacio-trams` (526
+# sections on 2026-10-22), its state now and the state forecast for 15 minutes.
+#
+# The DataSource's answer is the state file, one line per section: id#yyyymmddhhmmss#state#forecast,
+# the time local to Barcelona. The sections' lines come from transit_relacio_trams.csv (130 kB),
+# read each run from the same host, so a section the city adds gets its line the run it appears.
+#
+# Codes: 0 sense dades, 1 molt fluid, 2 fluid, 3 dens, 4 molt dens, 5 congestió, 6 tallat, named in
+# English (noData .. closed); congested is true for 4 and 5 only.
+#
+# Plausibility (owner 2026-10-22): a line that is not id#time#code#code, a code outside 0..6, a time
+# more than a day ahead, a section named twice, a section without a line, or a line that leaves
+# Barcelona (lon 2.04..2.24, lat 41.30..41.48, the space's area) or has fewer than two points is left
+# out, each counted by its reason in the run's log line. A file with no section, a file older than
+# three periods (15 min) or a section list that does not answer fails the run, which writes nothing
+# and leaves the entities as they were.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 262144 { throw("the traffic state file is %d bytes, more than the 256 kB read".format(content().length())) } else { content().string() }
+        - mapping: |
+            let lines = content().string().split("\n").map_each(l -> l.trim()).filter(l -> l != "")
+            let rows = $lines.map_each(l -> l.split("#"))
+            let shaped = $rows.filter(r -> r.length() == 4 && r.index(0).re_match("^[0-9]{1,6}$") && r.index(1).re_match("^[0-9]{14}$") && r.index(2).re_match("^-?[0-9]+$") && r.index(3).re_match("^-?[0-9]+$"))
+            let coded = $shaped.filter(r -> r.index(2).number() >= 0 && r.index(2).number() <= 6 && r.index(3).number() >= 0 && r.index(3).number() <= 6)
+            let timed = $coded.map_each(r -> r.append((r.index(1).slice(0, 4) + "-" + r.index(1).slice(4, 6) + "-" + r.index(1).slice(6, 8) + "T" + r.index(1).slice(8, 10) + ":" + r.index(1).slice(10, 12) + ":" + r.index(1).slice(12, 14)).(local -> (local + (local + "Z").ts_format("-07:00", "Europe/Madrid")).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix())))
+            let present = $timed.filter(r -> r.index(4) <= now().ts_unix() + 86400)
+            let first = $present.fold({}, t -> if t.tally.exists(t.value.index(0)) { t.tally } else { t.tally.merge({ t.value.index(0): t.value }) })
+            let newest = $present.fold(0, t -> if t.value.index(4) > t.tally { t.value.index(4) } else { t.tally })
+            root = if $present.length() == 0 { throw("the traffic state file names no section") } else if $newest < now().ts_unix() - 900 { throw("the traffic state file is from %v, older than three 5-minute periods".format($newest.ts_format("2006-01-02T15:04:05Z", "UTC"))) } else { {
+              "rows": $first.values().sort_by(r -> r.index(0).number()),
+              "dropped": {
+                "malformedLine": $rows.length() - $shaped.length(),
+                "stateOutOfRange": $shaped.length() - $coded.length(),
+                "timeInFuture": $timed.length() - $present.length(),
+                "duplicateSection": $present.length() - $first.keys().length()
+              }
+            } }
+        - branch:
+            request_map: root = ""
+            processors:
+              - http:
+                  url: https://opendata-ajuntament.barcelona.cat/data/dataset/1090983a-1c40-4609-8620-14ad49aae3ab/resource/1d6c814c-70ef-4147-aa16-a49ddb952f72/download/transit_relacio_trams.csv
+                  verb: GET
+                  headers:
+                    Accept: text/csv
+                    User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+                  rate_limit: barcelona_opendata
+              - mapping: |
+                  root = if content().length() > 2097152 { throw("the section list is %d bytes, more than the 2 MB read".format(content().length())) } else { content().string() }
+            result_map: root.sections = content().string()
+        - mapping: |
+            let csv = this.sections.trim_prefix("﻿").parse_csv()
+            root = if $csv.length() == 0 || !$csv.index(0).exists("Tram") || !$csv.index(0).exists("Coordenades") { throw("the section list does not have the columns Tram, Descripció, Coordenades") } else { this }
+        - mapping: |
+            let csv = this.sections.trim_prefix("﻿").parse_csv()
+            let parsed = $csv.map_each(s -> s.merge({ "c": s.Coordenades.or("").split(",").map_each(v -> v.trim().number().catch(null)) }))
+            let shaped = $parsed.filter(s -> s.c.length() >= 4 && s.c.length() % 2 == 0 && s.c.all(v -> v != null))
+            let points = $shaped.map_each(s -> s.merge({ "line": range(0, s.c.length(), 2).map_each(i -> [s.c.index(i), s.c.index(i + 1)]) }))
+            let inside = $points.filter(s -> s.line.all(p -> p.index(0) >= 2.04 && p.index(0) <= 2.24 && p.index(1) >= 41.30 && p.index(1) <= 41.48))
+            let lines = $inside.map_each(s -> { s.Tram.string().trim(): s }).squash()
+            let codes = ["noData", "veryFluid", "fluid", "dense", "veryDense", "congestion", "closed"]
+            let known = this.rows.filter(r -> $lines.exists(r.index(0)))
+            let entities = $known.map_each(r -> $lines.get(r.index(0)).(s -> r.index(4).ts_format("2006-01-02T15:04:05Z", "UTC").(at -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:tram-%v".format("TrafficFlowObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.index(0)),
+              "type": "TrafficFlowObserved",
+              "name": { "type": "Property", "value": s.get("Descripció").or("").trim() },
+              "location": { "type": "GeoProperty", "value": { "type": "LineString", "coordinates": s.line } },
+              "dateObserved": { "type": "Property", "value": at },
+              "trafficState": { "type": "Property", "value": $codes.index(r.index(2).number()), "observedAt": at },
+              "trafficStateForecast": { "type": "Property", "value": $codes.index(r.index(3).number()), "observedAt": at },
+              "congested": { "type": "Property", "value": [4, 5].contains(r.index(2).number()), "observedAt": at },
+              "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/ca/dataset/trams" }
+            })))
+            root = if $entities.length() == 0 { throw("no section of the state file has a line in the section list") } else { {
+              "entities": $entities,
+              "dropped": this.dropped.merge({
+                "sectionWithoutLine": this.rows.length() - $known.length(),
+                "lineMalformed": $parsed.length() - $shaped.length(),
+                "lineOutOfArea": $shaped.length() - $inside.length()
+              })
+            } }
+        - log:
+            level: INFO
+            message: 'traffic-state: ${! json("entities").length() } sections written, left out by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.entities
+        - unarchive: { format: json_array }

@@ -167,13 +167,20 @@ pub(crate) fn organization_vars(
                 let token = org.portal_token_file.as_ref()?;
                 // The gateway links a dataset's resources; off https a whole origin.
                 let data_host = match scheme.as_str() {
-                    "https" => org.hosts.api.clone(),
-                    _ => format!("{scheme}://{}", org.hosts.api),
+                    "https" => org.api_base(),
+                    _ => format!("{scheme}://{}", org.api_base()),
                 };
+                // The Portal writes into the catalogue on the working host's `/data`: the open
+                // data host answers reads only (T-6991 §1).
+                let writes = format!(
+                    "{}{}",
+                    org.hosts.portal,
+                    crate::config::DATAROOM_ON_WORKING_HOST
+                );
                 Some(serde_json::json!({
                     "organization": org.name,
-                    "url": format!("{scheme}://{}", org.hosts.opendata),
-                    "api": format!("http://{}", org.hosts.opendata),
+                    "url": format!("{scheme}://{}", org.opendata_base()),
+                    "api": format!("http://{writes}"),
                     "reach": reach.to_string(),
                     "dataHost": data_host,
                     "tokenFile": token,
@@ -396,7 +403,8 @@ mod tests {
         assert_eq!(parsed[0].organization, "alpha");
         assert_eq!(
             parsed[0].api.as_ref().map(url::Url::as_str),
-            Some("http://opendata.alpha.test/")
+            Some("http://portal.alpha.test/data"),
+            "the open data host takes no write: the Portal publishes on the working host"
         );
         assert!(parsed[0].reach.is_some_and(|r| r.ip().is_loopback()));
         assert_eq!(

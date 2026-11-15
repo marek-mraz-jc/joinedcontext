@@ -1,0 +1,44 @@
+# Commuting to work and school from Bratislava's city districts in 2011, 2021 and 2035: one public dataset of the hub (T-5274), item 9bf60619525e472caa5b15c794e3ab78, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-odchadzka-do-zamestnania-a-skol-v
+  namespace: bratislava
+  title:
+    sk: Odchádzka do zamestnania a škôl v mestských častiach Bratislavy v rokoch 2011, 2021 a 2035
+    en: Commuting to work and school from Bratislava's city districts in 2011, 2021 and 2035
+  description:
+    sk: 'Ukazovatele tabuľky „Odchádzka do zamestnania a škôl v mestských častiach Bratislavy v rokoch 2011, 2021 a 2035“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Commuting to work and school from Bratislava's city districts in 2011, 2021 and 2035”, one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: cl4k72jhjc6sg3xcquvnm2lubw72rjs3
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-odchadzka-do-zamestnania-a-skol-v
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/9bf60619525e472caa5b15c794e3ab78
+        title:
+          sk: Odchádzka do zamestnania a škôl v mestských častiach Bratislavy v rokoch 2011, 2021 a 2035
+          en: Commuting to work and school from Bratislava's city districts in 2011, 2021 and 2035
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Odchádzka do zamestnania a škôl v mestských častiach Bratislavy v rokoch 2011, 2021 a 2035. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Commuting to work and school from Bratislava's city districts in 2011, 2021 and 2035. Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics }

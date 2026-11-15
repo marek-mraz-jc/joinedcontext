@@ -1,0 +1,19 @@
+# One PublicOrganization per record of `bbsk-organizacie`, written into the register space through its one Endpoint (PL-18, T-2783).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: organizacie
+  namespace: bbsk
+  title: { sk: Organizácie kraja, en: Organisations of the region }
+spec:
+  class: auto
+  # A register the region revises a few times a year: weekly is already more than it needs (PL-26).
+  period: 168h
+  schedule: '45 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bbsk-organizacie }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-registre:bbsk-registre
+  # Each register is a full snapshot this pipeline alone writes: replace makes every entity exactly the
+  # record, so an attribute the mapping dropped or retyped leaves at the next run (PL-79, T-5167).
+  output: { type: PublicOrganization, mode: replace }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

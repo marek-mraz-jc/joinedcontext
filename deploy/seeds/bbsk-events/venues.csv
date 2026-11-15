@@ -1,0 +1,633 @@
+town,match,regional,venue,streetAddress,addressLocality,lat,lon,osm,checked_on,checked_by
+detva,dom kultúry a. sládkoviča v detve,y,Dom kultúry A. Sládkoviča,Obrancov mieru 871/1,Detva,48.5419222,19.4074269,way/292648504,2026-10-20,hand
+detva,zimný štadión v detve,y,Zimný štadión,M. R. Štefánika,Detva,48.5497865,19.4125602,way/46896068,2026-10-20,hand
+detva,amfiteáter,n,Amfiteáter,,Detva,48.5736489,19.4212542,way/80041978,2026-10-20,hand
+lucenec,kino apollo v lučenci,y,Kino Apollo,Novohradská 2978/5,Lučenec,48.3319139,19.6642043,node/59772282,2026-10-20,hand
+lucenec,mestské múzeum lučenec/radnica- dr. herza 1 lučenec,n,Mestské múzeum Lučenec (Radnica),Dr. Herza 1,Lučenec,48.3275449,19.6685542,node/6773922278,2026-10-20,hand
+lucenec,radnica lučenec- dr. herza 1 lučenec,n,Radnica Lučenec,Dr. Herza 1,Lučenec,48.3275449,19.6685542,node/6773922278,2026-10-20,hand
+lucenec,synagóga lučenec,y,Synagóga Lučenec,Adyho,Lučenec,48.3250515,19.6670861,way/59707419,2026-10-20,hand
+lucenec,tržnica lučenec,n,Mestská tržnica,Vajanského 2996/11,Lučenec,48.3264228,19.6679618,way/41201602,2026-10-20,hand
+lucenec,mestská tržnica lučenec,n,Mestská tržnica,Vajanského 2996/11,Lučenec,48.3264228,19.6679618,way/41201602,2026-10-20,hand
+velky-krtis,kino baník veľký krtíš,y,Kino Baník,Námestie A. H. Škultétyho 738/4,Veľký Krtíš,48.2079533,19.348242,node/170971283,2026-10-20,hand
+zvolen,sng zvolen,y,SNG – Zvolenský zámok,Námestie SNP 594/1,Zvolen,48.5729001,19.1276837,relation/69079,2026-10-20,hand
+zvolen,zvolenský zámok,y,SNG – Zvolenský zámok,Námestie SNP 594/1,Zvolen,48.5729001,19.1276837,relation/69079,2026-10-20,hand
+banska-stiavnica,art café,n,Art Café,Akademická 327/2,Banská Štiavnica,48.4585939,18.8960644,way/60876167,2026-10-20,hand
+bratislava,divadlo gunagu,n,Divadlo GUnaGU,Františkánske námestie 7,Bratislava,48.1441205,17.1078533,node/1470667811,2026-10-21,hand
+piestany,dom umenia piešťany,n,Dom umenia Piešťany,Nábrežie Ivana Krasku 4256/1A,Piešťany,48.5923954,17.8400391,way/58419890,2026-10-21,hand
+senica,kino mladosť,n,Kino Mladosť,Námestie oslobodenia 11/17,Senica,48.68002,17.3668825,node/2306702238,2026-10-21,hand
+senica,dom kultúry,n,Dom kultúry (Mestské kultúrne stredisko),Námestie oslobodenia 11/17,Senica,48.6799501,17.3665963,way/226122828,2026-10-21,hand
+senica,záhorské osvetové stredisko,n,Záhorské osvetové stredisko,Vajanského 19/5,Senica,48.6769068,17.3680276,way/226119296,2026-10-21,hand
+senica,zimný štadión senica,n,Zimný štadión Senica,Sadová 638/43,Senica,48.6854824,17.3764989,way/226123131,2026-10-21,hand
+senica,záhorská knižnica,n,Záhorská knižnica,Vajanského 28/2,Senica,48.6778774,17.3685138,way/226119288,2026-10-21,hand
+senica,centrum voľného času,n,Centrum voľného času,Sadová 646/8,Senica,48.6833427,17.3720938,node/5843764758,2026-10-21,hand
+senica,záhorská galéria jána mudrocha,n,Záhorská galéria Jána Mudrocha,Sadová 619/3,Senica,48.6835792,17.3689059,node/7266423772,2026-10-21,hand
+senica,múzeum senica,n,Múzeum Senica,Štefánikova 724/20,Senica,48.6806994,17.3731383,way/226119670,2026-10-21,hand
+sobotiste,kultúrny dom aničky jurkovičovej sobotište,n,Kultúrny dom Aničky Jurkovičovej,,Sobotište,48.7309886,17.4074186,way/172054631,2026-10-21,hand
+sobotiste,habánsky mlyn – nádvorie,n,Habánsky mlyn,,Sobotište,48.7330587,17.4037285,way/172055578,2026-10-21,hand
+kolarovo,aa vmk,n,Kultúrny dom (Városi Művelődési Központ),Kostolné námestie 860/4,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-21,hand
+levice,levická synagóga,n,Levická synagóga,Kálmána Kittenbergera 3191/1,Levice,48.2211713,18.6036172,way/58398452,2026-10-21,hand
+levice,oddelenie beletrie tekovská knižnica,n,"Tekovská knižnica, oddelenie beletrie",Holubyho 573/6,Levice,48.2193176,18.6055654,node/1256686063,2026-10-21,hand
+levice,galéria jozefa nécseyho levický hrad,n,"Galéria Jozefa Nécseyho, Dobóovský kaštieľ",Sv. Michala 2431/40,Levice,48.2212596,18.6016142,way/1378178980,2026-10-21,hand
+levice,tekovské múzeum v leviciach,n,Tekovské múzeum v Leviciach,Sv. Michala,Levice,48.2214082,18.6005873,node/506574685,2026-10-21,hand
+kosice,historická sála hlavná 27,n,"Východoslovenská galéria, Historická sála",Hlavná 110/27,Košice,48.7198959,21.2591497,node/691083875,2026-10-21,hand
+kosice,východoslovenská galéria hlavná 27,n,Východoslovenská galéria,Hlavná 110/27,Košice,48.7198959,21.2591497,node/691083875,2026-10-21,hand
+kosice,východoslovenská galéria alžbetina 22,n,Východoslovenská galéria,Alžbetina 670/22,Košice,48.7192637,21.2553209,way/48286955,2026-10-21,hand
+banska-bystrica,jilemnického 48 banská bystrica,n,Verejná knižnica Mikuláša Kováča,Jilemnického 48,Banská Bystrica,48.7303957,19.1271483,way/66072050,2026-10-21,hand
+zvolen,tuzvo,n,TUZVO,Študentská 2117/27,Zvolen,48.5725862,19.1147562,way/127509795,2026-10-21,nominatim
+zvolen,arborétum borová hora,n,Arborétum Borová hora,,Zvolen,48.5947396,19.1351858,node/3480637559,2026-10-21,nominatim
+zvolen,fee,n,FEE,Študentská,Zvolen,48.5729663,19.1165987,way/127509199,2026-10-21,nominatim
+zvolen,fee e214,n,FEE E214,Študentská,Zvolen,48.5729663,19.1165987,way/127509199,2026-10-21,nominatim
+zvolen,fakulta techniky,n,Fakulta techniky,Študentská,Zvolen,48.5737029,19.1160245,way/127315110,2026-10-21,nominatim
+zvolen,šd ľ. štúra študentská 17 zvolen,n,"ŠD Ľ. Štúra, Študentská 17, Zvolen",Študentská 1734/17,Zvolen,48.5738159,19.1205560,node/2923068012,2026-10-21,nominatim
+banska-bystrica,cpdv umb cesta na amfiteáter 1 učebňa č. 507,n,"CPDV UMB, Cesta na amfiteáter 1 (nová budova EF UMB), učebňa č. 507 (5. poschodie, za dverami vedľa výťahov)",Cesta na amfiteáter 2728/1,Banská Bystrica,48.7395768,19.1376321,way/61153499,2026-10-21,nominatim
+banska-bystrica,štúdio tanca komenského 837,n,"Štúdio tanca, Komenského 837",Komenského,Banská Bystrica,48.7427551,19.1483760,node/2430303154,2026-10-21,nominatim
+banska-bystrica,cesta na amfiteáter 1 aula rotunda,n,"Cesta na amfiteáter 1, Aula Rotunda",Cesta na amfiteáter 2728/1,Banská Bystrica,48.7395768,19.1376321,way/61153499,2026-10-21,nominatim
+banska-bystrica,veľká zasadačka a veľký študijný hub tajovského 40,n,"Veľká zasadačka a veľký študijný hub, Tajovského 40 (SĎ 1)",Tajovského 3767/40,Banská Bystrica,48.7421184,19.1212729,relation/19288857,2026-10-21,nominatim
+banska-bystrica,fpvamv umb kuzmányho 1,n,"FPVaMV UMB, Kuzmányho 1",Karola Kuzmányho 220/1,Banská Bystrica,48.7327705,19.1452633,way/24682799,2026-10-21,nominatim
+banska-bystrica,v-klub umb tajovského 40,n,"V-Klub UMB, Tajovského 40",Tajovského 3767/40,Banská Bystrica,48.7421184,19.1212729,relation/19288857,2026-10-21,nominatim
+banska-bystrica,europa shopping center,n,Europa shopping center,Na Troskách 14180/25,Banská Bystrica,48.7302094,19.1358859,way/173424504,2026-10-21,nominatim
+banska-bystrica,športový areál baseline švermova 6515/38a,n,"Športový areál BASELINE, Švermova 6515/38A",Švermova 6515/38A,Banská Bystrica,48.7348153,19.1258807,way/867501358,2026-10-21,nominatim
+banska-bystrica,tipsport aréna banská bystrica,n,Tipsport Aréna Banská Bystrica,Hronské predmestie,Banská Bystrica,48.7338929,19.1558658,way/104534560,2026-10-21,nominatim
+banska-bystrica,aula beliana tajovského 40 banská bystrica.,n,"aula Beliana, Tajovského 40, Banská Bystrica.",Tajovského 3767/40,Banská Bystrica,48.7421184,19.1212729,relation/19288857,2026-10-21,nominatim
+banska-bystrica,telocvičňa ftvšaz umb tajovského 40,n,"Telocvičňa FTVŠaZ UMB, Tajovského 40",Tajovského 3767/40,Banská Bystrica,48.7421184,19.1212729,relation/19288857,2026-10-21,nominatim
+banska-bystrica,atletický štadión umb tajovského 57,n,"Atletický štadión UMB, Tajovského 57",Tajovského 14450/57,Banská Bystrica,48.7402926,19.1202203,way/77972404,2026-10-21,nominatim
+banska-bystrica,stará tržnica,n,Stará Tržnica,Námestie Štefana Moyzesa 1093/29,Banská Bystrica,48.7371097,19.1458585,way/53441093,2026-10-21,nominatim
+banska-bystrica,emerge hub tajovského 40,n,"EMERGE HUB, Tajovského 40",Tajovského 3767/40,Banská Bystrica,48.7421184,19.1212729,relation/19288857,2026-10-21,nominatim
+banska-bystrica,park pod pamätníkom snp,n,Park pod Pamätníkom SNP,,Banská Bystrica,48.7351892,19.1507932,way/104532876,2026-10-21,nominatim
+banska-bystrica,aula beliana,n,Aula Beliana,Tajovského 3767/40,Banská Bystrica,48.7421184,19.1212729,relation/19288857,2026-10-21,hand
+banska-bystrica,aula fpvamv umb,n,Aula FPVaMV UMB,Karola Kuzmányho 220/1,Banská Bystrica,48.7327705,19.1452633,way/24682799,2026-10-21,hand
+banska-stiavnica,evanjelický kostol,n,Evanjelický kostol,Radničné námestie 106/13,Banská Štiavnica,48.4585269,18.8928204,way/60875188,2026-10-22,nominatim
+banska-stiavnica,kino akademik,n,Kino Akademik,Radničné námestie,Banská Štiavnica,48.4591918,18.8924892,node/1305253378,2026-10-22,nominatim
+banska-stiavnica,kultúrne centrum,n,Kultúrne centrum,Kammerhofská 177/1,Banská Štiavnica,48.4581933,18.8962585,way/60874164,2026-10-22,nominatim
+banska-stiavnica,nový zámok,n,Nový zámok,Novozámocká 149/22,Banská Štiavnica,48.4557658,18.8961575,way/52128919,2026-10-22,nominatim
+banska-stiavnica,starý zámok,n,Starý zámok,Starozámocká,Banská Štiavnica,48.4595334,18.8909934,way/1490512231,2026-10-22,nominatim
+banska-stiavnica,terasa u blaškov,n,Terasa u Blaškov,2533,Banská Štiavnica,48.4045959,18.8558536,node/4317597593,2026-10-22,nominatim
+revuca,litterra,n,LITTERRA,Železničná 260/27,Revúca,48.6807599,20.1122026,node/12282370128,2026-10-22,nominatim
+lucenec,synagóga lučenec radnica lučenec,n,"Synagóga Lučenec, Radnica Lučenec",Adyho,Lučenec,48.3250515,19.6670861,way/59707419,2026-10-22,nominatim
+poltar,kultúrny dom,n,Kultúrny dom,Slobody 492/24,Poltár,48.4313985,19.7916769,way/60041219,2026-10-22,nominatim
+banska-bystrica,rudohorská 23/a banská bystrica,n,"Rudohorská 23/A, Banská Bystrica",Rudohorská 23A,Banská Bystrica,48.7569918,19.1656690,node/5832047740,2026-10-22,nominatim
+zvolen,stará radnica nám. snp 21/31 zvolen - prízemie,n,"Stará radnica, Nám. SNP 21/31, Zvolen - prízemie",Námestie SNP 21/31,Zvolen,48.5768616,19.1251732,way/127509716,2026-10-22,nominatim
+banska-bystrica,štátna vedecká knižnica,n,Štátna vedecká knižnica,Lazovná 240/9,Banská Bystrica,48.7373616,19.1436671,node/388597048,2026-10-22,nominatim
+banska-bystrica,univerzita mateja bela,n,Univerzita Mateja Bela,Národná 739/12,Banská Bystrica,48.7331796,19.1455309,way/52738308,2026-10-22,nominatim
+banska-bystrica,pedagogická fakulta umb,n,Pedagogická fakulta UMB,Ružová 4038/13,Banská Bystrica,48.7512092,19.1550149,way/85777364,2026-10-22,nominatim
+banska-bystrica,záhrada – centrum nezávislej kultúry,n,Záhrada – Centrum nezávislej kultúry,Dolná 167/34,Banská Bystrica,48.7336704,19.1423806,way/61154567,2026-10-22,nominatim
+banska-bystrica,thurzov dom námesie snp 4 banská bystrica,y,Thurzov dom,Námestie SNP 4/4,Banská Bystrica,48.7351155,19.1455954,node/2246848534,2026-10-22,nominatim
+banska-stiavnica,múzeum vo svätom antone,n,Múzeum vo Svätom Antone,,Svätý Anton,48.4213955,18.9431833,relation/974504,2026-10-22,nominatim
+revuca,konferenčná sála litterra,n,Konferenčná sála Litterra,Železničná 260/27,Revúca,48.6807599,20.1122026,node/12282370128,2026-10-22,nominatim
+zvolen,technická univerzita vo zvolene,n,Technická univerzita vo Zvolene,T. G. Masaryka 8026/24,Zvolen,48.5721115,19.1179432,node/561281295,2026-10-22,nominatim
+zvolen,technická univerzita vo zvolene - vestibul,n,Technická univerzita vo Zvolene - vestibul,T. G. Masaryka 8026/24,Zvolen,48.5721115,19.1179432,node/561281295,2026-10-22,nominatim
+zvolen,sldk informačno-vedecké centrum,n,"SLDK, Informačno-vedecké centrum",T. G. Masaryka 8026/24,Zvolen,48.5721115,19.1179432,node/561281295,2026-10-22,nominatim
+zvolen,sng zvolenský zámok,n,SNG Zvolenský zámok,Námestie SNP 594/1,Zvolen,48.5729001,19.1276837,relation/69079,2026-10-22,nominatim
+zvolen,zimný štadión vo zvolen,n,Zimný štadión Zvolen,Pod Dráhami 2292/21,Zvolen,48.5662224,19.1209496,way/173518854,2026-10-22,nominatim
+halic,múzeum csontváry a kaviareň céder,n,Múzeum Csontváry,Mieru,Halič,48.3543776,19.5731775,node/13596568488,2026-10-22,nominatim
+hrinova,mestský úrad hriňová,n,Mestský úrad Hriňová,Partizánska 1612/5,Hriňová,48.5751556,19.5239070,way/61748025,2026-10-22,nominatim
+poltar,mestský úrad poltár,n,Mestský úrad Poltár,Železničná 489/1,Poltár,48.4326603,19.7938318,node/836263843,2026-10-22,nominatim
+drazice,obecný úrad dražice,n,Obecný úrad Dražice,,Dražice,48.4365511,20.0643738,node/13902175957,2026-10-22,nominatim
+kraskovo,obecný úrad kraskovo,n,Obecný úrad Kraskovo,,Kraskovo,48.5012231,19.9895046,node/14019581137,2026-10-22,nominatim
+mostenica,obecný úrad moštenica,n,Obecný úrad Moštenica,,Moštenica,48.8076127,19.2923174,node/836263526,2026-10-22,nominatim
+jesenske,obecný úrad jesenské,n,Obecný úrad Jesenské,Sobotská 10/1,Jesenské,48.3053402,20.0749598,node/13945547447,2026-10-22,nominatim
+predajna,obecný úrad predajná,n,Obecný úrad Predajná,,Predajná,48.8144554,19.4627969,node/549362193,2026-10-22,nominatim
+prsa,obecný úrad prša,n,Obecný úrad Prša,,Prša,48.3000502,19.7917208,node/11649090950,2026-10-22,nominatim
+strelniky,obecný úrad strelníky,n,Obecný úrad Strelníky,,Strelníky,48.7227280,19.3935746,node/836268186,2026-10-22,nominatim
+lubietova,obecný úrad ľubietová,n,Obecný úrad Ľubietová,Námestie V. Dunajského 1/1,Ľubietová,48.7459388,19.3621751,way/180460822,2026-10-22,nominatim
+medzibrod,obecný úrad medzibrod,n,Obecný úrad Medzibrod,Námestie hrdinov SNP 1/1,Medzibrod,48.7921843,19.3521331,way/73265471,2026-10-22,nominatim
+dobra-niva,obecný úrad dobrá niva,n,Obecný úrad Dobrá Niva,Námestie Slov. nár. povst. 47/9,Dobrá Niva,48.4701697,19.1055249,way/71431450,2026-10-22,nominatim
+dobra-niva,kultúrny dom,n,Kultúrny dom Dobrá Niva,Námestie Slov. nár. povst. 217/2,Dobrá Niva,48.4707889,19.1066170,way/71431271,2026-10-22,nominatim
+breziny,kultúrny dom dobrá niva,n,Kultúrny dom Dobrá Niva,Námestie Slov. nár. povst. 217/2,Dobrá Niva,48.4707889,19.1066170,way/71431271,2026-10-22,nominatim
+pliesovce,obecný úrad pliešovce,n,Obecný úrad Pliešovce,Hviezdoslavova 1/2,Pliešovce,48.4245250,19.1560412,way/288589979,2026-10-22,nominatim
+zvolen,divadlo jozefa gregora tajovského,n,Divadlo Jozefa Gregora Tajovského,,Zvolen,48.5786614,19.1270324,node/313179869,2026-10-22,nominatim
+velky-krtis,kultúrny dom veľký krtíš,n,Kultúrny dom Veľký Krtíš (Mestské kultúrne stredisko),Námestie A. H. Škultétyho,Veľký Krtíš,48.2077730,19.3481718,node/2650365876,2026-10-22,nominatim
+banska-bystrica,mestský úrad banská bystrica,n,Mestský úrad Banská Bystrica,Československej armády 1141/26,Banská Bystrica,48.7383590,19.1569057,way/500662610,2026-10-22,overpass
+detva,mestský úrad detva,n,Mestský úrad Detva,,Detva,48.5448490,19.4152085,way/46879676,2026-10-22,overpass
+dudince,mestský úrad dudince,n,Mestský úrad,Okružná 212/3,Dudince,48.1694638,18.8895471,way/58996279,2026-10-22,overpass
+filakovo,mestský úrad fiľakovo,n,Fiľakovo,,Fiľakovo,48.2706716,19.8217877,node/481204979,2026-10-22,overpass
+jelsava,mestský úrad jelšava,n,Mestský úrad Jelšava,Námestie republiky 499/11,Jelšava,48.6308730,20.2360300,way/71759557,2026-10-22,overpass
+kremnica,mestský úrad kremnica,n,Mestský úrad,,Kremnica,48.7047514,18.9178084,node/9672188595,2026-10-22,overpass
+kremnica,kultúrny dom,n,Mestské kultúrne stredisko,,Kremnica,48.7029727,18.9179450,node/11739608314,2026-10-22,overpass
+kremnica,kultúrny dom kremnica,n,Mestské kultúrne stredisko,,Kremnica,48.7029727,18.9179450,node/11739608314,2026-10-22,overpass
+kremnica,kultúrny dom v kremnica,n,Mestské kultúrne stredisko,,Kremnica,48.7029727,18.9179450,node/11739608314,2026-10-22,overpass
+kremnica,obecný kultúrny dom,n,Mestské kultúrne stredisko,,Kremnica,48.7029727,18.9179450,node/11739608314,2026-10-22,overpass
+kremnica,dom kultúry,n,Mestské kultúrne stredisko,,Kremnica,48.7029727,18.9179450,node/11739608314,2026-10-22,overpass
+kremnica,spoločenský dom,n,Mestské kultúrne stredisko,,Kremnica,48.7029727,18.9179450,node/11739608314,2026-10-22,overpass
+kremnica,sála kultúrneho domu,n,Mestské kultúrne stredisko,,Kremnica,48.7029727,18.9179450,node/11739608314,2026-10-22,overpass
+kremnica,kultúrne stredisko,n,Mestské kultúrne stredisko,,Kremnica,48.7029727,18.9179450,node/11739608314,2026-10-22,overpass
+kremnica,miestne kultúrne stredisko,n,Mestské kultúrne stredisko,,Kremnica,48.7029727,18.9179450,node/11739608314,2026-10-22,overpass
+lucenec,mestský úrad lučenec,n,Mestský úrad,Novohradská 316/1,Lučenec,48.3302964,19.6642927,way/54950406,2026-10-22,overpass
+revuca,mestský úrad revúca,n,Mestský úrad Revúca,,Revúca,48.6831886,20.1136543,node/12002120933,2026-10-22,overpass
+revuca,kultúrny dom,n,Mestské kultúrne stredisko v Revúcej,,Revúca,48.6824025,20.1145701,node/11631750084,2026-10-22,overpass
+revuca,kultúrny dom revúca,n,Mestské kultúrne stredisko v Revúcej,,Revúca,48.6824025,20.1145701,node/11631750084,2026-10-22,overpass
+revuca,kultúrny dom v revúca,n,Mestské kultúrne stredisko v Revúcej,,Revúca,48.6824025,20.1145701,node/11631750084,2026-10-22,overpass
+revuca,obecný kultúrny dom,n,Mestské kultúrne stredisko v Revúcej,,Revúca,48.6824025,20.1145701,node/11631750084,2026-10-22,overpass
+revuca,dom kultúry,n,Mestské kultúrne stredisko v Revúcej,,Revúca,48.6824025,20.1145701,node/11631750084,2026-10-22,overpass
+revuca,spoločenský dom,n,Mestské kultúrne stredisko v Revúcej,,Revúca,48.6824025,20.1145701,node/11631750084,2026-10-22,overpass
+revuca,sála kultúrneho domu,n,Mestské kultúrne stredisko v Revúcej,,Revúca,48.6824025,20.1145701,node/11631750084,2026-10-22,overpass
+revuca,kultúrne stredisko,n,Mestské kultúrne stredisko v Revúcej,,Revúca,48.6824025,20.1145701,node/11631750084,2026-10-22,overpass
+revuca,miestne kultúrne stredisko,n,Mestské kultúrne stredisko v Revúcej,,Revúca,48.6824025,20.1145701,node/11631750084,2026-10-22,overpass
+rimavska-sobota,mestský úrad rimavská sobota,n,Mestský úrad Rimavská Sobota,Hlavné námestie 5/2,Rimavská Sobota,48.3840699,20.0182749,way/31852339,2026-10-22,overpass
+tisovec,mestský úrad tisovec,n,Mestský úrad Tisovec,,Tisovec,48.6811733,19.9420708,node/6002606859,2026-10-22,overpass
+tisovec,kultúrny dom,n,Mestské kultúrne stredisko,Tisovec 835,Tisovec,48.6800159,19.9409029,way/60915577,2026-10-22,overpass
+tisovec,kultúrny dom tisovec,n,Mestské kultúrne stredisko,Tisovec 835,Tisovec,48.6800159,19.9409029,way/60915577,2026-10-22,overpass
+tisovec,kultúrny dom v tisovec,n,Mestské kultúrne stredisko,Tisovec 835,Tisovec,48.6800159,19.9409029,way/60915577,2026-10-22,overpass
+tisovec,obecný kultúrny dom,n,Mestské kultúrne stredisko,Tisovec 835,Tisovec,48.6800159,19.9409029,way/60915577,2026-10-22,overpass
+tisovec,dom kultúry,n,Mestské kultúrne stredisko,Tisovec 835,Tisovec,48.6800159,19.9409029,way/60915577,2026-10-22,overpass
+tisovec,spoločenský dom,n,Mestské kultúrne stredisko,Tisovec 835,Tisovec,48.6800159,19.9409029,way/60915577,2026-10-22,overpass
+tisovec,sála kultúrneho domu,n,Mestské kultúrne stredisko,Tisovec 835,Tisovec,48.6800159,19.9409029,way/60915577,2026-10-22,overpass
+tisovec,kultúrne stredisko,n,Mestské kultúrne stredisko,Tisovec 835,Tisovec,48.6800159,19.9409029,way/60915577,2026-10-22,overpass
+tisovec,miestne kultúrne stredisko,n,Mestské kultúrne stredisko,Tisovec 835,Tisovec,48.6800159,19.9409029,way/60915577,2026-10-22,overpass
+tornala,mestský úrad tornaľa,n,Mestský úrad Tornaľa,,Tornaľa,48.4221380,20.3223728,node/2511279860,2026-10-22,overpass
+velky-krtis,mestský úrad veľký krtíš,n,Mestský úrad,,Veľký Krtíš,48.2089130,19.3491320,node/2650365887,2026-10-22,overpass
+velky-krtis,kultúrny dom,n,Mestské kultúrne stredisko Veľký Krtíš,,Veľký Krtíš,48.2077730,19.3481718,node/2650365876,2026-10-22,overpass
+velky-krtis,kultúrny dom v veľký krtíš,n,Mestské kultúrne stredisko Veľký Krtíš,,Veľký Krtíš,48.2077730,19.3481718,node/2650365876,2026-10-22,overpass
+velky-krtis,obecný kultúrny dom,n,Mestské kultúrne stredisko Veľký Krtíš,,Veľký Krtíš,48.2077730,19.3481718,node/2650365876,2026-10-22,overpass
+velky-krtis,dom kultúry,n,Mestské kultúrne stredisko Veľký Krtíš,,Veľký Krtíš,48.2077730,19.3481718,node/2650365876,2026-10-22,overpass
+velky-krtis,spoločenský dom,n,Mestské kultúrne stredisko Veľký Krtíš,,Veľký Krtíš,48.2077730,19.3481718,node/2650365876,2026-10-22,overpass
+velky-krtis,sála kultúrneho domu,n,Mestské kultúrne stredisko Veľký Krtíš,,Veľký Krtíš,48.2077730,19.3481718,node/2650365876,2026-10-22,overpass
+velky-krtis,kultúrne stredisko,n,Mestské kultúrne stredisko Veľký Krtíš,,Veľký Krtíš,48.2077730,19.3481718,node/2650365876,2026-10-22,overpass
+velky-krtis,miestne kultúrne stredisko,n,Mestské kultúrne stredisko Veľký Krtíš,,Veľký Krtíš,48.2077730,19.3481718,node/2650365876,2026-10-22,overpass
+zarnovica,mestský úrad žarnovica,n,Mestský úrad Žarnovica,,Žarnovica,48.4836713,18.7184058,node/12484521308,2026-10-22,overpass
+zvolen,mestský úrad zvolen,n,Mestský úrad,,Zvolen,48.5782821,19.1235398,node/1709872011,2026-10-22,overpass
+casta,obecný úrad častá,n,Obecný úrad Častá,,Častá,48.3941314,17.3526375,node/2628759221,2026-10-22,overpass
+binovce,obecný úrad bíňovce,n,Obecný úrad,,Bíňovce,48.5045791,17.4802292,node/4017108581,2026-10-22,overpass
+horna-krupa,obecný úrad horná krupá,n,Obecný úrad Horná Krupá,,Horná Krupá,48.5121002,17.5274219,node/13922366451,2026-10-22,overpass
+katlovce,obecný úrad kátlovce,n,Obecný úrad kátlovce,,Kátlovce,48.5266020,17.6094739,node/1417430947,2026-10-22,overpass
+mad,obecný úrad mad,n,Obecný úrad Mad,,Mad,47.9517078,17.6606043,node/14064065932,2026-10-22,overpass
+puste-sady,obecný úrad pusté sady,n,Obecný úrad,,Pusté Sady,48.3134072,17.8286259,node/13876155199,2026-10-22,overpass
+sobotiste,obecný úrad sobotište,n,Obecný úrad,,Sobotište,48.7313367,17.4058172,node/6634207363,2026-10-22,overpass
+sobotiste,kultúrny dom,n,Kultúrny dom,Sobotište 8,Sobotište,48.7309701,17.4073528,way/172054631,2026-10-22,overpass
+sobotiste,kultúrny dom sobotište,n,Kultúrny dom,Sobotište 8,Sobotište,48.7309701,17.4073528,way/172054631,2026-10-22,overpass
+sobotiste,kultúrny dom v sobotište,n,Kultúrny dom,Sobotište 8,Sobotište,48.7309701,17.4073528,way/172054631,2026-10-22,overpass
+sobotiste,obecný kultúrny dom,n,Kultúrny dom,Sobotište 8,Sobotište,48.7309701,17.4073528,way/172054631,2026-10-22,overpass
+sobotiste,dom kultúry,n,Kultúrny dom,Sobotište 8,Sobotište,48.7309701,17.4073528,way/172054631,2026-10-22,overpass
+sobotiste,spoločenský dom,n,Kultúrny dom,Sobotište 8,Sobotište,48.7309701,17.4073528,way/172054631,2026-10-22,overpass
+sobotiste,sála kultúrneho domu,n,Kultúrny dom,Sobotište 8,Sobotište,48.7309701,17.4073528,way/172054631,2026-10-22,overpass
+sobotiste,kultúrne stredisko,n,Kultúrny dom,Sobotište 8,Sobotište,48.7309701,17.4073528,way/172054631,2026-10-22,overpass
+sobotiste,miestne kultúrne stredisko,n,Kultúrny dom,Sobotište 8,Sobotište,48.7309701,17.4073528,way/172054631,2026-10-22,overpass
+zemianske-sady,obecný úrad zemianske sady,n,Obecný úrad,,Zemianske Sady,48.3271015,17.8190933,node/13872077031,2026-10-22,overpass
+salgocka,obecný úrad šalgočka,n,Obecný úrad Šalgočka,,Šalgočka,48.3352944,17.8139153,node/13888408217,2026-10-22,overpass
+hradok,obecný úrad hrádok,n,Obecný úrad Hrádok,,Hrádok,48.6983810,17.8835869,node/491466761,2026-10-22,overpass
+zabokreky-nad-nitrou,obecný úrad žabokreky nad nitrou,n,Obecný úrad Žabokreky nad Nitrou,Žabokreky nad Nitrou 216,Žabokreky nad Nitrou,48.6236330,18.3008857,way/132822433,2026-10-22,overpass
+devicany,obecný úrad devičany,n,Obecný úrad,Devičany 75,Devičany,48.3240744,18.7064333,node/1327993849,2026-10-22,overpass
+pastina-zavada,obecný úrad paština závada,n,Obecný úrad Paština Závada,,Paština Závada,49.2113154,18.6383972,node/13932043365,2026-10-22,overpass
+sulov-hradna,obecný úrad súľov-hradná,n,Obecný úrad Súľov-Hradná,,Súľov-Hradná,49.1650731,18.5878453,node/12035294318,2026-10-22,overpass
+vlachy,obecný úrad vlachy,n,Obecný úrad Vlachy,,Vlachy,49.0929933,19.4741812,node/9027980798,2026-10-22,overpass
+hertnik,obecný úrad hertník,n,Obec Hertník,Hertník 162,Hertník,49.2066427,21.2393742,node/1418414376,2026-10-22,overpass
+krizovany,obecný úrad krížovany,n,Obecný úrad Krížovany,,Krížovany,48.9811177,21.0501182,node/14101349651,2026-10-22,overpass
+potoky,obecný úrad potoky,n,Obecný úrad potoky,,Potoky,49.2587929,21.6253966,node/836263943,2026-10-22,overpass
+spisske-hanusovce,obecný úrad spišské hanušovce,n,Obecný úrad Spišké Hanušovce,,Spišské Hanušovce,49.3303426,20.3433973,node/12971351827,2026-10-22,overpass
+sandal,obecný úrad šandal,n,Obecný úrad šandal,,Šandal,49.1864685,21.6189298,node/836263982,2026-10-22,overpass
+mnisek-nad-hnilcom,obecný úrad mníšek nad hnilcom,n,Mníšek nad Hnilcom,,Mníšek nad Hnilcom,48.8061124,20.8065279,node/945361431,2026-10-22,overpass
+cerhov,obecný úrad čerhov,n,Obecný úrad čerhov,Čerhov 100,Čerhov,48.4640049,21.6479962,way/71613228,2026-10-22,overpass
+uzovsky-salgov,obecný úrad uzovský šalgov,n,Obecný úrad,Uzovský Šalgov 138,Uzovský Šalgov,49.0919439,21.0606687,node/10314676341,2026-10-22,overpass
+vitanova,obecný úrad vitanová,n,Obecný úrad vitanová,,Vitanová,49.3547321,19.7269788,node/5089988263,2026-10-22,overpass
+sarisske-bohdanovce,obecný úrad šarišské bohdanovce,n,Obecný úrad Šarišské Bohdanovce,,Šarišské Bohdanovce,48.8465775,21.3173449,node/12846793628,2026-10-22,overpass
+vycapy-opatovce,obecný úrad výčapy-opatovce,n,Obec Výčapy - Opatovce,,Výčapy-Opatovce,48.4111826,18.0832359,node/11523029713,2026-10-22,overpass
+vycapy-opatovce,kultúrny dom,n,Kultúrny dom,Opatovská 204/1,Výčapy-Opatovce,48.4074171,18.0841180,way/58853492,2026-10-22,overpass
+vycapy-opatovce,kultúrny dom výčapy-opatovce,n,Kultúrny dom,Opatovská 204/1,Výčapy-Opatovce,48.4074171,18.0841180,way/58853492,2026-10-22,overpass
+vycapy-opatovce,kultúrny dom v výčapy-opatovce,n,Kultúrny dom,Opatovská 204/1,Výčapy-Opatovce,48.4074171,18.0841180,way/58853492,2026-10-22,overpass
+vycapy-opatovce,obecný kultúrny dom,n,Kultúrny dom,Opatovská 204/1,Výčapy-Opatovce,48.4074171,18.0841180,way/58853492,2026-10-22,overpass
+vycapy-opatovce,dom kultúry,n,Kultúrny dom,Opatovská 204/1,Výčapy-Opatovce,48.4074171,18.0841180,way/58853492,2026-10-22,overpass
+vycapy-opatovce,spoločenský dom,n,Kultúrny dom,Opatovská 204/1,Výčapy-Opatovce,48.4074171,18.0841180,way/58853492,2026-10-22,overpass
+vycapy-opatovce,sála kultúrneho domu,n,Kultúrny dom,Opatovská 204/1,Výčapy-Opatovce,48.4074171,18.0841180,way/58853492,2026-10-22,overpass
+vycapy-opatovce,kultúrne stredisko,n,Kultúrny dom,Opatovská 204/1,Výčapy-Opatovce,48.4074171,18.0841180,way/58853492,2026-10-22,overpass
+vycapy-opatovce,miestne kultúrne stredisko,n,Kultúrny dom,Opatovská 204/1,Výčapy-Opatovce,48.4074171,18.0841180,way/58853492,2026-10-22,overpass
+luzany,obecný úrad lužany,n,Obecný úrad lužany,,Lužany,48.5152531,18.0122164,node/13881638090,2026-10-22,overpass
+turany,obecný úrad turany,n,Mestský úrad Turany,,Turany,49.1165672,19.0352604,node/4307003595,2026-10-22,overpass
+michalova,obecný úrad michalová,n,Obec Michalová,Michalová 462,Michalová,48.7624742,19.7782414,way/966112103,2026-10-22,overpass
+raznany,obecný úrad ražňany,n,Obecný úrad,Hlavná 235/62,Ražňany,49.0807178,21.0835169,way/73482114,2026-10-22,overpass
+raznany,kultúrny dom,n,Kultúrny dom,Ražňany 241,Ražňany,49.0809943,21.0830467,node/9078502940,2026-10-22,overpass
+raznany,kultúrny dom ražňany,n,Kultúrny dom,Ražňany 241,Ražňany,49.0809943,21.0830467,node/9078502940,2026-10-22,overpass
+raznany,kultúrny dom v ražňany,n,Kultúrny dom,Ražňany 241,Ražňany,49.0809943,21.0830467,node/9078502940,2026-10-22,overpass
+raznany,obecný kultúrny dom,n,Kultúrny dom,Ražňany 241,Ražňany,49.0809943,21.0830467,node/9078502940,2026-10-22,overpass
+raznany,dom kultúry,n,Kultúrny dom,Ražňany 241,Ražňany,49.0809943,21.0830467,node/9078502940,2026-10-22,overpass
+raznany,spoločenský dom,n,Kultúrny dom,Ražňany 241,Ražňany,49.0809943,21.0830467,node/9078502940,2026-10-22,overpass
+raznany,sála kultúrneho domu,n,Kultúrny dom,Ražňany 241,Ražňany,49.0809943,21.0830467,node/9078502940,2026-10-22,overpass
+raznany,kultúrne stredisko,n,Kultúrny dom,Ražňany 241,Ražňany,49.0809943,21.0830467,node/9078502940,2026-10-22,overpass
+raznany,miestne kultúrne stredisko,n,Kultúrny dom,Ražňany 241,Ražňany,49.0809943,21.0830467,node/9078502940,2026-10-22,overpass
+jelenec,obecný úrad jelenec,n,Obecný úrad jelenec,Jelenec 126,Jelenec,48.3793381,18.2220126,way/58770559,2026-10-22,overpass
+rosina,obecný úrad rosina,n,Obecný úrad rosina,,Rosina,49.1797076,18.7687419,node/3822634278,2026-10-22,overpass
+prasnik,obecný úrad prašník,n,Obecný úrad Prašník,,Prašník,48.6506332,17.6884926,node/451634818,2026-10-22,overpass
+prasnik,kultúrny dom,n,Kultúrny dom Prašník,,Prašník,48.6505369,17.6883745,node/10720036411,2026-10-22,overpass
+prasnik,kultúrny dom prašník,n,Kultúrny dom Prašník,,Prašník,48.6505369,17.6883745,node/10720036411,2026-10-22,overpass
+prasnik,kultúrny dom v prašník,n,Kultúrny dom Prašník,,Prašník,48.6505369,17.6883745,node/10720036411,2026-10-22,overpass
+prasnik,obecný kultúrny dom,n,Kultúrny dom Prašník,,Prašník,48.6505369,17.6883745,node/10720036411,2026-10-22,overpass
+prasnik,dom kultúry,n,Kultúrny dom Prašník,,Prašník,48.6505369,17.6883745,node/10720036411,2026-10-22,overpass
+prasnik,spoločenský dom,n,Kultúrny dom Prašník,,Prašník,48.6505369,17.6883745,node/10720036411,2026-10-22,overpass
+prasnik,sála kultúrneho domu,n,Kultúrny dom Prašník,,Prašník,48.6505369,17.6883745,node/10720036411,2026-10-22,overpass
+prasnik,kultúrne stredisko,n,Kultúrny dom Prašník,,Prašník,48.6505369,17.6883745,node/10720036411,2026-10-22,overpass
+prasnik,miestne kultúrne stredisko,n,Kultúrny dom Prašník,,Prašník,48.6505369,17.6883745,node/10720036411,2026-10-22,overpass
+lubela,obecný úrad ľubeľa,n,Obecný úrad,,Ľubeľa,49.0522092,19.4813248,node/3270355568,2026-10-22,overpass
+lubela,kultúrny dom,n,Kultúrny dom,,Ľubeľa,49.0521869,19.4812436,node/11738848256,2026-10-22,overpass
+lubela,kultúrny dom ľubeľa,n,Kultúrny dom,,Ľubeľa,49.0521869,19.4812436,node/11738848256,2026-10-22,overpass
+lubela,kultúrny dom v ľubeľa,n,Kultúrny dom,,Ľubeľa,49.0521869,19.4812436,node/11738848256,2026-10-22,overpass
+lubela,obecný kultúrny dom,n,Kultúrny dom,,Ľubeľa,49.0521869,19.4812436,node/11738848256,2026-10-22,overpass
+lubela,dom kultúry,n,Kultúrny dom,,Ľubeľa,49.0521869,19.4812436,node/11738848256,2026-10-22,overpass
+lubela,spoločenský dom,n,Kultúrny dom,,Ľubeľa,49.0521869,19.4812436,node/11738848256,2026-10-22,overpass
+lubela,sála kultúrneho domu,n,Kultúrny dom,,Ľubeľa,49.0521869,19.4812436,node/11738848256,2026-10-22,overpass
+lubela,kultúrne stredisko,n,Kultúrny dom,,Ľubeľa,49.0521869,19.4812436,node/11738848256,2026-10-22,overpass
+lubela,miestne kultúrne stredisko,n,Kultúrny dom,,Ľubeľa,49.0521869,19.4812436,node/11738848256,2026-10-22,overpass
+plastovce,obecný úrad plášťovce,n,Obecný úrad Plášťovce,Plášťovce 345,Plášťovce,48.1591925,18.9787375,way/54941490,2026-10-22,overpass
+selpice,obecný úrad šelpice,n,Obecný úrad,,Šelpice,48.4314116,17.5315541,node/11694272994,2026-10-22,overpass
+selpice,kultúrny dom,n,Kultúrny dom,,Šelpice,48.4312501,17.5312539,node/9439547301,2026-10-22,overpass
+selpice,kultúrny dom šelpice,n,Kultúrny dom,,Šelpice,48.4312501,17.5312539,node/9439547301,2026-10-22,overpass
+selpice,kultúrny dom v šelpice,n,Kultúrny dom,,Šelpice,48.4312501,17.5312539,node/9439547301,2026-10-22,overpass
+selpice,obecný kultúrny dom,n,Kultúrny dom,,Šelpice,48.4312501,17.5312539,node/9439547301,2026-10-22,overpass
+selpice,dom kultúry,n,Kultúrny dom,,Šelpice,48.4312501,17.5312539,node/9439547301,2026-10-22,overpass
+selpice,spoločenský dom,n,Kultúrny dom,,Šelpice,48.4312501,17.5312539,node/9439547301,2026-10-22,overpass
+selpice,sála kultúrneho domu,n,Kultúrny dom,,Šelpice,48.4312501,17.5312539,node/9439547301,2026-10-22,overpass
+selpice,kultúrne stredisko,n,Kultúrny dom,,Šelpice,48.4312501,17.5312539,node/9439547301,2026-10-22,overpass
+selpice,miestne kultúrne stredisko,n,Kultúrny dom,,Šelpice,48.4312501,17.5312539,node/9439547301,2026-10-22,overpass
+trencianska-turna,obecný úrad trenčianska turná,n,Obecný úrad Trenčianska Turná,,Trenčianska Turná,48.8499987,18.0222381,node/5215873860,2026-10-22,overpass
+zbynov,obecný úrad zbyňov,n,Zbyňov,,Zbyňov,49.1206066,18.6460773,node/1792277310,2026-10-22,overpass
+hostie,obecný úrad hostie,n,Obecný úrad Hostie,Hlavná 1,Hostie,48.4539434,18.4375220,node/2138306582,2026-10-22,overpass
+horky,obecný úrad hôrky,n,Hôrky,,Hôrky,49.2058694,18.6921788,node/727589957,2026-10-22,overpass
+rakovice,obecný úrad rakovice,n,Obec Rakovice,Rakovice 42,Rakovice,48.5578204,17.7388686,way/240226524,2026-10-22,overpass
+zirany,obecný úrad žirany,n,Obecný úrad Žirany,,Žirany,48.3781200,18.1752377,node/6798375922,2026-10-22,overpass
+liptovske-klacany,obecný úrad liptovské kľačany,n,Liptovské Kľačany,,Liptovské Kľačany,49.0322049,19.4746788,node/7029560579,2026-10-22,overpass
+lietavska-svinna-babkov,obecný úrad lietavská svinná-babkov,n,Lietavská Svinná-Babkov,,Lietavská Svinná-Babkov,49.1524945,18.6763072,node/3646367974,2026-10-22,overpass
+pernek,obecný úrad pernek,n,Obecný úrad,,Pernek,48.3677757,17.1438201,node/7413595649,2026-10-22,overpass
+jablonec,obecný úrad jablonec,n,Obecný úrad Jablonec,,Jablonec,48.3324160,17.4480986,node/5221149475,2026-10-22,overpass
+jablonec,kultúrny dom,n,Spoločenský dom,Jablonec 205,Jablonec,48.3321024,17.4484189,way/166802131,2026-10-22,overpass
+jablonec,kultúrny dom jablonec,n,Spoločenský dom,Jablonec 205,Jablonec,48.3321024,17.4484189,way/166802131,2026-10-22,overpass
+jablonec,kultúrny dom v jablonec,n,Spoločenský dom,Jablonec 205,Jablonec,48.3321024,17.4484189,way/166802131,2026-10-22,overpass
+jablonec,obecný kultúrny dom,n,Spoločenský dom,Jablonec 205,Jablonec,48.3321024,17.4484189,way/166802131,2026-10-22,overpass
+jablonec,dom kultúry,n,Spoločenský dom,Jablonec 205,Jablonec,48.3321024,17.4484189,way/166802131,2026-10-22,overpass
+jablonec,spoločenský dom,n,Spoločenský dom,Jablonec 205,Jablonec,48.3321024,17.4484189,way/166802131,2026-10-22,overpass
+jablonec,sála kultúrneho domu,n,Spoločenský dom,Jablonec 205,Jablonec,48.3321024,17.4484189,way/166802131,2026-10-22,overpass
+jablonec,kultúrne stredisko,n,Spoločenský dom,Jablonec 205,Jablonec,48.3321024,17.4484189,way/166802131,2026-10-22,overpass
+jablonec,miestne kultúrne stredisko,n,Spoločenský dom,Jablonec 205,Jablonec,48.3321024,17.4484189,way/166802131,2026-10-22,overpass
+kuchyna,obecný úrad kuchyňa,n,Obecný úrad,Kuchyňa 220,Kuchyňa,48.4073394,17.1597316,way/245082791,2026-10-22,overpass
+teplicka-nad-vahom,obecný úrad teplička nad váhom,n,Obecný úrad Teplička nad Váhom,Námestie sv. Floriána 290/2,Teplička nad Váhom,49.2237992,18.7988625,way/205994830,2026-10-22,overpass
+cifer,obecný úrad cífer,n,Obecný úrad,,Cífer,48.3134786,17.4906917,node/13876818768,2026-10-22,overpass
+cifer,kultúrny dom,n,Kultúrny dom,Sv. Petra a Pavla 56/109,Cífer,48.3025638,17.5184876,way/303225960,2026-10-22,overpass
+cifer,kultúrny dom cífer,n,Kultúrny dom,Sv. Petra a Pavla 56/109,Cífer,48.3025638,17.5184876,way/303225960,2026-10-22,overpass
+cifer,kultúrny dom v cífer,n,Kultúrny dom,Sv. Petra a Pavla 56/109,Cífer,48.3025638,17.5184876,way/303225960,2026-10-22,overpass
+cifer,obecný kultúrny dom,n,Kultúrny dom,Sv. Petra a Pavla 56/109,Cífer,48.3025638,17.5184876,way/303225960,2026-10-22,overpass
+cifer,dom kultúry,n,Kultúrny dom,Sv. Petra a Pavla 56/109,Cífer,48.3025638,17.5184876,way/303225960,2026-10-22,overpass
+cifer,spoločenský dom,n,Kultúrny dom,Sv. Petra a Pavla 56/109,Cífer,48.3025638,17.5184876,way/303225960,2026-10-22,overpass
+cifer,sála kultúrneho domu,n,Kultúrny dom,Sv. Petra a Pavla 56/109,Cífer,48.3025638,17.5184876,way/303225960,2026-10-22,overpass
+cifer,kultúrne stredisko,n,Kultúrny dom,Sv. Petra a Pavla 56/109,Cífer,48.3025638,17.5184876,way/303225960,2026-10-22,overpass
+cifer,miestne kultúrne stredisko,n,Kultúrny dom,Sv. Petra a Pavla 56/109,Cífer,48.3025638,17.5184876,way/303225960,2026-10-22,overpass
+poniky,obecný úrad poniky,n,Obecný úrad poniky,Malá stráňa 32/12,Poniky,48.7097417,19.2898686,way/85611382,2026-10-22,overpass
+posa,obecný úrad poša,n,Obecný úrad poša,,Poša,48.8381611,21.7548767,node/836268283,2026-10-22,overpass
+krivan,obecný úrad kriváň,n,Obecný úrad,,Kriváň,48.5305207,19.4472759,node/11738820147,2026-10-22,overpass
+krivan,kultúrny dom,n,Kultúrny dom,,Kriváň,48.5305668,19.4472752,node/11738820148,2026-10-22,overpass
+krivan,kultúrny dom kriváň,n,Kultúrny dom,,Kriváň,48.5305668,19.4472752,node/11738820148,2026-10-22,overpass
+krivan,kultúrny dom v kriváň,n,Kultúrny dom,,Kriváň,48.5305668,19.4472752,node/11738820148,2026-10-22,overpass
+krivan,obecný kultúrny dom,n,Kultúrny dom,,Kriváň,48.5305668,19.4472752,node/11738820148,2026-10-22,overpass
+krivan,dom kultúry,n,Kultúrny dom,,Kriváň,48.5305668,19.4472752,node/11738820148,2026-10-22,overpass
+krivan,spoločenský dom,n,Kultúrny dom,,Kriváň,48.5305668,19.4472752,node/11738820148,2026-10-22,overpass
+krivan,sála kultúrneho domu,n,Kultúrny dom,,Kriváň,48.5305668,19.4472752,node/11738820148,2026-10-22,overpass
+krivan,kultúrne stredisko,n,Kultúrny dom,,Kriváň,48.5305668,19.4472752,node/11738820148,2026-10-22,overpass
+krivan,miestne kultúrne stredisko,n,Kultúrny dom,,Kriváň,48.5305668,19.4472752,node/11738820148,2026-10-22,overpass
+dravce,obecný úrad dravce,n,Obecný úrad dravce,,Dravce,49.0192835,20.4859795,node/6336694254,2026-10-22,overpass
+ratkovo,obecný úrad ratkovo,n,Obecný úrad Ratkovo,,Ratkovo,49.1358546,19.0862842,node/13876798917,2026-10-22,overpass
+tapesovo,obecný úrad ťapešovo,n,Obecný úrad ťapešovo,,Ťapešovo,49.3734981,19.4466410,node/970636834,2026-10-22,overpass
+kalnica,obecný úrad kálnica,n,Obecný úrad,,Kálnica,48.7645803,17.9234421,node/11116277618,2026-10-22,overpass
+vavrisovo,obecný úrad vavrišovo,n,Obecný úrad Vavrišovo,,Vavrišovo,49.0702901,19.7589125,node/13893749668,2026-10-22,overpass
+vavrisovo,kultúrny dom,n,Kultúrny dom,Tatranská 237/46,Vavrišovo,49.0683177,19.7572579,way/156384003,2026-10-22,overpass
+vavrisovo,kultúrny dom vavrišovo,n,Kultúrny dom,Tatranská 237/46,Vavrišovo,49.0683177,19.7572579,way/156384003,2026-10-22,overpass
+vavrisovo,kultúrny dom v vavrišovo,n,Kultúrny dom,Tatranská 237/46,Vavrišovo,49.0683177,19.7572579,way/156384003,2026-10-22,overpass
+vavrisovo,obecný kultúrny dom,n,Kultúrny dom,Tatranská 237/46,Vavrišovo,49.0683177,19.7572579,way/156384003,2026-10-22,overpass
+vavrisovo,dom kultúry,n,Kultúrny dom,Tatranská 237/46,Vavrišovo,49.0683177,19.7572579,way/156384003,2026-10-22,overpass
+vavrisovo,spoločenský dom,n,Kultúrny dom,Tatranská 237/46,Vavrišovo,49.0683177,19.7572579,way/156384003,2026-10-22,overpass
+vavrisovo,sála kultúrneho domu,n,Kultúrny dom,Tatranská 237/46,Vavrišovo,49.0683177,19.7572579,way/156384003,2026-10-22,overpass
+vavrisovo,kultúrne stredisko,n,Kultúrny dom,Tatranská 237/46,Vavrišovo,49.0683177,19.7572579,way/156384003,2026-10-22,overpass
+vavrisovo,miestne kultúrne stredisko,n,Kultúrny dom,Tatranská 237/46,Vavrišovo,49.0683177,19.7572579,way/156384003,2026-10-22,overpass
+liptovska-kokava,obecný úrad liptovská kokava,n,Liptovská Kokava,,Liptovská Kokava,49.0857441,19.8142947,node/11826394570,2026-10-22,overpass
+drahovce,obecný úrad drahovce,n,Obec Drahovce,,Drahovce,48.5170179,17.8003507,node/13881035078,2026-10-22,overpass
+sucany,obecný úrad sučany,n,Obecný úrad,,Sučany,49.1004729,18.9909364,node/1612159785,2026-10-22,overpass
+sunava,obecný úrad šuňava,n,Obecný úrad Šuňava,Trojičné námestie 255/3,Šuňava,49.0293922,20.0875513,way/151869383,2026-10-22,overpass
+lomna,obecný úrad lomná,n,Lomná,,Lomná,49.3626517,19.3070696,node/979749079,2026-10-22,overpass
+ruzindol,obecný úrad ružindol,n,Obecný úrad Ružindol,Hlavná 130/118,Ružindol,48.3728395,17.4909281,way/59011639,2026-10-22,overpass
+sap,obecný úrad sap,n,Obecný úrad sap,,Sap,47.8208288,17.6150173,node/2689998180,2026-10-22,overpass
+sastin-straze,obecný úrad šaštín-stráže,n,Mestský úrad Šaštín-Stráže,,Šaštín-Stráže,48.6397220,17.1442327,node/665048567,2026-10-22,overpass
+turzovka,obecný úrad turzovka,n,Mestský úrad,,Turzovka,49.4039446,18.6247070,node/2384140598,2026-10-22,overpass
+zelenec,obecný úrad zeleneč,n,Obecný úrad Zeleneč,Školská 224/5,Zeleneč,48.3304067,17.5965858,way/100109287,2026-10-22,overpass
+zelenec,kultúrny dom,n,Kultúrny dom Zeleneč,Školská 226/7,Zeleneč,48.3306870,17.5966544,way/100110250,2026-10-22,overpass
+zelenec,kultúrny dom zeleneč,n,Kultúrny dom Zeleneč,Školská 226/7,Zeleneč,48.3306870,17.5966544,way/100110250,2026-10-22,overpass
+zelenec,kultúrny dom v zeleneč,n,Kultúrny dom Zeleneč,Školská 226/7,Zeleneč,48.3306870,17.5966544,way/100110250,2026-10-22,overpass
+zelenec,obecný kultúrny dom,n,Kultúrny dom Zeleneč,Školská 226/7,Zeleneč,48.3306870,17.5966544,way/100110250,2026-10-22,overpass
+zelenec,dom kultúry,n,Kultúrny dom Zeleneč,Školská 226/7,Zeleneč,48.3306870,17.5966544,way/100110250,2026-10-22,overpass
+zelenec,spoločenský dom,n,Kultúrny dom Zeleneč,Školská 226/7,Zeleneč,48.3306870,17.5966544,way/100110250,2026-10-22,overpass
+zelenec,sála kultúrneho domu,n,Kultúrny dom Zeleneč,Školská 226/7,Zeleneč,48.3306870,17.5966544,way/100110250,2026-10-22,overpass
+zelenec,kultúrne stredisko,n,Kultúrny dom Zeleneč,Školská 226/7,Zeleneč,48.3306870,17.5966544,way/100110250,2026-10-22,overpass
+zelenec,miestne kultúrne stredisko,n,Kultúrny dom Zeleneč,Školská 226/7,Zeleneč,48.3306870,17.5966544,way/100110250,2026-10-22,overpass
+velky-biel,obecný úrad veľký biel,n,Obecný úrad,,Veľký Biel,48.2130574,17.3597013,way/61361118,2026-10-22,overpass
+velky-biel,kultúrny dom,n,Kultúrny dom,Železničná 570/80,Veľký Biel,48.2133281,17.3602318,way/61361483,2026-10-22,overpass
+velky-biel,kultúrny dom veľký biel,n,Kultúrny dom,Železničná 570/80,Veľký Biel,48.2133281,17.3602318,way/61361483,2026-10-22,overpass
+velky-biel,kultúrny dom v veľký biel,n,Kultúrny dom,Železničná 570/80,Veľký Biel,48.2133281,17.3602318,way/61361483,2026-10-22,overpass
+velky-biel,obecný kultúrny dom,n,Kultúrny dom,Železničná 570/80,Veľký Biel,48.2133281,17.3602318,way/61361483,2026-10-22,overpass
+velky-biel,dom kultúry,n,Kultúrny dom,Železničná 570/80,Veľký Biel,48.2133281,17.3602318,way/61361483,2026-10-22,overpass
+velky-biel,spoločenský dom,n,Kultúrny dom,Železničná 570/80,Veľký Biel,48.2133281,17.3602318,way/61361483,2026-10-22,overpass
+velky-biel,sála kultúrneho domu,n,Kultúrny dom,Železničná 570/80,Veľký Biel,48.2133281,17.3602318,way/61361483,2026-10-22,overpass
+velky-biel,kultúrne stredisko,n,Kultúrny dom,Železničná 570/80,Veľký Biel,48.2133281,17.3602318,way/61361483,2026-10-22,overpass
+velky-biel,miestne kultúrne stredisko,n,Kultúrny dom,Železničná 570/80,Veľký Biel,48.2133281,17.3602318,way/61361483,2026-10-22,overpass
+petrova-ves,obecný úrad petrova ves,n,Obecný úrad,,Petrova Ves,48.7204195,17.1603777,node/8126614466,2026-10-22,overpass
+petrova-ves,kultúrny dom,n,Kultúrny dom,,Petrova Ves,48.7194401,17.1616490,node/8126614467,2026-10-22,overpass
+petrova-ves,kultúrny dom petrova ves,n,Kultúrny dom,,Petrova Ves,48.7194401,17.1616490,node/8126614467,2026-10-22,overpass
+petrova-ves,kultúrny dom v petrova ves,n,Kultúrny dom,,Petrova Ves,48.7194401,17.1616490,node/8126614467,2026-10-22,overpass
+petrova-ves,obecný kultúrny dom,n,Kultúrny dom,,Petrova Ves,48.7194401,17.1616490,node/8126614467,2026-10-22,overpass
+petrova-ves,dom kultúry,n,Kultúrny dom,,Petrova Ves,48.7194401,17.1616490,node/8126614467,2026-10-22,overpass
+petrova-ves,spoločenský dom,n,Kultúrny dom,,Petrova Ves,48.7194401,17.1616490,node/8126614467,2026-10-22,overpass
+petrova-ves,sála kultúrneho domu,n,Kultúrny dom,,Petrova Ves,48.7194401,17.1616490,node/8126614467,2026-10-22,overpass
+petrova-ves,kultúrne stredisko,n,Kultúrny dom,,Petrova Ves,48.7194401,17.1616490,node/8126614467,2026-10-22,overpass
+petrova-ves,miestne kultúrne stredisko,n,Kultúrny dom,,Petrova Ves,48.7194401,17.1616490,node/8126614467,2026-10-22,overpass
+horne-srnie,obecný úrad horné srnie,n,"Obecný úrad, Horné Srnie",Družstevná 430/1,Horné Srnie,48.9901745,18.1035343,way/770983912,2026-10-22,overpass
+horne-srnie,kultúrny dom,n,Kultúrny dom,Súhradská 381/8,Horné Srnie,48.9920801,18.1020965,way/297484653,2026-10-22,overpass
+horne-srnie,kultúrny dom horné srnie,n,Kultúrny dom,Súhradská 381/8,Horné Srnie,48.9920801,18.1020965,way/297484653,2026-10-22,overpass
+horne-srnie,kultúrny dom v horné srnie,n,Kultúrny dom,Súhradská 381/8,Horné Srnie,48.9920801,18.1020965,way/297484653,2026-10-22,overpass
+horne-srnie,obecný kultúrny dom,n,Kultúrny dom,Súhradská 381/8,Horné Srnie,48.9920801,18.1020965,way/297484653,2026-10-22,overpass
+horne-srnie,dom kultúry,n,Kultúrny dom,Súhradská 381/8,Horné Srnie,48.9920801,18.1020965,way/297484653,2026-10-22,overpass
+horne-srnie,spoločenský dom,n,Kultúrny dom,Súhradská 381/8,Horné Srnie,48.9920801,18.1020965,way/297484653,2026-10-22,overpass
+horne-srnie,sála kultúrneho domu,n,Kultúrny dom,Súhradská 381/8,Horné Srnie,48.9920801,18.1020965,way/297484653,2026-10-22,overpass
+horne-srnie,kultúrne stredisko,n,Kultúrny dom,Súhradská 381/8,Horné Srnie,48.9920801,18.1020965,way/297484653,2026-10-22,overpass
+horne-srnie,miestne kultúrne stredisko,n,Kultúrny dom,Súhradská 381/8,Horné Srnie,48.9920801,18.1020965,way/297484653,2026-10-22,overpass
+zemianske-kostolany,obecný úrad zemianske kostoľany,n,Obecný úrad Zemianske Kostoľany,4. apríla 60/28,Zemianske Kostoľany,48.6864730,18.5261312,way/289504640,2026-10-22,overpass
+zuberec,obecný úrad zuberec,n,Obecný úrad zuberec,,Zuberec,49.2599770,19.6143079,node/1916886214,2026-10-22,overpass
+bobrov,obecný úrad bobrov,n,Obecný úrad Bobrov,,Bobrov,49.4281862,19.5439943,node/970954529,2026-10-22,overpass
+stitare,obecný úrad štitáre,n,Obecný úrad Štitáre,,Štitáre,48.3501986,18.1591505,node/13891016973,2026-10-22,overpass
+durcina,obecný úrad ďurčiná,n,Obecný úrad Ďurčiná,,Ďurčiná,49.0629313,18.6544311,node/14020555485,2026-10-22,overpass
+marianka,obecný úrad marianka,n,Obecný úrad Marianka,Štúrova 1050/9,Marianka,48.2495040,17.0576528,way/480566494,2026-10-22,overpass
+dlha-nad-vahom,obecný úrad dlhá nad váhom,n,Obecný úrad Dlhá nad Váhom,,Dlhá nad Váhom,48.1702772,17.8605180,node/13888421594,2026-10-22,overpass
+sered,obecný úrad sereď,n,Mestský úrad Sereď,Námestie republiky 1176/10,Sereď,48.2869201,17.7380273,way/61391836,2026-10-22,overpass
+sered,kultúrny dom,n,Dom kultúry,,Sereď,48.2838238,17.7383816,node/12365558870,2026-10-22,overpass
+sered,kultúrny dom sereď,n,Dom kultúry,,Sereď,48.2838238,17.7383816,node/12365558870,2026-10-22,overpass
+sered,kultúrny dom v sereď,n,Dom kultúry,,Sereď,48.2838238,17.7383816,node/12365558870,2026-10-22,overpass
+sered,obecný kultúrny dom,n,Dom kultúry,,Sereď,48.2838238,17.7383816,node/12365558870,2026-10-22,overpass
+sered,dom kultúry,n,Dom kultúry,,Sereď,48.2838238,17.7383816,node/12365558870,2026-10-22,overpass
+sered,spoločenský dom,n,Dom kultúry,,Sereď,48.2838238,17.7383816,node/12365558870,2026-10-22,overpass
+sered,sála kultúrneho domu,n,Dom kultúry,,Sereď,48.2838238,17.7383816,node/12365558870,2026-10-22,overpass
+sered,kultúrne stredisko,n,Dom kultúry,,Sereď,48.2838238,17.7383816,node/12365558870,2026-10-22,overpass
+sered,miestne kultúrne stredisko,n,Dom kultúry,,Sereď,48.2838238,17.7383816,node/12365558870,2026-10-22,overpass
+koksov-baksa,obecný úrad kokšov-bakša,n,Obecný úrad Kokšov-Bakša,,Kokšov-Bakša,48.6479116,21.3236877,node/6176888468,2026-10-22,overpass
+koksov-baksa,kultúrny dom,n,Kultúrny dom,Športová 25/5,Kokšov-Bakša,48.6473347,21.3263294,way/114535736,2026-10-22,overpass
+koksov-baksa,kultúrny dom kokšov-bakša,n,Kultúrny dom,Športová 25/5,Kokšov-Bakša,48.6473347,21.3263294,way/114535736,2026-10-22,overpass
+koksov-baksa,kultúrny dom v kokšov-bakša,n,Kultúrny dom,Športová 25/5,Kokšov-Bakša,48.6473347,21.3263294,way/114535736,2026-10-22,overpass
+koksov-baksa,obecný kultúrny dom,n,Kultúrny dom,Športová 25/5,Kokšov-Bakša,48.6473347,21.3263294,way/114535736,2026-10-22,overpass
+koksov-baksa,dom kultúry,n,Kultúrny dom,Športová 25/5,Kokšov-Bakša,48.6473347,21.3263294,way/114535736,2026-10-22,overpass
+koksov-baksa,spoločenský dom,n,Kultúrny dom,Športová 25/5,Kokšov-Bakša,48.6473347,21.3263294,way/114535736,2026-10-22,overpass
+koksov-baksa,sála kultúrneho domu,n,Kultúrny dom,Športová 25/5,Kokšov-Bakša,48.6473347,21.3263294,way/114535736,2026-10-22,overpass
+koksov-baksa,kultúrne stredisko,n,Kultúrny dom,Športová 25/5,Kokšov-Bakša,48.6473347,21.3263294,way/114535736,2026-10-22,overpass
+koksov-baksa,miestne kultúrne stredisko,n,Kultúrny dom,Športová 25/5,Kokšov-Bakša,48.6473347,21.3263294,way/114535736,2026-10-22,overpass
+durkov,obecný úrad ďurkov,n,Obecný úrad ďurkov,Hlavná 274/38,Ďurkov,48.7076135,21.4430327,way/61237563,2026-10-22,overpass
+samorin,obecný úrad šamorín,n,Mestský úrad v Šamoríne,Hlavná 830/37,Šamorín,48.0279742,17.3089816,way/61630694,2026-10-22,overpass
+samorin,kultúrny dom,n,MSKS Šamorín - VMK Somorja,Námestie Svätého Štefana 489/2,Šamorín,48.0271421,17.3107433,way/61632662,2026-10-22,overpass
+samorin,kultúrny dom šamorín,n,MSKS Šamorín - VMK Somorja,Námestie Svätého Štefana 489/2,Šamorín,48.0271421,17.3107433,way/61632662,2026-10-22,overpass
+samorin,kultúrny dom v šamorín,n,MSKS Šamorín - VMK Somorja,Námestie Svätého Štefana 489/2,Šamorín,48.0271421,17.3107433,way/61632662,2026-10-22,overpass
+samorin,obecný kultúrny dom,n,MSKS Šamorín - VMK Somorja,Námestie Svätého Štefana 489/2,Šamorín,48.0271421,17.3107433,way/61632662,2026-10-22,overpass
+samorin,dom kultúry,n,MSKS Šamorín - VMK Somorja,Námestie Svätého Štefana 489/2,Šamorín,48.0271421,17.3107433,way/61632662,2026-10-22,overpass
+samorin,spoločenský dom,n,MSKS Šamorín - VMK Somorja,Námestie Svätého Štefana 489/2,Šamorín,48.0271421,17.3107433,way/61632662,2026-10-22,overpass
+samorin,sála kultúrneho domu,n,MSKS Šamorín - VMK Somorja,Námestie Svätého Štefana 489/2,Šamorín,48.0271421,17.3107433,way/61632662,2026-10-22,overpass
+samorin,kultúrne stredisko,n,MSKS Šamorín - VMK Somorja,Námestie Svätého Štefana 489/2,Šamorín,48.0271421,17.3107433,way/61632662,2026-10-22,overpass
+samorin,miestne kultúrne stredisko,n,MSKS Šamorín - VMK Somorja,Námestie Svätého Štefana 489/2,Šamorín,48.0271421,17.3107433,way/61632662,2026-10-22,overpass
+spania-dolina,obecný úrad špania dolina,n,Obecný úrad špania dolina,,Špania Dolina,48.8075377,19.1322048,node/12582637717,2026-10-22,overpass
+soblahov,obecný úrad soblahov,n,Obecný úrad Soblahov,,Soblahov,48.8636236,18.0777276,node/11107083720,2026-10-22,overpass
+pazit,obecný úrad pažiť,n,Obecný úrad Pažiť,,Pažiť,48.6320694,18.4334949,node/3072314594,2026-10-22,overpass
+oldza,obecný úrad oľdza,n,Obecný úrad oľdza,Oľdza 16,Oľdza,48.0847076,17.4224724,way/262550152,2026-10-22,overpass
+liptovska-teplicka,obecný úrad liptovská teplička,n,Obecný úrad Liptovská Teplička,Štefana Garaja 398/16,Liptovská Teplička,48.9674913,20.0888295,way/69711639,2026-10-22,overpass
+osikov,obecný úrad osikov,n,Osikov,,Osikov,49.1727021,21.2652781,node/1295437130,2026-10-22,overpass
+reca,obecný úrad reca,n,Obecný úrad - Községi hivatal,Reca 24,Reca,48.2300975,17.4583177,way/63405820,2026-10-22,overpass
+demanovska-dolina,obecný úrad demänovská dolina,n,Obecný úrad demänovská dolina,,Demänovská Dolina,48.9770529,19.5939292,node/2499524481,2026-10-22,overpass
+turen,obecný úrad tureň,n,Obecný úrad Tureň,Tureň 36,Tureň,48.1919733,17.3895167,way/254912219,2026-10-22,overpass
+hontianske-tesare,obecný úrad hontianske tesáre,n,Obecný úrad,,Hontianske Tesáre,48.2061127,18.9218996,node/11738971339,2026-10-22,overpass
+hontianske-tesare,kultúrny dom,n,Kultúrny dom,,Hontianske Tesáre,48.2061325,18.9218485,node/11738971340,2026-10-22,overpass
+hontianske-tesare,kultúrny dom hontianske tesáre,n,Kultúrny dom,,Hontianske Tesáre,48.2061325,18.9218485,node/11738971340,2026-10-22,overpass
+hontianske-tesare,kultúrny dom v hontianske tesáre,n,Kultúrny dom,,Hontianske Tesáre,48.2061325,18.9218485,node/11738971340,2026-10-22,overpass
+hontianske-tesare,obecný kultúrny dom,n,Kultúrny dom,,Hontianske Tesáre,48.2061325,18.9218485,node/11738971340,2026-10-22,overpass
+hontianske-tesare,dom kultúry,n,Kultúrny dom,,Hontianske Tesáre,48.2061325,18.9218485,node/11738971340,2026-10-22,overpass
+hontianske-tesare,spoločenský dom,n,Kultúrny dom,,Hontianske Tesáre,48.2061325,18.9218485,node/11738971340,2026-10-22,overpass
+hontianske-tesare,sála kultúrneho domu,n,Kultúrny dom,,Hontianske Tesáre,48.2061325,18.9218485,node/11738971340,2026-10-22,overpass
+hontianske-tesare,kultúrne stredisko,n,Kultúrny dom,,Hontianske Tesáre,48.2061325,18.9218485,node/11738971340,2026-10-22,overpass
+hontianske-tesare,miestne kultúrne stredisko,n,Kultúrny dom,,Hontianske Tesáre,48.2061325,18.9218485,node/11738971340,2026-10-22,overpass
+dolna-suca,obecný úrad dolná súča,n,Obecný úrad,,Dolná Súča,48.9567036,18.0319101,node/12854752878,2026-10-22,overpass
+galanta,obecný úrad galanta,n,Mestský úrad Galanta,,Galanta,48.1899071,17.7258342,node/4873410042,2026-10-22,overpass
+lehota,obecný úrad lehota,n,Obecný úrad Lehota,,Lehota,48.3125768,17.9938867,node/4092568634,2026-10-22,overpass
+lehota,kultúrny dom,n,Kultúrny dom,Lehota 72,Lehota,48.3131156,17.9918847,way/276448126,2026-10-22,overpass
+lehota,kultúrny dom lehota,n,Kultúrny dom,Lehota 72,Lehota,48.3131156,17.9918847,way/276448126,2026-10-22,overpass
+lehota,kultúrny dom v lehota,n,Kultúrny dom,Lehota 72,Lehota,48.3131156,17.9918847,way/276448126,2026-10-22,overpass
+lehota,obecný kultúrny dom,n,Kultúrny dom,Lehota 72,Lehota,48.3131156,17.9918847,way/276448126,2026-10-22,overpass
+lehota,dom kultúry,n,Kultúrny dom,Lehota 72,Lehota,48.3131156,17.9918847,way/276448126,2026-10-22,overpass
+lehota,spoločenský dom,n,Kultúrny dom,Lehota 72,Lehota,48.3131156,17.9918847,way/276448126,2026-10-22,overpass
+lehota,sála kultúrneho domu,n,Kultúrny dom,Lehota 72,Lehota,48.3131156,17.9918847,way/276448126,2026-10-22,overpass
+lehota,kultúrne stredisko,n,Kultúrny dom,Lehota 72,Lehota,48.3131156,17.9918847,way/276448126,2026-10-22,overpass
+lehota,miestne kultúrne stredisko,n,Kultúrny dom,Lehota 72,Lehota,48.3131156,17.9918847,way/276448126,2026-10-22,overpass
+ilava,obecný úrad ilava,n,Mestský úrad,Mierové námestie 16/31,Ilava,48.9995242,18.2361525,way/58500587,2026-10-22,overpass
+topolnica,obecný úrad topoľnica,n,Obecný úrad topoľnica,,Topoľnica,48.1709031,17.7952785,node/4472847145,2026-10-22,overpass
+matuskovo,obecný úrad matúškovo,n,Obecný úrad Matúškovo,Matúškovo 138,Matúškovo,48.1663940,17.7345652,way/73261816,2026-10-22,overpass
+velky-cetin,obecný úrad veľký cetín,n,Obec Veľký Cetín,Nová 700/2,Veľký Cetín,48.2172451,18.1871670,way/316514074,2026-10-22,overpass
+boleraz,obecný úrad boleráz,n,Obecný úrad,Boleráz 586,Boleráz,48.4658970,17.4929795,way/61514242,2026-10-22,overpass
+cataj,obecný úrad čataj,n,Obecný úrad čataj,Čataj 333,Čataj,48.2723134,17.4751249,way/61274345,2026-10-22,overpass
+hranovnica,obecný úrad hranovnica,n,Obec Hranovnica,,Hranovnica,48.9875458,20.3096329,node/2902369171,2026-10-22,overpass
+cerveny-kamen,obecný úrad červený kameň,n,Obecný úrad červený kameň,,Červený Kameň,49.0881621,18.1804700,node/10137327209,2026-10-22,overpass
+velke-zaluzie,obecný úrad veľké zálužie,n,Obecný úrad,,Veľké Zálužie,48.3081098,17.9407936,node/12880722347,2026-10-22,overpass
+sklabina,obecný úrad sklabiňa,n,Obecný úrad Sklabiňa,,Sklabiňa,49.0453106,19.0035489,node/836268087,2026-10-22,overpass
+polomka,obecný úrad polomka,n,Obecný úrad Polomka,Osloboditeľov 288/12,Polomka,48.8519478,19.8523895,way/57920338,2026-10-22,overpass
+belusa,obecný úrad beluša,n,Obecný úrad Beluša,,Beluša,49.0645686,18.3291220,way/58973628,2026-10-22,overpass
+trencianske-stankovce,obecný úrad trenčianske stankovce,n,Obecný úrad Trenčianske Stankovce,,Trenčianske Stankovce,48.8410127,17.9854480,node/1082560501,2026-10-22,overpass
+trencianske-stankovce,kultúrny dom,n,Kultúrny dom,,Trenčianske Stankovce,48.8412681,17.9864750,node/12627879242,2026-10-22,overpass
+trencianske-stankovce,kultúrny dom trenčianske stankovce,n,Kultúrny dom,,Trenčianske Stankovce,48.8412681,17.9864750,node/12627879242,2026-10-22,overpass
+trencianske-stankovce,kultúrny dom v trenčianske stankovce,n,Kultúrny dom,,Trenčianske Stankovce,48.8412681,17.9864750,node/12627879242,2026-10-22,overpass
+trencianske-stankovce,obecný kultúrny dom,n,Kultúrny dom,,Trenčianske Stankovce,48.8412681,17.9864750,node/12627879242,2026-10-22,overpass
+trencianske-stankovce,dom kultúry,n,Kultúrny dom,,Trenčianske Stankovce,48.8412681,17.9864750,node/12627879242,2026-10-22,overpass
+trencianske-stankovce,spoločenský dom,n,Kultúrny dom,,Trenčianske Stankovce,48.8412681,17.9864750,node/12627879242,2026-10-22,overpass
+trencianske-stankovce,sála kultúrneho domu,n,Kultúrny dom,,Trenčianske Stankovce,48.8412681,17.9864750,node/12627879242,2026-10-22,overpass
+trencianske-stankovce,kultúrne stredisko,n,Kultúrny dom,,Trenčianske Stankovce,48.8412681,17.9864750,node/12627879242,2026-10-22,overpass
+trencianske-stankovce,miestne kultúrne stredisko,n,Kultúrny dom,,Trenčianske Stankovce,48.8412681,17.9864750,node/12627879242,2026-10-22,overpass
+halic,obecný úrad halič,n,Halič,,Halič,48.3544888,19.5739915,node/1929019064,2026-10-22,overpass
+trstice,obecný úrad trstice,n,OcU Trstice,,Trstice,48.0141382,17.8051218,node/2297035258,2026-10-22,overpass
+kolarovo,obecný úrad kolárovo,n,Obecný úrad kolárovo,,Kolárovo,47.9179266,17.9966716,node/1304548498,2026-10-22,overpass
+kolarovo,kultúrny dom,n,Kultúrny dom,,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-22,overpass
+kolarovo,kultúrny dom kolárovo,n,Kultúrny dom,,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-22,overpass
+kolarovo,kultúrny dom v kolárovo,n,Kultúrny dom,,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-22,overpass
+kolarovo,obecný kultúrny dom,n,Kultúrny dom,,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-22,overpass
+kolarovo,dom kultúry,n,Kultúrny dom,,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-22,overpass
+kolarovo,spoločenský dom,n,Kultúrny dom,,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-22,overpass
+kolarovo,sála kultúrneho domu,n,Kultúrny dom,,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-22,overpass
+kolarovo,kultúrne stredisko,n,Kultúrny dom,,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-22,overpass
+kolarovo,miestne kultúrne stredisko,n,Kultúrny dom,,Kolárovo,47.9172502,17.9948644,node/2096774698,2026-10-22,overpass
+zikava,obecný úrad žikava,n,Obecný úrad Žikava,,Žikava,48.4445941,18.3821695,node/14233107612,2026-10-22,overpass
+chocholna-velcice,obecný úrad chocholná-velčice,n,Obecný úrad Chocholná - Velčice,,Chocholná-Velčice,48.8658213,17.9443287,node/9933124289,2026-10-22,overpass
+chocholna-velcice,kultúrny dom,n,Kulturny dom,,Chocholná-Velčice,48.8658770,17.9441518,node/12408870414,2026-10-22,overpass
+chocholna-velcice,kultúrny dom chocholná-velčice,n,Kulturny dom,,Chocholná-Velčice,48.8658770,17.9441518,node/12408870414,2026-10-22,overpass
+chocholna-velcice,kultúrny dom v chocholná-velčice,n,Kulturny dom,,Chocholná-Velčice,48.8658770,17.9441518,node/12408870414,2026-10-22,overpass
+chocholna-velcice,obecný kultúrny dom,n,Kulturny dom,,Chocholná-Velčice,48.8658770,17.9441518,node/12408870414,2026-10-22,overpass
+chocholna-velcice,dom kultúry,n,Kulturny dom,,Chocholná-Velčice,48.8658770,17.9441518,node/12408870414,2026-10-22,overpass
+chocholna-velcice,spoločenský dom,n,Kulturny dom,,Chocholná-Velčice,48.8658770,17.9441518,node/12408870414,2026-10-22,overpass
+chocholna-velcice,sála kultúrneho domu,n,Kulturny dom,,Chocholná-Velčice,48.8658770,17.9441518,node/12408870414,2026-10-22,overpass
+chocholna-velcice,kultúrne stredisko,n,Kulturny dom,,Chocholná-Velčice,48.8658770,17.9441518,node/12408870414,2026-10-22,overpass
+chocholna-velcice,miestne kultúrne stredisko,n,Kulturny dom,,Chocholná-Velčice,48.8658770,17.9441518,node/12408870414,2026-10-22,overpass
+kocin-lancar,obecný úrad kočín-lančár,n,Obecný úrad Kočín-Lančár,,Kočín-Lančár,48.6000876,17.6600517,node/13922394651,2026-10-22,overpass
+tvarozna,obecný úrad tvarožná,n,Tvarožná,,Tvarožná,49.0859807,20.4770289,node/2517507704,2026-10-22,overpass
+velke-ozorovce,obecný úrad veľké ozorovce,n,Obecný úrad Veľké Ozorovce,,Veľké Ozorovce,48.6616510,21.6105338,node/4139332432,2026-10-22,overpass
+svrcinovec,obecný úrad svrčinovec,n,Obecný úrad Svrčinovec,Svrčinovec 858,Svrčinovec,49.4811463,18.7940143,way/331483562,2026-10-22,overpass
+dolne-srnie,obecný úrad dolné srnie,n,Obecný úrad,,Dolné Srnie,48.8031481,17.8197476,node/11633697621,2026-10-22,overpass
+jaklovce,obecný úrad jaklovce,n,Obecný úrad Jaklovce,,Jaklovce,48.8747932,20.9966353,node/13888371369,2026-10-22,overpass
+jaklovce,kultúrny dom,n,Kultúrny dom,Nová 436/80,Jaklovce,48.8752671,20.9959334,way/59008444,2026-10-22,overpass
+jaklovce,kultúrny dom jaklovce,n,Kultúrny dom,Nová 436/80,Jaklovce,48.8752671,20.9959334,way/59008444,2026-10-22,overpass
+jaklovce,kultúrny dom v jaklovce,n,Kultúrny dom,Nová 436/80,Jaklovce,48.8752671,20.9959334,way/59008444,2026-10-22,overpass
+jaklovce,obecný kultúrny dom,n,Kultúrny dom,Nová 436/80,Jaklovce,48.8752671,20.9959334,way/59008444,2026-10-22,overpass
+jaklovce,dom kultúry,n,Kultúrny dom,Nová 436/80,Jaklovce,48.8752671,20.9959334,way/59008444,2026-10-22,overpass
+jaklovce,spoločenský dom,n,Kultúrny dom,Nová 436/80,Jaklovce,48.8752671,20.9959334,way/59008444,2026-10-22,overpass
+jaklovce,sála kultúrneho domu,n,Kultúrny dom,Nová 436/80,Jaklovce,48.8752671,20.9959334,way/59008444,2026-10-22,overpass
+jaklovce,kultúrne stredisko,n,Kultúrny dom,Nová 436/80,Jaklovce,48.8752671,20.9959334,way/59008444,2026-10-22,overpass
+jaklovce,miestne kultúrne stredisko,n,Kultúrny dom,Nová 436/80,Jaklovce,48.8752671,20.9959334,way/59008444,2026-10-22,overpass
+kopcany,obecný úrad kopčany,n,Obecný úrad Kopčany,Kollárova 318/13,Kopčany,48.7876654,17.1175139,way/51484705,2026-10-22,overpass
+kopcany,kultúrny dom,n,Kultúrny dom Kopčany,,Kopčany,48.7878121,17.1126344,node/3446307756,2026-10-22,overpass
+kopcany,kultúrny dom kopčany,n,Kultúrny dom Kopčany,,Kopčany,48.7878121,17.1126344,node/3446307756,2026-10-22,overpass
+kopcany,kultúrny dom v kopčany,n,Kultúrny dom Kopčany,,Kopčany,48.7878121,17.1126344,node/3446307756,2026-10-22,overpass
+kopcany,obecný kultúrny dom,n,Kultúrny dom Kopčany,,Kopčany,48.7878121,17.1126344,node/3446307756,2026-10-22,overpass
+kopcany,dom kultúry,n,Kultúrny dom Kopčany,,Kopčany,48.7878121,17.1126344,node/3446307756,2026-10-22,overpass
+kopcany,spoločenský dom,n,Kultúrny dom Kopčany,,Kopčany,48.7878121,17.1126344,node/3446307756,2026-10-22,overpass
+kopcany,sála kultúrneho domu,n,Kultúrny dom Kopčany,,Kopčany,48.7878121,17.1126344,node/3446307756,2026-10-22,overpass
+kopcany,kultúrne stredisko,n,Kultúrny dom Kopčany,,Kopčany,48.7878121,17.1126344,node/3446307756,2026-10-22,overpass
+kopcany,miestne kultúrne stredisko,n,Kultúrny dom Kopčany,,Kopčany,48.7878121,17.1126344,node/3446307756,2026-10-22,overpass
+hubice,obecný úrad hubice,n,Obecný úrad Hubice,Hubice 28,Hubice,48.0945348,17.3962746,way/120649986,2026-10-22,overpass
+radatice,obecný úrad radatice,n,Obecný úrad radatice,,Radatice,48.9318736,21.1890399,node/2470777936,2026-10-22,overpass
+tomasov,obecný úrad tomášov,n,Obecný úrad Tomášov,1. mája 180/5,Tomášov,48.1425187,17.3365953,way/556713067,2026-10-22,overpass
+tomasov,kultúrny dom,n,Kultúrny dom,1. mája 179/3,Tomášov,48.1425263,17.3358643,way/252170203,2026-10-22,overpass
+tomasov,kultúrny dom tomášov,n,Kultúrny dom,1. mája 179/3,Tomášov,48.1425263,17.3358643,way/252170203,2026-10-22,overpass
+tomasov,kultúrny dom v tomášov,n,Kultúrny dom,1. mája 179/3,Tomášov,48.1425263,17.3358643,way/252170203,2026-10-22,overpass
+tomasov,obecný kultúrny dom,n,Kultúrny dom,1. mája 179/3,Tomášov,48.1425263,17.3358643,way/252170203,2026-10-22,overpass
+tomasov,dom kultúry,n,Kultúrny dom,1. mája 179/3,Tomášov,48.1425263,17.3358643,way/252170203,2026-10-22,overpass
+tomasov,spoločenský dom,n,Kultúrny dom,1. mája 179/3,Tomášov,48.1425263,17.3358643,way/252170203,2026-10-22,overpass
+tomasov,sála kultúrneho domu,n,Kultúrny dom,1. mája 179/3,Tomášov,48.1425263,17.3358643,way/252170203,2026-10-22,overpass
+tomasov,kultúrne stredisko,n,Kultúrny dom,1. mája 179/3,Tomášov,48.1425263,17.3358643,way/252170203,2026-10-22,overpass
+tomasov,miestne kultúrne stredisko,n,Kultúrny dom,1. mája 179/3,Tomášov,48.1425263,17.3358643,way/252170203,2026-10-22,overpass
+zlatniky,obecný úrad zlatníky,n,Obecný úrad Zlatníky,,Zlatníky,48.7108401,18.1231982,node/6497655991,2026-10-22,overpass
+vinohrady-nad-vahom,obecný úrad vinohrady nad váhom,n,Obecný úrad Vinohrady nad Váhom,,Vinohrady nad Váhom,48.3204716,17.7606031,node/13888402851,2026-10-22,overpass
+horne-myto,obecný úrad horné mýto,n,Obecný úrad Horné Mýto,,Horné Mýto,48.0103611,17.7520622,node/14087575899,2026-10-22,overpass
+velky-folkmar,obecný úrad veľký folkmar,n,Obecný úrad Veľký Folkmar,,Veľký Folkmar,48.8562314,21.0148079,node/13888361493,2026-10-22,overpass
+babin,obecný úrad babín,n,Obecný úrad,,Babín,49.3323183,19.3794596,node/2188316011,2026-10-22,overpass
+babin,kultúrny dom,n,Kultúrny dom,,Babín,49.3322940,19.3796818,node/11738834466,2026-10-22,overpass
+babin,kultúrny dom babín,n,Kultúrny dom,,Babín,49.3322940,19.3796818,node/11738834466,2026-10-22,overpass
+babin,kultúrny dom v babín,n,Kultúrny dom,,Babín,49.3322940,19.3796818,node/11738834466,2026-10-22,overpass
+babin,obecný kultúrny dom,n,Kultúrny dom,,Babín,49.3322940,19.3796818,node/11738834466,2026-10-22,overpass
+babin,dom kultúry,n,Kultúrny dom,,Babín,49.3322940,19.3796818,node/11738834466,2026-10-22,overpass
+babin,spoločenský dom,n,Kultúrny dom,,Babín,49.3322940,19.3796818,node/11738834466,2026-10-22,overpass
+babin,sála kultúrneho domu,n,Kultúrny dom,,Babín,49.3322940,19.3796818,node/11738834466,2026-10-22,overpass
+babin,kultúrne stredisko,n,Kultúrny dom,,Babín,49.3322940,19.3796818,node/11738834466,2026-10-22,overpass
+babin,miestne kultúrne stredisko,n,Kultúrny dom,,Babín,49.3322940,19.3796818,node/11738834466,2026-10-22,overpass
+harmanec,obecný úrad harmanec,n,Obecný úrad harmanec,,Harmanec,48.7955681,19.0763826,node/2989659769,2026-10-22,overpass
+dolny-chotar,obecný úrad dolný chotár,n,Obecný úrad dolný chotár,Dolný Chotár 45,Dolný Chotár,48.0004529,17.8678199,way/441770496,2026-10-22,overpass
+dolna-krupa,obecný úrad dolná krupá,n,Obecný úrad,,Dolná Krupá,48.4828309,17.5518518,node/4369753289,2026-10-22,overpass
+dolna-krupa,kultúrny dom,n,Kultúrny dom,,Dolná Krupá,48.4821222,17.5514733,node/4369652391,2026-10-22,overpass
+dolna-krupa,kultúrny dom dolná krupá,n,Kultúrny dom,,Dolná Krupá,48.4821222,17.5514733,node/4369652391,2026-10-22,overpass
+dolna-krupa,kultúrny dom v dolná krupá,n,Kultúrny dom,,Dolná Krupá,48.4821222,17.5514733,node/4369652391,2026-10-22,overpass
+dolna-krupa,obecný kultúrny dom,n,Kultúrny dom,,Dolná Krupá,48.4821222,17.5514733,node/4369652391,2026-10-22,overpass
+dolna-krupa,dom kultúry,n,Kultúrny dom,,Dolná Krupá,48.4821222,17.5514733,node/4369652391,2026-10-22,overpass
+dolna-krupa,spoločenský dom,n,Kultúrny dom,,Dolná Krupá,48.4821222,17.5514733,node/4369652391,2026-10-22,overpass
+dolna-krupa,sála kultúrneho domu,n,Kultúrny dom,,Dolná Krupá,48.4821222,17.5514733,node/4369652391,2026-10-22,overpass
+dolna-krupa,kultúrne stredisko,n,Kultúrny dom,,Dolná Krupá,48.4821222,17.5514733,node/4369652391,2026-10-22,overpass
+dolna-krupa,miestne kultúrne stredisko,n,Kultúrny dom,,Dolná Krupá,48.4821222,17.5514733,node/4369652391,2026-10-22,overpass
+podbiel,obecný úrad podbiel,n,Obecný úrad podbiel,,Podbiel,49.3081975,19.4848090,node/836268349,2026-10-22,overpass
+trstin,obecný úrad trstín,n,Obecný úrad trstín,,Trstín,48.5251424,17.4651669,node/2154184911,2026-10-22,overpass
+sladkovicovo,obecný úrad sládkovičovo,n,Mestský úrad Sládkovičovo,,Sládkovičovo,48.2072144,17.6473291,node/3361195665,2026-10-22,overpass
+plavecky-peter,obecný úrad plavecký peter,n,Obecný úrad Plavecký Peter,,Plavecký Peter,48.5382204,17.3233674,node/13908938994,2026-10-22,overpass
+oravska-polhora,obecný úrad oravská polhora,n,Obec Oravská Polhora,,Oravská Polhora,49.5206188,19.4474188,node/971014576,2026-10-22,overpass
+benadovo,obecný úrad beňadovo,n,Obecný úrad beňadovo,,Beňadovo,49.4313735,19.3390939,node/11813215340,2026-10-22,overpass
+velke-ulany,obecný úrad veľké úľany,n,Obecný úrad Veľké Úľany,Hlavná 578/9,Veľké Úľany,48.1636072,17.5743829,way/266812726,2026-10-22,overpass
+male-krstenany,obecný úrad malé kršteňany,n,Obecný úrad Malé Kršteňany,,Malé Kršteňany,48.6378045,18.4289032,way/210249888,2026-10-22,overpass
+skalka-nad-vahom,obecný úrad skalka nad váhom,n,Obecný úrad skalka nad váhom,,Skalka nad Váhom,48.9254706,18.0706242,node/7194192915,2026-10-22,overpass
+breziny,obecný úrad breziny,n,Obecný úrad Breziny,Horné Breziny 136,Breziny,48.5096999,19.0828774,way/255910491,2026-10-22,overpass
+vistuk,obecný úrad vištuk,n,Obecný úrad Vištuk,,Vištuk,48.3349432,17.3963101,node/14061888389,2026-10-22,overpass
+tekovske-nemce,obecný úrad tekovské nemce,n,Obecný úrad,,Tekovské Nemce,48.3559358,18.5291822,node/616136281,2026-10-22,overpass
+tekovske-nemce,kultúrny dom,n,Kultúrny dom,,Tekovské Nemce,48.3559150,18.5292203,node/616136282,2026-10-22,overpass
+tekovske-nemce,kultúrny dom tekovské nemce,n,Kultúrny dom,,Tekovské Nemce,48.3559150,18.5292203,node/616136282,2026-10-22,overpass
+tekovske-nemce,kultúrny dom v tekovské nemce,n,Kultúrny dom,,Tekovské Nemce,48.3559150,18.5292203,node/616136282,2026-10-22,overpass
+tekovske-nemce,obecný kultúrny dom,n,Kultúrny dom,,Tekovské Nemce,48.3559150,18.5292203,node/616136282,2026-10-22,overpass
+tekovske-nemce,dom kultúry,n,Kultúrny dom,,Tekovské Nemce,48.3559150,18.5292203,node/616136282,2026-10-22,overpass
+tekovske-nemce,spoločenský dom,n,Kultúrny dom,,Tekovské Nemce,48.3559150,18.5292203,node/616136282,2026-10-22,overpass
+tekovske-nemce,sála kultúrneho domu,n,Kultúrny dom,,Tekovské Nemce,48.3559150,18.5292203,node/616136282,2026-10-22,overpass
+tekovske-nemce,kultúrne stredisko,n,Kultúrny dom,,Tekovské Nemce,48.3559150,18.5292203,node/616136282,2026-10-22,overpass
+tekovske-nemce,miestne kultúrne stredisko,n,Kultúrny dom,,Tekovské Nemce,48.3559150,18.5292203,node/616136282,2026-10-22,overpass
+malinovo,obecný úrad malinovo,n,Obecný úrad Malinovo,,Malinovo,48.1565522,17.2979249,node/2623343125,2026-10-22,overpass
+bobot,obecný úrad bobot,n,Obecný úrad bobot,,Bobot,48.8054921,18.1929164,node/2491489609,2026-10-22,overpass
+svit,obecný úrad svit,n,Mestský úrad Svit,,Svit,49.0562814,20.2009400,node/4305924550,2026-10-22,overpass
+rakovec-nad-ondavou,obecný úrad rakovec nad ondavou,n,Obecný úrad rakovec nad ondavou,,Rakovec nad Ondavou,48.7680191,21.7827059,node/1107845272,2026-10-22,overpass
+gan,obecný úrad gáň,n,Obecný úrad gáň,,Gáň,48.2308007,17.7188712,node/5393668535,2026-10-22,overpass
+brvniste,obecný úrad brvnište,n,Obecný úrad brvnište,,Brvnište,49.2143630,18.4272371,way/179573168,2026-10-22,overpass
+brvniste,kultúrny dom,n,Kultúrny dom,Brvnište 390,Brvnište,49.2145198,18.4270747,way/179573169,2026-10-22,overpass
+brvniste,kultúrny dom brvnište,n,Kultúrny dom,Brvnište 390,Brvnište,49.2145198,18.4270747,way/179573169,2026-10-22,overpass
+brvniste,kultúrny dom v brvnište,n,Kultúrny dom,Brvnište 390,Brvnište,49.2145198,18.4270747,way/179573169,2026-10-22,overpass
+brvniste,obecný kultúrny dom,n,Kultúrny dom,Brvnište 390,Brvnište,49.2145198,18.4270747,way/179573169,2026-10-22,overpass
+brvniste,dom kultúry,n,Kultúrny dom,Brvnište 390,Brvnište,49.2145198,18.4270747,way/179573169,2026-10-22,overpass
+brvniste,spoločenský dom,n,Kultúrny dom,Brvnište 390,Brvnište,49.2145198,18.4270747,way/179573169,2026-10-22,overpass
+brvniste,sála kultúrneho domu,n,Kultúrny dom,Brvnište 390,Brvnište,49.2145198,18.4270747,way/179573169,2026-10-22,overpass
+brvniste,kultúrne stredisko,n,Kultúrny dom,Brvnište 390,Brvnište,49.2145198,18.4270747,way/179573169,2026-10-22,overpass
+brvniste,miestne kultúrne stredisko,n,Kultúrny dom,Brvnište 390,Brvnište,49.2145198,18.4270747,way/179573169,2026-10-22,overpass
+gbely,obecný úrad gbely,n,Mestský úrad Gbely,,Gbely,48.7189658,17.1183053,node/2971966198,2026-10-22,overpass
+moldava-nad-bodvou,obecný úrad moldava nad bodvou,n,Mestský úrad Moldava nad Bodvou,Školská 356/2,Moldava nad Bodvou,48.6131205,21.0005871,way/375706840,2026-10-22,overpass
+budimir,obecný úrad budimír,n,Obec Budimír,,Budimír,48.7971057,21.3048402,node/6100698438,2026-10-22,overpass
+vysny-slavkov,obecný úrad vyšný slavkov,n,Obecný úrad,,Vyšný Slavkov,49.0715160,20.8542688,node/1480359674,2026-10-22,overpass
+vysny-slavkov,kultúrny dom,n,Kultúrny dom,,Vyšný Slavkov,49.0715547,20.8543169,node/13172747332,2026-10-22,overpass
+vysny-slavkov,kultúrny dom vyšný slavkov,n,Kultúrny dom,,Vyšný Slavkov,49.0715547,20.8543169,node/13172747332,2026-10-22,overpass
+vysny-slavkov,kultúrny dom v vyšný slavkov,n,Kultúrny dom,,Vyšný Slavkov,49.0715547,20.8543169,node/13172747332,2026-10-22,overpass
+vysny-slavkov,obecný kultúrny dom,n,Kultúrny dom,,Vyšný Slavkov,49.0715547,20.8543169,node/13172747332,2026-10-22,overpass
+vysny-slavkov,dom kultúry,n,Kultúrny dom,,Vyšný Slavkov,49.0715547,20.8543169,node/13172747332,2026-10-22,overpass
+vysny-slavkov,spoločenský dom,n,Kultúrny dom,,Vyšný Slavkov,49.0715547,20.8543169,node/13172747332,2026-10-22,overpass
+vysny-slavkov,sála kultúrneho domu,n,Kultúrny dom,,Vyšný Slavkov,49.0715547,20.8543169,node/13172747332,2026-10-22,overpass
+vysny-slavkov,kultúrne stredisko,n,Kultúrny dom,,Vyšný Slavkov,49.0715547,20.8543169,node/13172747332,2026-10-22,overpass
+vysny-slavkov,miestne kultúrne stredisko,n,Kultúrny dom,,Vyšný Slavkov,49.0715547,20.8543169,node/13172747332,2026-10-22,overpass
+jedlove-kostolany,obecný úrad jedľové kostoľany,n,Obecný úrad Jedľové Kostolany,Jedľové Kostoľany 297,Jedľové Kostoľany,48.4713418,18.4974566,way/118492382,2026-10-22,overpass
+stranavy,obecný úrad stráňavy,n,Obecný úrad Stráňavy,,Stráňavy,49.1709609,18.8193025,node/13956099120,2026-10-22,overpass
+hrnciarovce-nad-parnou,obecný úrad hrnčiarovce nad parnou,n,Obecný úrad Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409184,17.5722374,node/11379385523,2026-10-22,overpass
+hrnciarovce-nad-parnou,kultúrny dom,n,Kultúrny dom Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409930,17.5720471,node/11379385524,2026-10-22,overpass
+hrnciarovce-nad-parnou,kultúrny dom hrnčiarovce nad parnou,n,Kultúrny dom Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409930,17.5720471,node/11379385524,2026-10-22,overpass
+hrnciarovce-nad-parnou,kultúrny dom v hrnčiarovce nad parnou,n,Kultúrny dom Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409930,17.5720471,node/11379385524,2026-10-22,overpass
+hrnciarovce-nad-parnou,obecný kultúrny dom,n,Kultúrny dom Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409930,17.5720471,node/11379385524,2026-10-22,overpass
+hrnciarovce-nad-parnou,dom kultúry,n,Kultúrny dom Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409930,17.5720471,node/11379385524,2026-10-22,overpass
+hrnciarovce-nad-parnou,spoločenský dom,n,Kultúrny dom Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409930,17.5720471,node/11379385524,2026-10-22,overpass
+hrnciarovce-nad-parnou,sála kultúrneho domu,n,Kultúrny dom Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409930,17.5720471,node/11379385524,2026-10-22,overpass
+hrnciarovce-nad-parnou,kultúrne stredisko,n,Kultúrny dom Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409930,17.5720471,node/11379385524,2026-10-22,overpass
+hrnciarovce-nad-parnou,miestne kultúrne stredisko,n,Kultúrny dom Hrnčiarovce nad Parnou,,Hrnčiarovce nad Parnou,48.3409930,17.5720471,node/11379385524,2026-10-22,overpass
+spisska-teplica,obecný úrad spišská teplica,n,Obecný úrad spišská teplica,,Spišská Teplica,49.0465452,20.2490179,node/2066757726,2026-10-22,overpass
+vavrecka,obecný úrad vavrečka,n,Obecný úrad vavrečka,,Vavrečka,49.3859222,19.4683369,node/970781227,2026-10-22,overpass
+gbelany,obecný úrad gbeľany,n,Obecný úrad,,Gbeľany,49.2141754,18.8485002,node/5745724322,2026-10-22,overpass
+kostolna-pri-dunaji,obecný úrad kostolná pri dunaji,n,Obecný úrad kostolná pri dunaji,Kostolná pri Dunaji 59,Kostolná pri Dunaji,48.1847188,17.4360249,way/230357413,2026-10-22,overpass
+kostolna-pri-dunaji,kultúrny dom,n,Kultúrny dom,Kostolná pri Dunaji 15,Kostolná pri Dunaji,48.1866550,17.4335389,way/230357430,2026-10-22,overpass
+kostolna-pri-dunaji,kultúrny dom kostolná pri dunaji,n,Kultúrny dom,Kostolná pri Dunaji 15,Kostolná pri Dunaji,48.1866550,17.4335389,way/230357430,2026-10-22,overpass
+kostolna-pri-dunaji,kultúrny dom v kostolná pri dunaji,n,Kultúrny dom,Kostolná pri Dunaji 15,Kostolná pri Dunaji,48.1866550,17.4335389,way/230357430,2026-10-22,overpass
+kostolna-pri-dunaji,obecný kultúrny dom,n,Kultúrny dom,Kostolná pri Dunaji 15,Kostolná pri Dunaji,48.1866550,17.4335389,way/230357430,2026-10-22,overpass
+kostolna-pri-dunaji,dom kultúry,n,Kultúrny dom,Kostolná pri Dunaji 15,Kostolná pri Dunaji,48.1866550,17.4335389,way/230357430,2026-10-22,overpass
+kostolna-pri-dunaji,spoločenský dom,n,Kultúrny dom,Kostolná pri Dunaji 15,Kostolná pri Dunaji,48.1866550,17.4335389,way/230357430,2026-10-22,overpass
+kostolna-pri-dunaji,sála kultúrneho domu,n,Kultúrny dom,Kostolná pri Dunaji 15,Kostolná pri Dunaji,48.1866550,17.4335389,way/230357430,2026-10-22,overpass
+kostolna-pri-dunaji,kultúrne stredisko,n,Kultúrny dom,Kostolná pri Dunaji 15,Kostolná pri Dunaji,48.1866550,17.4335389,way/230357430,2026-10-22,overpass
+kostolna-pri-dunaji,miestne kultúrne stredisko,n,Kultúrny dom,Kostolná pri Dunaji 15,Kostolná pri Dunaji,48.1866550,17.4335389,way/230357430,2026-10-22,overpass
+jaslovske-bohunice,obecný úrad jaslovské bohunice,n,Obecný úrad Jaslovské Bohunice,,Jaslovské Bohunice,48.4769346,17.6458682,node/13891081098,2026-10-22,overpass
+kosice,historická radnica hlavná 59,n,"Historická radnica, Hlavná 59",Hlavná 94/59,Košice,48.7216900,21.2579270,ra/13490015,2026-10-22,register-adries
+kosice,kasárne/kulturpark budova alfa,n,"Kasárne/Kulturpark, budova Alfa",Kukučínova 81/2,Košice,48.7146450,21.2563440,ra/13382809,2026-10-22,register-adries
+kosice,kasárne/kulturpark pavilón november,n,"Kasárne/Kulturpark, pavilón November",Kukučínova 81/2,Košice,48.7146450,21.2563440,ra/13382809,2026-10-22,register-adries
+kosice,kunsthalle/hala umenia,n,Kunsthalle/Hala umenia,Rumanova 1470/1,Košice,48.7249500,21.2609160,ra/13506823,2026-10-22,register-adries
+kosice,steelpark,n,SteelPark,Kukučínova 81/2,Košice,48.7146450,21.2563440,ra/13382809,2026-10-22,register-adries
+kosice,výmenník obrody,n,Výmenník Obrody,Obrody 213/2,Košice,48.7157100,21.2332740,ra/13446191,2026-10-22,register-adries
+kosice,výmenník važecká,n,Výmenník Važecká,Galaktická 2397/1A,Košice,48.6761900,21.3008080,ra/5403000911,2026-10-22,register-adries
+kosice,výmenník wuppertálska,n,Výmenník Wuppertálska,Titogradská 1398/17,Košice,48.7182730,21.2174070,ra/36516755,2026-10-22,register-adries
+senica,dom smútku,n,Dom smútku,Brezová 872/2,Senica,48.6766550,17.3701230,ra/27934819,2026-10-22,register-adries
+banska-stiavnica,bylinková apatieka,n,Bylinková Apatieka,Daniela Licharda 277/5,Banská Štiavnica,48.4614140,18.8925000,ra/3335288,2026-10-22,register-adries
+banska-stiavnica,zš j. kollára,n,ZŠ J. Kollára,Ludvíka Svobodu 1542/40,Banská Štiavnica,48.4507400,18.9174880,ra/6602008567,2026-10-22,register-adries
+binovce,svadobná miestnosť,n,Svadobná miestnosť,Bíňovce 130,Bíňovce,48.5043450,17.4813200,ra/31145224,2026-10-22,register-adries
+bratislava,múzeum jána cikkera,n,Múzeum Jána Cikkera,Fialkové údolie 1864/2,Bratislava,48.1450230,17.0930560,ra/5988763,2026-10-22,register-adries
+katlovce,kostol ducha svätého,n,Kostol Ducha Svätého,Kátlovce 199,Kátlovce,48.5256700,17.6082780,ra/31314437,2026-10-22,register-adries
+katlovce,kultúrny dom kátlovce,n,Kultúrny dom Kátlovce,Kátlovce 1,Kátlovce,48.5266300,17.6095100,ra/31312611,2026-10-22,register-adries
+katlovce,multifunkčné ihrisko,n,Multifunkčné ihrisko,Kátlovce 195,Kátlovce,48.5258370,17.6099010,ra/31314393,2026-10-22,register-adries
+katlovce,obecná pivnica,n,Obecná pivnica,Kátlovce 318,Kátlovce,48.5267100,17.6088870,ra/31314910,2026-10-22,register-adries
+katlovce,požiarna zbrojnica,n,Požiarna zbrojnica,Kátlovce 331,Kátlovce,48.5264660,17.6088430,ra/5211001268,2026-10-22,register-adries
+katlovce,telocvičňa,n,Telocvičňa,Kátlovce 332,Kátlovce,48.5268600,17.6085930,ra/5211001279,2026-10-22,register-adries
+katlovce,športový areál tj fc kátlovce,n,Športový areál TJ FC Kátlovce,Kátlovce 200,Kátlovce,48.5275500,17.6073670,ra/31314448,2026-10-22,register-adries
+kosice,kc ponq,n,KC Ponq,Hrnčiarska 952/21,Košice,48.7239900,21.2592430,ra/13498804,2026-10-22,register-adries
+kosice,kasárne kulturpark,n,Kasárne Kulturpark (Košice),Kukučínova 81/2,Košice,48.7146450,21.2563440,ra/13382809,2026-10-22,register-adries
+brezno,mestská veža námestie m. r. štefánika 977 01 brezno,n,Mestská veža,Námestie gen. M. R. Štefánika 48/56,Brezno,48.8061178,19.6437512,way/58958241,2026-10-23,nominatim
+brezno,mestský dom kultúry švermova 1027/ 7 977 01 brezno,n,Mestský dom kultúry,Švermova 1027/7,Brezno,48.8027460,19.6392100,ra/34031954,2026-10-23,register-adries
+brezno,mestský dom kultúry švermova 7 brezno,n,Mestský dom kultúry,Švermova 1027/7,Brezno,48.8027460,19.6392100,ra/34031954,2026-10-23,register-adries
+brezno,švermova 1027/7 977 01 brezno kino mostár,n,Kino Mostár,Švermova 1027/7,Brezno,48.8027460,19.6392100,ra/34031954,2026-10-23,register-adries
+brezno,meštiansky dom 13 nám gen. m. r. štefánika 9 977 01 brezno,n,Meštiansky dom,Námestie gen. M.R.Štefánika 7/9,Brezno,48.8073430,19.6427100,ra/34021779,2026-10-23,register-adries
+brezno,synagóga štúrova 888 977 01 brezno,n,Synagóga,Štúrova 888/11,Brezno,48.8049450,19.6460612,way/58958199,2026-10-23,nominatim
+brezno,mestská knižnica brezno,n,Mestská knižnica,Rázusova 926/2,Brezno,48.8052112,19.6436529,way/58952226,2026-10-23,nominatim
+brezno,legia fitness brezno,n,Legia fitness,Československej armády,Brezno,48.8071445,19.6298876,node/9119669701,2026-10-23,nominatim
+banska-stiavnica,kultúrne centrum banská štiavnica,n,Kultúrne centrum,Kammerhofská 177/1,Banská Štiavnica,48.4581200,18.8962700,ra/333046A,2026-10-23,register-adries
+banska-stiavnica,kino,n,Kino Akademik,Námestie sv. Trojice 5/1,Banská Štiavnica,48.4592320,18.8925460,ra/3327269,2026-10-23,register-adries
+tornala,mestské kultúrne stredisko,n,Mestské kultúrne stredisko,Hlavné Námestie 505/6,Tornaľa,48.4218370,20.3246770,ra/2650185A,2026-10-23,register-adries
+krupina,sládkovičova 9 krupina,n,"Sládkovičova 9, Krupina",Sládkovičova 40/9,Krupina,48.3528370,19.0655360,ra/33497992,2026-10-23,register-adries
+brezno,mestský úrad brezno,n,Mestský úrad,,Brezno,48.8066549,19.6422964,node/4439437403,2026-10-23,overpass
+krupina,mestský úrad krupina,n,Mestský úrad Krupina,,Krupina,48.3540220,19.0663084,node/12598664308,2026-10-23,overpass
+sliac,mestský úrad sliač,n,Mestský úrad,Letecká 232/1,Sliač,48.6164528,19.1357664,way/302640073,2026-10-23,overpass

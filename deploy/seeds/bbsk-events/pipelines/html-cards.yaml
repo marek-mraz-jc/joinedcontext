@@ -1,0 +1,50 @@
+# A site whose events list page prints each event as a card with its date as text, and whose events carry no
+# date in a machine-readable field (T-5393): one request per run, the list page alone, no event page is read.
+# generate.py CARDS names, per feed host, where a card starts (`card`) and the pattern of each field inside it
+# (`url`, `name`, `when`, `end`, `time`, `venue`, `locality`); a pattern's groups v, v2 and v3 are joined with spaces. A date
+# reads as printed: "28. 10. 2026", "02.10.2026 - 06.11.2026", "23.10. - 24.10.2026", "24. 10. 2026 o 16:00",
+# "17. novembra 2026", "29 okt 2026" or 20261023; a time as 18:00 or 19.00; both local time in Europe/Bratislava.
+- mapping: |
+    let c = __CARDS__
+    map field {
+      let m = if this.rx == null { {} } else { this.chunk.re_find_object(this.rx).catch({}) }
+      let v = [$m.v.or(""), $m.v2.or(""), $m.v3.or("")].filter(x -> x != "").join(" ").unescape_html().re_replace_all("[\\s\\p{Z}]+", " ").trim()
+      root = if $v == "" { null } else { $v }
+    }
+    # A printed date or range as "D. M. YYYY[ HH:MM][ - D. M. YYYY][ HH:MM]": dashes made one, a weekday before the
+    # day dropped, a month word or its abbreviation made its number, 20261023 spelled out.
+    map norm {
+      let months = [["jan", 1], ["feb", 2], ["mar", 3], ["apr", 4], ["m[aá]j", 5], ["j[uú]n", 6], ["j[uú]l", 7], ["aug", 8], ["sep", 9], ["okt", 10], ["nov", 11], ["dec", 12]]
+      let t = this.re_replace_all("[–—−]", "-").re_replace_all("^[^0-9]+", "")
+      let t = if $t.re_match("^[0-9]{8}$") { "%s. %s. %s".format($t.slice(6, 8), $t.slice(4, 6), $t.slice(0, 4)) } else { $t }
+      root = $months.fold($t, acc -> acc.tally.re_replace_all("(?i)([0-9]{1,2})\\.?\\s*" + acc.value.index(0) + "\\p{L}*\\.?", "$1. %d. ".format(acc.value.index(1)))).re_replace_all("\\s+", " ").trim()
+    }
+    # {d, m, y[, h, i]} as YYYY-MM-DD or a local datetime with Bratislava's offset; null for a day no calendar has.
+    map at {
+      let day = if this.d == "" || this.m == "" || this.y == "" { null } else { "%04d-%02d-%02d".format(this.y.number().int64(), this.m.number().int64(), this.d.number().int64()) }
+      let day = if $day != null && $day.ts_parse("2006-01-02").catch(null) != null { $day } else { null }
+      let local = if $day != null && this.h.or("") != "" && this.h.number().int64() < 24 { "%sT%02d:%s:00".format($day, this.h.number().int64(), this.i) } else { null }
+      root = if $local != null { $local + ($local + "Z").ts_format("-07:00", "Europe/Bratislava") } else { $day }
+    }
+    let when_re = "^(?P<d1>[0-9]{1,2})\\.\\s*(?:(?P<m1>[0-9]{1,2})\\.\\s*)?(?P<y1>[0-9]{4})?(?:\\s*,?\\s*(?:o|od)?\\s*(?P<h1>[0-9]{1,2})[:.](?P<i1>[0-9]{2}))?(?:\\s*(?:h|hod)\\.?)?(?:\\s*-\\s*(?:(?P<d2>[0-9]{1,2})\\.\\s*(?P<m2>[0-9]{1,2})\\.\\s*(?P<y2>[0-9]{4})?)?\\s*,?\\s*(?:(?P<h2>[0-9]{1,2})[:.](?P<i2>[0-9]{2}))?)?"
+    let chunks = content().string().re_replace_all($c.card, "\u0001$0").split("\u0001").slice(1)
+    root = $chunks.map_each(ch -> {
+      "url": { "chunk": ch, "rx": $c.url.or(null) }.apply("field"),
+      "name": { "chunk": ch, "rx": $c.name }.apply("field"),
+      "when": { "chunk": ch, "rx": $c.when }.apply("field").or("").apply("norm"),
+      "until": { "chunk": ch, "rx": $c.end.or(null) }.apply("field").or("").apply("norm"),
+      "time": { "chunk": ch, "rx": $c.time.or(null) }.apply("field").or("").re_find_object("(?P<h>[0-9]{1,2})[:.](?P<i>[0-9]{2})").catch({}),
+      "venue": { "chunk": ch, "rx": $c.venue.or(null) }.apply("field"),
+      "locality": { "chunk": ch, "rx": $c.locality.or(null) }.apply("field")
+    }).map_each(r -> r.merge({ "w": r.when.re_find_object($when_re).catch({}), "e": r.until.re_find_object($when_re).catch({}) })).map_each(r -> {
+      "name": r.name,
+      "start": { "d": r.w.d1.or(""), "m": r.w.m1.or("").(v -> if v == "" { r.w.m2.or("") } else { v }), "y": r.w.y1.or("").(v -> if v == "" { r.w.y2.or("") } else { v }), "h": r.w.h1.or("").(v -> if v == "" { r.time.h.or("") } else { v }), "i": r.w.i1.or("").(v -> if v == "" { r.time.i.or("") } else { v }) }.apply("at"),
+      # The end: the range's second day, else a second clock on the start's day, else the `end` field's day.
+      "end": if r.w.d2.or("") != "" { { "d": r.w.d2, "m": r.w.m2, "y": r.w.y2.or(""), "h": r.w.h2.or(""), "i": r.w.i2.or("") }.apply("at") } else if r.w.h2.or("") != "" { { "d": r.w.d1, "m": r.w.m1.or(""), "y": r.w.y1.or(""), "h": r.w.h2, "i": r.w.i2 }.apply("at") } else if r.e.d1.or("") != "" { { "d": r.e.d1, "m": r.e.m1.or(""), "y": r.e.y1.or("") }.apply("at") } else { null },
+      "venue": r.venue,
+      # A museum's branch in another town (ÚĽUV Košice) is that town's event, never the source's.
+      "locality": r.locality,
+      # A card links its event on the source's own host, or a fair's own site (agrokomplex.sk).
+      "url": r.url.or("").(u -> if u.has_prefix("/") && !u.has_prefix("//") { "__HOST__" + u } else if u.re_match("^https://[^\\s]+$") { u } else { null }),
+      "sourceId": r.url
+    })

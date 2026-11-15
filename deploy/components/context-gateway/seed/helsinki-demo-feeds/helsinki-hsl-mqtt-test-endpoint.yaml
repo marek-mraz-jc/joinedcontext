@@ -1,0 +1,16 @@
+# The one door of the test space (T-5883): the pipeline writes through it, people of the
+# organization read it. Organization only, off the catalogue.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: hsl-mqtt-test
+  namespace: helsinki
+  title: { en: HSL trams through our MQTT broker (test) }
+spec:
+  contextSpaceRef: hsl-mqtt-test
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:hel.fi:hsl-mqtt-test:hsl-mqtt-test-pipelines-write
+  slug: bxh7tot5zee4ndom364owjtyf2ppinsy
+  audience: organization
+  enabledRepresentations: [ngsi-ld, mcp, websocket, ogc-features]

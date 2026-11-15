@@ -1,0 +1,30 @@
+# The server component of kpi-forecast (T-3350, ADR-N-044): a wasm32-wasip2 component on the shared
+# host that keeps every indicator's forecast with the day it was made, and monthly reports of the
+# forecasts against what was measured under the App's own prefix. It forecasts with the page's own
+# crate (../wasm), without the browser's bindings. Its own workspace and lock, as the build lane
+# builds it (AP-151).
+[package]
+name = "kpi-forecast-server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "EUPL-1.2"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kpi-forecast = { path = "../wasm", default-features = false }
+# The guest SDK at the platform commit the other server Apps pin: `gateway` reaches the App's own
+# Endpoint alone (AP-147, AP-157).
+jc-app-sdk = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "ef03418872f29c10bf895fdf84aaf899e651f205" }
+serde = { version = "1", features = ["derive"] }
+# The job's export (wit/server.wit), the version the SDK binds with.
+wit-bindgen = "0.62"
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+[workspace]

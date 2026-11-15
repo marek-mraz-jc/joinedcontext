@@ -1,0 +1,26 @@
+---
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: cnpg-operator-probes
+  annotations:
+    reason: >-
+      The CloudNativePG operator chart wires the same /readyz manager endpoint
+      into both probes and exposes no way to change either. The finding is
+      cosmetic for a controller with no traffic to gate: readiness routes no
+      requests (the operator has no Service selector for user traffic), so the
+      duplicate probe cannot mask a restart loop the way it could for a server.
+      Upstream: cloudnative-pg/charts. Re-check on every operator chart bump.
+spec:
+  exceptions:
+    - policyName: validate-probes
+      ruleNames:
+        - require-different-probes
+        - autogen-require-different-probes
+  match:
+    any:
+      - resources:
+          kinds:
+            - Deployment
+          names:
+            - postgres-operator-cloudnative-pg

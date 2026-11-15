@@ -1,0 +1,110 @@
+# One Smart Data Model type per catalogue dataset (T-4344): OffStreetParking of the space zilina-doprava,
+# read through its own Policy. The publisher is Mesto Žilina by its registry IRI, as the
+# Project's spec.catalog names it (T-4596); the data is the city's under ODbL, credited "Mesto Žilina" (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-parkoviska
+  namespace: zilina
+  title: { sk: Parkoviská — Žilina, en: Car parks — Žilina }
+  description:
+    sk: 'Parkoviská mesta Žilina s počtom voľných a všetkých miest, obnovované každých 5 minút, s históriou 30 dní. Zdroj: Mesto Žilina, opendata.zilina.sk, ODbL.'
+    en: "The City of Žilina's car parks with their free and total spaces, refreshed every 5 minutes, with 30 days of history. Source: City of Žilina, opendata.zilina.sk, ODbL."
+spec:
+  contextSpaceRef: zilina-doprava
+  slug: rpswug2dyqx2myokydtnuejqgu7rstvq
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:parkoviska-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: zilina }
+      license: odc-odbl
+  catalog:
+    # Public facilities, counts and vehicle positions: no record names a person.
+    personalData: does-not-contain
+    publisher:
+      name: { sk: Mesto Žilina, en: City of Žilina }
+      uri: https://data.gov.sk/id/legal-subject/00321796
+    license: ODC_ODBL
+    attribution:
+      sk: 'Zdroj: Mesto Žilina, otvorené dáta opendata.zilina.sk, ODbL'
+      en: 'Source: City of Žilina (Mesto Žilina), open data opendata.zilina.sk, ODbL'
+    themes: [TRAN]
+    keywords:
+      sk: [parkovanie, obsadenosť, voľné miesta, Žilina]
+      en: [parking, occupancy, free spaces, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: CONT
+    source:
+      - url: https://opendata.zilina.sk/sk/dataset-list/detail/57
+        title:
+          sk: Zoznam parkovísk s aktuálnou obsadenosťou (opendata.zilina.sk)
+          en: Car parks with their current occupancy (opendata.zilina.sk)
+        description:
+          sk: Mesto Žilina, platforma Invipo, POST https://opendata.zilina.sk/api/datasets/v1/city-dashboard/parking/list, ODbL.
+          en: City of Žilina, Invipo platform, POST https://opendata.zilina.sk/api/datasets/v1/city-dashboard/parking/list, ODbL.
+    pipelineRef: { kind: Pipeline, name: parkovanie }
+    # Declared charts replace the automatic ones (T-5432): totalSpotNumber is the parking's fixed
+    # size and has no observedAt, so its history chart stayed empty.
+    visualizations:
+      - name: auto-offstreetparking-availablespotnumber
+        title: { sk: Voľné miesta, en: Free spaces }
+        description:
+          sk: Hodnoty za posledných 7 dní, jedna čiara na parkovisko.
+          en: The values of the last 7 days, one line per car park.
+        data:
+          source: temporal
+          type: OffStreetParking
+          attrs: [availableSpotNumber]
+          last: P7D
+        spec:
+          $schema: https://vega.github.io/schema/vega-lite/v5.json
+          data: { name: source }
+          mark: { type: line, point: true }
+          encoding:
+            x: { field: observedAt, type: temporal, title: null }
+            'y':
+              field: availableSpotNumber
+              type: quantitative
+              scale: { zero: false }
+            color: { field: name, type: nominal, title: null }
+            tooltip:
+              - field: observedAt
+                type: temporal
+              - field: availableSpotNumber
+                type: quantitative
+                format: ',d'
+              - field: name
+                type: nominal
+      - name: auto-offstreetparking-occupiedspotnumber
+        title: { sk: Obsadené miesta, en: Occupied spaces }
+        description:
+          sk: Hodnoty za posledných 7 dní, jedna čiara na parkovisko.
+          en: The values of the last 7 days, one line per car park.
+        data:
+          source: temporal
+          type: OffStreetParking
+          attrs: [occupiedSpotNumber]
+          last: P7D
+        spec:
+          $schema: https://vega.github.io/schema/vega-lite/v5.json
+          data: { name: source }
+          mark: { type: line, point: true }
+          encoding:
+            x: { field: observedAt, type: temporal, title: null }
+            'y':
+              field: occupiedSpotNumber
+              type: quantitative
+              scale: { zero: false }
+            color: { field: name, type: nominal, title: null }
+            tooltip:
+              - field: observedAt
+                type: temporal
+              - field: occupiedSpotNumber
+                type: quantitative
+                format: ',d'
+              - field: name
+                type: nominal

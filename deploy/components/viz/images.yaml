@@ -1,0 +1,15 @@
+---
+# Re-pin a digest with (the manifest list, so every architecture keeps its image):
+#   curl -s "https://hub.docker.com/v2/repositories/<repo>/tags/<tag>" | jq -r .digest
+viz:
+  renderer:
+    # Static files only, as uid 101, writing /tmp and its cache. The image is the pinned nginx
+    # plus the vendored Vega, MapLibre and PMTiles builds (`images/viz/`, T-4657), built and
+    # cosign-signed by image-viz.yml at deployment fe826623 (Vega 6.4.0 at caa9f4a2, musl/zlib fixes T-6688 at fe826623; T-6313 at 575f76dd and T-6319 at fbabf207:
+    # unified entity grid explorer bundle with the data toolbar; T-5376 at e58c63c0: nginx-unprivileged 1.30.6 base; T-5231 at ccff991d: centred citizen row card, cancellable default filter;
+    # T-5192/T-5196 at 6f9117b9: model-driven columns, page length, numbered pager;
+    # T-5082 explorer before it, d9646520).
+    server:
+      repository: 'ghcr.io/marek-mraz-jc/joinedcontext-viz'
+      tag: '1.30.6'
+      digest: 'sha256:52b18f4286bc9d26871e42acae757a53977a89179158cbd6da10c16f71dc40f8'

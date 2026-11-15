@@ -1,0 +1,176 @@
+{% ckan_extends %}
+
+{# No share buttons to two social networks beside the resources (T-3009). #}
+{% block resource_license %}{% endblock %}
+
+{#
+  The trail to the resource, CKAN 2.11.6's package/base.html with the resource named in words
+  (T-3048); CKAN's own block appended the file name, cut at 30 characters.
+#}
+{% block breadcrumb_content %}
+  {% set dataset = h.dataset_display_name(pkg) %}
+  {% if pkg.organization %}
+    {% set organization = h.get_translated(pkg.organization, 'title') or pkg.organization.name %}
+    {% set group_type = pkg.organization.type %}
+    <li>{% link_for h.humanize_entity_type('organization', group_type, 'breadcrumb') or _('Organizations'), named_route=group_type ~ '.index' %}</li>
+    <li>{% link_for organization, named_route=group_type ~ '.read', id=pkg.organization.name %}</li>
+  {% else %}
+    <li>{% link_for _(pkg.type.title()), named_route=pkg.type ~ '.search' %}</li>
+  {% endif %}
+  <li>{% link_for dataset, named_route=pkg.type ~ '.read', id=pkg.name %}</li>
+  <li class="active"><a href="" aria-current="page">{{ h.jc_resource_label(res, pkg) }}</a></li>
+{% endblock %}
+
+{#
+  CKAN's top button ("API Endpoint", "Download") was a second primary action beside the page's
+  own (T-4333); an editor keeps Edit and Views.
+#}
+{% block resource_actions %}
+  {% if h.check_access('package_update', {'id': pkg.id}) %}
+    <ul class="d-flex flex-wrap gap-1 justify-content-end">
+      <li>{% link_for _('Edit resource'), named_route=pkg.type ~ '_resource.edit', id=pkg.name, resource_id=res.id, class_='btn btn-default', icon='pencil' %}</li>
+      <li>{% link_for _('Views'), named_route=pkg.type ~ '_resource.views', id=pkg.name, resource_id=res.id, class_='btn btn-default', icon='chart-bar' %}</li>
+    </ul>
+  {% endif %}
+{% endblock %}
+
+{#
+  The resource's heading (T-3048, T-4333): its format and entity type once, its name in words,
+  one line of what it is in the page's language, the dataset it belongs to, and its address as a
+  person reads it, with the whole address one click away. An API's one action is copying it.
+#}
+{% block resource_content %}
+  {% set label = h.jc_resource_label(res, package) %}
+  {% set api = h.jc_is_api(res) %}
+  {% set kind = h.jc_kind(res) %}
+  {% set entity_type = h.jc_entity_type(res) %}
+  <p class="jc-eyebrow">
+    <span class="jc-chip jc-chip-primary">{{ h.jc_format(res) or '—' }}</span>
+    {% if entity_type %}<span>{{ h.jc_t('entity_type') }}: <code>{{ entity_type }}</code></span>{% endif %}
+  </p>
+  <h1 class="page-heading">{{ label }}</h1>
+  {% set what = h.jc_what(res) %}
+  {% if what %}<p class="jc-lead">{{ what }}</p>{% endif %}
+  {# The publisher's own words; an Endpoint's description is the harvest's or jcctl's, in English. #}
+  {% if res.description and not kind and not api %}
+    <div class="prose notes">{{ h.render_markdown(h.get_translated(res, 'description')) }}</div>
+  {% endif %}
+  <p>{{ h.jc_t('part_of') }}: <a href="{{ h.url_for(package.type ~ '.read', id=package.name) }}">{{ h.get_translated(package, 'title') or package.name }}</a></p>
+  {% if res.url %}
+    {% set address = h.jc_address(res) %}
+    <div class="jc-address">
+      <span class="jc-address-label">{{ h.jc_t('address') }}</span>
+      <code class="jc-address-short">{% if address.segments %}{% for part in address.segments %}<span>{{ part }}</span>{% if not loop.last %}/<wbr>{% endif %}{% endfor %}{% else %}{{ address.short }}{% endif %}</code>
+      {% if res.url %}
+        <button type="button" class="btn {{ 'btn-primary' if api else 'btn-default' }}" data-jc-copy="jc-address-full" data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}"><span class="jc-code-copy-label">{{ h.jc_t('copy_address') }}</span></button>
+      {% endif %}
+      <details class="jc-address-whole">
+        <summary>{{ h.jc_t('full_address') }}</summary>
+        <pre id="jc-address-full" tabindex="0"><code>{% snippet 'snippets/jc_breakable.html', text=address.full %}</code></pre>
+      </details>
+    </div>
+  {% endif %}
+{% endblock %}
+
+{#
+  An API resource shows its first rows live and how to use it (T-3887, T-4333); a file says what
+  it is and offers its one action, Download. An editor who may create views for a file still
+  gets CKAN's own explanation.
+#}
+{% block resource_view_content %}
+  {% set api = h.jc_is_api(res) %}
+  {# T-5059: an Endpoint's table or query resource opens the live explorer of its entity type
+     instead of a DataStore view or a five-row preview. #}
+  {% set explorer = h.jc_explorer(pkg, res) if (res.datastore_active or h.jc_kind(res) in ('NGSI-LD', 'OGCFEAT', 'ODATA', 'STA')) else none %}
+  {% if explorer %}
+    <div class="resource-view jc-api">
+      {% snippet 'package/snippets/jc_explorer.html', explorer=explorer %}
+    </div>
+  {% endif %}
+  {% if not explorer and (resource_views or (not api and h.check_access('resource_view_create', {'resource_id': resource.id}))) %}
+    {{ super() }}
+  {% elif api %}
+    <div class="resource-view jc-api">
+      {% set preview = none if explorer else h.jc_preview(res) %}
+      {% if preview %}
+        <section class="jc-live-rows" data-jc-preview="{{ preview.url }}" data-jc-kind="{{ preview.kind }}"
+                 data-jc-failed="{{ h.jc_t('preview_failed') }}" data-jc-empty="{{ h.jc_t('preview_empty') }}"
+                 data-jc-shown="{{ h.jc_t('preview_shown') }}" data-jc-type-label="{{ h.jc_t('entity_type') }}" aria-labelledby="jc-rows-title">
+          <h2 id="jc-rows-title">{{ h.jc_t('preview_types' if preview.kind == 'NGSI-LD-TYPES' else 'preview_api') }}</h2>
+          <p class="jc-rows-status" role="status">{{ h.jc_t('preview_loading') }}</p>
+          <div class="jc-rows-table" tabindex="0" hidden></div>
+        </section>
+      {% endif %}
+      {% set examples = h.jc_examples(res) %}
+      {% if examples %}
+        <section class="jc-examples" aria-labelledby="jc-examples-title">
+          <h2 id="jc-examples-title">{{ h.jc_t('usage') }}</h2>
+          {% for example in examples %}
+            <h3>{{ example.title }}</h3>
+            {% for step in example.steps %}<p>{{ step }}</p>{% endfor %}
+            {% if example.code %}
+              <div class="jc-copy jc-copy-code">
+                <pre id="{{ example.id }}" aria-label="{{ h.jc_t('snippet') }}" tabindex="0"><code>{% snippet 'snippets/jc_breakable.html', text=example.code %}</code></pre>
+                <button type="button" class="btn btn-default" data-jc-copy="{{ example.id }}" data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}"><span class="jc-code-copy-label">{{ h.jc_t('copy') }}</span></button>
+              </div>
+            {% endif %}
+          {% endfor %}
+          {% set guide = h.jc_guide(res) %}
+          {% if guide %}<p><a href="{{ guide }}" rel="noreferrer">{{ h.jc_t('guide') }}</a></p>{% endif %}
+          {% set developer = h.jc_developer_page(pkg) %}
+          {% if developer %}<p class="jc-developer-page"><a href="{{ developer }}" rel="noreferrer">{{ h.jc_t('developer_page') }}</a></p>{% endif %}
+        </section>
+      {% elif res.description %}
+        <div class="jc-usage">{% snippet 'package/snippets/jc_usage.html', blocks=h.jc_usage(res), res=res %}</div>
+      {% endif %}
+    </div>
+  {% elif h.jc_is_source(res, package) %}
+    <div class="resource-view jc-no-view">
+      <p>{{ h.jc_t('source_lead') }}</p>
+      {% if res.url and h.is_url(res.url) %}
+        <a class="btn btn-primary" href="{{ res.url }}" rel="noreferrer">{{ h.jc_t('open') }}<span class="visually-hidden"> {{ h.jc_resource_label(res, package) }}</span></a>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="resource-view jc-no-view">
+      <p>{{ h.jc_t('file_lead') }}</p>
+      {% if res.url and h.is_url(res.url) %}
+        <a class="btn btn-primary" href="{{ res.url }}" rel="noreferrer">
+          {{- h.jc_t('download') -}}
+          <span class="visually-hidden"> {{ h.jc_resource_label(res, package) }}</span>
+        </a>
+      {% endif %}
+    </div>
+  {% endif %}
+  <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
+{% endblock %}
+
+{#
+  What a reader asks about a resource, in the page's language (T-4333): its format, when it
+  changed (one date unless it was created on another day), the licence, the standard it follows,
+  the data model and how many records it holds. CKAN listed every internal field in English.
+#}
+{% block resource_additional_information_inner %}
+  <div class="module-content">
+    <h2>{{ h.jc_t('info') }}</h2>
+    <dl class="jc-facts">
+      <div><dt>{{ h.jc_t('format') }}</dt><dd>{{ h.jc_format(res) or '—' }}</dd></div>
+      {% for label, value in h.jc_dates(res) %}<div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+      <div><dt>{{ h.jc_t('licence') }}</dt><dd>{% snippet "snippets/license.html", pkg_dict=pkg, text_only=True %}</dd></div>
+      {% set standard = h.jc_standard(res) %}
+      {% if standard %}<div><dt>{{ h.jc_t('conforms_to') }}</dt><dd><a href="{{ standard.url }}" rel="noreferrer">{{ standard.name }}</a></dd></div>{% endif %}
+      {% set model = h.jc_model(pkg) %}
+      {% if model %}<div><dt>{{ h.jc_t('section_schema') }}</dt><dd><a href="{{ model.url }}" rel="noreferrer">{{ model.name }}</a></dd></div>{% endif %}
+      {% set entity_type = h.jc_entity_type(res) %}
+      {% if entity_type %}<div><dt>{{ h.jc_t('entity_type') }}</dt><dd><code>{{ entity_type }}</code></dd></div>{% endif %}
+      <div data-jc-count hidden><dt>{{ h.jc_t('records') }}</dt><dd></dd></div>
+    </dl>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script src="{{ h.url_for_static('/jc-frame.js') }}" defer></script>
+  <script src="{{ h.url_for_static('/jc-preview.js') }}" defer></script>
+  <script src="{{ h.url_for_static('/jc-viz.js') }}" defer></script>
+{% endblock %}

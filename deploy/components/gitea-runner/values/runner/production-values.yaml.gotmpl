@@ -1,0 +1,22 @@
+# Checklist:
+# - [x] Resources (requests and limits) -> one build per pod
+# - [x] Larger Storage -> stateless, /tmp wiped per job
+# - [x] 2+ Replicas -> two builds at once; a pod takes one job at a time
+# - [ ] PodDisruptionBudget -> not wanted: a runner between jobs is safe to evict, and one in a
+#       job ends that job, which the forge reports as failed and a person re-runs
+
+replicaCount: 2
+
+{{- $this := index .Values "gitea-runner" (.Release.Name | trimPrefix "gitea-runner-") }}
+{{- if hasKey $this "resources" }}
+resources:
+  {{- $this.resources | toYaml | nindent 2 }}
+{{- else }}
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: '2'
+    memory: 3Gi
+{{- end }}

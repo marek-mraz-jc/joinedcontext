@@ -277,7 +277,7 @@ pub async fn import(
         .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    crate::api::projects::new_project_name(state, shako, project).await?;
+    crate::api::projects::new_project_name(state, shako, project, &organization).await?;
     let Checked { index, files, own } = check(bytes)?;
     let origin = index.metadata.name.clone();
 

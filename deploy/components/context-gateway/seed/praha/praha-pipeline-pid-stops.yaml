@@ -1,0 +1,18 @@
+# One GtfsStop per PID stop platform in Prague from ROPID's stop layer (T-5423).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: pid-stops
+  namespace: praha
+  title: { en: PID stops, cs: Zastávky PID }
+spec:
+  class: auto
+  # ROPID republishes the layer each night with the timetable; one read a day keeps up.
+  period: 24h
+  schedule: '20 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: pid-stops }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: GtfsStop, mode: upsert }
+  # 9.4 MB of GeoJSON runs in 128 MiB with little room (measured 2026-10-24 with docker --memory).
+  quotas: { maxMemoryMb: 192, cpuMillicores: 100 }

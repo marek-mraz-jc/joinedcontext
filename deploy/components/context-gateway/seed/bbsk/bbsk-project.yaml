@@ -1,0 +1,32 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  name: bbsk
+  namespace: org
+  title: { sk: Banskobystrický samosprávny kraj, en: Banská Bystrica Self-Governing Region }
+  description:
+    sk: Kraj s 13 okresmi a 614 356 obyvateľmi; publikuje to, čo patrí kraju.
+    en: 'The region: 13 districts, 614 356 people, publishing what a region owns.'
+spec:
+  organizationRef: hel
+  # Who publishes this data, the did:web assigner of its Apps' Policies (PF-108); describes, grants nothing.
+  domain: bbsk.sk
+  # The body that publishes the project's catalogue /catalog/bbsk.jsonld, by its registry IRI
+  # (EP-127, API/08 section 6). The desk is the installation's own, so no address is invented (T-4596).
+  catalog:
+    publisher:
+      name: { sk: Banskobystrický samosprávny kraj, en: Banská Bystrica Self-Governing Region }
+      uri: https://data.gov.sk/id/legal-subject/37828100
+    contactPoint: { name: joinedcontext platform, email: hello@joinedcontext.com }
+  # Owner, 2026-09-25 (T-2873): no demo work and no city dataset is refused by a quota, so every
+  # project allows 100 of each countable kind and runtime ceilings nobody reaches (PF-73). The
+  # quota stays as the mechanism; what the node holds is the operator's bounds file (PF-97).
+  quotas:
+    contextSpaces: 100
+    residentPipelines: 100
+    publicEndpoints: 110
+    apps: 100
+    ingestEventsPerSecond: 500
+    agentRunsPerDay: 2000
+    entitiesPerSpace: 1000000
+    requestsPerMinute: 6000

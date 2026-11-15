@@ -1,0 +1,267 @@
+{
+ "version": "2.0",
+ "class": "collection",
+ "label": "JSON-stat Dataset Collection",
+ "href": "http://datacube.statistics.sk/#!/lang/sk",
+ "link": {
+  "item": [
+   {
+    "class": "dataset",
+    "href": "https://data.statistics.sk/api/v2/dataset/as1001rs/as1001rs_rok/as1001rs_ukaz/as1001rs_poh?lang=sk",
+    "label": "Obyvateľstvo a charakteristiky veku",
+    "update": "2025-12-19",
+    "dimension": {
+     "as1001rs_rok": {
+      "label": "as1001rs_rok",
+      "note": "Rok",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1001rs/as1001rs_rok?lang=sk"
+     },
+     "as1001rs_ukaz": {
+      "label": "as1001rs_ukaz",
+      "note": "Ukazovateľ",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1001rs/as1001rs_ukaz?lang=sk"
+     },
+     "as1001rs_poh": {
+      "label": "as1001rs_poh",
+      "note": "Pohlavie",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1001rs/as1001rs_poh?lang=sk"
+     }
+    }
+   },
+   {
+    "class": "dataset",
+    "href": "https://data.statistics.sk/api/v2/dataset/as1003rs/as1003rs_rok/as1003rs_ukaz/as1003rs_dom?lang=sk",
+    "label": "Čisté peňažné príjmy a výdavky domácností podľa veku prednostu",
+    "update": "2025-12-19",
+    "dimension": {
+     "as1003rs_rok": {
+      "label": "as1003rs_rok",
+      "note": "Roky",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1003rs/as1003rs_rok?lang=sk"
+     },
+     "as1003rs_ukaz": {
+      "label": "as1003rs_ukaz",
+      "note": "Ukazovateľ",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1003rs/as1003rs_ukaz?lang=sk"
+     },
+     "as1003rs_dom": {
+      "label": "as1003rs_dom",
+      "note": "Domácnosti a vek",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1003rs/as1003rs_dom?lang=sk"
+     }
+    }
+   },
+   {
+    "class": "dataset",
+    "href": "https://data.statistics.sk/api/v2/dataset/as1007rs/as1007rs_rok/as1007rs_ukaz/as1007rs_poh/as1007rs_vek?lang=sk",
+    "label": "Default",
+    "update": "2025-12-19",
+    "dimension": {
+     "as1007rs_rok": {
+      "label": "as1007rs_rok",
+      "note": "Roky",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1007rs/as1007rs_rok?lang=sk"
+     },
+     "as1007rs_ukaz": {
+      "label": "as1007rs_ukaz",
+      "note": "Ukazovateľ",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1007rs/as1007rs_ukaz?lang=sk"
+     },
+     "as1007rs_poh": {
+      "label": "as1007rs_poh",
+      "note": "Pohlavie",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1007rs/as1007rs_poh?lang=sk"
+     },
+     "as1007rs_vek": {
+      "label": "as1007rs_vek",
+      "note": "Vek",
+      "href": "https://data.statistics.sk/api/v2/dimension/as1007rs/as1007rs_vek?lang=sk"
+     }
+    }
+   },
+   {
+    "class": "dataset",
+    "href": "https://data.statistics.sk/api/v2/dataset/is1001rs/is1001rs_rok/is1001rs_ukaz/is1001rs_doma?lang=sk",
+    "label": "Vybavenie domácností informačnými technológiami",
+    "update": "2022-12-20",
+    "dimension": {
+     "is1001rs_rok": {
+      "label": "is1001rs_rok",
+      "note": "Rok",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1001rs/is1001rs_rok?lang=sk"
+     },
+     "is1001rs_ukaz": {
+      "label": "is1001rs_ukaz",
+      "note": "Ukazovateľ",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1001rs/is1001rs_ukaz?lang=sk"
+     },
+     "is1001rs_doma": {
+      "label": "is1001rs_doma",
+      "note": "Domácnosti",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1001rs/is1001rs_doma?lang=sk"
+     }
+    }
+   },
+   {
+    "class": "dataset",
+    "href": "https://data.statistics.sk/api/v2/dataset/is1002rs/is1002rs_rok/is1002rs_ukaz/is1002rs_demo?lang=sk",
+    "label": "Nakupovanie cez internet pre súkromnú potrebu",
+    "update": "2022-12-20",
+    "dimension": {
+     "is1002rs_rok": {
+      "label": "is1002rs_rok",
+      "note": "Rok",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1002rs/is1002rs_rok?lang=sk"
+     },
+     "is1002rs_ukaz": {
+      "label": "is1002rs_ukaz",
+      "note": "Ukazovateľ",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1002rs/is1002rs_ukaz?lang=sk"
+     },
+     "is1002rs_demo": {
+      "label": "is1002rs_demo",
+      "note": "Obyvateľstvo",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1002rs/is1002rs_demo?lang=sk"
+     }
+    }
+   },
+   {
+    "class": "dataset",
+    "href": "https://data.statistics.sk/api/v2/dataset/is1003rs/is1003rs_rok/is1003rs_ukaz/is1003rs_nace/is1003rs_mj?lang=sk",
+    "label": "IKT v podnikoch",
+    "update": "2025-12-19",
+    "dimension": {
+     "is1003rs_rok": {
+      "label": "is1003rs_rok",
+      "note": "Rok",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1003rs/is1003rs_rok?lang=sk"
+     },
+     "is1003rs_ukaz": {
+      "label": "is1003rs_ukaz",
+      "note": "Ukazovateľ",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1003rs/is1003rs_ukaz?lang=sk"
+     },
+     "is1003rs_nace": {
+      "label": "is1003rs_nace",
+      "note": "SK NACE Rev. 2",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1003rs/is1003rs_nace?lang=sk"
+     },
+     "is1003rs_mj": {
+      "label": "is1003rs_mj",
+      "note": "Merná jednotka",
+      "href": "https://data.statistics.sk/api/v2/dimension/is1003rs/is1003rs_mj?lang=sk"
+     }
+    }
+   },
+   {
+    "class": "dataset",
+    "href": "https://data.statistics.sk/api/v2/dataset/ps1002rs/ps1002rs_year/ps1002rs_sex/ps1002rs_specu/ps1002rs_age/ps1002rs_unit/ps1002rs_indic?lang=sk",
+    "update": "2026-04-30",
+    "dimension": {
+     "ps1002rs_year": {
+      "label": "ps1002rs_year",
+      "note": "Rok",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1002rs/ps1002rs_year?lang=sk"
+     },
+     "ps1002rs_sex": {
+      "label": "ps1002rs_sex",
+      "note": "Pohlavie",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1002rs/ps1002rs_sex?lang=sk"
+     },
+     "ps1002rs_specu": {
+      "label": "ps1002rs_specu",
+      "note": "Špecifikácia mernej jednotky",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1002rs/ps1002rs_specu?lang=sk"
+     },
+     "ps1002rs_age": {
+      "label": "ps1002rs_age",
+      "note": "Vek",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1002rs/ps1002rs_age?lang=sk"
+     },
+     "ps1002rs_unit": {
+      "label": "ps1002rs_unit",
+      "note": "Merná jednotka",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1002rs/ps1002rs_unit?lang=sk"
+     },
+     "ps1002rs_indic": {
+      "label": "ps1002rs_indic",
+      "note": "Ukazovateľ",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1002rs/ps1002rs_indic?lang=sk"
+     }
+    }
+   },
+   {
+    "class": "dataset",
+    "href": "https://data.statistics.sk/api/v2/dataset/ps1003rs/ps1003rs_year/ps1003rs_specu/ps1003rs_sex/ps1003rs_unit/ps1003rs_indic/ps1003rs_ecact1/ps1003rs_ecact2?lang=sk",
+    "update": "2026-04-30",
+    "dimension": {
+     "ps1003rs_year": {
+      "label": "ps1003rs_year",
+      "note": "Rok",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1003rs/ps1003rs_year?lang=sk"
+     },
+     "ps1003rs_specu": {
+      "label": "ps1003rs_specu",
+      "note": "Špecifikácia mernej jednotky",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1003rs/ps1003rs_specu?lang=sk"
+     },
+     "ps1003rs_sex": {
+      "label": "ps1003rs_sex",
+      "note": "Pohlavie",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1003rs/ps1003rs_sex?lang=sk"
+     },
+     "ps1003rs_unit": {
+      "label": "ps1003rs_unit",
+      "note": "Merná jednotka",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1003rs/ps1003rs_unit?lang=sk"
+     },
+     "ps1003rs_indic": {
+      "label": "ps1003rs_indic",
+      "note": "Ukazovateľ",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1003rs/ps1003rs_indic?lang=sk"
+     },
+     "ps1003rs_ecact1": {
+      "label": "ps1003rs_ecact1",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1003rs/ps1003rs_ecact1?lang=sk"
+     },
+     "ps1003rs_ecact2": {
+      "label": "ps1003rs_ecact2",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1003rs/ps1003rs_ecact2?lang=sk"
+     }
+    }
+   },
+   {
+    "class": "dataset",
+    "href": "https://data.statistics.sk/api/v2/dataset/ps1004rs/ps1004rs_year/ps1004rs_specu/ps1004rs_quintil/ps1004rs_unit/ps1004rs_indic?lang=sk",
+    "update": "2026-04-30",
+    "dimension": {
+     "ps1004rs_year": {
+      "label": "ps1004rs_year",
+      "note": "Rok",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1004rs/ps1004rs_year?lang=sk"
+     },
+     "ps1004rs_specu": {
+      "label": "ps1004rs_specu",
+      "note": "Špecifikácia mernej jednotky",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1004rs/ps1004rs_specu?lang=sk"
+     },
+     "ps1004rs_quintil": {
+      "label": "ps1004rs_quintil",
+      "note": "Quintile",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1004rs/ps1004rs_quintil?lang=sk"
+     },
+     "ps1004rs_unit": {
+      "label": "ps1004rs_unit",
+      "note": "Merná jednotka",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1004rs/ps1004rs_unit?lang=sk"
+     },
+     "ps1004rs_indic": {
+      "label": "ps1004rs_indic",
+      "note": "Ukazovateľ",
+      "href": "https://data.statistics.sk/api/v2/dimension/ps1004rs/ps1004rs_indic?lang=sk"
+     }
+    }
+   }
+  ]
+ }
+}

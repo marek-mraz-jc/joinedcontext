@@ -1,0 +1,239 @@
+# The mapping of the statistics pipeline (T-5266): one Smart Data Model KeyPerformanceIndicator per
+# (indicator, area) of the city's statistics on Open Data BCN (Departament d'Estadística i Difusió
+# de Dades): the Padró (population, households), the cadastre, the notaries' sales and the vehicle
+# register, each for the 73 barris, the 10 districts and the whole city, the newest period of each.
+# One pipeline for every table: each is one CKAN DataStore resource of the same host, and each
+# names only its period, area, value and breakdown columns below.
+#
+# The DataSource's answer is the Padró's own code list (pad-dimensions): it labels the coded
+# breakdowns (SEXE 1 Dona, 2 Home; EDAT_Q; NACIONALITAT_G...) and lists the 73 barri codes, the
+# register an indicator's refArea must name, because the space refuses a whole entity whose
+# relationship names an entity it does not hold. Each table then costs two calls to
+# opendata-ajuntament.barcelona.cat only, one every two seconds (rate limit bcn_stat; a burst of
+# downloads answered 403 for an hour on 2026-10-23): package_show finds the newest yearly CSV
+# resource the DataStore holds, and one datastore_search_sql sums its rows (census sections) to
+# barri, district and city in the source's database (GROUPING SETS), 60 s (the API answers in 8 to
+# 20 s) and 8 MiB each.
+#
+# Ids: urn:ngsi-ld:KeyPerformanceIndicator:{domain}:{space}:stat-{theme}-{table}-{breakdown
+# codes}-{city | district-NN | neighbourhood-NN}; the theme segment is what each theme's Endpoint
+# Policy selects by idPattern. kpiValue carries the period's day as observedAt (a stock its
+# reference day, a flow its period's last day), so the space records one history row per period.
+#
+# Plausibility (owner 2026-10-22): a value is dropped and counted by reason when the source hides
+# it (".." for fewer than 5) or a sum would include a hidden cell, when it is negative, when its
+# district or barri code is no area of the city, when a coded breakdown names a code pad-dimensions
+# lacks, when its period starts in the future, or when a second value has the same id. A table
+# whose newest period is older than its maxAgeDays, that answers nothing, or that answers no usable
+# value fails its message (the run is failed, nothing is deleted); the counts go to the runner
+# log, one line per table.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let records = this.result.records.or([])
+            let register = $records.filter(r -> r.Desc_Dimensio.or("") == "CODI_BARRI_DEST").map_each(r -> r.Codi_Valor.string().trim()).filter(c -> c.re_match("^[0-9]{1,2}$")).map_each(c -> "%02d".format(c.number().int64())).sort()
+            let labels = $records.filter(r -> r.Desc_Dimensio.or("") != "" && r.Desc_Dimensio != "CODI_BARRI_DEST").fold({}, item -> item.tally.merge({ item.value.Desc_Dimensio: { item.value.Codi_Valor.string().trim(): item.value.Desc_Valor_CA.string().re_replace_all(" ", " ").trim() } }))
+            # period: the period columns ([Data_Referencia] a reference day, [Any] a year, [Any, Mes]
+            # a month); observe: start (a stock on 1 January, the Padró and the cadastre) or end (a
+            # flow over the period); coded: the breakdown columns pad-dimensions labels; unitDim:
+            # the column whose value names the unit (€ euros, m2 square metres, else a count).
+            let padro = {"theme": "population", "every": "yearly", "district": "Codi_Districte", "districtName": "Nom_Districte", "barri": "Codi_Barri", "barriName": "Nom_Barri", "value": "Valor", "coded": true}
+            let census = $padro.assign({"period": ["Data_Referencia"], "observe": "start"})
+            let flows = $padro.assign({"period": ["Any"], "observe": "end", "dims": []})
+            let cadastre = {"theme": "housing", "every": "yearly", "period": ["Any"], "observe": "start", "district": "Codi_districte", "districtName": "Nom_districte", "barri": "Codi_barri", "barriName": "Nom_barri", "value": "Nombre"}
+            let vehicles = {"theme": "vehicles", "every": "yearly", "period": ["Any"], "observe": "end", "district": "Codi_Districte", "districtName": "Nom_Districte", "barri": "Codi_Barri", "barriName": "Nom_Barri", "value": "Nombre"}
+            let notaries = {"theme": "housing", "every": "monthly", "period": ["Any", "Mes"], "observe": "end", "district": "Codi_Districte", "districtName": "Nom_Districte", "barri": "Codi_Barri", "barriName": "Nom_Barri", "dims": ["Tipologia_Us_Desc"], "maxAgeDays": 366}
+            let tables = [
+              $census.assign({"id": "pad_mdbas", "dims": []}),
+              $census.assign({"id": "pad_mdbas_sexe", "dims": ["SEXE"]}),
+              $census.assign({"id": "pad_mdbas_edat-q", "dims": ["EDAT_Q"]}),
+              $census.assign({"id": "pad_mdbas_nacionalitat-g_sexe", "dims": ["NACIONALITAT_G", "SEXE"]}),
+              $census.assign({"id": "pad_mdbas_niv-educa-esta_sexe", "dims": ["NIV_EDUCA_esta", "SEXE"]}),
+              $census.assign({"id": "pad_mdbas_lloc-naix_sexe", "dims": ["LLOC_NAIX", "SEXE"]}),
+              $flows.assign({"id": "pad_nai_mdbas"}),
+              $flows.assign({"id": "pad_def_mdbas"}),
+              $flows.assign({"id": "pad_imm_mdbas"}),
+              $flows.assign({"id": "pad_emi_mdbas"}),
+              $flows.assign({"id": "pad_alt_mdbas"}),
+              $flows.assign({"id": "pad_bai_mdbas"}),
+              $census.assign({"id": "pad_dom_mdbas_n-persones", "theme": "housing", "dims": ["N_PERSONES_AGG"]}),
+              $census.assign({"id": "pad_dom_mdbas_tipus-domicili", "theme": "housing", "dims": ["TIPUS_DOMICILI"]}),
+              $cadastre.assign({"id": "est-cadastre-habitatges-superficie", "dims": ["Desc_sup"]}),
+              $cadastre.assign({"id": "est-cadastre-habitatges-any-const", "dims": ["Any_construccio"]}),
+              $cadastre.assign({"id": "est-cadastre-finques-regim-propietat", "dims": ["Regim_propietat"]}),
+              $notaries.assign({"id": "notaris_compravendes_trans_tip_us", "value": "Nombre"}),
+              $notaries.assign({"id": "notaris_compravendes_trans_tip_us_sup", "value": "Superficie_m2", "unit": "MTK"}),
+              $vehicles.assign({"id": "est-vehicles-tipologia-parc-vehicles", "value": "Nombre_vehicles", "dims": ["Tipologia_parc"]}),
+              $vehicles.assign({"id": "est_vehicles_propulsio", "dims": ["Tipus_Propulsio"]}),
+              $vehicles.assign({"id": "est_vehicles_servei", "value": "Total", "dims": ["Tipus_Servei"]}),
+              $vehicles.assign({"id": "est_vehicles_evolucio_total", "value": "Total", "dims": []}),
+              $vehicles.assign({"id": "est-vehicles-tipus-propietari", "district": "Codi_districte", "districtName": "Nom_districte", "barri": "Codi_barri", "barriName": "Nom_barri", "dims": ["Tipus_Vehicles", "Desc_tipus_propietari"]}),
+              $census.assign({"id": "pad_mdbas_nacionalitat-continent_sexe", "dims": ["NACIONALITAT_CONTINENT", "SEXE"]}),
+              $flows.assign({"id": "pad_imm_mdbas_nacionalitat-g", "dims": ["NACIONALITAT_G"]}),
+              $flows.assign({"id": "pad_emi_mdbas_nacionalitat-g", "dims": ["NACIONALITAT_G"]}),
+              $census.assign({"id": "pad_dom_mdbas_dones", "theme": "housing", "dims": ["DOM_DONES"]}),
+              $census.assign({"id": "pad_dom_mdbas_homes", "theme": "housing", "dims": ["DOM_HOMES"]}),
+              $census.assign({"id": "pad_dom_mdbas_edat-0018", "theme": "housing", "dims": ["DOM_00_18"]}),
+              $census.assign({"id": "pad_dom_mdbas_edat-1864", "theme": "housing", "dims": ["DOM_18_64"]}),
+              $census.assign({"id": "pad_dom_mdbas_edat-6599", "theme": "housing", "dims": ["DOM_65_99"]}),
+              $census.assign({"id": "pad_dom_mdbas_nacionalitat", "theme": "housing", "dims": ["NACIONALITAT_DOMICILI"]}),
+              $cadastre.assign({"id": "est-cadastre-carrecs-tipus-propietari", "value": "Valor", "dims": ["Desc_tipus_propietari", "Concepte"], "unitDim": "Concepte"}),
+              $cadastre.assign({"id": "est-cadastre-edificacions-any-const", "dims": ["Any_construccio"]}),
+              $cadastre.assign({"id": "est-cadastre-edificacions-nombre-locals", "dims": ["Desc_locals"]}),
+              $cadastre.assign({"id": "est-cadastre-edificacions-superficie", "value": "Superficie_m2", "unit": "MTK", "dims": ["Tipus_sup"]}),
+              $cadastre.assign({"id": "est-cadastre-finques-superficie", "value": "Superficie_m2", "unit": "MTK", "dims": ["Desc_sup"]}),
+              $cadastre.assign({"id": "est-cadastre-locals-sup", "value": "Superficie_m2", "unit": "MTK", "dims": ["Us_del_local"]}),
+              # The unit values (€/m2) of these two are means a sum would falsify: the totals only.
+              $cadastre.assign({"id": "est-cadastre-habitatges-valor-cadastral", "value": "Valors", "unit": "EUR", "dims": ["Desc_valors"], "only": {"Desc_valors": ["Valor_cadastral_total_€", "Valor_construcció_més_serveis_total_€", "Valor_sòl_total_€"]}}),
+              $cadastre.assign({"id": "est-cadastre-locals-valors-total-unitaris", "value": "Valors", "unit": "EUR", "dims": ["Desc_valors"], "only": {"Desc_valors": ["Valor_cadastral_total_€", "Valor_construcció_més_serveis_total_€", "Valor_sòl_total_€"]}}),
+              $vehicles.assign({"id": "est-vehicles-cilindrada-motos", "value": "Nombre_Motos", "dims": ["Cilindrada_Motos"]}),
+              $vehicles.assign({"id": "est-vehicles-nacionalitat-propietari", "district": "Codi_districte", "districtName": "Nom_districte", "barri": "Codi_barri", "barriName": "Nom_barri", "dims": ["Tipus_Vehicles", "Nacionalitat_propietari"]}),
+              $vehicles.assign({"id": "est-vehicles-potencia-fiscal-turismes", "value": "Nombre_Turismes", "dims": ["Potencia_Fiscal"]})
+            ]
+            root = if $register.length() == 0 { throw("pad-dimensions listed no barri code (CODI_BARRI_DEST)") } else { $tables.map_each(t -> { "table": t, "register": $register, "labels": if t.coded.or(false) { t.dims.map_each(d -> { d: $labels.get(d).or({}) }).squash() } else { {} } }) }
+        - unarchive: { format: json_array }
+        - branch:
+            request_map: |
+              meta bcn_package = if this.table.id.re_match("^[a-z0-9_-]{3,80}$") { this.table.id } else { throw("not an Open Data BCN dataset name: %v".format(this.table.id)) }
+              root = ""
+            processors:
+              - http:
+                  url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/package_show?id=${! @bcn_package }
+                  verb: GET
+                  headers:
+                    Accept: application/json
+                    User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 60s
+                  retries: 1
+                  rate_limit: bcn_stat
+              - mapping: |
+                  root = if content().length() > 8388608 { throw("package_show answered %v bytes, more than 8388608".format(content().length())) } else { this }
+            result_map: |
+              # The newest yearly CSV resource the DataStore holds: the year its name starts with.
+              let held = this.result.resources.or([]).filter(r -> r.format.or("").uppercase() == "CSV" && r.datastore_active.or(false) == true && r.id.or("").re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))
+              let dated = $held.map_each(r -> r.assign({ "year": r.name.or("").re_find_all("(^|[^0-9])20[0-9]{2}([^0-9]|$)").map_each(y -> y.re_replace_all("[^0-9]", "").number().int64()).sort().index(-1).catch(0) }))
+              let newest = $dated.sort_by(r -> r.year).index(-1).catch(null)
+              root.resource = if $newest == null { throw("%v has no CSV resource in the DataStore".format(this.table.id)) } else { { "id": $newest.id, "name": $newest.name } }
+              root.title = this.result.title_translated.ca.or(this.result.title).or(this.table.id)
+        - branch:
+            request_map: |
+              # The query is built from the seed's own column names and a resource id of the
+              # DataStore's UUID shape only; a name outside that alphabet fails the table.
+              map col {
+                root = if this.re_match("^[A-Za-z][A-Za-z0-9_€]{0,40}$") { "\"%v\"".format(this) } else { throw("not a column name: %v".format(this)) }
+              }
+              let t = this.table
+              let p = $t.period.map_each(c -> c.apply("col"))
+              let d = $t.district.apply("col")
+              let b = $t.barri.apply("col")
+              let k = $t.dims.map_each(c -> c.apply("col"))
+              let v = $t.value.apply("col")
+              let num = "%v::text ~ '^-?[0-9]+([.][0-9]+)?$'".format($v)
+              let keys = $p.concat($k)
+              let sets = [$keys.concat([$d, $b]), $keys.concat([$d]), $keys].map_each(s -> "(%v)".format(s.join(", "))).join(", ")
+              let select = $p.enumerated().map_each(e -> "%v AS p%v".format(e.value, e.index)).concat($k.enumerated().map_each(e -> "%v AS k%v".format(e.value, e.index))).concat([
+                "%v AS d".format($d), "%v AS b".format($b),
+                "MAX(%v) AS dn".format($t.districtName.apply("col")), "MAX(%v) AS bn".format($t.barriName.apply("col")),
+                "GROUPING(%v) AS gd".format($d), "GROUPING(%v) AS gb".format($b),
+                "SUM(CASE WHEN %v THEN %v::numeric END) AS v".format($num, $v),
+                "COUNT(*) FILTER (WHERE (%v) IS NOT TRUE) AS s".format($num),
+                "COUNT(*) AS n"
+              ]).join(", ")
+              # A table may keep only listed values of a column; each value is the seed's own, without a quote.
+              let where = $t.only.or({}).key_values().map_each(kv -> "%v IN (%v)".format(kv.key.apply("col"), kv.value.map_each(x -> if x.re_match("^[^'\\\\]{1,80}$") { "'%v'".format(x) } else { throw("not a plain value: %v".format(x)) }).join(", ")))
+              let select = if $where.length() == 0 { $select } else { "%v FROM \"%v\" WHERE %v".format($select, this.resource.id, $where.join(" AND ")) }
+              root.sql = if this.resource.id.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") { if $where.length() == 0 { "SELECT %v FROM \"%v\" GROUP BY GROUPING SETS (%v)".format($select, this.resource.id, $sets) } else { "SELECT %v GROUP BY GROUPING SETS (%v)".format($select, $sets) } } else { throw("not a DataStore resource id: %v".format(this.resource.id)) }
+            processors:
+              - http:
+                  url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/datastore_search_sql
+                  verb: POST
+                  headers:
+                    Content-Type: application/json
+                    Accept: application/json
+                    User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 60s
+                  retries: 1
+                  rate_limit: bcn_stat
+              - mapping: |
+                  root = if content().length() > 8388608 { throw("datastore_search_sql answered %v bytes, more than 8388608".format(content().length())) } else { this }
+            result_map: root.answer = this.result.records.or([])
+        - mapping: |
+            # A Concepte names its unit: Valor_cad_€ euros, Superfície_m2 square metres, Nombre a count.
+            map unit_of {
+              root = if this.contains("€") || this.contains("Valor") { "EUR" } else if this.contains("m2") { "MTK" } else { "C62" }
+            }
+            map two {
+              root = "%02d".format(this.string().trim().number().int64())
+            }
+            let t = this.table
+            let register = this.register
+            let labels = this.labels
+            let recs = this.answer.map_each(r -> r.assign({
+              "pk": if $t.period.length() == 2 { "%04d-%02d".format(r.p0.string().number().int64(), r.p1.string().number().int64()) } else { r.p0.string().slice(0, if r.p0.string().length() >= 10 { 10 } else { 4 }) }.catch("")
+            }))
+            let newest = $recs.map_each(r -> r.pk).filter(k -> k != "").sort().index(-1).catch("")
+            # The period's first and last day: a reference day (2026-01-01), a year (2025) or a month (2026-02).
+            let y = $newest.slice(0, 4).number().int64().catch(0)
+            let from = if $newest.length() == 10 { $newest } else if $newest.length() == 7 { "%v-01".format($newest) } else { "%04d-01-01".format($y) }
+            let next = if $newest.length() == 10 { $newest } else if $newest.length() == 7 { if $newest.slice(5).number().int64() == 12 { "%04d-01-01".format($y + 1) } else { "%04d-%02d-01".format($y, $newest.slice(5).number().int64() + 1) } } else { "%04d-01-01".format($y + 1) }
+            let to = if $newest.length() == 10 { $newest } else { ($next.ts_parse("2006-01-02").ts_unix() - 86400).ts_format("2006-01-02", "UTC") }
+            let observed = "%vT00:00:00Z".format(if $t.observe == "start" { $from } else { $to })
+            let age_days = ((now().ts_unix() - $to.ts_parse("2006-01-02").ts_unix().catch(0)) / 86400).floor()
+            let max_age = $t.maxAgeDays.or(if $t.every == "monthly" { 92 } else { 1096 })
+            let future = $from.ts_parse("2006-01-02").ts_unix().catch(0) > now().ts_unix() + 86400
+            let rows = $recs.filter(r -> r.pk == $newest).map_each(r -> r.assign({
+              "level": if r.gd.string() == "1" { "city" } else if r.gb.string() == "1" { "district" } else { "neighbourhood" },
+              "dc": r.d.apply("two").catch(""),
+              "bc": r.b.apply("two").catch(""),
+              "codes": $t.dims.enumerated().map_each(e -> r.get("k%v".format(e.index)).or("").string().trim())
+            })).map_each(r -> r.assign({
+              "parts": $t.dims.enumerated().map_each(e -> if $t.coded.or(false) { $labels.get(e.value).or({}).get(r.codes.index(e.index)) } else { r.codes.index(e.index) }),
+              "key": if $t.dims.length() == 0 { "total" } else { r.codes.map_each(c -> c.re_replace_all("[^A-Za-z0-9]+", "_").trim("_")).map_each(c -> if c == "" { "blank" } else { c }).join("-") },
+              "place": if r.level == "city" { "city" } else if r.level == "district" { "district-%v".format(r.dc) } else { "neighbourhood-%v".format(r.bc) },
+              "areaName": if r.level == "city" { "Barcelona" } else if r.level == "district" { r.dn.or("").string() } else { r.bn.or("").string() },
+              "number": r.v.string().number().catch(null)
+            })).map_each(r -> r.assign({
+              "unit": $t.unit.or(if $t.unitDim == null { "C62" } else { r.codes.index($t.dims.enumerated().filter(e -> e.value == $t.unitDim).index(0).index).apply("unit_of") }),
+              "id": "urn:ngsi-ld:%v:%v:%v:stat-%v-%v-%v-%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $t.theme, $t.id, r.key, r.place),
+              "reason": if r.level == "district" && !r.dc.re_match("^(0[1-9]|10)$") { "not a district of the city" } else if r.level == "neighbourhood" && !$register.contains(r.bc) { "not a barri of the register" } else if r.parts.any(p -> p == null) { "a code pad-dimensions does not list" } else if r.s.string().number().catch(1) > 0 && r.number == null { "hidden by the source (fewer than 5)" } else if r.s.string().number().catch(1) > 0 { "a sum over a hidden cell" } else if r.number == null { "no value" } else if r.number < 0 { "negative count or amount" } else { "" }
+            }))
+            let kept = $rows.filter(r -> r.reason == "")
+            let unique = $kept.unique(r -> r.id)
+            let reasons = $rows.filter(r -> r.reason != "").map_each(r -> r.reason)
+            let dropped = $reasons.unique().map_each(r -> { r: $reasons.filter(x -> x == r).length() }).squash()
+            let dropped = if $kept.length() > $unique.length() { $dropped.merge({ "duplicate id": $kept.length() - $unique.length() }) } else { $dropped }
+            let source = "https://opendata-ajuntament.barcelona.cat/data/dataset/%v".format($t.id)
+            let title = this.title
+            let resource = this.resource.name
+            root = if $recs.length() == 0 { throw("%v answered no row".format($t.id)) } else if $y == 0 { throw("%v answered no period: %v".format($t.id, $newest)) } else if $future { throw("%v holds a period that starts in the future: %v".format($t.id, $newest)) } else if $age_days > $max_age { throw("%v is stale: its newest period %v ended %v days ago, more than %v".format($t.id, $newest, $age_days, $max_age)) } else if $unique.length() == 0 { throw("%v answered no usable value: %v".format($t.id, $dropped.format_json(no_indent: true))) } else { {
+              "table": $t.id,
+              "resource": $resource,
+              "period": $newest,
+              "dropped": $dropped,
+              "entities": $unique.map_each(r -> {
+                "id": r.id,
+                "type": "KeyPerformanceIndicator",
+                "name": { "type": "Property", "value": if r.parts.length() == 0 { "%v – %v".format($title, r.areaName) } else { "%v: %v – %v".format($title, r.parts.join(", "), r.areaName) } },
+                "description": { "type": "Property", "value": $title },
+                "kpiValue": { "type": "Property", "value": r.number, "unitCode": r.unit, "observedAt": $observed },
+                "calculationPeriod": { "type": "Property", "value": { "from": $from, "to": $to } },
+                "calculationFrequency": { "type": "Property", "value": $t.every },
+                "calculatedBy": { "type": "Property", "value": "Ajuntament de Barcelona, Departament d'Estadística i Difusió de Dades" },
+                "organization": { "type": "Property", "value": "Ajuntament de Barcelona" },
+                "process": { "type": "Property", "value": $title },
+                "area": { "type": "Property", "value": r.areaName },
+                "districtCode": if r.level == "city" { null } else if r.level == "district" { { "type": "Property", "value": r.dc } } else { { "type": "Property", "value": r.bc } },
+                "divisionLevel": { "type": "Property", "value": r.level },
+                "refArea": if r.level == "city" { null } else { { "type": "Relationship", "object": "urn:ngsi-ld:%v:%v:%v:%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.place) } },
+                "statisticsTable": { "type": "Property", "value": $t.id },
+                "dimensionKey": { "type": "Property", "value": if $t.dims.length() == 0 { "total" } else { $t.dims.enumerated().map_each(e -> "%v=%v".format(e.value, r.codes.index(e.index))).join(";") } },
+                "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN (CC BY 4.0)" },
+                "source": { "type": "Property", "value": $source }
+              }.filter(kv -> kv.value != null))
+            } }
+        - log:
+            level: INFO
+            message: 'statistics ${! this.table } ${! this.period } (${! this.resource }): ${! this.entities.length() } written, dropped ${! this.dropped.format_json(no_indent: true) }'
+        - mapping: root = this.entities

@@ -1,0 +1,234 @@
+---
+portal-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        # An App pod asks JC_ME_URL for its caller's roles on this Service in the cluster, never
+        # through the public host its own policy does not admit (AP-109, AP-134, T-3037). Every
+        # project's apps namespace is the Portal's, created with this label (AP-116, AP-117), and
+        # only an App pod carries the other one; the Portal checks the bearer token itself.
+        - namespaceSelector:
+            matchLabels:
+              joinedcontext.com/managed-by: joinedcontext-portal
+          podSelector:
+            matchLabels:
+              joinedcontext.com/app: "true"
+        # A WASM shard asks for a request's caller and an App's email and ai as that person
+        # (T-3622, API/06 §5); the Portal checks the bearer token itself.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+        # Keycloak's back-channel logout (T-5568); the Portal verifies the logout token itself.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+    # The Prometheus that scrapes /metrics (components/monitoring), from its own namespace only
+    # (T-3771); a meshed scrape lands on the inbound proxy.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - port: 4143
+          protocol: TCP
+
+# Meshed traffic reaches a pod through its Linkerd inbound proxy on 4143, not on the
+# service port, so the 5432 rule alone would leave the connection blocked.
+postgres-linkerd-from-portal:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# The portal declares an egress policy, so its Linkerd proxy needs identity (8080),
+# destination (8086) and policy (8090) spelled out. Without them the proxy never learns the
+# inbound policy for its own admin port, the kubelet startup probe gets a 403 and the pod
+# never leaves Init.
+portal-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 4143
+    # The registration write is meshed like every other hop, so the 9090 rule beside this one
+    # is not enough: the client proxy dials the broker's inbound proxy on 4143 (T-0345).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-broker-broker
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: model-tools-tools
+          componentNamespace: model-tools
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner
+      ports:
+        - protocol: TCP
+          port: 4143
+    # The open-data catalogue's API (T-5314), through its inbound proxy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 4143
+    # The UI bundle (T-5297), through its inbound proxy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-ui
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 4143
+    # The reconciler's admin calls to the artifact store are meshed too, so the 9000 rule
+    # beside this one is not enough: the client proxy dials the store's inbound proxy on 4143
+    # and the connection is refused at this pod's own egress without it (T-0933). The bucket
+    # Job has carried both ports since it was written, which is why it could create the bucket
+    # while the reconciler could not issue one credential.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# Meshed, the Portal reaches the UI bundle on its inbound proxy (4143), not on 8080; 4190/4191
+# are the proxy's admin and the kubelet's probes through it.
+portal-ui-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: portal-ui
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# The bundle declares an egress policy, so its proxy needs identity (8080), destination (8086)
+# and policy (8090) named, else the startup probe gets a 403 and the pod stays in Init.
+portal-ui-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: portal-ui
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090

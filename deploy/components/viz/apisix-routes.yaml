@@ -1,0 +1,9 @@
+---
+# The chart renderer on its own host, viz.{domain} (T-4641, ADR-N-053 §2.5). `subDomain` also
+# puts the host on the edge Ingress and in the certificate's SAN list. Anonymous, static, GET only.
+viz:
+  name: viz
+  description: The chart renderer's host page, sandboxed renderer and pinned Vega builds
+  upstream: viz-renderer.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "viz") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  subDomain: viz
+  uri: '/*'

@@ -1,0 +1,24 @@
+# One Organization per row of "Kontakty na miestne samosprávy v BBK" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-kontakty-na-miestne-samospravy-v-bbk
+  namespace: bbsk
+  title:
+    sk: Kontakty na miestne samosprávy v BBK
+    en: Kontakty na miestne samosprávy v BBK
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 59 2 * * 3
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-kontakty-na-miestne-samospravy-v-bbk
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: Organization
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

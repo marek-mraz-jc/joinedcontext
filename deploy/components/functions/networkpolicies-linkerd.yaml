@@ -1,0 +1,100 @@
+---
+# Meshed traffic reaches a pod through its Linkerd inbound proxy on 4143, and a pod under an
+# egress policy must still reach the control plane: identity (8080), destination (8086) and
+# policy (8090). The same rules every meshed component carries.
+functions-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: functions-runtime
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+functions-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: functions-runtime
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 4143
+
+portal-linkerd-to-functions:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: functions-runtime
+          componentNamespace: functions
+      ports:
+        - protocol: TCP
+          port: 4143
+
+gateway-linkerd-from-functions:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: functions-runtime
+          componentNamespace: functions
+      ports:
+        - port: 4143
+          protocol: TCP
+
+keycloak-linkerd-from-functions:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: functions-runtime
+          componentNamespace: functions
+      ports:
+        - port: 4143
+          protocol: TCP

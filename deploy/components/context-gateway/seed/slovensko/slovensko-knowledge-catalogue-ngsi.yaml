@@ -1,0 +1,17 @@
+# The project's own NGSI-LD catalogue as knowledge (T-3225, AG-116): one page per public Endpoint
+# of its spaces, written from this repository (the types of each space's model, every attribute
+# the Endpoint serves with its description and unit, its address and its CKAN dataset), with the
+# entities of each type counted anonymously through the gateway. Public: a private space's
+# Endpoint is never read into it. Read again within a minute of a change to an Endpoint or a model,
+# and every hour for the counts.
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: catalogue
+  namespace: slovensko
+  title: { en: 'Slovakia: the data catalogue' }
+spec:
+  source: catalogue
+  schedule: '9 * * * *'
+  languages: [sk, en]
+  visibility: public

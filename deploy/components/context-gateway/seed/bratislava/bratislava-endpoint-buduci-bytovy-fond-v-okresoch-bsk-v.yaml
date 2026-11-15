@@ -1,0 +1,44 @@
+# Future housing stock in the districts of the Bratislava Region, 2031-2051: one public dataset of the hub (T-5274), item 5581185b07bb4010aa6aa7066aa60343, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-buduci-bytovy-fond-v-okresoch-bsk-v
+  namespace: bratislava
+  title:
+    sk: Budúci bytový fond v okresoch BSK v rokoch 2031 - 2051
+    en: Future housing stock in the districts of the Bratislava Region, 2031-2051
+  description:
+    sk: 'Ukazovatele tabuľky „Budúci bytový fond v okresoch BSK v rokoch 2031 - 2051“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Future housing stock in the districts of the Bratislava Region, 2031-2051”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: c7ca6zkvnrobwb4sclyxrbpsbcqj3s2s
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-buduci-bytovy-fond-v-okresoch-bsk-v
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/5581185b07bb4010aa6aa7066aa60343
+        title:
+          sk: Budúci bytový fond v okresoch BSK v rokoch 2031 - 2051
+          en: Future housing stock in the districts of the Bratislava Region, 2031-2051
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Budúci bytový fond v okresoch BSK v rokoch 2031 - 2051. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Future housing stock in the districts of the Bratislava Region, 2031-2051. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

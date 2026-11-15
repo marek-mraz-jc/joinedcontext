@@ -1,0 +1,13 @@
+---
+component: pipeline-runner
+parts:
+  - name: runner
+  # The scheduled half of PL-04: pipelines slower than the thirty-second rule are CronJobs
+  # that exist only while they run, not streams in the resident pod.
+  - name: scheduled
+  # The pipelines' token service (PL-19, T-1508): one federated token per pipeline, minted by
+  # TokenRequest for that pipeline's own Kubernetes ServiceAccount. The one pod of the runner's
+  # namespace that reaches the Kubernetes API; off until the platform image carries it.
+  - name: tokens
+  # The namespace of the pipelines' own ServiceAccounts and the token service's one grant there.
+  - name: identities

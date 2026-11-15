@@ -1,0 +1,11 @@
+---
+gitea:
+  name: 'gitea'
+  embedded: true
+  user: 'gitea'
+  secret:
+    name: 'db-gitea'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432

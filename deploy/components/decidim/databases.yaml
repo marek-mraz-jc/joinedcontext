@@ -1,0 +1,13 @@
+---
+# Decidim's one database in the shared CNPG cluster. It holds citizen accounts (GDPR personal
+# data): the nightly dump covers it with every other database, and until off-site backups
+# exist that dump is its only copy (ADR-N-065 section 4).
+decidim:
+  name: 'decidim'
+  embedded: true
+  user: 'decidim'
+  secret:
+    name: 'db-decidim'
+    key: 'password'
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432

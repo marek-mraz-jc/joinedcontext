@@ -1,0 +1,24 @@
+# One CommitteeSeat per row of "Komisie zastupiteľstva Banskobystrického samosprávneho kraja" (T-4255); committee seats; the citizens' names are kept out.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-komisie-zastupitelstva-banskobystrickeho
+  namespace: bbsk
+  title:
+    sk: Komisie zastupiteľstva Banskobystrického samosprávneho kraja
+    en: Komisie zastupiteľstva Banskobystrického samosprávneho kraja
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 45 2 * * 1
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-komisie-zastupitelstva-banskobystrickeho
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: CommitteeSeat
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

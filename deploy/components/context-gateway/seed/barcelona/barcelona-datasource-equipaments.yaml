@@ -1,0 +1,20 @@
+# Open Data BCN's list of the register's packages (Open Data BCN, CC BY 4.0, weekly): the `equipament-*`
+# families and the thematic extracts of the same register (pharmacies, hotels, toilets...). The
+# pipeline takes the DataStore resource of each package it names and reads it with one SQL query;
+# no credential. T-5265.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-equipaments
+  namespace: barcelona
+  title:
+    ca: Equipaments de Barcelona (Open Data BCN)
+    es: Equipamientos de Barcelona (Open Data BCN)
+    en: Barcelona facilities (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/package_search?q=name:%28equipament-*%20OR%20equipaments-relacionats-amb-transports%20OR%20allotjaments-hotels%20OR%20sanitat-farmacies%20OR%20sanitat-hospitals-atencio-primaria%20OR%20lavabos-publics%20OR%20dutxes-platges%20OR%20punts-informacio-turistica%20OR%20xarxa-refugis-climatics%29&rows=50
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

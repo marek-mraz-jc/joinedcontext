@@ -1,0 +1,68 @@
+{
+  "@context": {
+    "@vocab": "https://smartdatamodels.org/",
+    "Article": {
+      "@id": "jc:Article"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "collectionName": {
+      "@id": "jc:collectionName"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "isPartOf": {
+      "@id": "schema:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "license": {
+      "@id": "schema:license",
+      "@type": "xsd:anyURI"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@container": "@language",
+      "@id": "schema:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "publisher": {
+      "@id": "schema:publisher"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "type": "@type",
+    "url": {
+      "@id": "schema:url",
+      "@type": "xsd:anyURI"
+    },
+    "workType": {
+      "@id": "jc:workType"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "yearPublished": {
+      "@id": "jc:yearPublished",
+      "@type": "xsd:integer"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

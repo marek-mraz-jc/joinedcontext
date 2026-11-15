@@ -1,0 +1,17 @@
+# One AdministrativeArea per record of `hel-preschool-areas`, written into the city space (T-5822).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: preschool-areas
+  namespace: helsinki
+  title: { en: Preschool admission areas }
+spec:
+  class: auto
+  # The city draws the areas once a school year; weekly is already more than it needs.
+  period: 168h
+  schedule: '10 5 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-preschool-areas }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: AdministrativeArea, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

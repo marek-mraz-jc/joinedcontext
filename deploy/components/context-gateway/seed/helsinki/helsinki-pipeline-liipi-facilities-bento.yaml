@@ -1,0 +1,71 @@
+# The mapping of the liipi-facilities pipeline (PL-03, T-3894): Fintraffic LIIPI's park and ride
+# facilities of the HSL area become one OffStreetParking each: its name in Finnish, Swedish and
+# English, its outline, LIIPI's status as open, closed or closedAbnormal, the built capacity per
+# kind of space, and the nearest HSL station within 500 m. The free spaces come from the
+# liipi-utilizations pipeline; a facility that never reports them has none.
+#
+# The stations are the GtfsStations the space holds (T-3890), asked for once per run; the link
+# goes only to one of them, so the gateway never refuses it as a missing target. A failed ask
+# writes the facilities without a station link this run (an upsert keeps yesterday's).
+# ponytail: a facility LIIPI drops stays in the space; LIIPI marks retired ones INACTIVE instead
+# (47 of 545 on 2026-10-12), which is written as closed.
+
+pipeline:
+  processors:
+    # A body over 8 MiB is not the HSL area's register (1.0 MB): refused before parsing.
+    - mapping: |
+        root = if content().length() > 8388608 { throw("the facilities answer is %d bytes, more than the 8 MiB read".format(content().length())) } else { this }
+    - mutation: root = if errored() { deleted() }
+
+    - branch:
+        request_map: 'root = { "type": "Query", "entities": [ { "type": "GtfsStation" } ], "attrs": [ "location" ] }'
+        processors:
+          - try:
+              - http:
+                  url: ${JC_GATEWAY_URL}/api/endpoint/si6epqkx364lprho5uaigutk274r5grb/ngsi-ld/v1/entityOperations/query?limit=1000&options=keyValues
+                  verb: POST
+                  headers: { Content-Type: application/json }
+                  oauth2:
+                    enabled: true
+                    client_key: ${JC_CLIENT_ID}
+                    client_secret: ${JC_CLIENT_SECRET}
+                    token_url: ${JC_TOKEN_URL}
+                  timeout: 20s
+                  rate_limit: pipeline_egress
+              - mapping: |
+                  root = this.filter(s -> s.location.type.or("") == "Point").map_each(s -> { "id": s.id, "lon": s.location.coordinates.index(0), "lat": s.location.coordinates.index(1) })
+          - catch:
+              - mapping: root = []
+        result_map: root.stations = this
+
+    - mapping: |
+        map nearest {
+          # Metres on a plane through the facility: within 500 m the earth is flat enough.
+          let lon = this.at.index(0)
+          let lat = this.at.index(1)
+          let east = ($lat * 3.141592653589793 / 180).cos() * 111320
+          let near = this.stations.map_each(s -> s.assign({ "m": ((s.lon - $lon) * $east).pow(2) + ((s.lat - $lat) * 110574).pow(2) })).filter(s -> s.m <= 250000).sort_by(s -> s.m)
+          root = if $near.length() > 0 { $near.index(0).id } else { null }
+        }
+        let urn = "urn:ngsi-ld:OffStreetParking:%v:%v:liipi-%v"
+        let status = { "IN_OPERATION": "open", "INACTIVE": "closed", "TEMPORARILY_CLOSED": "closed", "EXCEPTIONAL_SITUATION": "closedAbnormal" }
+        let kinds = { "CAR": "car", "DISABLED": "disabled", "BICYCLE": "bicycle", "ELECTRIC_CAR": "electricCar", "MOTORCYCLE": "motorcycle", "BICYCLE_SECURE_SPACE": "bicycleSecureSpace" }
+        let stations = this.stations.or([])
+        root = this.results.or([]).filter(f -> f.id.type() == "number" && f.location.type.or("") != "" && f.location.bbox.type() == "array").map_each(f -> {
+            "id": $urn.format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.id.string()),
+            "type": "OffStreetParking",
+            "name": { "type": "LanguageProperty", "languageMap": f.name.or({}).filter(n -> ["fi", "sv", "en"].contains(n.key) && n.value.or("").trim() != "") },
+            "location": { "type": "GeoProperty", "value": { "type": f.location.type, "coordinates": f.location.coordinates } },
+            "status": { "type": "Property", "value": $status.get(f.status.or("")).or("closed") },
+            "allowedVehicleType": { "type": "Property", "value": [ if f.type.or("") == "BICYCLE" { "bicycle" } else { "car" } ].concat(if f.builtCapacity.MOTORCYCLE.or(0) > 0 { [ "motorcycle" ] } else { [] }) },
+            "totalSpotNumber": if f.builtCapacity.get(f.type.or("")).or(0) > 0 { { "type": "Property", "value": f.builtCapacity.get(f.type.or("")) } },
+            "capacityByType": { "type": "JsonProperty", "json": f.builtCapacity.or({}).filter(c -> $kinds.get(c.key) != null).map_each_key(k -> $kinds.get(k)) },
+            "refNearestStation": {
+              "at": [ (f.location.bbox.index(0) + f.location.bbox.index(2)) / 2, (f.location.bbox.index(1) + f.location.bbox.index(3)) / 2 ],
+              "stations": $stations
+            }.apply("nearest"),
+            "dataProvider": { "type": "Property", "value": "Fintraffic LIIPI (CC BY 4.0)" },
+            "source": { "type": "Property", "value": "https://parking.fintraffic.fi/api/v1/facilities/" + f.id.string() }
+          }).map_each(e -> e.assign({ "refNearestStation": if e.refNearestStation != null { { "type": "Relationship", "object": e.refNearestStation } } }).filter(a -> a.value != null))
+
+    - unarchive: { format: json_array }

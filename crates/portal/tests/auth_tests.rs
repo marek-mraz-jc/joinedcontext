@@ -506,6 +506,76 @@ async fn a_mutation_without_the_csrf_token_is_forbidden() {
     );
 }
 
+/// T-6991 §6: a sibling host can toss a `jc_csrf` cookie without the prefix; the gate reads
+/// `__Host-jc_csrf` alone, so a header matching the tossed copy is still refused. A same-site
+/// `POST` from another Organization's `auto` host carries the `Lax` session cookie and no
+/// header: refused too.
+#[tokio::test]
+async fn a_tossed_csrf_cookie_or_a_same_site_post_without_the_header_is_forbidden() {
+    let app = server::app(AppState::new(Config::for_tests(), None));
+    for (cookie, header_value) in [
+        ("jc_csrf=tossed; __Host-jc_csrf=real", Some("tossed")),
+        ("__Host-jc_csrf=real; jc_csrf=tossed", Some("tossed")),
+        ("jc_csrf=tossed", Some("tossed")),
+        ("__Host-jc_session=s; __Host-jc_csrf=real", None),
+    ] {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/logout")
+            .header(header::COOKIE, cookie)
+            .header(header::ORIGIN, "https://kosice.city.example")
+            .header("sec-fetch-site", "same-site");
+        if let Some(v) = header_value {
+            req = req.header("x-csrf-token", v);
+        }
+        let response = app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{cookie}");
+    }
+}
+
+/// T-6991 §4: `/api/v1` answers no cross-origin read but `/api/v1/mcp`, which takes any
+/// origin with a bearer token and never credentials.
+#[tokio::test]
+async fn only_the_mcp_route_answers_cross_origin_and_never_with_credentials() {
+    let app = server::app(AppState::new(Config::for_tests(), None));
+    let preflight = |path: &str| {
+        Request::builder()
+            .method("OPTIONS")
+            .uri(path)
+            .header(header::ORIGIN, "https://evil.example")
+            .header("access-control-request-method", "POST")
+            .header(
+                "access-control-request-headers",
+                "authorization, content-type",
+            )
+            .body(Body::empty())
+            .unwrap()
+    };
+    for path in ["/api/v1/projects", "/api/v1/auth/me", "/api/v1/auth/logout"] {
+        let response = app.clone().oneshot(preflight(path)).await.unwrap();
+        let headers = response.headers();
+        assert!(
+            headers.get("access-control-allow-origin").is_none(),
+            "{path}: {headers:?}"
+        );
+        assert!(
+            headers.get("access-control-allow-credentials").is_none(),
+            "{path}"
+        );
+    }
+    let response = app.clone().oneshot(preflight("/api/v1/mcp")).await.unwrap();
+    let headers = response.headers();
+    assert_eq!(headers["access-control-allow-origin"], "*");
+    assert!(
+        headers.get("access-control-allow-credentials").is_none(),
+        "{headers:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_mutation_with_a_matching_csrf_token_passes_the_gate() {
     let app = server::app(AppState::new(Config::for_tests(), None));

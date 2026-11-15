@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
 static DNS1123_LABEL_RE: LazyLock<Regex> =
@@ -26,6 +27,87 @@ pub fn validate_dns1123_label(name: &str) -> Result<()> {
             field: "metadata.name",
             value: name.to_string(),
             reason: "must match DNS-1123 label regex ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ and be 1 to 63 characters",
+        });
+    }
+    Ok(())
+}
+
+/// Every name the platform's routing gives a meaning of its own (T-6974): the first path
+/// segments jc places on a shared host (module slugs, the gateway's and the assistant's root
+/// paths, jc's and the Portal's own pages and the deployment's extra prefixes), every host label
+/// below the deployment's domain (module hosts, the deployment's `idm`, `data`, `status`, `ai`,
+/// `mqtt`), the segments docs/API/15-addresses-v1.md fixes (`data`, `dash`, `dsc`, `app`, `c`) and
+/// labels held for hosts not served yet (`login`, `embed`, `apps`, ...). An Organization named like one
+/// would take that segment or label from the service on a host the Organizations share, so no
+/// Organization takes one. The list only grows; bins/jc fails a test when a mount, host label or
+/// Portal page root it places is missing here. No live Organization's name is on it: `bbsk`
+/// (jc-prod's landing host is named after it) and `ops` (a jc-dev Organization) stay out.
+pub const RESERVED_LABELS: &[&str] = &[
+    "accessibility",
+    "admin",
+    "ai",
+    "ai-connectors",
+    "api",
+    "app",
+    "apps",
+    "assets",
+    "assistant",
+    "autodiscover",
+    "broker",
+    "c",
+    "callback",
+    "catalog",
+    "catalogue",
+    "closed",
+    "connect",
+    "connectors",
+    "cs",
+    "d",
+    "dash",
+    "dashboards",
+    "data",
+    "docs",
+    "dsc",
+    "embed",
+    "endpoints",
+    "f",
+    "git",
+    "glossary",
+    "grafana",
+    "healthz",
+    "id",
+    "idm",
+    "login",
+    "logout",
+    "mail",
+    "mcp",
+    "mcp-confirmations",
+    "metrics",
+    "model-tools",
+    "mqtt",
+    "oauth",
+    "opendata",
+    "organization",
+    "playground",
+    "portal",
+    "portals",
+    "projects",
+    "settings",
+    "status",
+    "streams",
+    "tiles",
+    "v",
+    "viz",
+    "www",
+];
+
+/// Refuses an Organization name the platform's routing reserves ([`RESERVED_LABELS`]).
+pub fn validate_not_reserved(name: &str) -> Result<()> {
+    if RESERVED_LABELS.contains(&name) {
+        return Err(Error::Name {
+            field: "metadata.name",
+            value: name.to_string(),
+            reason: "is reserved for the platform: an address of a platform service uses this name; choose another Organization name",
         });
     }
     Ok(())
@@ -98,6 +180,72 @@ pub fn validate_org_domain(domain: &str) -> Result<()> {
 /// spaces hold (ADR-N-068, EP-186). A hostname holds no `_`, so the map is one-to-one.
 pub fn org_id(domain: &str) -> String {
     domain.rsplit('.').collect::<Vec<_>>().join("_")
+}
+
+/// An Organization id (API/15 section 2, EP-186): the verified domain's labels reversed and
+/// joined by `_` (`bbsk.sk` -> `sk_bbsk`), `[a-z][a-z0-9_-]{1,62}` with at least one `_`, each
+/// `_`-separated part a DNS label. Every other name of the platform is DNS-1123 and holds no
+/// `_`, so an id never equals a project, space, Endpoint, App or resource name, and no such
+/// name is ever read as an id.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct OrganizationId(String);
+
+impl OrganizationId {
+    /// Parses an id as written (`sk_bbsk`).
+    pub fn parse(id: &str) -> Result<Self> {
+        let parts_ok = id
+            .split('_')
+            .all(|part| part.len() <= 63 && DNS_LABEL_RE.is_match(part));
+        if !(2..=63).contains(&id.len())
+            || !id.starts_with(|c: char| c.is_ascii_lowercase())
+            || !id.contains('_')
+            || !parts_ok
+        {
+            return Err(Error::Name {
+                field: "organizationId",
+                value: id.to_string(),
+                reason: "must be a verified domain with its labels reversed and joined by `_` (`sk_bbsk` for bbsk.sk): [a-z][a-z0-9_-]{1,62} with a `_`",
+            });
+        }
+        Ok(Self(id.to_owned()))
+    }
+
+    /// The id of a verified domain: [`validate_org_domain`], then [`org_id`], at most 63 long.
+    pub fn from_domain(domain: &str) -> Result<Self> {
+        validate_org_domain(domain)?;
+        Self::parse(&org_id(domain)).map_err(|_| Error::Name {
+            field: "orgDomain",
+            value: domain.to_string(),
+            reason: "gives an Organization id longer than 63 characters or not starting with a letter: choose a shorter domain",
+        })
+    }
+
+    /// The id as text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for OrganizationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::str::FromStr for OrganizationId {
+    type Err = Error;
+    fn from_str(id: &str) -> Result<Self> {
+        Self::parse(id)
+    }
+}
+
+impl<'de> Deserialize<'de> for OrganizationId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
 }
 
 /// Validates a local identifier within an entity URN (`^[A-Za-z0-9._~-]{1,128}$`) (PF-42).
@@ -250,6 +398,63 @@ pub(crate) fn validate_relative_path(field: &'static str, path: &str) -> Result<
 mod tests {
     use super::*;
 
+    #[test]
+    fn reserved_labels_are_sorted_unique_labels() {
+        assert!(RESERVED_LABELS.windows(2).all(|w| w[0] < w[1]));
+        for name in RESERVED_LABELS {
+            validate_dns1123_label(name).expect(name);
+        }
+    }
+
+    /// T-6974: every door that parses an Organization (the Portal's judge, import, the
+    /// reconciler's load, `jcctl validate`) reaches this check through `validate_spec`.
+    #[test]
+    fn an_organization_manifest_with_a_reserved_name_is_refused() {
+        let golden = include_str!("../tests/golden/004-Organization-03-domain-model.yaml");
+        let named =
+            |name: &str| golden.replacen("name: banskabystrica", &format!("name: {name}"), 1);
+        crate::registry::validate_yaml("Organization", golden)
+            .expect("registered")
+            .expect("the golden passes");
+        for name in ["api", "opendata", "oauth", "login"] {
+            let err = crate::registry::validate_yaml("Organization", &named(name))
+                .expect("registered")
+                .expect_err(name);
+            assert!(
+                err.to_string().contains("reserved for the platform"),
+                "{name}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reserved_name_is_refused_and_an_ordinary_one_passes() {
+        for name in ["api", "opendata", "oauth", "login"] {
+            let err = validate_not_reserved(name).expect_err(name);
+            assert!(
+                err.to_string().contains("reserved for the platform"),
+                "{err}"
+            );
+        }
+        for name in [
+            "bbsk",
+            "banskabystrica",
+            "hel",
+            "bratislava",
+            "praha",
+            "barcelona",
+            "zilina",
+            "slovensko",
+            "ctl-a",
+            "ctl-b",
+            "demo-mcp",
+            "ops",
+            "helsinki",
+        ] {
+            validate_not_reserved(name).expect(name);
+        }
+    }
+
     /// T-6769 (ADR-N-068): the owner segment is the text before the first `:` of the id part,
     /// and a URN with nothing after it, or without a `:`, names no owner.
     #[test]
@@ -280,6 +485,107 @@ mod tests {
             ("city.example.com", "com_example_city"),
         ] {
             assert_eq!(org_id(domain), id);
+        }
+    }
+
+    /// T-7007 (EP-186): an id is the reversed verified domain, never a DNS-1123 name.
+    #[test]
+    fn an_organization_id_is_parsed_and_minted_from_its_domain() {
+        for id in [
+            "sk_bbsk",
+            "sk_marek-mraz",
+            "com_joinedcontext_region",
+            "xn--p1ai_example",
+        ] {
+            assert_eq!(OrganizationId::parse(id).expect(id).as_str(), id);
+        }
+        for bad in [
+            "bbsk",
+            "marek-mraz",
+            "com-marek-mraz",
+            "Sk_bbsk",
+            "1sk_bbsk",
+            "sk__bbsk",
+            "sk_",
+            "_sk",
+            "sk_-bbsk",
+            "sk_bbsk-",
+            "sk.bbsk",
+            "sk:bbsk",
+            "",
+            &"a_".repeat(32),
+        ] {
+            assert!(OrganizationId::parse(bad).is_err(), "{bad}");
+        }
+        assert_eq!(
+            OrganizationId::from_domain("marek-mraz.sk")
+                .unwrap()
+                .to_string(),
+            "sk_marek-mraz"
+        );
+        let long = format!("{}.{}.sk", "a".repeat(40), "b".repeat(40));
+        match OrganizationId::from_domain(&long) {
+            Err(Error::Name { field, .. }) => assert_eq!(field, "orgDomain"),
+            other => panic!("{other:?}"),
+        }
+        assert!(OrganizationId::from_domain("bbsk").is_err());
+        let parsed: OrganizationId = serde_json::from_str("\"fi_hel\"").unwrap();
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), "\"fi_hel\"");
+        assert!(serde_json::from_str::<OrganizationId>("\"hel\"").is_err());
+    }
+
+    /// T-7007: no other name can take the shape of an Organization id. Every validator but the
+    /// entity's local id refuses `_`, and every golden manifest renamed to an id (its name or
+    /// its namespace) is refused at the one parse every door calls, while a DNS-1123 look-alike
+    /// passes.
+    #[test]
+    fn no_other_name_can_be_an_organization_id() {
+        for id in ["sk_bbsk", "com_marek-mraz"] {
+            assert!(validate_dns1123_label(id).is_err(), "{id}");
+            assert!(validate_namespace(id).is_err(), "{id}");
+            assert!(validate_space_name(id).is_err(), "{id}");
+            assert!(validate_org_domain(id).is_err(), "{id}");
+            assert!(validate_entity_type(id).is_err(), "{id}");
+            assert!(validate_locale(id).is_err(), "{id}");
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+        let mut checked = std::collections::BTreeSet::new();
+        for file in std::fs::read_dir(dir).unwrap() {
+            let raw = std::fs::read_to_string(file.unwrap().path()).unwrap();
+            let doc: serde_json::Value = serde_norway::from_str(&raw).unwrap();
+            let kind = doc["kind"].as_str().unwrap().to_owned();
+            let valid = |doc: &serde_json::Value| {
+                let yaml = serde_norway::to_string(doc).unwrap();
+                crate::registry::validate_yaml(&kind, &yaml).expect("a known kind")
+            };
+            if valid(&doc).is_err() {
+                continue;
+            }
+            for field in ["name", "namespace"] {
+                if doc["metadata"].get(field).is_none() {
+                    continue;
+                }
+                for id in ["sk_bbsk", "com_marek-mraz"] {
+                    let mut renamed = doc.clone();
+                    renamed["metadata"][field] = id.into();
+                    assert!(valid(&renamed).is_err(), "{kind} {field} {id}");
+                }
+            }
+            if matches!(
+                kind.as_str(),
+                "Project" | "ContextSpace" | "Endpoint" | "App"
+            ) {
+                for name in ["marek-mraz", "com-marek-mraz"] {
+                    let mut renamed = doc.clone();
+                    renamed["metadata"]["name"] = name.into();
+                    valid(&renamed).unwrap_or_else(|e| panic!("{kind} {name}: {e}"));
+                    assert!(OrganizationId::parse(name).is_err());
+                }
+            }
+            checked.insert(kind);
+        }
+        for kind in ["Organization", "Project", "ContextSpace", "Endpoint", "App"] {
+            assert!(checked.contains(kind), "no golden {kind} validated");
         }
     }
 

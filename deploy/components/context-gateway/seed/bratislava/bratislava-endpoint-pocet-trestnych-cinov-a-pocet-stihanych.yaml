@@ -1,0 +1,44 @@
+# Crimes and juveniles and minors prosecuted and investigated: one public dataset of the hub (T-5274), item 80379c888397485d80a82c1620daf19f, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-trestnych-cinov-a-pocet-stihanych
+  namespace: bratislava
+  title:
+    sk: Počet trestných činov a počet stíhaných a vyšetrovaných mladistvých a maloletých osôb
+    en: Crimes and juveniles and minors prosecuted and investigated
+  description:
+    sk: 'Ukazovatele tabuľky „Počet trestných činov a počet stíhaných a vyšetrovaných mladistvých a maloletých osôb“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Crimes and juveniles and minors prosecuted and investigated”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 5wbmtnjuy4av7e42o77x2imgrnaae7xa
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-trestnych-cinov-a-pocet-stihanych
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [JUST]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/80379c888397485d80a82c1620daf19f
+        title:
+          sk: Počet trestných činov a počet stíhaných a vyšetrovaných mladistvých a maloletých osôb
+          en: Crimes and juveniles and minors prosecuted and investigated
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet trestných činov a počet stíhaných a vyšetrovaných mladistvých a maloletých osôb. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Crimes and juveniles and minors prosecuted and investigated. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

@@ -1,0 +1,32 @@
+---
+artifact-store:
+  store:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "artifact-store") }}
+    # One bucket for every rendered thing the platform serves: schemas, compiled mappings,
+    # dumps, exports, app builds and the gateway's file cache (PF-29, Architecture/17 §2).
+    # Every key starts with the owning organization, so quota and cascade deletion work by
+    # prefix rather than by a bucket per tenant.
+    bucket: 'jc-artifacts'
+    region: 'us-east-1'
+    storage:
+      size: '10Gi'
+    objectLock:
+      # Object lock can only be turned on when a bucket is created, never added later, so it
+      # is on from the first apply (PF-33).
+      enabled: true
+      # A default retention locks EVERY object in the bucket, the gateway's file cache
+      # included, and that cache has to stay purgeable. Publishers set COMPLIANCE retention
+      # per object on the prefixes that promise immutability; set this only for a store that
+      # holds nothing else.
+      defaultRetentionDays: 0
+    # The bucket Postgres archives to when `postgres.cluster.backups.target` is 'artifact-store'
+    # (T-5289), with a user of its own that reaches this bucket alone.
+    backupBucket:
+      name: 'postgres-backups'
+    fileCache:
+      prefix: 'filecache/'
+      expiryDays: 1
+    console:
+      # Every caller is a machine, and the console is another way in.
+      enabled: false

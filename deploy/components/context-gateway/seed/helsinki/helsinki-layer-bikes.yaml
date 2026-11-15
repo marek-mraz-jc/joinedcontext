@@ -1,0 +1,20 @@
+# The city bike stations as one map layer (T-0528, UI-18): the public bikes endpoint, coloured
+# by the bikes available, only stations that have one, a popup of name and count.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Layer
+metadata:
+  name: bike-stations
+  namespace: helsinki
+spec:
+  sourceEndpointRef: helsinki-bikes
+  entityType: BikeHireDockingStation
+  style: circle
+  filter: { q: availableBikeNumber>0 }
+  colorBy:
+    property: availableBikeNumber
+    palette: YlOrRd
+    domain: [0, 20]
+  sizeBy:
+    property: availableBikeNumber
+    range: [4, 14]
+  popupProperties: [name, availableBikeNumber, freeSlotNumber]

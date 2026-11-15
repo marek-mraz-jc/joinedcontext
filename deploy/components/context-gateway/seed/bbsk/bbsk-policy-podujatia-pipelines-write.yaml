@@ -1,0 +1,17 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: podujatia-pipelines-write
+  namespace: bbsk
+  title: { sk: Kanály zapisujú podujatia, en: The ingestion pipelines write the events }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-podujatia }
+  assigner: did:web:bbsk.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is what a daily poll does; no delete: an event leaves the space at its expiresAt, and a
+  # source delete is T-4890's ledger. The pipelines' account is the space's only writer (T-4895).
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: Event
+        - type: PointOfInterest

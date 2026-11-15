@@ -1,0 +1,21 @@
+{{- $part := "ckan" }}
+{{/*
+The scripts `start_ckan.sh` sources from `/docker-entrypoint.d` after it has minted its own
+secrets and run `prerun.py`, and before it starts uWSGI. That order is the whole point: it is
+the only place in the image's own startup where a value can overwrite what the entrypoint
+generated, without patching the image or rewriting its entrypoint here.
+
+Read verbatim — these are shell, and Helm must not evaluate their braces.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ckan.fullname" . }}-startup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ckan.labels" (dict "root" . "part" $part) | nindent 4 }}
+data:
+{{- range $path, $_ := .Files.Glob "files/startup/*" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

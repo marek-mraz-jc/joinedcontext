@@ -1,0 +1,39 @@
+{
+  "aCH": 0,
+  "aUT": 0,
+  "dOW": "2026-01-01T00:00:00Z",
+  "dataProvider": "dataProvider",
+  "designatio": "designatio",
+  "fACC": "fACC",
+  "fIDKraj0": 0,
+  "fIDSubpovodiaBbsk": 0,
+  "gmlId": "gmlId",
+  "iDN2": 0,
+  "id": "urn:ngsi-ld:RiverBasin:joinedcontext.com:example:1",
+  "inspireIdL": 0,
+  "inspireIdN": "inspireIdN",
+  "isPartOf": "https://example.org/isPartOf",
+  "link": "link",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "nM2": "nM2",
+  "name": "name",
+  "nameLangua": "nameLangua",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "relatedZ1": "relatedZ1",
+  "relatedZon": "relatedZon",
+  "sOI": 0,
+  "source": "https://example.org/source",
+  "specialise": "specialise",
+  "thematic1": "thematic1",
+  "thematicId": "thematicId",
+  "type": "RiverBasin",
+  "vYMERA": 0.0,
+  "wiseEvolut": "wiseEvolut",
+  "zoneType": "zoneType"
+}

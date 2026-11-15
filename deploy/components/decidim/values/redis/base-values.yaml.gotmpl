@@ -1,0 +1,47 @@
+---
+{{- $global := .Values.global }}
+{{- $images := index .Values.images "decidim" "redis" }}
+# Checklist:
+# - [x] Non-root (the image's redis user, 999) with `readOnlyRootFilesystem`
+# - [x] Health -> `redis-cli ping`
+# - [x] Storage -> none: persistence off, Sidekiq's queue survives a web or Sidekiq restart,
+#   not a Redis restart (ADR-N-065 section 3)
+# - [x] ServiceAccount with least privilege -> none
+
+fullnameOverride: decidim-redis
+nameOverride: decidim-redis
+
+serviceAccount:
+  create: false
+  automountServiceAccountToken: false
+
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+args: ["--save", "", "--appendonly", "no", "--maxmemory", "96mb", "--maxmemory-policy", "noeviction"]
+
+containerPort: 6379
+service:
+  enabled: true
+  type: ClusterIP
+  port: 6379
+  targetPort: 6379
+  name: redis
+
+probes:
+  enabled: false
+  readinessExec: ["redis-cli", "ping"]
+
+preStopSleepSeconds: 0
+
+podSecurityContext:
+  {{ merge (dict "runAsUser" 999 "runAsGroup" 999 "fsGroup" 999) .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

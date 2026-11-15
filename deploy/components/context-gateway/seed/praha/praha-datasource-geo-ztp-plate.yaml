@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item 1e6b9ad51a12468193f47e2b9b1b94ed (Vyhrazené stání pro invalidy s registrační značkou, TSK hl. m. Prahy), 2,085 records on 2026-10-24, served
+# by its ArcGIS Hub download as GeoJSON in WGS 84. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5424).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-ztp-plate
+  namespace: praha
+  title:
+    en: Reserved bays for one disabled driver's plate (IPR Praha)
+    cs: Vyhrazené stání pro invalidy s registrační značkou (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/1e6b9ad51a12468193f47e2b9b1b94ed_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 120s

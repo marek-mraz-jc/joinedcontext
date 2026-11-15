@@ -1,0 +1,23 @@
+# What Decidim's publishing account may do (T-6458): its five classes in its own space, and delete,
+# because a record hidden or withdrawn in Decidim leaves the space on the next commit. No policyRef
+# on the write Endpoint slovensko-participacia-zapis, so this Policy binds there.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: decidim-publish
+  namespace: slovensko
+  title:
+    sk: Decidim zverejňuje výstupy procesov
+    en: Decidim publishes the outputs of its processes
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: slovensko-participacia }
+  assigner: did:web:joinedcontext.com
+  assignee: { kind: serviceAccount, id: decidim-publish }
+  operations: [upsertBatch, createBatch, deleteBatch, queryBatch]
+  information:
+    - entities:
+        - type: ParticipatoryProcess
+        - type: Proposal
+        - type: BudgetProject
+        - type: Result
+        - type: Meeting

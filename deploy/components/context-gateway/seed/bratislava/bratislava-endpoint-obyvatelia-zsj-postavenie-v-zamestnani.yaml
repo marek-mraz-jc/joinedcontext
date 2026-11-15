@@ -1,0 +1,44 @@
+# Residents by status in employment (current or last) in the basic settlement units (ZSJ), 2021 census: one public dataset of the hub (T-5675), item b89326cfd6e54f768f279b89d0e3c16b, written by the statistics-zsj-obyvatelia pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-obyvatelia-zsj-postavenie-v-zamestnani
+  namespace: bratislava
+  title:
+    sk: Počet obyvateľov podľa postavenia v zamestnaní (súčasného/posledne vykonávaného) v ZSJ
+    en: Residents by status in employment (current or last) in the basic settlement units (ZSJ), 2021 census
+  description:
+    sk: 'Ukazovatele tabuľky „Počet obyvateľov podľa postavenia v zamestnaní (súčasného/posledne vykonávaného) v ZSJ“ z data.bratislava.sk, jeden na základnú sídelnú jednotku (ZSJ), obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Residents by status in employment (current or last) in the basic settlement units (ZSJ), 2021 census”, one per basic settlement unit (ZSJ), period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: hiixzlvmopiu3dohcqgwv663vslorfok
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-obyvatelia-zsj-postavenie-v-zamestnani
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ECON]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/b89326cfd6e54f768f279b89d0e3c16b
+        title:
+          sk: Počet obyvateľov podľa postavenia v zamestnaní (súčasného/posledne vykonávaného) v ZSJ
+          en: Residents by status in employment (current or last) in the basic settlement units (ZSJ), 2021 census
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet obyvateľov podľa postavenia v zamestnaní (súčasného/posledne vykonávaného) v ZSJ. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Residents by status in employment (current or last) in the basic settlement units (ZSJ), 2021 census. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-zsj-obyvatelia }

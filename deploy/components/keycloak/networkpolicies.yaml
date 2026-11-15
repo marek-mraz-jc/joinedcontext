@@ -1,0 +1,204 @@
+---
+keycloak:
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    # CoreDNS. Every rule below names a Service, and a Service name is worth nothing
+    # without this one.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Infinispan's JGroups cluster: the same two ports the ingress rule below opens, seen
+    # from the other end. A StatefulSet of one still forms a cluster with itself.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+              app.kubernetes.io/name: keycloakx
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 7800
+        - protocol: TCP
+          port: 57800
+    # The Kubernetes API, for the issuer's keys the `kubernetes` identity provider verifies
+    # workload tokens against (PF-47). The API server is not a pod, so it is named by address;
+    # k3s serves it on 6443 and the policy sees that port after the Service's DNAT.
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+    # Client ID Metadata Documents (T-5954, ADR-N-064 §3.3): a CIMD login makes Keycloak fetch
+    # the client's document from its https client id, and without this rule that fetch ends in
+    # an SSLHandshakeException. The realm's `client-id-uri` condition admits only claude.ai and
+    # vscode.dev as hosts; this rule is the second fence: 443 to public addresses only, so a
+    # name that resolves inward reaches no pod, node, metadata service or loopback.
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+    # Back-channel logout (T-5568, TR-03187 AR-6): Keycloak posts the logout token of every
+    # session it ends to the Portal's /api/v1/auth/backchannel-logout over the in-cluster
+    # Service; the Portal verifies the token's signature and nothing else admits the call.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 8080
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloak-config-cli
+          componentNamespace: keycloak
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloak-admin-permissions
+          componentNamespace: keycloak
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloak-user-ids
+          componentNamespace: keycloak
+        # The Context Gateway loads the realm's signing keys over the in-cluster Service and
+        # exits when it cannot (platform main.rs: no keys, no process). Without the mesh
+        # that is a plain connection to 8080, and this list is what lets it through; the
+        # Linkerd mirror next door already carried the gateway on 4143, which is why dev
+        # (meshed) worked while the unmeshed k3d variant crash-looped.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      # HTTP alone: without `ports` these peers reached every port of the pod, JGroups 7800 and
+      # 57800 included, the unauthenticated cluster channel that carries sessions (F-R2DEP2-002).
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+              app.kubernetes.io/name: keycloakx
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 7800
+        - protocol: TCP
+          port: 57800
+
+# The realm import job (a post-install/post-upgrade hook). It reads its realm files from a
+# ConfigMap and pushes them over the admin API; the only thing it ever dials is Keycloak.
+keycloak-config-cli:
+  podSelector:
+    app.kubernetes.io/name: keycloak-config-cli
+  policyTypes:
+    - Egress
+  egress:
+    # CoreDNS. Every rule below names a Service, and a Service name is worth nothing
+    # without this one.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# The admin permissions job (a post-install/post-upgrade hook after the realm import, T-2725):
+# kcadm.sh over the admin API, the only thing it ever dials is Keycloak.
+keycloak-admin-permissions:
+  podSelector:
+    app.kubernetes.io/name: keycloak-admin-permissions
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# The people Job (a hook before the realm import, PF-126): kcadm.sh over the admin API,
+# the only thing it ever dials is Keycloak.
+keycloak-user-ids:
+  podSelector:
+    app.kubernetes.io/name: keycloak-user-ids
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080

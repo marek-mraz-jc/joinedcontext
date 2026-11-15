@@ -1,0 +1,40 @@
+---
+# The collector reads files on its own node and writes to one object store. It listens on
+# nothing outside its own pod, so it has no ingress rule at all.
+#
+# The object store is a URL, not a pod, and in an air-gapped installation it is inside the
+# zone while in a hosted one it is not. Naming it by address is the only portable form, and
+# the credential it holds is what actually bounds the write: `PutObject` and nothing else.
+audit-logging:
+  podSelector:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/instance: audit-logging-collector
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The Kubernetes API, for the pod metadata every record is annotated with, and the
+    # object store.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443

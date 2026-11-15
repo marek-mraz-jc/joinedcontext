@@ -1,0 +1,14 @@
+---
+# app-pods renders here with an example pin, because components/app-pods/images.yaml holds none
+# until the monorepo's image-apps.yml publishes the first signed digest. This render is never
+# applied; an environment that deploys app-pods pins the real digest in
+# components/app-pods/images.yaml instead.
+images:
+  app-pods:
+    hsl-transport:
+      repository: 'ghcr.io/marek-mraz-jc/jc-app-hsl-transport'
+      tag: 'main'
+      digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000'
+app-pods:
+  hsl-transport:
+    endpointSlug: example0slug

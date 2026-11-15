@@ -1,0 +1,1630 @@
+[
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911101010",
+"type": "AdministrativeArea",
+"districtCode": "0911101010",
+"name": {
+"languageMap": {
+"fi": "Kruununhaka",
+"sv": "Kronohagen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911101020",
+"type": "AdministrativeArea",
+"districtCode": "0911101020",
+"name": {
+"languageMap": {
+"fi": "Kluuvi",
+"sv": "Gloet"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911101080",
+"type": "AdministrativeArea",
+"districtCode": "0911101080",
+"name": {
+"languageMap": {
+"fi": "Katajanokka",
+"sv": "Skatudden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911102030",
+"type": "AdministrativeArea",
+"districtCode": "0911102030",
+"name": {
+"languageMap": {
+"fi": "Kaartinkaupunki",
+"sv": "Gardesstaden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911102050",
+"type": "AdministrativeArea",
+"districtCode": "0911102050",
+"name": {
+"languageMap": {
+"fi": "Punavuori",
+"sv": "Rödbergen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911102060",
+"type": "AdministrativeArea",
+"districtCode": "0911102060",
+"name": {
+"languageMap": {
+"fi": "Eira",
+"sv": "Eira"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911102070",
+"type": "AdministrativeArea",
+"districtCode": "0911102070",
+"name": {
+"languageMap": {
+"fi": "Ullanlinna",
+"sv": "Ulrikasborg"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911102090",
+"type": "AdministrativeArea",
+"districtCode": "0911102090",
+"name": {
+"languageMap": {
+"fi": "Kaivopuisto",
+"sv": "Brunnsparken"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911102204",
+"type": "AdministrativeArea",
+"districtCode": "0911102204",
+"name": {
+"languageMap": {
+"fi": "Hernesaari",
+"sv": "Ärtholmen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911102520",
+"type": "AdministrativeArea",
+"districtCode": "0911102520",
+"name": {
+"languageMap": {
+"fi": "Suomenlinna",
+"sv": "Sveaborg"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911102531",
+"type": "AdministrativeArea",
+"districtCode": "0911102531",
+"name": {
+"languageMap": {
+"fi": "Länsisaaret",
+"sv": "Västra holmarna"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911103040",
+"type": "AdministrativeArea",
+"districtCode": "0911103040",
+"name": {
+"languageMap": {
+"fi": "Kamppi",
+"sv": "Kampen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911103130",
+"type": "AdministrativeArea",
+"districtCode": "0911103130",
+"name": {
+"languageMap": {
+"fi": "Etu-Töölö",
+"sv": "Främre Tölö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911103201",
+"type": "AdministrativeArea",
+"districtCode": "0911103201",
+"name": {
+"languageMap": {
+"fi": "Ruoholahti",
+"sv": "Gräsviken"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911103202",
+"type": "AdministrativeArea",
+"districtCode": "0911103202",
+"name": {
+"languageMap": {
+"fi": "Lapinlahti",
+"sv": "Lappviken"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911103203",
+"type": "AdministrativeArea",
+"districtCode": "0911103203",
+"name": {
+"languageMap": {
+"fi": "Jätkäsaari",
+"sv": "Busholmen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911104140",
+"type": "AdministrativeArea",
+"districtCode": "0911104140",
+"name": {
+"languageMap": {
+"fi": "Taka-Töölö",
+"sv": "Bortre Tölö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911105311",
+"type": "AdministrativeArea",
+"districtCode": "0911105311",
+"name": {
+"languageMap": {
+"fi": "Kotkavuori",
+"sv": "Örnberget"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911105312",
+"type": "AdministrativeArea",
+"districtCode": "0911105312",
+"name": {
+"languageMap": {
+"fi": "Vattuniemi",
+"sv": "Hallonnäs"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911105313",
+"type": "AdministrativeArea",
+"districtCode": "0911105313",
+"name": {
+"languageMap": {
+"fi": "Myllykallio",
+"sv": "Kvarnberget"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0911105314",
+"type": "AdministrativeArea",
+"districtCode": "0911105314",
+"name": {
+"languageMap": {
+"fi": "Koivusaari",
+"sv": "Björkholmen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912201150",
+"type": "AdministrativeArea",
+"districtCode": "0912201150",
+"name": {
+"languageMap": {
+"fi": "Meilahti",
+"sv": "Mejlans"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912201161",
+"type": "AdministrativeArea",
+"districtCode": "0912201161",
+"name": {
+"languageMap": {
+"fi": "Vanha Ruskeasuo",
+"sv": "Gamla Brunakärr"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912201162",
+"type": "AdministrativeArea",
+"districtCode": "0912201162",
+"name": {
+"languageMap": {
+"fi": "Pikku Huopalahti",
+"sv": "Lillhoplax"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912201180",
+"type": "AdministrativeArea",
+"districtCode": "0912201180",
+"name": {
+"languageMap": {
+"fi": "Laakso",
+"sv": "Dal"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912202301",
+"type": "AdministrativeArea",
+"districtCode": "0912202301",
+"name": {
+"languageMap": {
+"fi": "Vanha Munkkiniemi",
+"sv": "Gamla Munksnäs"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912202302",
+"type": "AdministrativeArea",
+"districtCode": "0912202302",
+"name": {
+"languageMap": {
+"fi": "Kuusisaari",
+"sv": "Granö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912202303",
+"type": "AdministrativeArea",
+"districtCode": "0912202303",
+"name": {
+"languageMap": {
+"fi": "Lehtisaari",
+"sv": "Lövö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912202304",
+"type": "AdministrativeArea",
+"districtCode": "0912202304",
+"name": {
+"languageMap": {
+"fi": "Munkkivuori",
+"sv": "Munkshöjden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912202305",
+"type": "AdministrativeArea",
+"districtCode": "0912202305",
+"name": {
+"languageMap": {
+"fi": "Niemenmäki",
+"sv": "Näshöjden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912202306",
+"type": "AdministrativeArea",
+"districtCode": "0912202306",
+"name": {
+"languageMap": {
+"fi": "Talinranta",
+"sv": "Talistranden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912203291",
+"type": "AdministrativeArea",
+"districtCode": "0912203291",
+"name": {
+"languageMap": {
+"fi": "Etelä-Haaga",
+"sv": "Södra Haga"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912203292",
+"type": "AdministrativeArea",
+"districtCode": "0912203292",
+"name": {
+"languageMap": {
+"fi": "Kivihaka",
+"sv": "Stenhagen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912203293",
+"type": "AdministrativeArea",
+"districtCode": "0912203293",
+"name": {
+"languageMap": {
+"fi": "Pohjois-Haaga",
+"sv": "Norra Haga"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912203294",
+"type": "AdministrativeArea",
+"districtCode": "0912203294",
+"name": {
+"languageMap": {
+"fi": "Lassila",
+"sv": "Lassas"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912204320",
+"type": "AdministrativeArea",
+"districtCode": "0912204320",
+"name": {
+"languageMap": {
+"fi": "Konala",
+"sv": "Kånala"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912204461",
+"type": "AdministrativeArea",
+"districtCode": "0912204461",
+"name": {
+"languageMap": {
+"fi": "Pajamäki",
+"sv": "Smedjebacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912204462",
+"type": "AdministrativeArea",
+"districtCode": "0912204462",
+"name": {
+"languageMap": {
+"fi": "Tali",
+"sv": "Tali"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912204463",
+"type": "AdministrativeArea",
+"districtCode": "0912204463",
+"name": {
+"languageMap": {
+"fi": "Reimarla",
+"sv": "Reimars"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912204464",
+"type": "AdministrativeArea",
+"districtCode": "0912204464",
+"name": {
+"languageMap": {
+"fi": "Marttila",
+"sv": "Martas"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912204465",
+"type": "AdministrativeArea",
+"districtCode": "0912204465",
+"name": {
+"languageMap": {
+"fi": "Pitäjänmäen yritysalue",
+"sv": "Sockenbacka företagsområde"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912205331",
+"type": "AdministrativeArea",
+"districtCode": "0912205331",
+"name": {
+"languageMap": {
+"fi": "Kannelmäki",
+"sv": "Gamlas"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912205332",
+"type": "AdministrativeArea",
+"districtCode": "0912205332",
+"name": {
+"languageMap": {
+"fi": "Maununneva",
+"sv": "Magnuskärr"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912205333",
+"type": "AdministrativeArea",
+"districtCode": "0912205333",
+"name": {
+"languageMap": {
+"fi": "Malminkartano",
+"sv": "Malmgård"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912205334",
+"type": "AdministrativeArea",
+"districtCode": "0912205334",
+"name": {
+"languageMap": {
+"fi": "Hakuninmaa",
+"sv": "Håkansåker"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912205335",
+"type": "AdministrativeArea",
+"districtCode": "0912205335",
+"name": {
+"languageMap": {
+"fi": "Kuninkaantammi",
+"sv": "Kungseken"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0912205336",
+"type": "AdministrativeArea",
+"districtCode": "0912205336",
+"name": {
+"languageMap": {
+"fi": "Honkasuo",
+"sv": "Hongasmossa"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913301101",
+"type": "AdministrativeArea",
+"districtCode": "0913301101",
+"name": {
+"languageMap": {
+"fi": "Vilhonvuori",
+"sv": "Vilhelmsberg"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913301102",
+"type": "AdministrativeArea",
+"districtCode": "0913301102",
+"name": {
+"languageMap": {
+"fi": "Kalasatama",
+"sv": "Fiskehamnen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913301103",
+"type": "AdministrativeArea",
+"districtCode": "0913301103",
+"name": {
+"languageMap": {
+"fi": "Sompasaari",
+"sv": "Sumparn"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913301104",
+"type": "AdministrativeArea",
+"districtCode": "0913301104",
+"name": {
+"languageMap": {
+"fi": "Hanasaari",
+"sv": "Hanaholmen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913301111",
+"type": "AdministrativeArea",
+"districtCode": "0913301111",
+"name": {
+"languageMap": {
+"fi": "Siltasaari",
+"sv": "Broholmen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913301112",
+"type": "AdministrativeArea",
+"districtCode": "0913301112",
+"name": {
+"languageMap": {
+"fi": "Linjat",
+"sv": "Linjerna"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913301113",
+"type": "AdministrativeArea",
+"districtCode": "0913301113",
+"name": {
+"languageMap": {
+"fi": "Torkkelinmäki",
+"sv": "Torkelsbacken"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913302121",
+"type": "AdministrativeArea",
+"districtCode": "0913302121",
+"name": {
+"languageMap": {
+"fi": "Harju",
+"sv": "Ås"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913302122",
+"type": "AdministrativeArea",
+"districtCode": "0913302122",
+"name": {
+"languageMap": {
+"fi": "Alppila",
+"sv": "Alphyddan"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913303211",
+"type": "AdministrativeArea",
+"districtCode": "0913303211",
+"name": {
+"languageMap": {
+"fi": "Hermanninmäki",
+"sv": "Hermanstadsbacken"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913303212",
+"type": "AdministrativeArea",
+"districtCode": "0913303212",
+"name": {
+"languageMap": {
+"fi": "Hermanninranta",
+"sv": "Hermanstadsstranden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913303213",
+"type": "AdministrativeArea",
+"districtCode": "0913303213",
+"name": {
+"languageMap": {
+"fi": "Kyläsaari",
+"sv": "Byholmen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913303220",
+"type": "AdministrativeArea",
+"districtCode": "0913303220",
+"name": {
+"languageMap": {
+"fi": "Vallila",
+"sv": "Vallgård"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913304171",
+"type": "AdministrativeArea",
+"districtCode": "0913304171",
+"name": {
+"languageMap": {
+"fi": "Länsi-Pasila",
+"sv": "Västra Böle"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913304172",
+"type": "AdministrativeArea",
+"districtCode": "0913304172",
+"name": {
+"languageMap": {
+"fi": "Pohjois-Pasila",
+"sv": "Norra Böle"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913304173",
+"type": "AdministrativeArea",
+"districtCode": "0913304173",
+"name": {
+"languageMap": {
+"fi": "Itä-Pasila",
+"sv": "Östra Böle"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913304174",
+"type": "AdministrativeArea",
+"districtCode": "0913304174",
+"name": {
+"languageMap": {
+"fi": "Keski-Pasila",
+"sv": "Mellersta Böle"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913305231",
+"type": "AdministrativeArea",
+"districtCode": "0913305231",
+"name": {
+"languageMap": {
+"fi": "Toukola",
+"sv": "Majstad"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913305232",
+"type": "AdministrativeArea",
+"districtCode": "0913305232",
+"name": {
+"languageMap": {
+"fi": "Arabianranta",
+"sv": "Arabiastranden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913305240",
+"type": "AdministrativeArea",
+"districtCode": "0913305240",
+"name": {
+"languageMap": {
+"fi": "Kumpula",
+"sv": "Gumtäkt"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913305250",
+"type": "AdministrativeArea",
+"districtCode": "0913305250",
+"name": {
+"languageMap": {
+"fi": "Käpylä",
+"sv": "Kottby"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913305260",
+"type": "AdministrativeArea",
+"districtCode": "0913305260",
+"name": {
+"languageMap": {
+"fi": "Koskela",
+"sv": "Forsby"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0913305270",
+"type": "AdministrativeArea",
+"districtCode": "0913305270",
+"name": {
+"languageMap": {
+"fi": "Vanhakaupunki",
+"sv": "Gammelstaden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914401281",
+"type": "AdministrativeArea",
+"districtCode": "0914401281",
+"name": {
+"languageMap": {
+"fi": "Pirkkola",
+"sv": "Britas"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914401282",
+"type": "AdministrativeArea",
+"districtCode": "0914401282",
+"name": {
+"languageMap": {
+"fi": "Maunula",
+"sv": "Månsas"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914401283",
+"type": "AdministrativeArea",
+"districtCode": "0914401283",
+"name": {
+"languageMap": {
+"fi": "Metsälä",
+"sv": "Krämertsskog"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914401286",
+"type": "AdministrativeArea",
+"districtCode": "0914401286",
+"name": {
+"languageMap": {
+"fi": "Maunulanpuisto",
+"sv": "Månsasparken"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914402341",
+"type": "AdministrativeArea",
+"districtCode": "0914402341",
+"name": {
+"languageMap": {
+"fi": "Länsi-Pakila",
+"sv": "Västra Baggböle"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914403351",
+"type": "AdministrativeArea",
+"districtCode": "0914403351",
+"name": {
+"languageMap": {
+"fi": "Paloheinä",
+"sv": "Svedängen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914403352",
+"type": "AdministrativeArea",
+"districtCode": "0914403352",
+"name": {
+"languageMap": {
+"fi": "Torpparinmäki",
+"sv": "Torparbacken"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914403354",
+"type": "AdministrativeArea",
+"districtCode": "0914403354",
+"name": {
+"languageMap": {
+"fi": "Haltiala",
+"sv": "Tomtbacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914404284",
+"type": "AdministrativeArea",
+"districtCode": "0914404284",
+"name": {
+"languageMap": {
+"fi": "Patola",
+"sv": "Dammen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914404285",
+"type": "AdministrativeArea",
+"districtCode": "0914404285",
+"name": {
+"languageMap": {
+"fi": "Veräjämäki",
+"sv": "Grindbacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914404287",
+"type": "AdministrativeArea",
+"districtCode": "0914404287",
+"name": {
+"languageMap": {
+"fi": "Veräjälaakso",
+"sv": "Grinddal"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914405342",
+"type": "AdministrativeArea",
+"districtCode": "0914405342",
+"name": {
+"languageMap": {
+"fi": "Itä-Pakila",
+"sv": "Östra Baggböle"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0914405353",
+"type": "AdministrativeArea",
+"districtCode": "0914405353",
+"name": {
+"languageMap": {
+"fi": "Tuomarinkartano",
+"sv": "Domargård"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915501361",
+"type": "AdministrativeArea",
+"districtCode": "0915501361",
+"name": {
+"languageMap": {
+"fi": "Viikinranta",
+"sv": "Viksstranden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915501362",
+"type": "AdministrativeArea",
+"districtCode": "0915501362",
+"name": {
+"languageMap": {
+"fi": "Latokartano",
+"sv": "Ladugården"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915501363",
+"type": "AdministrativeArea",
+"districtCode": "0915501363",
+"name": {
+"languageMap": {
+"fi": "Viikin tiedepuisto",
+"sv": "Viks forskarpark"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915501364",
+"type": "AdministrativeArea",
+"districtCode": "0915501364",
+"name": {
+"languageMap": {
+"fi": "Viikinmäki",
+"sv": "Viksbacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915501383",
+"type": "AdministrativeArea",
+"districtCode": "0915501383",
+"name": {
+"languageMap": {
+"fi": "Pihlajamäki",
+"sv": "Rönnbacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915501386",
+"type": "AdministrativeArea",
+"districtCode": "0915501386",
+"name": {
+"languageMap": {
+"fi": "Pihlajisto",
+"sv": "Rönninge"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915502370",
+"type": "AdministrativeArea",
+"districtCode": "0915502370",
+"name": {
+"languageMap": {
+"fi": "Pukinmäki",
+"sv": "Bocksbacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915503381",
+"type": "AdministrativeArea",
+"districtCode": "0915503381",
+"name": {
+"languageMap": {
+"fi": "Ylä-Malmi",
+"sv": "Övre Malm"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915503382",
+"type": "AdministrativeArea",
+"districtCode": "0915503382",
+"name": {
+"languageMap": {
+"fi": "Ala-Malmi",
+"sv": "Nedre Malm"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915503384",
+"type": "AdministrativeArea",
+"districtCode": "0915503384",
+"name": {
+"languageMap": {
+"fi": "Tattariharju",
+"sv": "Tattaråsen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915503385",
+"type": "AdministrativeArea",
+"districtCode": "0915503385",
+"name": {
+"languageMap": {
+"fi": "Malmin lentokenttä",
+"sv": "Malms flygfält"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915503391",
+"type": "AdministrativeArea",
+"districtCode": "0915503391",
+"name": {
+"languageMap": {
+"fi": "Tapaninvainio",
+"sv": "Staffansslätten"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915503392",
+"type": "AdministrativeArea",
+"districtCode": "0915503392",
+"name": {
+"languageMap": {
+"fi": "Tapanila",
+"sv": "Mosabacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915504401",
+"type": "AdministrativeArea",
+"districtCode": "0915504401",
+"name": {
+"languageMap": {
+"fi": "Siltamäki",
+"sv": "Brobacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915504403",
+"type": "AdministrativeArea",
+"districtCode": "0915504403",
+"name": {
+"languageMap": {
+"fi": "Töyrynummi",
+"sv": "Lidmalmen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915505402",
+"type": "AdministrativeArea",
+"districtCode": "0915505402",
+"name": {
+"languageMap": {
+"fi": "Tapulikaupunki",
+"sv": "Stapelstaden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915505411",
+"type": "AdministrativeArea",
+"districtCode": "0915505411",
+"name": {
+"languageMap": {
+"fi": "Puistola",
+"sv": "Parkstad"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915505412",
+"type": "AdministrativeArea",
+"districtCode": "0915505412",
+"name": {
+"languageMap": {
+"fi": "Heikinlaakso",
+"sv": "Henriksdal"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915505413",
+"type": "AdministrativeArea",
+"districtCode": "0915505413",
+"name": {
+"languageMap": {
+"fi": "Tattarisuo",
+"sv": "Tattarmossen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915505415",
+"type": "AdministrativeArea",
+"districtCode": "0915505415",
+"name": {
+"languageMap": {
+"fi": "Alppikylä",
+"sv": "Alpbyn"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0915506414",
+"type": "AdministrativeArea",
+"districtCode": "0915506414",
+"name": {
+"languageMap": {
+"fi": "Jakomäki",
+"sv": "Jakobacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916601190",
+"type": "AdministrativeArea",
+"districtCode": "0916601190",
+"name": {
+"languageMap": {
+"fi": "Mustikkamaa-Korkeasaari",
+"sv": "Blåbärslandet-Högholmen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916601420",
+"type": "AdministrativeArea",
+"districtCode": "0916601420",
+"name": {
+"languageMap": {
+"fi": "Kulosaari",
+"sv": "Brändö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916602431",
+"type": "AdministrativeArea",
+"districtCode": "0916602431",
+"name": {
+"languageMap": {
+"fi": "Länsi-Herttoniemi",
+"sv": "Västra Hertonäs"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916602432",
+"type": "AdministrativeArea",
+"districtCode": "0916602432",
+"name": {
+"languageMap": {
+"fi": "Roihuvuori",
+"sv": "Kasberget"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916602433",
+"type": "AdministrativeArea",
+"districtCode": "0916602433",
+"name": {
+"languageMap": {
+"fi": "Herttoniemen yritysalue",
+"sv": "Hertonäs företagsområde"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916602434",
+"type": "AdministrativeArea",
+"districtCode": "0916602434",
+"name": {
+"languageMap": {
+"fi": "Herttoniemenranta",
+"sv": "Hertonäs strand"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916602440",
+"type": "AdministrativeArea",
+"districtCode": "0916602440",
+"name": {
+"languageMap": {
+"fi": "Tammisalo",
+"sv": "Tammelund"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603480",
+"type": "AdministrativeArea",
+"districtCode": "0916603480",
+"name": {
+"languageMap": {
+"fi": "Vartiosaari",
+"sv": "Vårdö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603491",
+"type": "AdministrativeArea",
+"districtCode": "0916603491",
+"name": {
+"languageMap": {
+"fi": "Yliskylä",
+"sv": "Uppby"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603492",
+"type": "AdministrativeArea",
+"districtCode": "0916603492",
+"name": {
+"languageMap": {
+"fi": "Jollas",
+"sv": "Jollas"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603493",
+"type": "AdministrativeArea",
+"districtCode": "0916603493",
+"name": {
+"languageMap": {
+"fi": "Tullisaari",
+"sv": "Turholm"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603494",
+"type": "AdministrativeArea",
+"districtCode": "0916603494",
+"name": {
+"languageMap": {
+"fi": "Kruunuvuorenranta",
+"sv": "Kronbergsstranden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603495",
+"type": "AdministrativeArea",
+"districtCode": "0916603495",
+"name": {
+"languageMap": {
+"fi": "Hevossalmi",
+"sv": "Hästnässund"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603500",
+"type": "AdministrativeArea",
+"districtCode": "0916603500",
+"name": {
+"languageMap": {
+"fi": "Villinki",
+"sv": "Villinge"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603510",
+"type": "AdministrativeArea",
+"districtCode": "0916603510",
+"name": {
+"languageMap": {
+"fi": "Santahamina",
+"sv": "Sandhamn"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603532",
+"type": "AdministrativeArea",
+"districtCode": "0916603532",
+"name": {
+"languageMap": {
+"fi": "Itäsaaret",
+"sv": "Östra holmarna"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0916603533",
+"type": "AdministrativeArea",
+"districtCode": "0916603533",
+"name": {
+"languageMap": {
+"fi": "Aluemeri",
+"sv": "Territorialhavet"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917701451",
+"type": "AdministrativeArea",
+"districtCode": "0917701451",
+"name": {
+"languageMap": {
+"fi": "Vartioharju",
+"sv": "Botbyåsen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917701452",
+"type": "AdministrativeArea",
+"districtCode": "0917701452",
+"name": {
+"languageMap": {
+"fi": "Puotila",
+"sv": "Botby gård"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917701453",
+"type": "AdministrativeArea",
+"districtCode": "0917701453",
+"name": {
+"languageMap": {
+"fi": "Puotinharju",
+"sv": "Botbyhöjden"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917701455",
+"type": "AdministrativeArea",
+"districtCode": "0917701455",
+"name": {
+"languageMap": {
+"fi": "Marjaniemi",
+"sv": "Marudd"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917701456",
+"type": "AdministrativeArea",
+"districtCode": "0917701456",
+"name": {
+"languageMap": {
+"fi": "Roihupelto",
+"sv": "Kasåkern"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917701457",
+"type": "AdministrativeArea",
+"districtCode": "0917701457",
+"name": {
+"languageMap": {
+"fi": "Itäkeskus",
+"sv": "Östra centrum"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917702454",
+"type": "AdministrativeArea",
+"districtCode": "0917702454",
+"name": {
+"languageMap": {
+"fi": "Myllypuro",
+"sv": "Kvarnbäcken"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917703471",
+"type": "AdministrativeArea",
+"districtCode": "0917703471",
+"name": {
+"languageMap": {
+"fi": "Kontula",
+"sv": "Gårdsbacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917703472",
+"type": "AdministrativeArea",
+"districtCode": "0917703472",
+"name": {
+"languageMap": {
+"fi": "Vesala",
+"sv": "Ärvings"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917703473",
+"type": "AdministrativeArea",
+"districtCode": "0917703473",
+"name": {
+"languageMap": {
+"fi": "Mellunmäki",
+"sv": "Mellungsbacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917703474",
+"type": "AdministrativeArea",
+"districtCode": "0917703474",
+"name": {
+"languageMap": {
+"fi": "Kivikko",
+"sv": "Stensböle"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917703475",
+"type": "AdministrativeArea",
+"districtCode": "0917703475",
+"name": {
+"languageMap": {
+"fi": "Kurkimäki",
+"sv": "Tranbacka"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917704541",
+"type": "AdministrativeArea",
+"districtCode": "0917704541",
+"name": {
+"languageMap": {
+"fi": "Keski-Vuosaari",
+"sv": "Mellersta Nordsjö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917704542",
+"type": "AdministrativeArea",
+"districtCode": "0917704542",
+"name": {
+"languageMap": {
+"fi": "Nordsjön kartano",
+"sv": "Nordsjö gård"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917704543",
+"type": "AdministrativeArea",
+"districtCode": "0917704543",
+"name": {
+"languageMap": {
+"fi": "Uutela",
+"sv": "Nybondas"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917704544",
+"type": "AdministrativeArea",
+"districtCode": "0917704544",
+"name": {
+"languageMap": {
+"fi": "Meri-Rastila",
+"sv": "Havsrastböle"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917704545",
+"type": "AdministrativeArea",
+"districtCode": "0917704545",
+"name": {
+"languageMap": {
+"fi": "Kallahti",
+"sv": "Kallvik"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917704546",
+"type": "AdministrativeArea",
+"districtCode": "0917704546",
+"name": {
+"languageMap": {
+"fi": "Aurinkolahti",
+"sv": "Solvik"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917704547",
+"type": "AdministrativeArea",
+"districtCode": "0917704547",
+"name": {
+"languageMap": {
+"fi": "Rastila",
+"sv": "Rastböle"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917704548",
+"type": "AdministrativeArea",
+"districtCode": "0917704548",
+"name": {
+"languageMap": {
+"fi": "Niinisaari",
+"sv": "Bastö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0917704549",
+"type": "AdministrativeArea",
+"districtCode": "0917704549",
+"name": {
+"languageMap": {
+"fi": "Mustavuori",
+"sv": "Svarta backen"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0918801550",
+"type": "AdministrativeArea",
+"districtCode": "0918801550",
+"name": {
+"languageMap": {
+"fi": "Östersundom",
+"sv": "Östersundom"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0918801560",
+"type": "AdministrativeArea",
+"districtCode": "0918801560",
+"name": {
+"languageMap": {
+"fi": "Salmenkallio",
+"sv": "Sundberg"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0918801570",
+"type": "AdministrativeArea",
+"districtCode": "0918801570",
+"name": {
+"languageMap": {
+"fi": "Talosaari",
+"sv": "Husö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0918801580",
+"type": "AdministrativeArea",
+"districtCode": "0918801580",
+"name": {
+"languageMap": {
+"fi": "Karhusaari",
+"sv": "Björnsö"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0918801591",
+"type": "AdministrativeArea",
+"districtCode": "0918801591",
+"name": {
+"languageMap": {
+"fi": "Landbo",
+"sv": "Landbo"
+}
+}
+},
+{
+"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:subdistrict-0918801592",
+"type": "AdministrativeArea",
+"districtCode": "0918801592",
+"name": {
+"languageMap": {
+"fi": "Puroniitty",
+"sv": "Bäckängen"
+}
+}
+}
+]

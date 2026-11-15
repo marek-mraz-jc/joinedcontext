@@ -1,0 +1,22 @@
+# Eight more census 2021 tables of the residents of the basic settlement units (ZSJ) of the city as
+# KeyPerformanceIndicator, one entity per figure, ZSJ and period (T-5675), with the same mapping text
+# as the statistics pipeline; beside statistics-zsj because one run of both would not fit one quota.
+# The census does not change; a weekly run repairs a lost write within a week. 8 tables, 23,249
+# figures on 2026-10-25; the run fits 256 MiB slowly (docker --memory: killed at 192).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: statistics-zsj-obyvatelia
+  namespace: bratislava
+  title:
+    sk: Obyvatelia základných sídelných jednotiek
+    en: Residents of the basic settlement units
+spec:
+  class: auto
+  period: 168h
+  schedule: '15 5 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bratislava-hub }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 320, cpuMillicores: 100 }

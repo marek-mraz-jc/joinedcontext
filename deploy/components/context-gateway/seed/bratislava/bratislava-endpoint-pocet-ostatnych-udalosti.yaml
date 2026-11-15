@@ -1,0 +1,44 @@
+# Other events recorded by the city police, 2017-2022: one public dataset of the hub (T-5671, Research/bratislava-open-data.md row 143), item 453481307bfe4386b8d2ec14ca8fb63d, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-ostatnych-udalosti
+  namespace: bratislava
+  title:
+    sk: Počet ostatných udalostí v rokoch 2017 - 2022
+    en: Other events recorded by the city police, 2017-2022
+  description:
+    sk: 'Ukazovatele tabuľky „Počet ostatných udalostí v rokoch 2017 - 2022“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Ukazovatele sú súčty a počty riadkov tabuľky, ktoré vypočíta portál. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Other events recorded by the city police, 2017-2022”, one per city district, period and figure, as KeyPerformanceIndicator. The figures are counts and sums of the table rows, computed by the hub. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: kuq76pjn3pi3sqz2jtm4ki6dro2xivie
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-ostatnych-udalosti
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [JUST]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/453481307bfe4386b8d2ec14ca8fb63d
+        title:
+          sk: Počet ostatných udalostí v rokoch 2017 - 2022
+          en: Other events recorded by the city police, 2017-2022
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet ostatných udalostí v rokoch 2017 - 2022. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Other events recorded by the city police, 2017-2022. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics }

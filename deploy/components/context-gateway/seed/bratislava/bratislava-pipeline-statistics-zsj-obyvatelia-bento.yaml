@@ -1,0 +1,324 @@
+# The mapping of the statistics-zsj-obyvatelia pipeline (T-5675): eight more census 2021 tables of
+# the residents of the basic settlement units (ZSJ) of the city as Smart Data Models
+# KeyPerformanceIndicator, one entity per table, figure, ZSJ and period, with the mapping text of
+# the statistics pipeline (T-5274).
+pipeline:
+  processors:
+    - mapping: |
+        # name: the id prefix and the dataset's Endpoint idPattern; path: the Feature Service as the
+        # hub's URL writes it; areas: district (the 17 city districts), okres (Bratislava I to V),
+        # city (Bratislava as a whole), zsj (the census's basic settlement units of the city), obec
+        # (the municipalities of the Bratislava Region) or kraj (the Bratislava region, NUTS 3 SK010);
+        # area: the area column (a zsj's 7-digit code), none for a table of the city alone; label: a
+        # zsj's name column, within: its city district's code column; year: the period column (a
+        # year, a range of years, two ranges compared, a day or a month such as 2018-06), quarter:
+        # its quarter column, month: its month column (1 to 12), spans: the range each year of it
+        # stands for (a model's 1991 is 1991-2021), or fixed: the year or range the table's title or
+        # the item's description names; by: breakdown columns (age, sex,
+        # category), each one segment of the id and one part of the name, or {code, name, optional}:
+        # the id segment from the code column, the name part from the name column (a budget item's
+        # code and title), an optional one left out of both where its cell is empty; abs: the figure
+        # without its sign (an age pyramid writes the men's side negative); only: [column, prefix]
+        # keeps the rows of one breakdown (all school founders, not the districts' own schools);
+        # values: [column, id segment, Slovak label, minimum, maximum], null where no bound holds.
+        # A table of events or bookings asks the hub for sums: group: the columns or expressions
+        # (SUBSTRING of a date) one figure stands for, in the order the hub names its answer
+        # (an expression answers as EXPR_1); stats: [statistic, column or expression, answer
+        # column]; where: the rows counted (the year-end month of a running ledger); labels: a
+        # breakdown code by its Slovak word; past: a period that starts after today is a wrong
+        # date in the ledger, dropped.
+        let tables = [
+          {"name": "obyvatelia-zsj-odvetvie", "item": "6982f335e01c4c03b2f9617af6b67d86", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20odvetvia%20ekonomickej%20%C4%8Dinnosti%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1c", "title": "Počet obyvateľov podľa odvetvia ekonomickej činnosti v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Nezistené", "nezistene", "Obyvatelia v odvetví: Nezistené", 0, null], ["Pestovanie_plodín_a_chov_zviera", "pestovanie-plodin-a-chov-zvierat-polovni", "Obyvatelia v odvetví: Pestovanie plodín a chov zvierat, poľovníctvo a služby s tým súvisiace", 0, null], ["Lesníctvo_a_ťažba_dreva", "lesnictvo-a-tazba-dreva", "Obyvatelia v odvetví: Lesníctvo a ťažba dreva", 0, null], ["Rybolov_a_akvakultúra", "rybolov-a-akvakultura", "Obyvatelia v odvetví: Rybolov a akvakultúra", 0, null], ["Ťažba_uhlia_a_lignitu", "tazba-uhlia-a-lignitu", "Obyvatelia v odvetví: Ťažba uhlia a lignitu", 0, null], ["Ťažba_ropy_a_zemného_plynu", "tazba-ropy-a-zemneho-plynu", "Obyvatelia v odvetví: Ťažba ropy a zemného plynu", 0, null], ["Dobývanie_kovových_rúd", "dobyvanie-kovovych-rud", "Obyvatelia v odvetví: Dobývanie kovových rúd", 0, null], ["Iná_ťažba_a_dobývanie", "ina-tazba-a-dobyvanie", "Obyvatelia v odvetví: Iná ťažba a dobývanie", 0, null], ["Pomocné_činnosti_pri_ťažbe", "pomocne-cinnosti-pri-tazbe", "Obyvatelia v odvetví: Pomocné činnosti pri ťažbe", 0, null], ["Výroba_potravín", "vyroba-potravin", "Obyvatelia v odvetví: Výroba potravín", 0, null], ["Výroba_nápojov", "vyroba-napojov", "Obyvatelia v odvetví: Výroba nápojov", 0, null], ["Výroba_tabakových_výrobkov", "vyroba-tabakovych-vyrobkov", "Obyvatelia v odvetví: Výroba tabakových výrobkov", 0, null], ["Výroba_textilu", "vyroba-textilu", "Obyvatelia v odvetví: Výroba textilu", 0, null], ["Výroba_odevov", "vyroba-odevov", "Obyvatelia v odvetví: Výroba odevov", 0, null], ["Výroba_kože_a_kožených_výrobkov", "vyroba-koze-a-kozenych-vyrobkov", "Obyvatelia v odvetví: Výroba kože a kožených výrobkov", 0, null], ["Spracovanie_dreva_a_výroba_výro", "spracovanie-dreva-a-vyroba-vyrobkov-z-dr", "Obyvatelia v odvetví: Spracovanie dreva a výroba výrobkov z dreva a korku okrem nábytku; výroba predmetov zo slamy a prúteného materiálu", 0, null], ["Výroba_papiera_a_papierových_vý", "vyroba-papiera-a-papierovych-vyrobkov", "Obyvatelia v odvetví: Výroba papiera a papierových výrobkov", 0, null], ["Tlač_a_reprodukcia_záznamových_", "tlac-a-reprodukcia-zaznamovych-medii", "Obyvatelia v odvetví: Tlač a reprodukcia záznamových médií", 0, null], ["Výroba_koksu_a_rafinovaných_rop", "vyroba-koksu-a-rafinovanych-ropnych-prod", "Obyvatelia v odvetví: Výroba koksu a rafinovaných ropných produktov", 0, null], ["Výroba_chemikálií_a_chemických_", "vyroba-chemikalii-a-chemickych-produktov", "Obyvatelia v odvetví: Výroba chemikálií a chemických produktov", 0, null], ["Výroba_základných_farmaceutický", "vyroba-zakladnych-farmaceutickych-vyrobk", "Obyvatelia v odvetví: Výroba základných farmaceutických výrobkov a farmaceutických prípravkov", 0, null], ["Výroba_výrobkov_z_gumy_a_plastu", "vyroba-vyrobkov-z-gumy-a-plastu", "Obyvatelia v odvetví: Výroba výrobkov z gumy a plastu", 0, null], ["Výroba_ostatných_nekovových_min", "vyroba-ostatnych-nekovovych-mineralnych", "Obyvatelia v odvetví: Výroba ostatných nekovových minerálnych výrobkov", 0, null], ["Výroba_a_spracovanie_kovov", "vyroba-a-spracovanie-kovov", "Obyvatelia v odvetví: Výroba a spracovanie kovov", 0, null], ["Výroba_kovových_konštrukcií_okr", "vyroba-kovovych-konstrukcii-okrem-strojo", "Obyvatelia v odvetví: Výroba kovových konštrukcií okrem strojov a zariadení", 0, null], ["Výroba_počítačových__elektronic", "vyroba-pocitacovych-elektronickych-a-opt", "Obyvatelia v odvetví: Výroba počítačových, elektronických a optických výrobko", 0, null], ["Výroba_elektrických_zariadení", "vyroba-elektrickych-zariadeni", "Obyvatelia v odvetví: Výroba elektrických zariadení", 0, null], ["Výroba_strojov_a_zariadení_i__n", "vyroba-strojov-a-zariadeni-i-n", "Obyvatelia v odvetví: Výroba strojov a zariadení i. n.", 0, null], ["Výroba_motorových_vozidiel__náv", "vyroba-motorovych-vozidiel-navesov-a-pri", "Obyvatelia v odvetví: Výroba motorových vozidiel, návesov a prívesov", 0, null], ["Výroba_ostatných_dopravných_pro", "vyroba-ostatnych-dopravnych-prostriedkov", "Obyvatelia v odvetví: Výroba ostatných dopravných prostriedkov", 0, null], ["Výroba_nábytku", "vyroba-nabytku", "Obyvatelia v odvetví: Výroba nábytku", 0, null], ["Iná_výroba", "ina-vyroba", "Obyvatelia v odvetví: Iná výroba", 0, null], ["Oprava_a_inštalácia_strojov_a_p", "oprava-a-instalacia-strojov-a-pristrojov", "Obyvatelia v odvetví: Oprava a inštalácia strojov a prístrojov", 0, null], ["Dodávka_elektriny__plynu__pary_", "dodavka-elektriny-plynu-pary-a-studeneho", "Obyvatelia v odvetví: Dodávka elektriny, plynu, pary a studeného vzduchu", 0, null], ["Zber__úprava_a_dodávka_vody", "zber-uprava-a-dodavka-vody", "Obyvatelia v odvetví: Zber, úprava a dodávka vody", 0, null], ["Čistenie_a_odvod_odpadových_vôd", "cistenie-a-odvod-odpadovych-vod", "Obyvatelia v odvetví: Čistenie a odvod odpadových vôd", 0, null], ["Zber__spracúvanie_a_likvidácia_", "zber-spracuvanie-a-likvidacia-odpadov-re", "Obyvatelia v odvetví: Zber, spracúvanie a likvidácia odpadov; recyklácia materiálov", 0, null], ["Ozdravovacie_činnosti_a_ostatné", "ozdravovacie-cinnosti-a-ostatne-cinnosti", "Obyvatelia v odvetví: Ozdravovacie činnosti a ostatné činnosti nakladania s odpadom", 0, null], ["Výstavba_budov", "vystavba-budov", "Obyvatelia v odvetví: Výstavba budov", 0, null], ["Inžinierske_stavby", "inzinierske-stavby", "Obyvatelia v odvetví: Inžinierske stavby", 0, null], ["Špecializované_stavebné_práce", "specializovane-stavebne-prace", "Obyvatelia v odvetví: Špecializované stavebné práce", 0, null], ["Veľkoobchod_a_maloobchod_a_opra", "velkoobchod-a-maloobchod-a-oprava-motoro", "Obyvatelia v odvetví: Veľkoobchod a maloobchod a oprava motorových vozidiel a motocyklov", 0, null], ["Veľkoobchod__okrem_motorových_v", "velkoobchod-okrem-motorovych-vozidiel-a", "Obyvatelia v odvetví: Veľkoobchod, okrem motorových vozidiel a motocyklov", 0, null], ["Maloobchod_okrem_motorových_voz", "maloobchod-okrem-motorovych-vozidiel-a-m", "Obyvatelia v odvetví: Maloobchod okrem motorových vozidiel a motocyklov", 0, null], ["Pozemná_doprava_a_doprava_potru", "pozemna-doprava-a-doprava-potrubim", "Obyvatelia v odvetví: Pozemná doprava a doprava potrubím", 0, null], ["Vodná_doprava", "vodna-doprava", "Obyvatelia v odvetví: Vodná doprava", 0, null], ["Letecká_doprava", "letecka-doprava", "Obyvatelia v odvetví: Letecká doprava", 0, null], ["Skladové_a_pomocné_činnosti_v_d", "skladove-a-pomocne-cinnosti-v-doprave", "Obyvatelia v odvetví: Skladové a pomocné činnosti v doprave", 0, null], ["Poštové_služby_a_služby_kuriéro", "postove-sluzby-a-sluzby-kurierov", "Obyvatelia v odvetví: Poštové služby a služby kuriérov", 0, null], ["Ubytovanie", "ubytovanie", "Obyvatelia v odvetví: Ubytovanie", 0, null], ["Činnosti_reštaurácií_a_pohostin", "cinnosti-restauracii-a-pohostinstiev", "Obyvatelia v odvetví: Činnosti reštaurácií a pohostinstiev", 0, null], ["Nakladateľské_činnosti", "nakladatelske-cinnosti", "Obyvatelia v odvetví: Nakladateľské činnosti", 0, null], ["Výroba_filmov__videozáznamov_a_", "vyroba-filmov-videozaznamov-a-televiznyc", "Obyvatelia v odvetví: Výroba filmov, videozáznamov a televíznych programov, príprava a zverejňovanie zvukových nahrávok", 0, null], ["Činnosti_pre_rozhlasové_a_telev", "cinnosti-pre-rozhlasove-a-televizne-vysi", "Obyvatelia v odvetví: Činnosti pre rozhlasové a televízne vysielanie", 0, null], ["Telekomunikácie", "telekomunikacie", "Obyvatelia v odvetví: Telekomunikácie", 0, null], ["Počítačové_programovanie__porad", "pocitacove-programovanie-poradenstvo-a-s", "Obyvatelia v odvetví: Počítačové programovanie, poradenstvo a súvisiace služby", 0, null], ["Informačné_služby", "informacne-sluzby", "Obyvatelia v odvetví: Informačné služby", 0, null], ["Finančné_služby__okrem_poisteni", "financne-sluzby-okrem-poistenia-a-dochod", "Obyvatelia v odvetví: Finančné služby, okrem poistenia a dôchodkového zabezpečenia", 0, null], ["Poistenie__zaistenie_a_dôchodko", "poistenie-zaistenie-a-dochodkove-zabezpe", "Obyvatelia v odvetví: Poistenie, zaistenie a dôchodkové zabezpečenie okrem povinného sociálneho poistenia", 0, null], ["Pomocné_činnosti_finančných_slu", "pomocne-cinnosti-financnych-sluzieb-a-po", "Obyvatelia v odvetví: Pomocné činnosti finančných služieb a poistenia", 0, null], ["Činnosti_v_oblasti_nehnuteľnost", "cinnosti-v-oblasti-nehnutelnosti", "Obyvatelia v odvetví: Činnosti v oblasti nehnuteľností", 0, null], ["Právne_a_účtovnícke_činnosti", "pravne-a-uctovnicke-cinnosti", "Obyvatelia v odvetví: Právne a účtovnícke činnosti", 0, null], ["Vedenie_firiem__poradenstvo_v_o", "vedenie-firiem-poradenstvo-v-oblasti-ria", "Obyvatelia v odvetví: Vedenie firiem; poradenstvo v oblasti riadenia", 0, null], ["Architektonické_a_inžinierske_č", "architektonicke-a-inzinierske-cinnosti-t", "Obyvatelia v odvetví: Architektonické a inžinierske činnosti; technické testovanie a analýzy", 0, null], ["Vedecký_výskum_a_vývoj", "vedecky-vyskum-a-vyvoj", "Obyvatelia v odvetví: Vedecký výskum a vývoj", 0, null], ["Reklama_a_prieskum_trhu", "reklama-a-prieskum-trhu", "Obyvatelia v odvetví: Reklama a prieskum trhu", 0, null], ["Ostatné_odborné__vedecké_a_tech", "ostatne-odborne-vedecke-a-technicke-cinn", "Obyvatelia v odvetví: Ostatné odborné, vedecké a technické činnosti", 0, null], ["Veterinárne_činnosti", "veterinarne-cinnosti", "Obyvatelia v odvetví: Veterinárne činnosti", 0, null], ["Prenájom_a_lízing", "prenajom-a-lizing", "Obyvatelia v odvetví: Prenájom a lízing", 0, null], ["Sprostredkovanie_práce", "sprostredkovanie-prace", "Obyvatelia v odvetví: Sprostredkovanie práce", 0, null], ["Činnosti_cestovných_agentúr__re", "cinnosti-cestovnych-agentur-rezervacne-s", "Obyvatelia v odvetví: Činnosti cestovných agentúr, rezervačné služby cestovných kancelárií a súvisiace činnosti", 0, null], ["Bezpečnostné_a_pátracie_služby", "bezpecnostne-a-patracie-sluzby", "Obyvatelia v odvetví: Bezpečnostné a pátracie služby", 0, null], ["Činnosti_súvisiace_s_údržbou_za", "cinnosti-suvisiace-s-udrzbou-zariadeni-a", "Obyvatelia v odvetví: Činnosti súvisiace s údržbou zariadení a krajinnou úpravou", 0, null], ["Administratívne__pomocné_kancel", "administrativne-pomocne-kancelarske-a-in", "Obyvatelia v odvetví: Administratívne, pomocné kancelárske a iné obchodné pomocné činnosti", 0, null], ["Verejná_správa_a_obrana__povinn", "verejna-sprava-a-obrana-povinne-socialne", "Obyvatelia v odvetví: Verejná správa a obrana; povinné sociálne zabezpečenie", 0, null], ["Vzdelávanie", "vzdelavanie", "Obyvatelia v odvetví: Vzdelávanie", 0, null], ["Zdravotníctvo", "zdravotnictvo", "Obyvatelia v odvetví: Zdravotníctvo", 0, null], ["Starostlivosť_v_pobytových_zari", "starostlivost-v-pobytovych-zariadeniach", "Obyvatelia v odvetví: Starostlivosť v pobytových zariadeniach (rezidenčná starostlivosť)", 0, null], ["Sociálna_práca_bez_ubytovania", "socialna-praca-bez-ubytovania", "Obyvatelia v odvetví: Sociálna práca bez ubytovania", 0, null], ["Tvorivé__umelecké_a_zábavné_čin", "tvorive-umelecke-a-zabavne-cinnosti", "Obyvatelia v odvetví: Tvorivé, umelecké a zábavné činnosti", 0, null], ["Činnosti_knižníc__archívov__múz", "cinnosti-kniznic-archivov-muzei-a-ostatn", "Obyvatelia v odvetví: Činnosti knižníc, archívov, múzeí a ostatných kultúrnyc", 0, null], ["Činnosti_herní_a_stávkových_kan", "cinnosti-herni-a-stavkovych-kancelarii", "Obyvatelia v odvetví: Činnosti herní a stávkových kancelárií", 0, null], ["Športové__zábavné_a_rekreačné_č", "sportove-zabavne-a-rekreacne-cinnosti", "Obyvatelia v odvetví: Športové, zábavné a rekreačné činnosti", 0, null], ["Činnosti_členských_organizácií", "cinnosti-clenskych-organizacii", "Obyvatelia v odvetví: Činnosti členských organizácií", 0, null], ["Oprava_počítačov__osobných_potr", "oprava-pocitacov-osobnych-potrieb-a-potr", "Obyvatelia v odvetví: Oprava počítačov, osobných potrieb a potrieb pre domácnosti", 0, null], ["Ostatné_osobné_služby", "ostatne-osobne-sluzby", "Obyvatelia v odvetví: Ostatné osobné služby", 0, null], ["Činnosti_domácností_ako_zamestn", "cinnosti-domacnosti-ako-zamestnavatelov", "Obyvatelia v odvetví: Činnosti domácností ako zamestnávateľov domáceho personálu", 0, null], ["Nediferencované_činnosti_v_domá", "nediferencovane-cinnosti-v-domacnostiach", "Obyvatelia v odvetví: Nediferencované činnosti v domácnostiach produkujúce tovary a služby na vlastné použitie", 0, null], ["Činnosti_extrateritoriálnych_or", "cinnosti-extrateritorialnych-organizacii", "Obyvatelia v odvetví: Činnosti extrateritoriálnych organizácií a združení", 0, null], ["Zamestnávateľ_v_zahraničí", "zamestnavatel-v-zahranici", "Obyvatelia v odvetví: Zamestnávateľ v zahraničí", 0, null], ["Spolu", "spolu", "Obyvatelia v odvetví: Spolu", 0, null]]},
+          {"name": "obyvatelia-zsj-pohlavie", "item": "7a0fda4ad7a04a4ea353faf1d5a679ea", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20pohlavia%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1ch%20-%20anonymizovan", "title": "Počet obyvateľov podľa pohlavia v základných sídelných jednotkách - anonymizované", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Muži", "muzi", "Obyvatelia: Muži", 0, null], ["Ženy", "zeny", "Obyvatelia: Ženy", 0, null], ["Spolu", "spolu", "Obyvatelia: Spolu", 0, null]]},
+          {"name": "obyvatelia-zsj-postavenie-v-zamestnani", "item": "b89326cfd6e54f768f279b89d0e3c16b", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20postavenia%20v%20zamestnan%C3%AD%20%28s%C3%BA%C4%8Dasn%C3%A9ho%20alebo%20posledne%20vykon%C3%A1van%C3%A9ho", "title": "Počet obyvateľov podľa postavenia v zamestnaní (súčasného/posledne vykonávaného) v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Zamestnanec", "zamestnanec", "Postavenie v zamestnaní: Zamestnanec", 0, null], ["Podnikateľ_so_zamestnancami", "podnikatel-so-zamestnancami", "Postavenie v zamestnaní: Podnikateľ so zamestnancami", 0, null], ["Podnikateľ_bez_zamestnancov", "podnikatel-bez-zamestnancov", "Postavenie v zamestnaní: Podnikateľ bez zamestnancov", 0, null], ["Člen_družstva", "clen-druzstva", "Postavenie v zamestnaní: Člen družstva", 0, null], ["Vypomáhajúci__neplatený__člen_d", "vypomahajuci-neplateny-clen-domacnosti-v", "Postavenie v zamestnaní: Vypomáhajúci (neplatený) člen domácnosti v rodinnom podniku", 0, null], ["Iné", "ine", "Postavenie v zamestnaní: Iné", 0, null], ["Nezistené", "nezistene", "Postavenie v zamestnaní: Nezistené", 0, null], ["Spolu", "spolu", "Postavenie v zamestnaní: Spolu", 0, null]]},
+          {"name": "obyvatelia-zsj-praca-s-internetom", "item": "8d6eabcbe6624650b151e3034944c98c", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20po%C4%8D%C3%ADta%C4%8Dovej%20znalosti%20-%20pr%C3%A1ca%20s%20internetom%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BD", "title": "Počet obyvateľov podľa počítačovej znalosti - práca s internetom v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Práca_s_internetom___áno", "ano", "Práca s internetom - áno", 0, null], ["Práca_s_internetom___nie", "nie", "Práca s internetom - nie", 0, null], ["Práca_s_internetom___nezistené", "nezistene", "Práca s internetom - nezistené", 0, null], ["Práca_s_internetom___spolu", "spolu", "Práca s internetom - spolu", 0, null]]},
+          {"name": "obyvatelia-zsj-praca-s-postou", "item": "215c2e3cc25d42f6823bfd8f5488958a", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20po%C4%8D%C3%ADta%C4%8Dovej%20znalosti%20%E2%80%93%20pr%C3%A1ca%20s%20elektronickou%20po%C5%A1tou%20v%20z%C3%A1kladn%C3%BD", "title": "Počet obyvateľov podľa počítačovej znalosti – práca s elektronickou poštou v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Práca_s_elektronickou_poštou__e", "praca-s-elektronickou-postou-e-mail-ano", "Práca s elektronickou poštou (e-mail) - áno", 0, null], ["Práca_s_elektronickou_poštou__1", "praca-s-elektronickou-postou-e-mail-nie", "Práca s elektronickou poštou (e-mail) - nie", 0, null], ["Práca_s_elektronickou_poštou__2", "praca-s-elektronickou-postou-e-mail-nezi", "Práca s elektronickou poštou (e-mail) - nezistené", 0, null], ["Práca_s_elektronickou_poštou__3", "praca-s-elektronickou-postou-e-mail-spol", "Práca s elektronickou poštou (e-mail) - spolu", 0, null]]},
+          {"name": "obyvatelia-zsj-praca-s-tabulkami", "item": "a2e84487894d4690b503d089d0ed3617", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20po%C4%8D%C3%ADta%C4%8Dovej%20znalosti%20%E2%80%93%20pr%C3%A1ca%20s%20tabu%C4%BEkami%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDc", "title": "Počet obyvateľov podľa počítačovej znalosti – práca s tabuľkami v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Práca_s_tabuľkami___áno", "ano", "Práca s tabuľkami - áno", 0, null], ["Práca_s_tabuľkami___nie", "nie", "Práca s tabuľkami - nie", 0, null], ["Práca_s_tabuľkami___nezistené", "nezistene", "Práca s tabuľkami - nezistené", 0, null], ["Práca_s_tabuľkami___spolu", "spolu", "Práca s tabuľkami - spolu", 0, null]]},
+          {"name": "obyvatelia-zsj-ekonomicka-aktivita", "item": "0c7474e4f4154726b216d36a654775d1", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20s%C3%BA%C4%8Dasnej%20ekonomickej%20aktivity%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jedn", "title": "Počet obyvateľov podľa súčasnej ekonomickej aktivity v základných sídelných jednotkách", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Pracujúci__okrem_dôchodcov_", "pracujuci-okrem-dochodcov", "Ekonomická aktivita: Pracujúci (okrem dôchodcov)", 0, null], ["Pracujúci_dôchodca", "pracujuci-dochodca", "Ekonomická aktivita: Pracujúci dôchodca", 0, null], ["Osoba_na_materskej_dovolenke", "osoba-na-materskej-dovolenke", "Ekonomická aktivita: Osoba na materskej dovolenke", 0, null], ["Osoba_na_rodičovskej_dovolenke", "osoba-na-rodicovskej-dovolenke", "Ekonomická aktivita: Osoba na rodičovskej dovolenke", 0, null], ["Nezamestnaný", "nezamestnany", "Ekonomická aktivita: Nezamestnaný", 0, null], ["Študent_strednej_školy", "student-strednej-skoly", "Ekonomická aktivita: Študent strednej školy", 0, null], ["Študent_vysokej_školy", "student-vysokej-skoly", "Ekonomická aktivita: Študent vysokej školy", 0, null], ["Osoba_v_domácnosti", "osoba-v-domacnosti", "Ekonomická aktivita: Osoba v domácnosti", 0, null], ["Dôchodca", "dochodca", "Ekonomická aktivita: Dôchodca", 0, null], ["Príjemca_kapitálových_príjmov", "prijemca-kapitalovych-prijmov", "Ekonomická aktivita: Príjemca kapitálových príjmov", 0, null], ["Dieťa_do_16_rokov", "dieta-do-16-rokov", "Ekonomická aktivita: Dieťa do 16 rokov", 0, null], ["Iná", "ina", "Ekonomická aktivita: Iná", 0, null], ["Nezistené", "nezistene", "Ekonomická aktivita: Nezistené", 0, null], ["Spolu", "spolu", "Ekonomická aktivita: Spolu", 0, null], ["Aktívni", "aktivni", "Ekonomická aktivita: Aktívni", 0, null], ["Neaktívni", "neaktivni", "Ekonomická aktivita: Neaktívni", 0, null]]},
+          {"name": "obyvatelia-zsj-statna-prislusnost", "item": "271dd13fa74a4e4088c37fb4c55d7c5b", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20%C5%A1t%C3%A1tnej%20pr%C3%ADslu%C5%A1nosti%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1ch%20-%20anony", "title": "Počet obyvateľov podľa štátnej príslušnosti v základných sídelných jednotkách", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Štátna_príslušnosť___iné", "statna-prislusnost-ine", "Štátna príslušnosť: Štátna príslušnosť - iné", 0, null], ["Bez_štátnej_príslušnosti", "bez-statnej-prislusnosti", "Štátna príslušnosť: Bez štátnej príslušnosti", 0, null], ["Nezistené", "nezistene", "Štátna príslušnosť: Nezistené", 0, null], ["Slovenská_republika", "slovenska-republika", "Štátna príslušnosť: Slovenská republika", 0, null], ["Menšie_odľahlé_ostrovy_Spojenýc", "mensie-odlahle-ostrovy-spojenych-statov", "Štátna príslušnosť: Menšie odľahlé ostrovy Spojených štátov", 0, null], ["Čínska_republika", "cinska-republika", "Štátna príslušnosť: Čínska republika", 0, null], ["Britské_indickooceánske_územie", "britske-indickooceanske-uzemie", "Štátna príslušnosť: Britské indickooceánske územie", 0, null], ["Belgické_kráľovstvo", "belgicke-kralovstvo", "Štátna príslušnosť: Belgické kráľovstvo", 0, null], ["Antarktída", "antarktida", "Štátna príslušnosť: Antarktída", 0, null], ["Malajzia", "malajzia", "Štátna príslušnosť: Malajzia", 0, null], ["Libanonská_republika", "libanonska-republika", "Štátna príslušnosť: Libanonská republika", 0, null], ["Laoská_ľudovodemokratická_repub", "laoska-ludovodemokraticka-republika", "Štátna príslušnosť: Laoská ľudovodemokratická republika", 0, null], ["Kirgizská_republika", "kirgizska-republika", "Štátna príslušnosť: Kirgizská republika", 0, null], ["Kuvajtský_štát", "kuvajtsky-stat", "Štátna príslušnosť: Kuvajtský štát", 0, null], ["Kórejská_republika", "korejska-republika", "Štátna príslušnosť: Kórejská republika", 0, null], ["Kórejská_ľudovodemokratická_rep", "korejska-ludovodemokraticka-republika", "Štátna príslušnosť: Kórejská ľudovodemokratická republika", 0, null], ["Kazašská_republika", "kazasska-republika", "Štátna príslušnosť: Kazašská republika", 0, null], ["Jordánske_hášimovské_kráľovstvo", "jordanske-hasimovske-kralovstvo", "Štátna príslušnosť: Jordánske hášimovské kráľovstvo", 0, null], ["Japonsko", "japonsko", "Štátna príslušnosť: Japonsko", 0, null], ["Spojené_kráľovstvo_Veľkej_Britá", "spojene-kralovstvo-velkej-britanie-a-sev", "Štátna príslušnosť: Spojené kráľovstvo Veľkej Británie a Severného ĺrska", 0, null], ["Ukrajina", "ukrajina", "Štátna príslušnosť: Ukrajina", 0, null], ["Macedónska_republika", "macedonska-republika", "Štátna príslušnosť: Macedónska republika", 0, null], ["Švajčiarska_konfederácia", "svajciarska-konfederacia", "Štátna príslušnosť: Švajčiarska konfederácia", 0, null], ["Švédske_kráľovstvo", "svedske-kralovstvo", "Štátna príslušnosť: Švédske kráľovstvo", 0, null], ["Španielske_kráľovstvo", "spanielske-kralovstvo", "Štátna príslušnosť: Španielske kráľovstvo", 0, null], ["Slovinská_republika", "slovinska-republika", "Štátna príslušnosť: Slovinská republika", 0, null], ["Srbská_republika", "srbska-republika", "Štátna príslušnosť: Srbská republika", 0, null], ["Ruská_federácia", "ruska-federacia", "Štátna príslušnosť: Ruská federácia", 0, null], ["Rumunsko", "rumunsko", "Štátna príslušnosť: Rumunsko", 0, null], ["Moldavská_republika", "moldavska-republika", "Štátna príslušnosť: Moldavská republika", 0, null], ["Portugalská_republika", "portugalska-republika", "Štátna príslušnosť: Portugalská republika", 0, null], ["Poľská_republika", "polska-republika", "Štátna príslušnosť: Poľská republika", 0, null], ["Nórske_kráľovstvo", "norske-kralovstvo", "Štátna príslušnosť: Nórske kráľovstvo", 0, null], ["Holandské_kráľovstvo", "holandske-kralovstvo", "Štátna príslušnosť: Holandské kráľovstvo", 0, null], ["Čierna_Hora", "cierna-hora", "Štátna príslušnosť: Čierna Hora", 0, null], ["Monacké_kniežatstvo", "monacke-kniezatstvo", "Štátna príslušnosť: Monacké kniežatstvo", 0, null], ["Maltská_republika", "maltska-republika", "Štátna príslušnosť: Maltská republika", 0, null], ["Luxemburské_veľkovojvodstvo", "luxemburske-velkovojvodstvo", "Štátna príslušnosť: Luxemburské veľkovojvodstvo", 0, null], ["Litovská_republika", "litovska-republika", "Štátna príslušnosť: Litovská republika", 0, null], ["Lichtenštajnské_kniežatstvo", "lichtenstajnske-kniezatstvo", "Štátna príslušnosť: Lichtenštajnské kniežatstvo", 0, null], ["Lotyšská_republika", "lotysska-republika", "Štátna príslušnosť: Lotyšská republika", 0, null], ["Talianska_republika", "talianska-republika", "Štátna príslušnosť: Talianska republika", 0, null], ["Írsko", "irsko", "Štátna príslušnosť: Írsko", 0, null], ["Islandská_republika", "islandska-republika", "Štátna príslušnosť: Islandská republika", 0, null], ["Maďarsko", "madarsko", "Štátna príslušnosť: Maďarsko", 0, null], ["Srílanská_demokratická_socialis", "srilanska-demokraticka-socialisticka-rep", "Štátna príslušnosť: Srílanská demokratická socialistická republika", 0, null], ["Singapurská_republika", "singapurska-republika", "Štátna príslušnosť: Singapurská republika", 0, null], ["Saudskoarabské_kráľovstvo", "saudskoarabske-kralovstvo", "Štátna príslušnosť: Saudskoarabské kráľovstvo", 0, null], ["Filipínska_republika", "filipinska-republika", "Štátna príslušnosť: Filipínska republika", 0, null], ["Britské_Panenské_ostrovy", "britske-panenske-ostrovy", "Štátna príslušnosť: Britské Panenské ostrovy", 0, null], ["Belize", "belize", "Štátna príslušnosť: Belize", 0, null], ["Zimbabwianska_republika", "zimbabwianska-republika", "Štátna príslušnosť: Zimbabwianska republika", 0, null], ["Zambijská_republika", "zambijska-republika", "Štátna príslušnosť: Zambijská republika", 0, null], ["Ugandská_republika", "ugandska-republika", "Štátna príslušnosť: Ugandská republika", 0, null], ["Tuniská_republika", "tuniska-republika", "Štátna príslušnosť: Tuniská republika", 0, null], ["Sudánska_republika", "sudanska-republika", "Štátna príslušnosť: Sudánska republika", 0, null], ["Juhoafrická_republika", "juhoafricka-republika", "Štátna príslušnosť: Juhoafrická republika", 0, null], ["Somálska_republika", "somalska-republika", "Štátna príslušnosť: Somálska republika", 0, null], ["Senegalská_republika", "senegalska-republika", "Štátna príslušnosť: Senegalská republika", 0, null], ["Nigérijská_federatívna_republik", "nigerijska-federativna-republika", "Štátna príslušnosť: Nigérijská federatívna republika", 0, null], ["Nigerská_republika", "nigerska-republika", "Štátna príslušnosť: Nigerská republika", 0, null], ["Mozambická_republika", "mozambicka-republika", "Štátna príslušnosť: Mozambická republika", 0, null], ["Marocké_kráľovstvo", "marocke-kralovstvo", "Štátna príslušnosť: Marocké kráľovstvo", 0, null], ["Maurícijská_republika", "mauricijska-republika", "Štátna príslušnosť: Maurícijská republika", 0, null], ["Mauritánska_islamská_republika", "mauritanska-islamska-republika", "Štátna príslušnosť: Mauritánska islamská republika", 0, null], ["Malawijská_republika", "malawijska-republika", "Štátna príslušnosť: Malawijská republika", 0, null], ["Madagaskarská_republika", "madagaskarska-republika", "Štátna príslušnosť: Madagaskarská republika", 0, null], ["Líbya", "libya", "Štátna príslušnosť: Líbya", 0, null], ["Libérijská_republika", "liberijska-republika", "Štátna príslušnosť: Libérijská republika", 0, null], ["Lesothské_kráľovstvo", "lesothske-kralovstvo", "Štátna príslušnosť: Lesothské kráľovstvo", 0, null], ["Kenská_republika", "kenska-republika", "Štátna príslušnosť: Kenská republika", 0, null], ["Guinejsko_bissauská_republika", "guinejsko-bissauska-republika", "Štátna príslušnosť: Guinejsko-bissauská republika", 0, null], ["Guinejská_republika", "guinejska-republika", "Štátna príslušnosť: Guinejská republika", 0, null], ["Ghanská_republika", "ghanska-republika", "Štátna príslušnosť: Ghanská republika", 0, null], ["Gambijská_republika", "gambijska-republika", "Štátna príslušnosť: Gambijská republika", 0, null], ["Etiópska_federatívna_demokratic", "etiopska-federativna-demokraticka-republ", "Štátna príslušnosť: Etiópska federatívna demokratická republika", 0, null], ["Egyptská_arabská_republika", "egyptska-arabska-republika", "Štátna príslušnosť: Egyptská arabská republika", 0, null], ["Džibutská_republika", "dzibutska-republika", "Štátna príslušnosť: Džibutská republika", 0, null], ["Konžská_demokratická_republika", "konzska-demokraticka-republika", "Štátna príslušnosť: Konžská demokratická republika", 0, null], ["Izraelský_štát", "izraelsky-stat", "Štátna príslušnosť: Izraelský štát", 0, null], ["Iracká_republika", "iracka-republika", "Štátna príslušnosť: Iracká republika", 0, null], ["Iránska_islamská_republika", "iranska-islamska-republika", "Štátna príslušnosť: Iránska islamská republika", 0, null], ["Indonézska_republika", "indonezska-republika", "Štátna príslušnosť: Indonézska republika", 0, null], ["Indická_republika", "indicka-republika", "Štátna príslušnosť: Indická republika", 0, null], ["Gruzínsko", "gruzinsko", "Štátna príslušnosť: Gruzínsko", 0, null], ["Cyperská_republika", "cyperska-republika", "Štátna príslušnosť: Cyperská republika", 0, null], ["Austrálsky_zväz", "australsky-zvaz", "Štátna príslušnosť: Austrálsky zväz", 0, null], ["Grécka_republika", "grecka-republika", "Štátna príslušnosť: Grécka republika", 0, null], ["Nemecká_spolková_republika", "nemecka-spolkova-republika", "Štátna príslušnosť: Nemecká spolková republika", 0, null], ["Francúzska_republika", "francuzska-republika", "Štátna príslušnosť: Francúzska republika", 0, null], ["Fínska_republika", "finska-republika", "Štátna príslušnosť: Fínska republika", 0, null], ["Estónska_republika", "estonska-republika", "Štátna príslušnosť: Estónska republika", 0, null], ["Dánske_kráľovstvo", "danske-kralovstvo", "Štátna príslušnosť: Dánske kráľovstvo", 0, null], ["Česká_republika", "ceska-republika", "Štátna príslušnosť: Česká republika", 0, null], ["Chorvátska_republika", "chorvatska-republika", "Štátna príslušnosť: Chorvátska republika", 0, null], ["Bulharská_republika", "bulharska-republika", "Štátna príslušnosť: Bulharská republika", 0, null], ["Bosna_a_Hercegovina", "bosna-a-hercegovina", "Štátna príslušnosť: Bosna a Hercegovina", 0, null], ["Bieloruská_republika", "bieloruska-republika", "Štátna príslušnosť: Bieloruská republika", 0, null], ["Rakúska_republika", "rakuska-republika", "Štátna príslušnosť: Rakúska republika", 0, null], ["Pakistanská_islamská_republika", "pakistanska-islamska-republika", "Štátna príslušnosť: Pakistanská islamská republika", 0, null], ["Ománsky_sultanát", "omansky-sultanat", "Štátna príslušnosť: Ománsky sultanát", 0, null], ["Konžská_republika", "konzska-republika", "Štátna príslušnosť: Konžská republika", 0, null], ["Čadská_republika", "cadska-republika", "Štátna príslušnosť: Čadská republika", 0, null], ["Stredoafrická_republika", "stredoafricka-republika", "Štátna príslušnosť: Stredoafrická republika", 0, null], ["Kamerunská_republika", "kamerunska-republika", "Štátna príslušnosť: Kamerunská republika", 0, null], ["Burundská_republika", "burundska-republika", "Štátna príslušnosť: Burundská republika", 0, null], ["Beninská_republika", "beninska-republika", "Štátna príslušnosť: Beninská republika", 0, null], ["Angolská_republika", "angolska-republika", "Štátna príslušnosť: Angolská republika", 0, null], ["Alžírska_demokratická_ľudová_re", "alzirska-demokraticka-ludova-republika", "Štátna príslušnosť: Alžírska demokratická ľudová republika", 0, null], ["Papua_Nová_Guinea", "papua-nova-guinea", "Štátna príslušnosť: Papua-Nová Guinea", 0, null], ["Teritórium_ostrova_Norfolk", "teritorium-ostrova-norfolk", "Štátna príslušnosť: Teritórium ostrova Norfolk", 0, null], ["Nový_Zéland", "novy-zeland", "Štátna príslušnosť: Nový Zéland", 0, null], ["Kiribatská_republika", "kiribatska-republika", "Štátna príslušnosť: Kiribatská republika", 0, null], ["Albánska_republika", "albanska-republika", "Štátna príslušnosť: Albánska republika", 0, null], ["Jemenská_republika", "jemenska-republika", "Štátna príslušnosť: Jemenská republika", 0, null], ["Vietnamská_socialistická_republ", "vietnamska-socialisticka-republika", "Štátna príslušnosť: Vietnamská socialistická republika", 0, null], ["Uzbecká_republika", "uzbecka-republika", "Štátna príslušnosť: Uzbecká republika", 0, null], ["Spojené_arabské_emiráty", "spojene-arabske-emiraty", "Štátna príslušnosť: Spojené arabské emiráty", 0, null], ["Turecká_republika", "turecka-republika", "Štátna príslušnosť: Turecká republika", 0, null], ["Thajské_kráľovstvo", "thajske-kralovstvo", "Štátna príslušnosť: Thajské kráľovstvo", 0, null], ["Tadžická_republika", "tadzicka-republika", "Štátna príslušnosť: Tadžická republika", 0, null], ["Sýrska_arabská_republika", "syrska-arabska-republika", "Štátna príslušnosť: Sýrska arabská republika", 0, null], ["Spojené_štáty_americké", "spojene-staty-americke", "Štátna príslušnosť: Spojené štáty americké", 0, null], ["Republika_Trinidadu_a_Tobaga", "republika-trinidadu-a-tobaga", "Štátna príslušnosť: Republika Trinidadu a Tobaga", 0, null], ["Panamská_republika", "panamska-republika", "Štátna príslušnosť: Panamská republika", 0, null], ["Nikaragujská_republika", "nikaragujska-republika", "Štátna príslušnosť: Nikaragujská republika", 0, null], ["Holandské_Antily", "holandske-antily", "Štátna príslušnosť: Holandské Antily", 0, null], ["Spojené_štáty_mexické", "spojene-staty-mexicke", "Štátna príslušnosť: Spojené štáty mexické", 0, null], ["Jamajka", "jamajka", "Štátna príslušnosť: Jamajka", 0, null], ["Guatemalská_republika", "guatemalska-republika", "Štátna príslušnosť: Guatemalská republika", 0, null], ["Dominikánska_republika", "dominikanska-republika", "Štátna príslušnosť: Dominikánska republika", 0, null], ["Kubánska_republika", "kubanska-republika", "Štátna príslušnosť: Kubánska republika", 0, null], ["Kostarická_republika", "kostaricka-republika", "Štátna príslušnosť: Kostarická republika", 0, null], ["Čínska_ľudová_republika", "cinska-ludova-republika", "Štátna príslušnosť: Čínska ľudová republika", 0, null], ["Kambodžské_kráľovstvo", "kambodzske-kralovstvo", "Štátna príslušnosť: Kambodžské kráľovstvo", 0, null], ["Bangladéšska_ľudová_republika", "bangladesska-ludova-republika", "Štátna príslušnosť: Bangladéšska ľudová republika", 0, null], ["Bahrajnské_kráľovstvo", "bahrajnske-kralovstvo", "Štátna príslušnosť: Bahrajnské kráľovstvo", 0, null], ["Azerbajdžanská_republika", "azerbajdzanska-republika", "Štátna príslušnosť: Azerbajdžanská republika", 0, null], ["Arménska_republika", "armenska-republika", "Štátna príslušnosť: Arménska republika", 0, null], ["Afganská_islamská_republika", "afganska-islamska-republika", "Štátna príslušnosť: Afganská islamská republika", 0, null], ["Venezuelská_bolívarovská_republ", "venezuelska-bolivarovska-republika", "Štátna príslušnosť: Venezuelská bolívarovská republika", 0, null], ["Uruguajská_východná_republika", "uruguajska-vychodna-republika", "Štátna príslušnosť: Uruguajská východná republika", 0, null], ["Peruánska_republika", "peruanska-republika", "Štátna príslušnosť: Peruánska republika", 0, null], ["Paraguajská_republika", "paraguajska-republika", "Štátna príslušnosť: Paraguajská republika", 0, null], ["Falklandské_ostrovy", "falklandske-ostrovy", "Štátna príslušnosť: Falklandské ostrovy", 0, null], ["Ekvádorská_republika", "ekvadorska-republika", "Štátna príslušnosť: Ekvádorská republika", 0, null], ["Kolumbijská_republika", "kolumbijska-republika", "Štátna príslušnosť: Kolumbijská republika", 0, null], ["Čilská_republika", "cilska-republika", "Štátna príslušnosť: Čilská republika", 0, null], ["Brazílska_federatívna_republika", "brazilska-federativna-republika", "Štátna príslušnosť: Brazílska federatívna republika", 0, null], ["Bolívijský_mnohonárodný_štát", "bolivijsky-mnohonarodny-stat", "Štátna príslušnosť: Bolívijský mnohonárodný štát", 0, null], ["Palestínska_národná_samospráva", "palestinska-narodna-samosprava", "Štátna príslušnosť: Palestínska národná samospráva", 0, null], ["Nepálská_federatívna_demokratic", "nepalska-federativna-demokraticka-republ", "Štátna príslušnosť: Nepálská federatívna demokratická republika", 0, null], ["Mongolsko", "mongolsko", "Štátna príslušnosť: Mongolsko", 0, null], ["Argentínska_republika", "argentinska-republika", "Štátna príslušnosť: Argentínska republika", 0, null], ["Kanada", "kanada", "Štátna príslušnosť: Kanada", 0, null], ["Spolu", "spolu", "Štátna príslušnosť: Spolu", 0, null]]}
+        ]
+        let listed = this.services.or([]).map_each(s -> s.name.or(""))
+        let found = $tables.filter(t -> $listed.contains(t.path.unescape_url_query()))
+        let missing = $tables.filter(t -> !$listed.contains(t.path.unescape_url_query())).map_each(t -> t.name)
+        meta missing = $missing.join(", ")
+        root = if content().length() > 1048576 {
+          throw("the hub's list of services is %d bytes, more than the 1 MiB read".format(content().length()))
+        } else if this.error.or(null) != null {
+          throw("the hub refused its list of services: %s".format(this.error.message.or("no reason given")))
+        } else if $found.length() == 0 {
+          throw("the hub lists none of the statistics tables: nothing is written")
+        } else { $found }
+    - switch:
+        - check: '@missing != ""'
+          processors:
+            - log:
+                level: WARN
+                message: 'statistics: the hub no longer lists ${! @missing }, left out of this run'
+    - unarchive: { format: json_array }
+
+    # One table at a time, read in pages of 1,000 rows (the hub's smallest maxRecordCount) until
+    # the hub says no more, at most 20 pages; a table with more fails instead of writing part of
+    # it. The path and the query are the constants above, never text of an answer. A table line
+    # with `group` asks the hub for its sums instead of its rows: one row a group, ordered by the
+    # group so the pages do not overlap.
+    - for_each:
+        - branch:
+            request_map: |
+              meta path = this.path
+              meta query = if this.group.or("") == "" { "where=1%3D1&outFields=*" } else {
+                "where=" + this.where.or("1=1").escape_url_query() +
+                "&groupByFieldsForStatistics=" + this.group.escape_url_query() +
+                "&orderByFields=" + this.group.escape_url_query() +
+                "&outStatistics=" + this.stats.map_each(s -> { "statisticType": s.index(0), "onStatisticField": s.index(1), "outStatisticFieldName": s.index(2) }).format_json(no_indent: true).escape_url_query()
+              }
+              root = { "rows": [], "offset": 0, "more": true }
+            processors:
+              - while:
+                  check: this.more && !errored()
+                  max_loops: 20
+                  processors:
+                    - branch:
+                        request_map: |
+                          meta offset = this.offset.string()
+                          root = ""
+                        processors:
+                          - sleep: { duration: '200ms' }
+                          - http:
+                              url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/${! @path }/FeatureServer/0/query?${! @query }&resultOffset=${! @offset }&resultRecordCount=1000&f=json
+                              verb: GET
+                              headers:
+                                Accept: application/json
+                                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+                              timeout: 30s
+                              retries: 2
+                        result_map: |
+                          root.rows = if content().length() > 4194304 {
+                            throw("the table answer is over 4 MiB")
+                          } else if this.error.or(null) != null {
+                            throw("the hub refused the query: %s".format(this.error.message.or("no reason given")))
+                          } else { root.rows.concat(this.features.or([]).map_each(f -> f.attributes)) }
+                          root.offset = root.offset + 1000
+                          root.more = this.exceededTransferLimit.or(false)
+            result_map: |
+              root.rows = if this.more { throw("the table holds more than 20,000 rows, more than 20 pages") } else { this.rows }
+    # A table the hub refuses is logged and left out of this run; the others still write.
+    - catch:
+        - log: { level: WARN, message: 'statistics: ${! json("name") } not read: ${! error() }' }
+        - mapping: root = deleted()
+    - archive: { format: json_array }
+
+    # Plausibility (owner 2026-10-22T18:10Z): dropped and counted by reason, never guessed at: an
+    # area outside the city; no period; a breakdown cell left empty; a figure that is no number or
+    # lies outside its bounds; one figure twice for the same breakdown, area and period (the first
+    # is kept).
+    - mapping: |
+        # The 17 city districts by their name folded to ASCII, with their ZÚJ code (the
+        # AdministrativeArea id the districts pipeline writes). The hub writes names three ways:
+        # with diacritics, without them and abbreviated ("D. N. Ves", dots dropped: a key with a dot
+        # is a path to `get`); the mosquito table writes č as è and ň as ò (a cp1250 text read as
+        # Latin-1), folded here too, and its 2025 figures with a space between thousands.
+        let districts = {
+          "stare mesto": ["528595", "Staré Mesto"], "podunajske biskupice": ["529311", "Podunajské Biskupice"],
+          "p biskupice": ["529311", "Podunajské Biskupice"], "ruzinov": ["529320", "Ružinov"], "vrakuna": ["529338", "Vrakuňa"],
+          "nove mesto": ["529346", "Nové Mesto"], "raca": ["529354", "Rača"], "vajnory": ["529362", "Vajnory"],
+          "devinska nova ves": ["529371", "Devínska Nová Ves"], "d n ves": ["529371", "Devínska Nová Ves"],
+          "dubravka": ["529389", "Dúbravka"], "karlova ves": ["529397", "Karlova Ves"], "devin": ["529401", "Devín"],
+          "lamac": ["529419", "Lamač"], "zahorska bystrica": ["529427", "Záhorská Bystrica"], "z bystrica": ["529427", "Záhorská Bystrica"],
+          "cunovo": ["529435", "Čunovo"], "jarovce": ["529443", "Jarovce"], "petrzalka": ["529460", "Petržalka"], "rusovce": ["529494", "Rusovce"]
+        }
+        # The five okresy (LAU 1, Bratislava I to V, codes 101 to 105), written in Roman or Arabic
+        # numerals; the city as a whole by its municipality code. A table of the whole region keeps
+        # the Bratislava okresy, a table of Bratislava beside Slovakia the Bratislava rows.
+        let okresy = {
+          "bratislava i": ["101", "Bratislava I"], "bratislava ii": ["102", "Bratislava II"], "bratislava iii": ["103", "Bratislava III"],
+          "bratislava iv": ["104", "Bratislava IV"], "bratislava v": ["105", "Bratislava V"], "bratislava 1": ["101", "Bratislava I"],
+          "bratislava 2": ["102", "Bratislava II"], "bratislava 3": ["103", "Bratislava III"], "bratislava 4": ["104", "Bratislava IV"],
+          "bratislava 5": ["105", "Bratislava V"]
+        }
+        # A table of the region beside Slovakia keeps the region's rows.
+        let kraje = { "bratislavsky kraj": ["sk010", "Bratislavský kraj"] }
+        # A table without an area column ("*") is the city's, and so is its row named after the city.
+        let city = ["582000", "Bratislava"]
+        # A basic settlement unit (ZSJ) by its 7-digit code, named with its city district, kept only
+        # inside one of the 17; a municipality of the region by its name, the hub giving no code.
+        let parts = $districts.values()
+        map fold {
+          root = this.string().lowercase().replace_all_many([
+            "á", "a", "ä", "a", "à", "a", "â", "a", "č", "c", "ç", "c", "ď", "d", "é", "e", "ě", "e", "ë", "e", "í", "i", "ĺ", "l",
+            "ľ", "l", "ň", "n", "ó", "o", "ô", "o", "ö", "o", "ő", "o", "ŕ", "r", "ř", "r", "š", "s", "ť", "t", "ú", "u", "ü", "u",
+            "ű", "u", "ů", "u", "ý", "y", "ž", "z", "è", "c", "ò", "n", ".", ""
+          ]).re_replace_all("\\s+", " ").trim()
+        }
+        map segment {
+          root = this.apply("fold").re_replace_all("[^a-z0-9]+", "-").trim("-")
+        }
+        map number {
+          root = if this == null { null } else { this.string().re_replace_all("[\\s %]", "").replace_all(",", ".").number().catch(null) }
+        }
+        map magnitude {
+          let n = this.apply("number")
+          root = if $n == null { null } else { $n.abs() }
+        }
+        map yearmonth {
+          let y = this.slice(0, 4).number().int64()
+          let m = this.slice(5, 7).number().int64()
+          let february = if $y % 4 == 0 && ($y % 100 != 0 || $y % 400 == 0) { "29" } else { "28" }
+          root = {
+            "from": this + "-01",
+            "to": this + "-" + ["31", $february, "31", "30", "31", "30", "31", "31", "30", "31", "30", "31"].index($m - 1),
+            "slug": this,
+            "label": ["január", "február", "marec", "apríl", "máj", "jún", "júl", "august", "september", "október", "november", "december"].index($m - 1) + " " + $y.string(),
+            "frequency": "monthly"
+          }
+        }
+        map years {
+          let v = this.string().trim()
+          let y = $v.re_find_all("(19|20)[0-9]{2}")
+          root = if $v.re_match("^(19|20)[0-9]{2}$") {
+            { "from": $v + "-01-01", "to": $v + "-12-31", "slug": $v, "label": $v, "frequency": "yearly" }
+          } else if $v.re_match("^(19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2}$") {
+            { "from": $y.index(0) + "-01-01", "to": $y.index(1) + "-12-31", "slug": $y.join("-"), "label": $y.join("–") }
+          } else if $v.re_match("^(19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2} a (19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2}$") {
+            # Two ranges compared ("2017 – 2019 a 2000 – 2002"): the period spans both.
+            {
+              "from": $y.sort().index(0) + "-01-01", "to": $y.sort().index(3) + "-12-31", "slug": $y.join("-"),
+              "label": $y.index(0) + "–" + $y.index(1) + " a " + $y.index(2) + "–" + $y.index(3)
+            }
+          } else if $v.re_match("^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}$") && $v.ts_parse("2006-01-02").catch(null) != null {
+            { "from": $v, "to": $v, "slug": $v, "label": $v, "frequency": "daily" }
+          } else if $v.re_match("^(19|20)[0-9]{2}-(0[1-9]|1[0-2])$") { $v.apply("yearmonth") } else { null }
+        }
+        map quarter {
+          let y = this.index(0)
+          # "3" or the transit table's "3.Q".
+          let q = this.index(1).re_replace_all("^([1-4])\\s*\\.?\\s*[Qq]$", "$1")
+          root = if $y.re_match("^(19|20)[0-9]{2}$") && $q.re_match("^[1-4]$") {
+            {
+              "from": $y + "-" + ["01-01", "04-01", "07-01", "10-01"].index($q.number() - 1),
+              "to": $y + "-" + ["03-31", "06-30", "09-30", "12-31"].index($q.number() - 1),
+              "slug": $y + "-q" + $q,
+              "label": $q + ". štvrťrok " + $y,
+              "frequency": "quarterly"
+            }
+          } else { null }
+        }
+        # A month column holds 1 to 12, with or without a leading zero; anything else is no period.
+        map month {
+          let y = this.index(0)
+          let m = this.index(1).trim_prefix("0")
+          root = if $y.re_match("^(19|20)[0-9]{2}$") && $m.re_match("^([1-9]|1[0-2])$") {
+            {
+              "from": "%s-%02d-01".format($y, $m.number().int64()),
+              "to": "%s-%02d-%s".format($y, $m.number().int64(), if $m == "2" && $y.number().int64() % 4 == 0 && ($y.number().int64() % 100 != 0 || $y.number().int64() % 400 == 0) { "29" } else {
+                ["31", "28", "31", "30", "31", "30", "31", "31", "30", "31", "30", "31"].index($m.number().int64() - 1)
+              }),
+              "slug": "%s-%02d".format($y, $m.number().int64()),
+              "label": "%d/%s".format($m.number().int64(), $y),
+              "frequency": "monthly"
+            }
+          } else { null }
+        }
+        map period {
+          let t = this.table
+          let r = this.row
+          root = if $t.fixed.or("") != "" { $t.fixed.apply("years") }
+            else if $t.spans.or(null) != null { $t.spans.get($r.get($t.year).or("").string().trim()).or("").apply("years") }
+            else if $t.quarter.or("") != "" { [$r.get($t.year).or("").string().trim(), $r.get($t.quarter).or("").string().trim()].apply("quarter") }
+            else if $t.month.or("") != "" { [$r.get($t.year).or("").string().trim(), $r.get($t.month).or("").string().trim()].apply("month") }
+            else { $r.get($t.year).or("").apply("years") }
+        }
+        map areaname {
+          root = if this.table.area.or("") == "" { "*" } else { this.row.get(this.table.area).or("").apply("fold") }
+        }
+        # Each breakdown cell as its id segment and its label; a label read as Latin-1 from cp1250
+        # text ("Raèianska") gets its č and ň back.
+        map breakdown {
+          let r = this.row
+          let labels = this.table.labels.or({})
+          # "Nan" is the hub's word for a category it did not detect: no breakdown.
+          root = this.table.by.or([]).map_each(c -> if c.type() == "string" { { "code": c } } else { c }).map_each(c -> c.assign({
+            "raw": $r.get(c.code).or("").string().trim()
+          })).map_each(c -> c.assign({ "raw": if c.raw.lowercase() == "nan" { "" } else { $labels.get(c.raw).or(c.raw) } })).map_each(c -> {
+            "segment": c.raw.apply("segment"),
+            "label": (if c.name.or("") != "" { $r.get(c.name).or("").string().trim() } else { c.raw }).replace_all_many(["è", "č", "ò", "ň"]),
+            "optional": c.optional.or(false)
+          })
+        }
+        map zsj {
+          let code = this.row.get(this.table.area).or("").string().trim()
+          let name = this.row.get(this.table.label).or("").string().trim()
+          let within = this.row.get(this.table.within).or("").string().trim()
+          let part = this.parts.filter(d -> d.index(0) == $within)
+          root = if $code.re_match("^[0-9]{7}$") && $name != "" && $part.length() > 0 { [$code, $name + " (" + $part.index(0).index(1) + ")"] } else { null }
+        }
+        map obec {
+          let name = this.row.get(this.table.area).or("").string().trim()
+          root = if $name.apply("segment") != "" { [$name.apply("segment"), $name] } else { null }
+        }
+        let cells = this.map_each(t -> t.rows.or([]).filter(r -> if t.only.or(null) == null { true } else {
+          r.get(t.only.index(0)).or("").string().has_prefix(t.only.index(1))
+        }).map_each(r -> t.values.map_each(v -> {
+          "table": t.without("rows", "values"),
+          "value": v,
+          "area": if t.areas == "district" { $districts.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if t.areas == "okres" { $okresy.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if t.areas == "zsj" { { "table": t, "row": r, "parts": $parts }.apply("zsj") }
+            else if t.areas == "obec" { { "table": t, "row": r }.apply("obec") }
+            else if t.areas == "kraj" { $kraje.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if ["*", $city.index(1).lowercase()].contains({ "table": t, "row": r }.apply("areaname")) { $city } else { null },
+          "by": { "table": t, "row": r }.apply("breakdown"),
+          "period": { "table": t, "row": r }.apply("period"),
+          "number": r.get(v.index(0)).apply(if t.abs.or(false) { "magnitude" } else { "number" })
+        }))).flatten().flatten()
+        map reason {
+          let v = this.value
+          root = if this.area == null {
+              { "district": "not a city district", "okres": "not a Bratislava okres", "city": "not Bratislava",
+                "zsj": "not a ZSJ of the city", "obec": "no municipality", "kraj": "not the Bratislava region" }.get(this.table.areas)
+            }
+            else if this.period == null { "no period" }
+            else if this.table.past.or(false) && this.period.from > now().ts_format("2006-01-02") { "in the future" }
+            else if this.by.filter(b -> b.segment == "" && !b.optional).length() > 0 { "no breakdown" }
+            else if this.number == null { "no number" }
+            else if ($v.index(3) != null && this.number < $v.index(3)) || ($v.index(4) != null && this.number > $v.index(4)) { "out of range" }
+            else { null }
+        }
+        let marked = $cells.map_each(c -> c.assign({
+          "_drop": c.apply("reason"),
+          "_id": ([c.table.name, c.value.index(1)].concat(c.by.map_each(b -> b.segment).filter(s -> s != "")).concat([c.area.index(0).or(""), c.period.slug.or("")])).join(".")
+        }))
+        let usable = $marked.filter(c -> c._drop == null)
+        let once = $usable.unique(c -> c._id)
+        let tally = $marked.filter(c -> c._drop != null).fold({}, item -> item.tally.assign({ item.value._drop: item.tally.get(item.value._drop).or(0) + 1 }))
+        let dups = $usable.length() - $once.length()
+        meta dropped = (if $dups > 0 { $tally.assign({ "duplicate": $dups }) } else { $tally }).format_json(no_indent: true)
+        meta kept = $once.length().string()
+        root = if $once.length() == 0 { throw("the statistics tables hold no usable figure: nothing is written") } else { $once }
+    - log:
+        level: INFO
+        message: 'statistics: ${! @kept } figures kept, dropped by reason ${! @dropped }'
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44).
+        let t = this.table
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this._id),
+          "type": "KeyPerformanceIndicator",
+          "name": { "type": "Property", "value": ([this.value.index(2)].concat(this.by.map_each(b -> b.label).filter(l -> l != "")).concat([this.area.index(1), this.period.label])).join(", ") },
+          "description": { "type": "Property", "value": $t.title },
+          "process": { "type": "Property", "value": this.value.index(2) },
+          "category": { "type": "Property", "value": ["quantitative"] },
+          "kpiValue": { "type": "Property", "value": this.number },
+          "calculationPeriod": { "type": "Property", "value": { "from": this.period.from, "to": this.period.to } },
+          # Smart Data Models names hourly to yearly; a period of several years carries none.
+          "calculationFrequency": if this.period.frequency.or("") == "" { null } else { { "type": "Property", "value": this.period.frequency } },
+          "area": { "type": "Property", "value": this.area.index(1) },
+          "organization": { "type": "Property", "value": "Hlavné mesto SR Bratislava" },
+          "dataProvider": { "type": "Property", "value": "Hlavné mesto SR Bratislava, data.bratislava.sk (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://data.bratislava.sk/datasets/" + $t.item }
+        }
+        root = root.filter(entry -> entry.value != null)
+
+    - split: { size: 500 }
+    - archive: { format: json_array }

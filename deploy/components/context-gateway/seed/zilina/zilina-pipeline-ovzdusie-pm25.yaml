@@ -1,0 +1,17 @@
+# One AirQualityObserved per record of `eea-sk0020a-pm25`, written into the city's public space through its one Endpoint (PL-18, T-3138).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: ovzdusie-pm25
+  namespace: zilina
+  title: { sk: PM2.5 na stanici SK0020A, en: PM2.5 at station SK0020A }
+spec:
+  class: auto
+  # As for PM10, two minutes later so the two streams do not merge into the same entity at once.
+  period: 1h
+  schedule: '42 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: eea-sk0020a-pm25 }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-verejne:zilina-verejne
+  output: { type: AirQualityObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

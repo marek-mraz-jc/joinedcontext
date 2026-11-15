@@ -1,0 +1,21 @@
+---
+demo-feeds:
+  nats:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "demo-feeds") }}
+  feed:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "demo-feeds") }}
+    subject: helsinki.demo.counters
+    interval: 10s
+  hsl-bridge:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "demo-feeds") }}
+    # The Keycloak client of the helsinki ServiceAccount hsl-bridge, and the Secret holding the
+    # secret an approver issues for it in the Portal (PF-37); the pod waits until it exists.
+    clientId: helsinki-hsl-bridge
+    clientSecret: { secret: hsl-bridge-client, key: client-secret }
+    # Trams only, about a third of HSL's feed (~350 messages a second, 700 at peak).
+    topic: /hfp/v2/journey/ongoing/vp/tram/#
+    # Under the broker's per-client 1,000 a second, which disconnects a client over it.
+    messagesPerSecond: 900

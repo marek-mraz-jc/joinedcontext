@@ -1,0 +1,19 @@
+# Open Data BCN `trams` (T-5262): the traffic state of every street section of the city's network,
+# rewritten every five minutes as one small text file (532 lines, 13 kB on 2026-10-22), one line
+# per section: id#time#state#forecast. No key. CC BY 4.0, Ajuntament de Barcelona.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-traffic-state
+  namespace: barcelona
+  title:
+    ca: Estat del trànsit per trams (Open Data BCN)
+    es: Estado del tráfico por tramos (Open Data BCN)
+    en: Traffic state by street section (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/dataset/8319c2b1-4c21-4962-9acd-6db4c5ff1148/resource/2d456eb5-4ea6-4f68-9794-2f3f1a58a933/download
+    verb: GET
+    headers: { Accept: text/plain }
+    timeout: 20s

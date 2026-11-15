@@ -1,0 +1,40 @@
+{
+ "success": true,
+ "result": {
+  "name": "fonts-ornamentals",
+  "resources": [
+   {
+    "id": "e395404f-371f-4908-bea1-a5383f6eebc5",
+    "name": "2026_Fonts_ornamentals.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/263e635b-eaf4-4b66-9156-09f4331d5017/resource/e395404f-371f-4908-bea1-a5383f6eebc5/download/fonts_ornamentals_2026.csv",
+    "last_modified": "2026-03-25T09:22:19.800553",
+    "datastore_active": true
+   },
+   {
+    "id": "0e3e679f-2255-4f8e-ac05-983178fa0a99",
+    "name": "2025_Fonts_Ornamentals.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/263e635b-eaf4-4b66-9156-09f4331d5017/resource/0e3e679f-2255-4f8e-ac05-983178fa0a99/download/2025_fonts_ornamentals.csv",
+    "last_modified": "2025-03-27T07:28:44.804769",
+    "datastore_active": true
+   },
+   {
+    "id": "f02da5b5-b767-4d60-977d-48f97cb8fffe",
+    "name": "2024_Fonts_Ornamentals.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/263e635b-eaf4-4b66-9156-09f4331d5017/resource/f02da5b5-b767-4d60-977d-48f97cb8fffe/download/fonts_ornamentals_2024.csv",
+    "last_modified": "2024-03-25T11:49:15.107731",
+    "datastore_active": true
+   },
+   {
+    "id": "71702717-0f04-49be-989e-f069e17b4d2c",
+    "name": "2019_Fonts_Ornamentals.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/263e635b-eaf4-4b66-9156-09f4331d5017/resource/71702717-0f04-49be-989e-f069e17b4d2c/download/2019_fonts_ornamentals.csv",
+    "last_modified": "2019-03-14T12:09:44.064399",
+    "datastore_active": true
+   }
+  ]
+ }
+}

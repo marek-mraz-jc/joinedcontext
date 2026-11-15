@@ -1,0 +1,44 @@
+# T-5129: a throwaway WordPress for the embed test (run.sh). Local only: bound to 127.0.0.1, no
+# volume kept, the passwords are fixed test values of this one-shot database.
+name: jc-embed-wordpress
+services:
+  db:
+    image: mariadb:11.4@sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873
+    environment:
+      MARIADB_DATABASE: wp
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp-embed-test
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      retries: 60
+  wordpress:
+    image: wordpress:6.8-php8.3-apache@sha256:30bff39330d1693b0ce13d32fc9b7bb67193064f040b7d60d3494e136fa599d4
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${WP_PORT:-8089}:80"
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp-embed-test
+      WORDPRESS_DB_NAME: wp
+    volumes:
+      - html:/var/www/html
+  cli:
+    image: wordpress:cli-php8.3@sha256:576000a52fecd0c8688b33bb6c58589911b2ea7e1524155b45c5ebebf143d1f0
+    profiles: ["cli"]
+    user: "33:33"
+    depends_on: [wordpress]
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp-embed-test
+      WORDPRESS_DB_NAME: wp
+    volumes:
+      - html:/var/www/html
+      - ./pages:/pages:ro
+volumes:
+  html:

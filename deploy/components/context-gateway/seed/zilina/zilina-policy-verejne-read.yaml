@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: verejne-read
+  namespace: zilina
+  title: { sk: Verejné čítanie verejných údajov mesta, en: "Public read: the city's open data" }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-verejne }
+  assigner: did:web:zilina.sk
+  assignee: { kind: role, id: public }
+  # Read only. Every type of the space is open data, and no mapping writes a person's name, a parcel or an owner.
+  # Discovery beside the reads (T-4258, EP-116): which types and attributes the Endpoint holds,
+  # narrowed to this grant (EP-26), so an anonymous MCP client finds them before it queries.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: AirQualityObserved
+        - type: PointOfInterest
+        - type: GtfsStop

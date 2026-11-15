@@ -1,0 +1,44 @@
+# Small, medium and large enterprises, 2010-2021: one public dataset of the hub (T-5274), item deab5680a22c4f22870a217ed553ca13, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vyvoj-poctu-malych-strednych-a-velkych
+  namespace: bratislava
+  title:
+    sk: Vývoj počtu malých, stredných a veľkých podnikov v rokoch 2010 - 2021
+    en: Small, medium and large enterprises, 2010-2021
+  description:
+    sk: 'Ukazovatele tabuľky „Vývoj počtu malých, stredných a veľkých podnikov v rokoch 2010 - 2021“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Small, medium and large enterprises, 2010-2021”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: fzycxlzg2lmz22grv34ffx5poxtqqwya
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vyvoj-poctu-malych-strednych-a-velkych
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ECON]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/deab5680a22c4f22870a217ed553ca13
+        title:
+          sk: Vývoj počtu malých, stredných a veľkých podnikov v rokoch 2010 - 2021
+          en: Small, medium and large enterprises, 2010-2021
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Vývoj počtu malých, stredných a veľkých podnikov v rokoch 2010 - 2021. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Small, medium and large enterprises, 2010-2021. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

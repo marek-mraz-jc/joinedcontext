@@ -1,0 +1,101 @@
+{
+  "@context": {
+    "@vocab": "https://smartdatamodels.org/",
+    "AirQualityObserved": {
+      "@id": "sdm:AirQualityObserved"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "GtfsStop": {
+      "@id": "sdm:GtfsStop"
+    },
+    "PointOfInterest": {
+      "@id": "sdm:PointOfInterest"
+    },
+    "address": {
+      "@id": "schema:address"
+    },
+    "architecturalStyle": {
+      "@id": "jc:architecturalStyle"
+    },
+    "cadastralArea": {
+      "@id": "jc:cadastralArea"
+    },
+    "co": {
+      "@id": "sdm:co",
+      "@type": "xsd:float"
+    },
+    "constructionPeriod": {
+      "@id": "jc:constructionPeriod"
+    },
+    "dailyDepartures": {
+      "@id": "jc:dailyDepartures",
+      "@type": "xsd:integer"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dateObserved": {
+      "@id": "sdm:dateObserved",
+      "@type": "xsd:dateTime"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "monumentKind": {
+      "@id": "jc:monumentKind"
+    },
+    "monumentNumber": {
+      "@id": "jc:monumentNumber"
+    },
+    "name": {
+      "@container": "@language",
+      "@id": "schema:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "no2": {
+      "@id": "sdm:no2",
+      "@type": "xsd:float"
+    },
+    "o3": {
+      "@id": "sdm:o3",
+      "@type": "xsd:float"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "ownershipForm": {
+      "@id": "jc:ownershipForm"
+    },
+    "pm10": {
+      "@id": "sdm:pm10",
+      "@type": "xsd:float"
+    },
+    "pm25": {
+      "@id": "sdm:pm25",
+      "@type": "xsd:float"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "stationCode": {
+      "@id": "jc:stationCode"
+    },
+    "stopCode": {
+      "@id": "jc:stopCode"
+    },
+    "type": "@type",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

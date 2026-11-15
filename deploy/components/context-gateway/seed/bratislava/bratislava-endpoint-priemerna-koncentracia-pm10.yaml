@@ -1,0 +1,44 @@
+# Annual mean PM10 concentration: one public dataset of the hub (T-5435), item 08b4888537194726bffd6f0f5a55c21e, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-priemerna-koncentracia-pm10
+  namespace: bratislava
+  title:
+    sk: Priemerná ročná koncentrácia škodlivých látok PM10 v ovzduší v Bratislave
+    en: Annual mean PM10 concentration
+  description:
+    sk: 'Ukazovatele tabuľky „Priemerná ročná koncentrácia škodlivých látok PM10 v ovzduší v Bratislave“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Annual mean PM10 concentration”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 56iijiuv3uk2fut6pwkb27ylysfudf4z
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-priemerna-koncentracia-pm10
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ENVI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/08b4888537194726bffd6f0f5a55c21e
+        title:
+          sk: Priemerná ročná koncentrácia škodlivých látok PM10 v ovzduší v Bratislave
+          en: Annual mean PM10 concentration
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Priemerná ročná koncentrácia škodlivých látok PM10 v ovzduší v Bratislave. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Annual mean PM10 concentration. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

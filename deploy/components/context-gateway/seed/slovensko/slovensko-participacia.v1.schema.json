@@ -1,0 +1,1598 @@
+{
+  "$id": "https://joinedcontext.com/models/slovensko/slovensko-participacia",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": true,
+  "definitions": {
+    "BudgetProject": {
+      "additionalProperties": false,
+      "description": "One project of a participatory budget, what it costs and whether the vote selected it.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where it is, as the platform writes it; the town is the instance's.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "budgetAmount": {
+          "description": "What the project costs, in euro.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "budgetName": {
+          "description": "The budget the project competes in, `Online hlasovanie 2025/2026`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "budgetTotal": {
+          "description": "The whole budget the projects share, in euro.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "The category the platform files the record under, `\u017divotn\u00e9 prostredie`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "The town or body that runs the participation platform.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the platform last changed the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "The text as plain text without markup, at most 2000 characters, e-mail addresses and phone numbers cut out.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The title as the platform shows it, in the instance's language.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refParticipatoryProcess": {
+          "description": "The ParticipatoryProcess of this space the record belongs to, its URN.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "reference": {
+          "description": "Decidim's reference code of the record, `BB-PROP-2026-05-21616`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "selected": {
+          "description": "Whether the vote selected the project for funding.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The participation platform the record was read from, its base URL.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "sourceId": {
+          "description": "The record's id on the platform (Decidim's own numeric id).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The record's own page on the participation platform.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "voteCount": {
+          "description": "How many votes the proposal or project has, where the platform shows them.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "refParticipatoryProcess",
+        "id",
+        "type"
+      ],
+      "title": "BudgetProject",
+      "type": "object"
+    },
+    "Debate": {
+      "additionalProperties": false,
+      "description": "One debate of a process, its question and dates; the contributions are not kept.",
+      "properties": {
+        "category": {
+          "description": "The category the platform files the record under, `\u017divotn\u00e9 prostredie`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "The town or body that runs the participation platform.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateCreated": {
+          "description": "When the platform created or published the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the platform last changed the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "The text as plain text without markup, at most 2000 characters, e-mail addresses and phone numbers cut out.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "endDate": {
+          "description": "When it ends, a date or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2027-12-30"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The title as the platform shows it, in the instance's language.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refParticipatoryProcess": {
+          "description": "The ParticipatoryProcess of this space the record belongs to, its URN.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "reference": {
+          "description": "Decidim's reference code of the record, `BB-PROP-2026-05-21616`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The participation platform the record was read from, its base URL.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "sourceId": {
+          "description": "The record's id on the platform (Decidim's own numeric id).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "startDate": {
+          "description": "When it starts, a date (`2026-05-01`) or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2026-05-01"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The record's own page on the participation platform.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "refParticipatoryProcess",
+        "id",
+        "type"
+      ],
+      "title": "Debate",
+      "type": "object"
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "description": "The root every NGSI-LD entity class specialises.",
+      "properties": {
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "Meeting": {
+      "additionalProperties": false,
+      "description": "One public meeting of a process, where and when; a private one is never read.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where it is, as the platform writes it; the town is the instance's.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "attendeesCount": {
+          "description": "How many people attended a closed meeting, once that is public. Only the platform's own Decidim sends it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "The category the platform files the record under, `\u017divotn\u00e9 prostredie`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "closed": {
+          "description": "Whether the meeting is over and its minutes are published.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "closingReport": {
+          "description": "The minutes of a closed meeting, once they are public. Only the platform's own Decidim sends them.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "The town or body that runs the participation platform.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the platform last changed the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "The text as plain text without markup, at most 2000 characters, e-mail addresses and phone numbers cut out.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "endDate": {
+          "description": "When it ends, a date or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2027-12-30"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "meetingType": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MeetingType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How people attend, `in_person`, `online` or `hybrid`.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "name": {
+          "description": "The title as the platform shows it, in the instance's language.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "onlineUrl": {
+          "description": "Where an online meeting is held.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refParticipatoryProcess": {
+          "description": "The ParticipatoryProcess of this space the record belongs to, its URN.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "reference": {
+          "description": "Decidim's reference code of the record, `BB-PROP-2026-05-21616`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The participation platform the record was read from, its base URL.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "sourceId": {
+          "description": "The record's id on the platform (Decidim's own numeric id).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "startDate": {
+          "description": "When it starts, a date (`2026-05-01`) or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2026-05-01"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The record's own page on the participation platform.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "startDate",
+        "refParticipatoryProcess",
+        "id",
+        "type"
+      ],
+      "title": "Meeting",
+      "type": "object"
+    },
+    "MeetingType": {
+      "description": "",
+      "enum": [
+        "in_person",
+        "online",
+        "hybrid"
+      ],
+      "title": "MeetingType",
+      "type": "string"
+    },
+    "ParticipatoryProcess": {
+      "additionalProperties": false,
+      "description": "One participatory process or assembly of the platform: a participatory budget year, a consultation on a strategy, a survey. Its phases and dates as the town set them.",
+      "properties": {
+        "activeStep": {
+          "description": "The title of the phase the process is in, `Hlasovanie`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "The town or body that runs the participation platform.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the platform last changed the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "The text as plain text without markup, at most 2000 characters, e-mail addresses and phone numbers cut out.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "endDate": {
+          "description": "When it ends, a date or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2027-12-30"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The title as the platform shows it, in the instance's language.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "processType": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ParticipatorySpaceType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whether the space is a participatory process or a standing assembly.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "reference": {
+          "description": "Decidim's reference code of the record, `BB-PROP-2026-05-21616`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The participation platform the record was read from, its base URL.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "sourceId": {
+          "description": "The record's id on the platform (Decidim's own numeric id).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "startDate": {
+          "description": "When it starts, a date (`2026-05-01`) or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2026-05-01"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProcessStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whether the process has not started, runs or is over, from its dates on the day of the run.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "steps": {
+          "description": "The phases of the process in their order, each with its title and dates.",
+          "items": {
+            "$ref": "#/definitions/ProcessStep"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The record's own page on the participation platform.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "id",
+        "type"
+      ],
+      "title": "ParticipatoryProcess",
+      "type": "object"
+    },
+    "ParticipatorySpaceType": {
+      "description": "",
+      "enum": [
+        "process",
+        "assembly"
+      ],
+      "title": "ParticipatorySpaceType",
+      "type": "string"
+    },
+    "PostalAddress": {
+      "additionalProperties": false,
+      "description": "The value of `address`, never an entity of its own.",
+      "properties": {
+        "addressCountry": {
+          "description": "The country code, `SK`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "addressLocality": {
+          "description": "The town.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "streetAddress": {
+          "description": "The street and number, or the place, as the platform writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "title": "PostalAddress",
+      "type": "object"
+    },
+    "ProcessStatus": {
+      "description": "",
+      "enum": [
+        "upcoming",
+        "active",
+        "past"
+      ],
+      "title": "ProcessStatus",
+      "type": "string"
+    },
+    "ProcessStep": {
+      "additionalProperties": false,
+      "description": "The value of one of `steps`, never an entity of its own.",
+      "properties": {
+        "active": {
+          "description": "Whether this phase is the current one.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "endDate": {
+          "description": "When it ends, a date or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2027-12-30"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "startDate": {
+          "description": "When it starts, a date (`2026-05-01`) or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2026-05-01"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "title": {
+          "description": "The phase's title.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "title": "ProcessStep",
+      "type": "object"
+    },
+    "Proposal": {
+      "additionalProperties": false,
+      "description": "One proposal residents or the town filed in a process, with the town's answer and its support. The author is never kept.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where it is, as the platform writes it; the town is the instance's.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "The category the platform files the record under, `\u017divotn\u00e9 prostredie`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "The town or body that runs the participation platform.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateCreated": {
+          "description": "When the platform created or published the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the platform last changed the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "The text as plain text without markup, at most 2000 characters, e-mail addresses and phone numbers cut out.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "endorsementsCount": {
+          "description": "How many residents support the proposal.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The title as the platform shows it, in the instance's language.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "official": {
+          "description": "Whether the town itself filed the proposal.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "proposalAnswer": {
+          "description": "The town's published answer to the proposal. Only the platform's own Decidim sends it, because the public API hides it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "proposalState": {
+          "description": "The town's answer as Decidim's state token: `not_answered`, `evaluating`, `accepted`, `rejected`, `withdrawn`, or a token the instance defined itself. Empty when only the page was readable; `stateLabel` then holds what the page shows.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refParticipatoryProcess": {
+          "description": "The ParticipatoryProcess of this space the record belongs to, its URN.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "reference": {
+          "description": "Decidim's reference code of the record, `BB-PROP-2026-05-21616`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The participation platform the record was read from, its base URL.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "sourceId": {
+          "description": "The record's id on the platform (Decidim's own numeric id).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "stateLabel": {
+          "description": "The state as the page shows it, `Postupuje do hlasovania`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The record's own page on the participation platform.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "voteCount": {
+          "description": "How many votes the proposal or project has, where the platform shows them.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "refParticipatoryProcess",
+        "id",
+        "type"
+      ],
+      "title": "Proposal",
+      "type": "object"
+    },
+    "ProposalStatistic": {
+      "additionalProperties": false,
+      "description": "How many proposals of one process are in one state, counted from the Proposal records of this space. It holds figures only, so no text a resident wrote reaches it.",
+      "properties": {
+        "dataProvider": {
+          "description": "The town or body that runs the participation platform.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the platform last changed the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The title as the platform shows it, in the instance's language.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "processName": {
+          "description": "The title of the process the figure counts, as the platform shows it.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "proposalCount": {
+          "description": "How many proposals of the process are in this state.",
+          "minimum": 0,
+          "type": "integer",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "proposalState": {
+          "description": "The town's answer as Decidim's state token: `not_answered`, `evaluating`, `accepted`, `rejected`, `withdrawn`, or a token the instance defined itself. Empty when only the page was readable; `stateLabel` then holds what the page shows.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refParticipatoryProcess": {
+          "description": "The ParticipatoryProcess of this space the record belongs to, its URN.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "source": {
+          "description": "The participation platform the record was read from, its base URL.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "stateLabel": {
+          "description": "The state as the page shows it, `Postupuje do hlasovania`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "processName",
+        "proposalCount",
+        "refParticipatoryProcess",
+        "id",
+        "type"
+      ],
+      "title": "ProposalStatistic",
+      "type": "object"
+    },
+    "Result": {
+      "additionalProperties": false,
+      "description": "One result the town reports on (Decidim accountability), with its progress and dates.",
+      "properties": {
+        "category": {
+          "description": "The category the platform files the record under, `\u017divotn\u00e9 prostredie`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "The town or body that runs the participation platform.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the platform last changed the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "The text as plain text without markup, at most 2000 characters, e-mail addresses and phone numbers cut out.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "endDate": {
+          "description": "When it ends, a date or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2027-12-30"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The title as the platform shows it, in the instance's language.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "progress": {
+          "description": "How far the town reports the result to be, in percent.",
+          "maximum": 100,
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refParent": {
+          "description": "The Result this one is part of, its URN.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "refParticipatoryProcess": {
+          "description": "The ParticipatoryProcess of this space the record belongs to, its URN.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "reference": {
+          "description": "Decidim's reference code of the record, `BB-PROP-2026-05-21616`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "resultStatus": {
+          "description": "The status the town gives the result, `Realizuje sa`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The participation platform the record was read from, its base URL.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "sourceId": {
+          "description": "The record's id on the platform (Decidim's own numeric id).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "startDate": {
+          "description": "When it starts, a date (`2026-05-01`) or an RFC 3339 instant with its offset.",
+          "examples": [
+            "2026-05-01"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The record's own page on the participation platform.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "refParticipatoryProcess",
+        "id",
+        "type"
+      ],
+      "title": "Result",
+      "type": "object"
+    },
+    "Survey": {
+      "additionalProperties": false,
+      "description": "One survey of a process, its title and link only; the questions and answers are not kept.",
+      "properties": {
+        "dataProvider": {
+          "description": "The town or body that runs the participation platform.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateCreated": {
+          "description": "When the platform created or published the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the platform last changed the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The title as the platform shows it, in the instance's language.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refParticipatoryProcess": {
+          "description": "The ParticipatoryProcess of this space the record belongs to, its URN.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "source": {
+          "description": "The participation platform the record was read from, its base URL.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "sourceId": {
+          "description": "The record's id on the platform (Decidim's own numeric id).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The record's own page on the participation platform.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "refParticipatoryProcess",
+        "id",
+        "type"
+      ],
+      "title": "Survey",
+      "type": "object"
+    }
+  },
+  "metamodel_version": "1.12.0",
+  "title": "slovensko-participacia",
+  "type": "object",
+  "version": null,
+  "x-generator-version": "linkml-1.12.0"
+}

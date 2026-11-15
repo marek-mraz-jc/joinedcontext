@@ -1,0 +1,41 @@
+---
+# jc-assistant's own identity (ADR-N-040 §3.4, AG-109): a confidential client with a service
+# account, client_credentials only. Its token buys model calls from jc-agent-proxy for an
+# AssistantDeployment, so it names the proxy's client in its audience; the proxy checks that it
+# is this client's service account and nothing else. `jc-functions` in the audience as well: a
+# deployment with `sandbox: true` runs the model's scripts there, with no network (AG-112). The
+# proxy's client is
+# `{agent-runner.proxy.project}-agent-proxy`, `helsinki` on every environment so far.
+jc-assistant:
+  name: Knowledge assistant
+  description: Service account of jc-assistant; client_credentials for its model calls through jc-agent-proxy, no browser flow
+  subdomain: ''
+  redirectPath: /
+  # Federated (PF-47, T-2868): the worker pod's own ServiceAccount, whose projected token it
+  # presents (JC_ASSISTANT_CLIENT_ASSERTION_FILE); no secret exists for it.
+  federated:
+    release: assistant.worker
+    serviceAccount: jc-assistant
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: agent-proxy-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: helsinki-agent-proxy
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: functions-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: jc-functions
+          access.token.claim: 'true'
+          id.token.claim: 'false'

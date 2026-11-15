@@ -1,0 +1,68 @@
+# RMQTT, filled from components/mqtt-brokers/images.yaml.
+image:
+  repository: ''
+  tag: ''
+  digest: ''
+  pullPolicy: IfNotPresent
+
+# A broker answers on <name>.<project>.mqtt.<domain>, port 8883 of the ingress controller.
+domain: ''
+clusterIssuer: letsencrypt-prod
+# The ingress controller's TCP entrypoint for MQTT over TLS, and the identity it calls 1884 with.
+entryPoint: mqtts
+ingress:
+  # The ingress controller (global.ingress.ingressClass): the mqtts routes and their TLSOption
+  # are Traefik objects, so on any other controller the TLSOption is not rendered (T-4709).
+  className: traefik
+  namespace: traefik
+  serviceAccount: traefik
+
+# The gateway's CONNECT check (PL-75), on its internal listener; the publish check is the same
+# URL with its last segment `auth` replaced by `acl` (T-5560).
+authUrl: ''
+
+# The gateway's pods, whose internal listener (8082) admits the brokers' mesh identities only
+# (templates/gateway-access.yaml, T-5566); empty namespace, no Linkerd Server there.
+gateway:
+  namespace: ''
+  podLabels:
+    app.kubernetes.io/name: context-gateway-gateway
+
+# The pipeline runner, the one client of the internal listener (PL-76).
+runner:
+  namespace: ''
+  serviceAccount: ''
+
+serviceMesh:
+  enabled: false
+
+# The Portal, which stamps one broker per MqttBroker from the template (T-3994); empty, no Role.
+portal:
+  namespace: ''
+  serviceAccount: portal
+
+# One entry per MqttBroker: {project, name, port (18830-18839, optional), clientCa ({name, key}: the Secret of the
+# project's device client CA, which adds the certificate door <release>-cert, T-5875), limits: {maxMessageBytes, messagesPerSecond,
+# maxConnections}}. The roles stay in the gateway, which answers each CONNECT with them.
+brokers: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

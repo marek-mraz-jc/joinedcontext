@@ -1,0 +1,6 @@
+# Packages the publish gate hid that passed back in after the gate's run, one `name: why` per line
+# (EP-145): scripts/ckan-hidden-list.py leaves each out of the generated hidden list. Remove a line
+# once a gate run keeps the package by itself.
+bbsk-materske-skoly-v-banskobystrickom-kraji-3f7d07: T-4766 2026-10-19, 405 Organization rows on dev and prod
+bbsk-vysoke-skoly-v-banskobystrickom-kraji-b0be47: T-4766 2026-10-19, 224 rows on prod, the source's 224 features
+susr-zo-krajiny: T-5089 2026-10-21, 7142 KeyPerformanceIndicator rows on dev, the hub lists the type

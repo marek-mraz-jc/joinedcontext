@@ -1,0 +1,35 @@
+﻿Numero_expedient,Codi_districte,Nom_districte,Codi_barri,Nom_barri,Codi_carrer,Nom_carrer,Num_postal ,Descripcio_dia_setmana,NK_Any,Mes_any,Nom_mes,Dia_mes,Hora_dia,Descripcio_torn,Descripcio_causa_vianant,Numero_morts,Numero_lesionats_lleus,Numero_lesionats_greus,Numero_victimes,Numero_vehicles_implicats,Coordenada_UTM_Y_ED50,Coordenada_UTM_X_ED50,Longitud_WGS84,Latitud_WGS84
+2025S000001,3,Sants-Montjuïc,11,el Poble Sec,700690,Migdia,187,Dimecres,2025,1,Gener,1,4,Nit,,,,,,1,429920.025,4579485.471,2.16099940,41.36198056
+2025S000002,10,Sant Martí,65,el Clot,018505,Aragó,,Dimecres,2025,1,Gener,1,11,Matí,,,1,,1,2,432504.379,4585011.175,2.19127893,41.41197011
+2025S000003,10,Sant Martí,66,el Parc i la Llacuna del Poblenou,011200,Almogàvers,119-123,Dimecres,2025,1,Gener,1,12,Matí,,,1,,1,1,432383.518,4583374.358,2.19001592,41.39721760
+2025S000004,5,Sarrià-Sant Gervasi,26,Sant Gervasi - Galvany,023403,Aribau,212-216,Dijous,2025,1,Gener,2,7,Matí,Creuar per fora pas de vianants,,2,,2,1,429100.957,4583158.797,2.15077769,41.39499324
+2025S000005,4,Les Corts,19,les Corts,700721,Gerard Piera,,Dimecres,2025,1,Gener,1,20,Tarda,,,,,,1,427208.073,4581714.187,2.12831108,41.38181302
+2025S000006,2,Eixample,6,la Sagrada Família,178308,Lepant,,Dimecres,2025,1,Gener,1,21,Tarda,,,1,,1,2,431183.543,4584280.162,2.17555965,41.40527404
+2025S000007,3,Sants-Montjuïc,12,la Marina del Prat Vermell,000180,A Zona Franca,,Dimecres,2025,1,Gener,1,20,Tarda,,,1,,1,1,428020.430,4576283.261,2.13867018,41.33297157
+2025S000008,2,Eixample,7,la Dreta de l'Eixample,018505,Aragó,325,Dimecres,2025,1,Gener,1,20,Tarda,,,2,,2,2,430717.800,4583288.120,2.17010168,41.39629901
+2025S000009,5,Sarrià-Sant Gervasi,25,Sant Gervasi - la Bonanova,701267,Dalt (Besòs),K90,Dijous,2025,1,Gener,2,18,Tarda,Altres,,1,,1,3,427504.457,4585298.725,2.13142592,41.41412426
+2025S000010,2,Eixample,7,la Dreta de l'Eixample,335100,Tetuan,,Dijous,2025,1,Gener,2,19,Tarda,Altres,,1,,1,1,431275.837,4583019.166,2.17680695,41.39392453
+2025S000011,3,Sants-Montjuïc,13,la Marina de Port,160903,Ildefons Cerdà,,Dimecres,2025,1,Gener,1,0,Nit,,,1,,1,2,427718.431,4579750.570,2.13464835,41.36417347
+2025S000012,3,Sants-Montjuïc,12,la Marina del Prat Vermell,000180,A Zona Franca,49,Dijous,2025,1,Gener,2,14,Tarda,,,2,,2,2,427951.726,4576183.927,2.13786099,41.33207076
+2025S000013,8,Nou Barris,44,Vilapicina i la Torre Llobeta,024304,Arnau d'Oms,,Dijous,2025,1,Gener,2,15,Tarda,,,1,,1,2,431357.406,4586967.113,2.17733444,41.42948939
+2025S000014,2,Eixample,9,la Nova Esquerra de l'Eixample,018505,Aragó,,Dijous,2025,1,Gener,2,13,Matí,,,1,,1,2,429257.366,4581833.721,2.15280330,41.38307252
+2025S000015,5,Sarrià-Sant Gervasi,26,Sant Gervasi - Galvany,143904,General Mitre,124-126,Dijous,2025,1,Gener,2,13,Matí,,,1,,1,2,428014.077,4583986.134,2.13767937,41.40234813
+2025S000016,9,Sant Andreu,58,Baró de Viver,314100,Santa Coloma,,Divendres,2025,1,Gener,3,6,Matí,,,1,,1,2,433292.467,4589076.697,2.20025875,41.44865288
+2025S000017,3,Sants-Montjuïc,18,Sants,296406,Sant Antoni,2-6,Dijous,2025,1,Gener,2,11,Matí,,,1,,1,1,427874.989,4581049.969,2.13636537,41.37589075
+2025S000018,2,Eixample,5,el Fort Pienc,169409,Corts Catalanes,751,Divendres,2025,1,Gener,3,7,Matí,,,2,,2,2,431756.231,4583735.028,2.18247207,41.40041303
+2025S000019,4,Les Corts,21,Pedralbes,114509,Espasa,,Dimecres,2025,1,Gener,1,12,Matí,,,1,,1,2,426097.089,4583334.484,2.11482785,41.39630500
+2025S000020,5,Sarrià-Sant Gervasi,25,Sant Gervasi - la Bonanova,701268,Dalt (Llobregat),E6,Dijous,2025,1,Gener,2,6,Matí,,,1,,1,2,427869.956,4585406.474,2.13578598,41.41512763
+2025S000021,9,Sant Andreu,60,Sant Andreu,701502,B-20 (Besòs),K160,Dijous,2025,1,Gener,2,13,Matí,,,1,,1,2,432720.038,4588904.372,2.19342553,41.44705300
+2025S000022,5,Sarrià-Sant Gervasi,23,Sarrià,701267,Dalt (Besòs),K70,Dijous,2025,1,Gener,2,12,Matí,,,1,,1,2,426062.630,4583917.332,2.11434447,41.40155128
+2025S000023,6,Gràcia,31,la Vila de Gràcia,208001,Torrent de l'Olla,169,Dijous,2025,1,Gener,2,8,Matí,,,,,,2,429393.457,4584246.621,2.15414929,41.40481663
+2025S000024,2,Eixample,5,el Fort Pienc,305100,Sant Joan,,Dijous,2025,1,Gener,2,16,Tarda,,,1,,1,2,431582.270,4582754.760,2.18050199,41.39156924
+2025S000025,10,Sant Martí,66,el Parc i la Llacuna del Poblenou,701414,C-31,K2061,Dijous,2025,1,Gener,2,16,Tarda,,,1,,1,3,432364.822,4584274.740,2.18969164,41.40532552
+2025S000026,4,Les Corts,20,la Maternitat i Sant Ramon,144601,Diagonal,635-637,Dijous,2025,1,Gener,2,12,Matí,,,1,,1,2,426848.127,4582296.782,2.12393637,41.38702756
+2025S000027,4,Les Corts,21,Pedralbes,144601,Diagonal,,Dijous,2025,1,Gener,2,18,Tarda,,,1,,1,2,427092.141,4582471.601,2.12683354,41.38862424
+2025S000028,7,Horta-Guinardó,35,el Guinardó,185507,Llobet i Vall-llosera,29,Divendres,2025,1,Gener,3,12,Matí,Altres,,1,,1,1,430848.104,4586173.865,2.17133030,41.42230118
+2025S000029,9,Sant Andreu,60,Sant Andreu,322007,Segre,2-6,Dijous,2025,1,Gener,2,19,Tarda,,,1,,1,1,432537.158,4587652.901,2.19137621,41.43576608
+2025S000030,5,Sarrià-Sant Gervasi,26,Sant Gervasi - Galvany,028000,Augusta,,Dijous,2025,1,Gener,2,20,Tarda,,,1,,1,2,429312.018,4583541.861,2.15325740,41.39846196
+2025S000130,5,Sarrià-Sant Gervasi,23,Sarrià,305201,Sant Joan Bosco,,Dijous,2025,1,Gener,9,20,Tarda,,1,,,1,2,427124.326,4583146.827,2.12713717,41.39470865
+2025S001982,10,Sant Martí,64,el Camp de l'Arpa del Clot,018505,Aragó,,Dijous,2025,4,Abril,10,13,Matí,,1,2,,3,2,431934.162,4584454.656,2.18451949,41.40690960
+2025S000056,5,Sarrià-Sant Gervasi,26,Sant Gervasi - Galvany,032700,Balmes,255-257,Dissabte,2025,1,Gener,4,15,Tarda,Creuar per fora pas de vianants,,,1,1,1,428965.410,4583719.117,2.14909067,41.40002787
+2025S000059,4,Les Corts,19,les Corts,100107,Deu i Mata,50-52,Diumenge,2025,1,Gener,5,11,Matí,,,,1,1,2,427795.724,4582401.688,2.13525642,41.38805807

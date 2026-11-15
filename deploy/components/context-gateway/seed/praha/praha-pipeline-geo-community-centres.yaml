@@ -1,0 +1,17 @@
+# One PointOfInterest per record of the IPR layer Kulturně komunitní centra into the city space (T-5269).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-community-centres
+  namespace: praha
+  title: { en: Cultural and community centres, cs: Kulturně komunitní centra }
+spec:
+  class: auto
+  # IPR republishes its layers a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '15 2 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-community-centres }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

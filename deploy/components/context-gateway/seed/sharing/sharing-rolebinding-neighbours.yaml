@@ -1,0 +1,11 @@
+# The matrix's "same organization, other project" person (T-4911): a reader of sharing-other only.
+apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: sharing-neighbours
+  namespace: org
+spec:
+  subjects:
+    - user: de300000-0000-4000-8000-00000000000b # demo.neighbour
+  role: viewer
+  scope: { project: sharing-other }

@@ -1,0 +1,25 @@
+---
+# Browser login for the forge. `subdomain: ''` keeps the client on the primary host,
+# where the forge is served under /git/ (docs Deployment/10 section 2); the callback path
+# is Gitea's own, with the name of the authentication source in it.
+gitea:
+  # What the login page names ("Sign in to {name} · {organization}"): a key the login theme
+  # translates (components/keycloak/charts/theme).
+  name: ${jcClientForge}
+  description: Confidential client of the in-cluster Git forge for human login
+  subdomain: ''
+  redirectPath: /git/user/oauth2/keycloak/callback
+  componentNamespaces:
+    - gitea
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    # T-1420, owner decision: the forge's OAuth2 client (Gitea 1.27) sends no PKCE challenge,
+    # so this client alone drops the realm's S256 requirement. It stays confidential with one
+    # exact redirect URI. Remove this block when go-gitea/gitea#38202 ships.
+    attributes:
+      post.logout.redirect.uris: "+"
+      pkce.code.challenge.method: ""

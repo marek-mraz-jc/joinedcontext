@@ -1,0 +1,18 @@
+---
+{{- $global := .Values.global }}
+# The Keycloak image itself: its kcadm.sh is all the Job runs, so it adds no image to pin.
+{{- with .Values.images.keycloak.app }}
+image: {{ .repository }}:{{ .tag }}@{{ .digest }}
+{{- end }}
+keycloakUrl: http://keycloak-app-keycloakx-http.{{ .Values.keycloak.app.namespace }}.svc.cluster.local:80{{ .Values.keycloak.app.pathPrefix | trimSuffix "/" }}
+realm: "{{ $global.instanceSlug }}"
+principal: portal-api
+admin:
+  username: "{{ .Values.keycloak.app.admin.username }}"
+  existingSecret: {{ .Values.keycloak.app.admin.secret.name }}
+  existingSecretKey: {{ .Values.keycloak.app.admin.secret.passwordKey }}
+securityDefaults:
+  podSecurityContext:
+    {{- .Values.securityDefaults.podSecurityContext | toYaml | nindent 4 }}
+  securityContext:
+    {{- .Values.securityDefaults.securityContext | toYaml | nindent 4 }}

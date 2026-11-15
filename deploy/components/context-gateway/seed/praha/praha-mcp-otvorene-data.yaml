@@ -1,0 +1,24 @@
+# Prague's public data as one read-only MCP connector (T-4750, T-5367, ADR-N-043):
+# `https://{domain}/api/mcp/praha/otvorene-data`, the server Prague's public assistant reads
+# through. It selects every public Endpoint of the project praha; every call is still that
+# Endpoint's own call under its anonymous Policy, and a public server lists read tools only,
+# whoever calls (EP-141).
+apiVersion: joinedcontext.com/v1alpha1
+kind: McpServer
+metadata:
+  name: otvorene-data
+  namespace: praha
+  # What an AI client reads as serverInfo and initialize.instructions (EP-92).
+  title:
+    sk: Praha — otvorené údaje
+    en: Prague, open data
+  description:
+    sk: 'Otvorené údaje hlavného mesta Prahy, len na čítanie: kvalita ovzdušia, zdieľané bicykle, parkoviská P+R, kontajnery a zberné miesta triedeného odpadu, rozpočet, kultúrne a školské zariadenia, verejné toalety a mestské časti. Zdroje: ČHMÚ, Golemio, ROPID, IPR Praha a hlavné mesto Praha; texty sú po česky. Pri citovaní uveďte zdroj.'
+    en: 'Read-only open data of the City of Prague: air quality, shared bikes, park and ride car parks, sorted-waste containers and collection points, the budget, cultural and school facilities, public toilets and city districts. Start with list_endpoints or search, then query_entities naming one endpoint, with a small limit. Texts are in Czech. Sources: Czech Hydrometeorological Institute (CC BY 4.0), IPR Praha (CC BY 4.0), ROPID (CC BY 4.0), nextbike (CC0 1.0), Golemio and the City of Prague; credit the source when you quote it.'
+spec:
+  # Every public Endpoint of the project, resolved on each call (MF-55, T-5367): a new one joins
+  # without an edit here, one that stops being public leaves.
+  select:
+    projects: [praha]
+    accessLevel: [public]
+  audience: public

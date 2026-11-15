@@ -1,0 +1,21 @@
+# The agendas change once a day at the source (frequency DIARIA); one run a day after the city's
+# morning update writes them (T-5265).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: agenda
+  namespace: barcelona
+  title:
+    ca: Agenda d'activitats de Barcelona
+    es: Agenda de actividades de Barcelona
+    en: Barcelona activity agenda
+spec:
+  class: auto
+  schedule: '17 6 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-agenda }
+  # Every stream writes through the one endpoint that evaluates the pipelines-write Policy.
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  output: { type: Event, mode: upsert }
+  # Measured: the whole agenda (7,670 rows) maps inside a 128 MiB container.
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

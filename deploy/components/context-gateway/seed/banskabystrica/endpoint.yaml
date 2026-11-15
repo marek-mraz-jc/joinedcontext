@@ -1,0 +1,50 @@
+# The one public door of the air-quality space (EP-16, GW22): anonymous reads of what the
+# `public-read` Policy allows, and the dataset the open-data catalogue carries (EP-62).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: public-air
+  namespace: banskabystrica
+  # What the dataset page and the endpoint's own DCAT-AP record show: `dct:title` and
+  # `dct:description` are read from here (EP-27), and the catalogue maps them to the dataset's
+  # title and notes. Slovak first: the space's own locale is `sk`.
+  title: { sk: Kvalita ovzdušia v Banskej Bystrici, en: Air quality in Banská Bystrica }
+  description:
+    sk: 'Hodinové merania kvality ovzdušia na stanici SK0263A v Banskej Bystrici (mestské pozadie, SHMÚ), ako ich zverejňuje Európska environmentálna agentúra: PM10, PM2.5 a čas merania. Licencia CC BY 4.0, držiteľ autorských práv EEA.'
+    en: 'Hourly air-quality readings at station SK0263A in Banská Bystrica (urban background, SHMÚ) as the European Environment Agency republishes them: PM10, PM2.5 and the time of the reading. CC BY 4.0, copyright holder EEA.'
+spec:
+  contextSpaceRef: ovzdusie
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie:ovzdusie-pipelines-write
+    - urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie:public-read
+  slug: mluyob4nz52lok3ssk7pgn5vwt
+  audience: public
+  # `csv` is what a tabular consumer reads, and what the catalogue's DataStore sheet is filled
+  # from: the sheet is read through this representation as an ordinary consumer, so an endpoint
+  # that serves none can carry no preview, no filtered API and no SQL over its rows (EP-64,
+  # Architecture/21 §3, T-2432). `xlsx` is the same rows for a person who opens them in a
+  # spreadsheet; `zip` is left out, a third copy of the same readings nobody rebuilds.
+  # `ogc-features` is the OGC API Features surface dev-smoke reads per Endpoint kind (T-3957).
+  enabledRepresentations: [ngsi-ld, csv, mcp, ogc-features, websocket, odata]
+  # Published under CC BY 4.0 by the owner's decision (T-2407, 2026-09-25). Since T-3120 the
+  # space holds the real hourly EEA reading of SK0263A (pipeline public-air), and the 13 seeded
+  # test stations age out through that pipeline's expiry (PL-64).
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: banskabystrica }
+      license: cc-by
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    themes: [ENVI, HEAL]
+    # The EEA streams renew the reading every hour.
+    frequency: HOURLY
+    keywords:
+      sk: [kvalita ovzdušia, PM10, PM2.5, Banská Bystrica]
+      en: [air quality, PM10, PM2.5, Banská Bystrica]
+    spatial:
+      - SK032
+      - https://data.gov.sk/id/lau2/SK0321508438

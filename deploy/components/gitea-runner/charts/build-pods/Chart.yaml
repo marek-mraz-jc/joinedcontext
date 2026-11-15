@@ -1,0 +1,5 @@
+apiVersion: v2
+name: build-pods
+description: What an App's build pod needs in the runner's namespace, which the Portal starts per queued build (AP-130, AP-131)
+type: application
+version: 0.1.0

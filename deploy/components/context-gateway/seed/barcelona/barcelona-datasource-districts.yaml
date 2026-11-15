@@ -1,0 +1,20 @@
+# Open Data BCN's districts file (dataset 20170706-districtes-barris, CC BY 4.0): the 10 districts,
+# their codes and outlines as WKT in ETRS89 and WGS84. The resource's download link answers 302 to
+# this address on the same host; the DataSource names it directly. About 520 KB, rewritten nightly
+# with the same content; the mapping refuses more than 4 MiB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-districts
+  namespace: barcelona
+  title:
+    ca: Districtes de Barcelona (Open Data BCN)
+    es: Distritos de Barcelona (Open Data BCN)
+    en: Barcelona districts (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/resources/bcn/EstadisticaUnitatsAdministratives/BarcelonaCiutat_Districtes.csv
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 30s

@@ -63,6 +63,20 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   `secrets/realm/NAME` (0600), and the realm file names it as `$(file:...)`: kaisatsu inside jc
   reads no environment, only `--kaisatsu-import-secrets-dir`. It stops a running `jc` of the same
   environment first (`stop-jc.sh`: SIGTERM, then SIGKILL after 10 s).
+- `REHEARSAL_LAYOUT=split up.sh <env> <port> <pg port>` starts the same environment as separate
+  services (`split.sh`): an nginx front on the public port routes `/git`, `/dashboards`, `/opendata`
+  and `/streams` to one jc each for shako, daiya, dataroom and ekiben (each behind `[door]`), and
+  everything else to core (kaisatsu, Antares, gateway, Portal, model-tools, assistant, viz), whose
+  Portal calls the four through `[remote]` with kaisatsu tokens of the realm `jc-split`. The broker
+  runs on NATS (docker, loopback, password in a 0600 file). `REHEARSAL_CORE_REPLICAS=2` starts a
+  second core on the same jc.toml and state dir behind the front's round robin: two brokers and
+  two gateways. The gateway and the broker stay in core because the gateway reaches the broker
+  only on the in-process hop and checks persons only with kaisatsu and the Portal beside it
+  (split.sh header). Import on the one-process layout first (`import.sh`), then restart split
+  on the same data; host mode (`REHEARSAL_JC_TOML_EXTRA`) is refused there.
+  `notify_once.py --base <replica 1> --base <replica 2>` (on allow-all, with
+  `ANTARES_EGRESS_ALLOW_PRIVATE=true`) writes to both replicas in turn and counts each
+  notification at a loopback receiver.
 - kaisatsu, the Portal, Antares, shako, daiya, dataroom and ekiben keep their state in PostgreSQL
   (one database each, request roles without BYPASSRLS). Each module's `[<m>.database]` in
   `jc.toml` names role, host and database inline; jc refuses a password in a URL, and every

@@ -1,0 +1,14 @@
+# The open-data catalogue the project's endpoints publish to (EP-62, EP-67), its own organization
+# of the one catalogue. The API token is a reference.
+apiVersion: joinedcontext.com/v1alpha1
+kind: CkanInstance
+metadata:
+  name: slovensko
+  namespace: slovensko
+  title:
+    sk: Slovensko — otvorené dáta
+    en: Slovakia, open data
+spec:
+  url: https://opendata.dev.joinedcontext.com
+  organizationDefault: slovensko
+  apiTokenRef: { name: ckan-api-token, key: token, envVar: CKAN_API_TOKEN }

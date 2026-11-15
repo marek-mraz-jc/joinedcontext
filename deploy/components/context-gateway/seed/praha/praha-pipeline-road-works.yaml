@@ -1,0 +1,18 @@
+# One CityWork per record of `opravujeme-works`, written into the city space (T-5428).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: road-works
+  namespace: praha
+  title: { en: Road works and closures, cs: Opravy a uzavírky }
+spec:
+  class: auto
+  # The city adds and closes works during the day; a read every six hours keeps up.
+  period: 6h
+  schedule: '25 */6 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: opravujeme-works }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: CityWork, mode: upsert }
+  # 4.9 MB of JSON with long HTML texts; 256 MiB, as the PID lines'.
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

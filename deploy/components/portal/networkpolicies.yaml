@@ -1,0 +1,256 @@
+---
+portal:
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        # An App pod asks JC_ME_URL for its caller's roles on this Service in the cluster, never
+        # through the public host its own policy does not admit (AP-109, AP-134, T-3037). Every
+        # project's apps namespace is the Portal's, created with this label (AP-116, AP-117), and
+        # only an App pod carries the other one; the Portal checks the bearer token itself.
+        - namespaceSelector:
+            matchLabels:
+              joinedcontext.com/managed-by: joinedcontext-portal
+          podSelector:
+            matchLabels:
+              joinedcontext.com/app: "true"
+        # A WASM shard asks for a request's caller and an App's email and ai as that person
+        # (T-3622, API/06 §5); the Portal checks the bearer token itself.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+        # Keycloak's back-channel logout (T-5568); the Portal verifies the logout token itself.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # The UI bundle it reads every page from (T-2485, T-5297).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-ui
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 8080
+    # The mail catcher of an installation without a relay (T-3583); a named relay outside the
+    # cluster takes an egress rule of the environment's own.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mail-catcher
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 1025
+    # The `wasm` Apps' database: placement, provisioning, migrations and export (AP-149, AP-150).
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    # The hub's registrations (T-0345, PF-48). A ContextSourceRegistration is a control-plane
+    # act with no gateway operation behind it, so the reconciler writes it straight into the
+    # hub space's tenant on the broker's own API port. The broker's ingress already names this
+    # pod; this is the other half.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-broker-broker
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 9090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: model-tools-tools
+          componentNamespace: model-tools
+      ports:
+        - protocol: TCP
+          port: 8080
+    # The reconciler mints one scoped writer and one scoped reader per Organization in the
+    # artifact store's own IAM (T-0422, PF-32). It is the only caller of that admin API, and
+    # the store's ingress policy already names this pod as the one workload it answers.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 9000
+    # The open-data catalogue's API (T-5314): the reconciler publishes each Endpoint's dataset
+    # on the Service rather than through the edge. The catalogue's ingress names this pod too.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 5000
+    # The pipeline test creates and deletes an ephemeral stream on the runner (PL-43).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner
+      ports:
+        - protocol: TCP
+          port: 4195
+    # Each WASM shard's GET /jobs, the last run of every scheduled job, which the reconciler
+    # writes into the App's status.jobs[] (AP-154, T-3372).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The portal makes outbound HTTPS calls by design: OIDC discovery against the public
+    # issuer URL — the `iss` claim carries the public host, so pointing it at the in-cluster
+    # Keycloak service fails issuer validation — and merge requests against the Git forge.
+    # Egress is therefore 443 and nothing else.
+    #
+    # Two things follow from kube-proxy DNATing before the egress filter runs, and both cost
+    # an hour to find. First, no `except` for the pod and service CIDRs, however tempting: the
+    # issuer URL resolves to the node's external address and is rewritten to the ingress
+    # controller's POD IP before this rule is evaluated, so excluding 10.42.0.0/16 does not
+    # narrow the rule to "the internet" — it kills every Service-mediated call, the portal's
+    # own login discovery included. Second, the port this rule sees is the controller's
+    # CONTAINER port, not 443: ingress-nginx binds 443 itself, Traefik binds 8443.
+    # The same DNAT rewrites the API server: the reconciler dials `kubernetes.default.svc:443`
+    # and kube-proxy sends it to the node's 6443, which is the port this rule sees (T-0938).
+    # Without 6443 every write the Portal makes to the cluster — an App's objects, the artifact
+    # store's reader Secret, a pipeline's credentials — is refused before it leaves the pod, and
+    # the Portal can only say "cannot reach the API server".
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+        - protocol: TCP
+          port: 6443
+
+postgres-from-portal:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 5432
+
+# The mail catcher takes SMTP from the Portal alone (T-3583); its egress is the namespace's
+# default deny, so it reaches nothing but DNS. Its API on 8025 is read through a port-forward,
+# which no policy here admits from a pod.
+mail-catcher:
+  podSelector:
+    app.kubernetes.io/name: mail-catcher
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 1025
+
+# The UI bundle answers the Portal alone (T-2485, T-5297): the edge never reaches it, the Portal
+# reads its files and serves them with its own headers. It dials nothing but CoreDNS.
+portal-ui:
+  podSelector:
+    app.kubernetes.io/name: portal-ui
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

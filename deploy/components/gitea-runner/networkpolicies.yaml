@@ -1,0 +1,133 @@
+---
+# The runner executes the workflow of every application repository, so an application's own
+# install, test and build code runs here (T-1707, ADR-N-028 §5). It reaches exactly what a
+# build needs (AP-81): the forge to take jobs, clone and publish the package, the Portal API to
+# propose `status.build`, and DNS. No ingress at all: nothing calls a runner.
+gitea-runner:
+  podSelector:
+    app.kubernetes.io/name: gitea-runner
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The other half of the Portal leg: the Portal's own policy admits the edge alone.
+portal-ingress-from-gitea-runner:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea-runner
+          componentNamespace: gitea-runner
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# The lane token's refresher (ADR-N-028 §5, T-2636), a CronJob of the forge's bootstrap chart
+# that exists only beside a runner: it mints the lane's token at Keycloak's in-cluster Service
+# and writes it into the forge, and reaches nothing else. No ingress: nothing calls it.
+gitea-lane-token:
+  componentNamespace: gitea
+  podSelector:
+    app.kubernetes.io/name: lane-token
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The two peers' halves: the forge and Keycloak list their callers by name.
+gitea-from-lane-token:
+  componentNamespace: gitea
+  podSelector:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/instance: gitea-forge
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lane-token
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+
+keycloak-from-lane-token:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lane-token
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 8080

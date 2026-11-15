@@ -1,0 +1,148 @@
+{
+ "dataUpdatedTime": "2026-10-21T12:41:19Z",
+ "stations": [
+  {
+   "id": 1001,
+   "dataUpdatedTime": "2026-10-21T12:38:49Z",
+   "sensorValues": [
+    {
+     "id": 1,
+     "stationId": 1001,
+     "name": "ILMA",
+     "shortName": "Ilma ",
+     "measuredTime": "2026-10-21T12:37:58Z",
+     "unit": "°C",
+     "value": 11.1
+    },
+    {
+     "id": 3,
+     "stationId": 1001,
+     "name": "TIE_1",
+     "shortName": "Tie1",
+     "measuredTime": "2026-10-21T12:37:58Z",
+     "unit": "°C",
+     "value": 11.7
+    },
+    {
+     "id": 9,
+     "stationId": 1001,
+     "name": "KASTEPISTE",
+     "shortName": "KastP",
+     "measuredTime": "2026-10-21T12:37:58Z",
+     "unit": "°C",
+     "value": 6.3
+    },
+    {
+     "id": 16,
+     "stationId": 1001,
+     "name": "KESKITUULI",
+     "shortName": "KTuuli",
+     "measuredTime": "2026-10-21T12:37:58Z",
+     "unit": "m/s",
+     "value": 2.9
+    },
+    {
+     "id": 18,
+     "stationId": 1001,
+     "name": "TUULENSUUNTA",
+     "shortName": "TSuunt",
+     "measuredTime": "2026-10-21T12:37:58Z",
+     "unit": "°",
+     "value": 110.0
+    },
+    {
+     "id": 21,
+     "stationId": 1001,
+     "name": "ILMAN_KOSTEUS",
+     "shortName": "Koste",
+     "measuredTime": "2026-10-21T12:37:58Z",
+     "unit": "%",
+     "value": 73.0
+    },
+    {
+     "id": 23,
+     "stationId": 1001,
+     "name": "SADE_INTENSITEETTI",
+     "shortName": "S-Int",
+     "measuredTime": "2026-10-21T12:37:58Z",
+     "unit": "mm/h",
+     "value": 0.0
+    }
+   ]
+  },
+  {
+   "id": 1002,
+   "dataUpdatedTime": "2026-10-21T12:36:49Z",
+   "sensorValues": [
+    {
+     "id": 1,
+     "stationId": 1002,
+     "name": "ILMA",
+     "shortName": "Ilma ",
+     "measuredTime": "2026-10-21T12:35:48Z",
+     "unit": "°C",
+     "value": 11.0
+    },
+    {
+     "id": 3,
+     "stationId": 1002,
+     "name": "TIE_1",
+     "shortName": "Tie1",
+     "measuredTime": "2026-10-21T12:35:48Z",
+     "unit": "°C",
+     "value": 13.0
+    },
+    {
+     "id": 9,
+     "stationId": 1002,
+     "name": "KASTEPISTE",
+     "shortName": "KastP",
+     "measuredTime": "2026-10-21T12:35:48Z",
+     "unit": "°C",
+     "value": 6.6
+    },
+    {
+     "id": 16,
+     "stationId": 1002,
+     "name": "KESKITUULI",
+     "shortName": "KTuuli",
+     "measuredTime": "2026-10-21T12:35:48Z",
+     "unit": "m/s",
+     "value": 3.3
+    },
+    {
+     "id": 18,
+     "stationId": 1002,
+     "name": "TUULENSUUNTA",
+     "shortName": "TSuunt",
+     "measuredTime": "2026-10-21T12:35:48Z",
+     "unit": "°",
+     "value": 75.0
+    },
+    {
+     "id": 21,
+     "stationId": 1002,
+     "name": "ILMAN_KOSTEUS",
+     "shortName": "Koste",
+     "measuredTime": "2026-10-21T12:35:48Z",
+     "unit": "%",
+     "value": 75.0
+    },
+    {
+     "id": 23,
+     "stationId": 1002,
+     "name": "SADE_INTENSITEETTI",
+     "shortName": "S-Int",
+     "measuredTime": "2026-10-21T12:35:48Z",
+     "unit": "mm/h",
+     "value": 0.0
+    }
+   ]
+  },
+  {
+   "id": 1071,
+   "dataUpdatedTime": "1970-01-01T00:00:00Z",
+   "sensorValues": []
+  }
+ ]
+}

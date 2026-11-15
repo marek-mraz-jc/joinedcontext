@@ -1,0 +1,530 @@
+{
+  "$id": "https://joinedcontext.com/models/praha/praha-akce",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "Entity": {
+      "additionalProperties": false,
+      "description": "The root every NGSI-LD entity class specialises.",
+      "properties": {
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "Event": {
+      "additionalProperties": false,
+      "description": "One public event: its name, its start and a link are required (owner 2026-10-22); its place as a GPS point is expected and filled from the source or the venue table, its organizer kept where the source names one, the rest kept where the source gives it.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The postal address of the venue, field by field (Smart Data Models' common PostalAddress); `addressLocality` is the town a calendar filters on. A field the source leaves out is absent, never guessed.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "areaServed": {
+          "description": "The municipality the event or the venue belongs to, by its official name (`Detva`, `Košice`): the key a count or a filter per town reads, on every event (DM-141).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "audience": {
+          "description": "Who the event is for, in Smart Data Models' Event codes; set with the category `children-family`, `children` when the source or the name says children, else `family`.",
+          "items": {
+            "$ref": "#/definitions/EventAudience"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "The event's main category, one code of the platform's list of 16 (docs API/12-event-categories.md), picked by the rule table seeds/event-categories.json from the source's own word, the name or the kind of body that announced it (`music`, `sport`), else by the decision model's cached answer. A list of one, as Smart Data Models' Event writes `category`; absent while neither has named the event.",
+          "items": {
+            "$ref": "#/definitions/EventCategory"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "categorySource": {
+          "description": "How `category` was picked: `rule` the rule table, `model` the decision model's cached answer for an event no rule decides (scripts/events-classify.py).",
+          "pattern": "^(rule|model)$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who announced the event (the town, the region, the cultural body), as the credit names it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the source last changed the record.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "What the source says about the event, as plain text without markup.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "endDate": {
+          "description": "When the event ends, written as `startDate`; for a whole-day event its last day, inclusive. Absent when the source gives no end: the calendar then shows the start alone.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "eventCategory": {
+          "description": "The kind of event in the source's own words (`koncert`, `výstava`, `šport`), kept so `category` can be traced back to it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the event takes place, a GeoJSON Point in WGS 84 inside the source's country (Czechia: longitude 12.0 to 18.9, latitude 48.5 to 51.1; Slovakia: longitude 16.8 to 22.6, latitude 47.7 to 49.7): the source's own point, the venue's building, else the organizer's or the town's office or the town's centre, as `locationPrecision` says (owner 2026-10-21: at least 90 % of events with a point).",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "locationPrecision": {
+          "$ref": "#/definitions/LocationPrecision",
+          "description": "How close `location` is to the venue: `source` the publisher's own point, `building` the venue's building (the address register or a venue checked against OpenStreetMap), `office` the organizer's or the town's office standing in for a venue nobody placed, `centre` the town's centre. A map draws `office` and `centre` as approximate.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "locationSource": {
+          "description": "Who placed `location`: `feed` the publisher, `register-adries`, `overpass`, `nominatim` or `hand` the venue table's row (seeds/bbsk-events/venues.csv), `towns` the town table's office or centre.",
+          "pattern": "^(feed|register-adries|overpass|nominatim|hand|towns)$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "name": {
+          "description": "The title of the event as the source writes it, in its own language (Czech or Slovak).",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "organizer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Organizer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who runs the event: the museum, the school, the town or the named performer, never the feed or the aggregator that announced it (that is `dataProvider`). Its name and its web site only, never a person's e-mail or phone.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refPointOfInterest": {
+          "description": "The venue as a PointOfInterest of this space, when the venue table placed the event; every event held there links the same one (DM-141).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "source": {
+          "description": "The feed or the page the pipeline read the event from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "sourceId": {
+          "description": "The event's own identifier at its source, so a record can be traced back.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "startDate": {
+          "description": "When the event starts: an RFC 3339 instant with its offset (`2026-11-14T19:00:00+01:00`, Europe/Bratislava as the source publishes it), or a date alone (`2026-11-14`) for an event that lasts whole days.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "An http(s) link a person opens: the page of the event at its source, where they read more or buy a ticket, else the organizer's page that lists its events.",
+          "format": "uri",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "venue": {
+          "description": "The name of the place, as the source writes it (a hall, a square, a museum).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "startDate",
+        "url",
+        "id",
+        "type"
+      ],
+      "title": "Event",
+      "type": "object"
+    },
+    "EventAudience": {
+      "description": "The Smart Data Models Event audience codes the pipelines write.",
+      "enum": [
+        "children",
+        "family"
+      ],
+      "title": "EventAudience",
+      "type": "string"
+    },
+    "EventCategory": {
+      "description": "The main event categories of the platform, with labels in sk, cs, en and de.",
+      "enum": [
+        "sport",
+        "outdoor-nature",
+        "film",
+        "theatre-dance",
+        "music",
+        "festival-fair",
+        "food-market",
+        "exhibition-museum",
+        "history-heritage",
+        "faith-tradition",
+        "education-talk",
+        "children-family",
+        "hobby-workshop",
+        "health-wellness",
+        "community-civic",
+        "other"
+      ],
+      "title": "EventCategory",
+      "type": "string",
+      "x-enum-descriptions": {
+        "exhibition-museum": "Smart Data Models category museum.",
+        "faith-tradition": "Smart Data Models category religiousWorship.",
+        "festival-fair": "Smart Data Models category spectacle.",
+        "film": "Smart Data Models category spectacle.",
+        "food-market": "Smart Data Models category gastronomy, shopping.",
+        "health-wellness": "Smart Data Models category wellness.",
+        "history-heritage": "Smart Data Models category history.",
+        "music": "Smart Data Models category spectacle.",
+        "outdoor-nature": "Smart Data Models category outdoorActivities, excursion.",
+        "theatre-dance": "Smart Data Models category spectacle."
+      }
+    },
+    "LocationPrecision": {
+      "description": "How close an event's point is to its venue; office and centre are approximate.",
+      "enum": [
+        "source",
+        "building",
+        "office",
+        "centre"
+      ],
+      "title": "LocationPrecision",
+      "type": "string"
+    },
+    "Organizer": {
+      "additionalProperties": false,
+      "description": "The value of `organizer`, never an entity of its own.",
+      "properties": {
+        "name": {
+          "description": "The organizer's name as the source writes it (`Stredoslovenské múzeum`).",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The organizer's own web site, when the source names it.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Organizer",
+      "type": "object"
+    },
+    "PointOfInterest": {
+      "additionalProperties": false,
+      "description": "One venue of the venue table (seeds/bbsk-events/venues.csv): a hall, a square, a museum where events take place, one entity per real place (table rows of one name within 50 m are one venue), its id the OpenStreetMap object of its building or a hash of its town, name and point (DM-141).",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The postal address of the venue, field by field (Smart Data Models' common PostalAddress); `addressLocality` is the town a calendar filters on. A field the source leaves out is absent, never guessed.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "areaServed": {
+          "description": "The municipality the event or the venue belongs to, by its official name (`Detva`, `Košice`): the key a count or a filter per town reads, on every event (DM-141).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who announced the event (the town, the region, the cultural body), as the credit names it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "The venue's building as a GeoJSON Point in WGS 84 inside the source's country.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": "object",
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The venue's name (`Dom kultúry A. Sládkoviča`).",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The feed or the page the pipeline read the event from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "location",
+        "id",
+        "type"
+      ],
+      "title": "PointOfInterest",
+      "type": "object"
+    },
+    "PostalAddress": {
+      "additionalProperties": false,
+      "description": "The value of `address`, never an entity of its own.",
+      "properties": {
+        "addressCountry": {
+          "description": "The country, as an ISO 3166-1 alpha-2 code.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "addressLocality": {
+          "description": "The town or the municipality, by its official name with diacritics (`Praha`, `Banská Bystrica`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "addressRegion": {
+          "description": "The self-governing region, by its official name (`Hlavní město Praha`, `Banskobystrický kraj`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "postalCode": {
+          "description": "The postal code.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "streetAddress": {
+          "description": "The street and the house number.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "title": "PostalAddress",
+      "type": "object"
+    }
+  },
+  "metamodel_version": "1.11.0",
+  "title": "praha-akce",
+  "type": "object",
+  "version": null,
+  "x-generator-version": "linkml-1.11.1"
+}

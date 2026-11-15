@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: conformance-write
+  namespace: banskabystrica
+  title: { sk: Zápis konformančnej sady, en: Conformance suite writes }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: conformance }
+  assigner: did:web:banskabystrica.sk
+  assignee: { kind: serviceAccount, id: conformance }
+  # redirectionOps (CIM 009 Table 4.20-2) holds no temporal or subscription operation: the release
+  # gate's roundtrip (T-5914) reads its writes back through NGSI-LD temporal, OGC history and the
+  # SensorThings Observations, and subscribes on the WebSocket, all in this test space only.
+  operations:
+    - redirectionOps
+    - createBatch
+    - deleteBatch
+    - queryBatch
+    - retrieveTemporal
+    - queryTemporal
+    - createSubscription

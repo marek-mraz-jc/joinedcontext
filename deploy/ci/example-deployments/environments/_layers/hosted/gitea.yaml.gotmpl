@@ -1,0 +1,12 @@
+---
+gitea:
+  forge:
+    # The generated applications live in an organization of their own, owned by jc-apps and by
+    # no other machine user (owner decision 2026-09-26, T-2969): the Portal's build-pods pass
+    # mints each App's runner registration token as an owner of that organization only. The
+    # first apply moves every `{project}_{name}` repository out of the configuration's
+    # organization; each App rebuilds once there (T-2856).
+    appsOrganization: joinedcontext-apps
+    # Layout 2 since 2026-10-06 (T-2647): each project repository's two teams, created by the
+    # bootstrap and joined to the Keycloak groups of the same names (PF-87).
+    projectTeams: [banskabystrica, bbsk, helsinki, helsinki-mobility, praha, slovensko, zilina]

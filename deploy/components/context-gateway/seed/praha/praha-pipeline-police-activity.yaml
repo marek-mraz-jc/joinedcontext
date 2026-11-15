@@ -1,0 +1,17 @@
+# One KeyPerformanceIndicator per record of `mp-cinnost`, written into the city space (T-5428).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: police-activity
+  namespace: praha
+  title: { en: Police activity reports, cs: Činnost městské policie }
+spec:
+  class: auto
+  # The police publish a month's report some weeks after it ends; one read a week keeps up.
+  period: 168h
+  schedule: '40 3 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: mp-cinnost }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

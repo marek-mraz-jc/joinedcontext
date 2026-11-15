@@ -1,0 +1,54 @@
+---
+gitea:
+  forge:
+    repository: https://dl.gitea.com/charts/
+    chart: gitea-charts/gitea
+    version: '12.7.0'
+  bootstrap:
+    chart: charts/bootstrap
+  sample-apps:
+    chart: charts/sample-apps
+  sample-apps-2:
+    chart: charts/sample-apps
+  sample-apps-3:
+    chart: charts/sample-apps
+  sample-apps-4:
+    chart: charts/sample-apps
+  sample-apps-5:
+    chart: charts/sample-apps
+  sample-apps-6:
+    chart: charts/sample-apps
+  sample-apps-7:
+    chart: charts/sample-apps
+  seed:
+    chart: charts/sample-apps
+  seed-2:
+    chart: charts/sample-apps
+  seed-3:
+    chart: charts/sample-apps
+  seed-4:
+    chart: charts/sample-apps
+  seed-5:
+    chart: charts/sample-apps
+  seed-6:
+    chart: charts/sample-apps
+  seed-7:
+    chart: charts/sample-apps
+  seed-8:
+    chart: charts/sample-apps
+  seed-9:
+    chart: charts/sample-apps
+  seed-10:
+    chart: charts/sample-apps
+  seed-11:
+    chart: charts/sample-apps
+  seed-12:
+    chart: charts/sample-apps
+  seed-13:
+    chart: charts/sample-apps
+  seed-14:
+    chart: charts/sample-apps
+  seed-15:
+    chart: charts/sample-apps
+  seed-16:
+    chart: charts/sample-apps

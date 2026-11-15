@@ -1,0 +1,115 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Minimal Resources -> PL-11 mandates 100m/256Mi requests and 1000m/1024Mi limits
+# - [x] Minimal storage -> stateless runner pods with stream ConfigMap
+# - [x] 1 Replica
+
+replicaCount: 1
+
+# Six cities' resident streams in one process: 1 GiB was OOMKilled once Zilina's joined
+# (2026-10-07, T-3191); the request says what it holds, the limit leaves it room. One core was
+# throttled in 38 % of its CFS periods with 102 streams, the passes bursting to 900m while the
+# HSL feed wants a steady share (T-4036); two cores cost the node nothing it reserves.
+# 2Gi since the gateway answers model refusals per entity (207, T-4011): 1536Mi was OOMKilled
+# twice in 20 min on 2026-10-12 (T-4069); T-4036 sizes it from measurements.
+# 3Gi for T-4255's 92 open-data streams: an idle stream of the rendered shape holds about
+# 4.9 MB in Bento 1.22.0 (135 MB empty, 583 MB with 92, measured 2026-10-16), so 108 streams at
+# 1.5 GiB plus 92 would sit at 95 % of 2Gi, past smoke's 80 % line, before a run buffers a page.
+resources:
+  requests:
+    cpu: 100m
+    # T-4473: dev, kubectl top 2026-10-17 21:22-22:22Z: median 807, peak 963Mi. T-5897: 338Mi
+    # steady over 3 days on dev once T-5282 cut the resident streams (2026-10-28), so 512Mi; the
+    # nightly peaks (1872Mi, T-5285) use the limit, and 896Mi left no node room for a surge pod.
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 3Gi
+
+# The Helsinki demo's feeds (DEMO.md step 3) are the seeded Pipeline manifests and the
+# bento.yaml beside each (../../context-gateway/seed/helsinki/): the Portal's reconciler renders
+# them into resident streams on this runner (PL-47, T-0647), each writing into the `helsinki`
+# space through the `helsinki-all` endpoint with the `helsinki-pipelines` client's token
+# (../../keycloak-clients.yaml). Everything a rendered stream needs from the deployment comes
+# in as an environment variable, so no manifest carries a host, a slug or a credential. The
+# slug is the one helsinki-endpoint-all.yaml declares and the Keycloak client names as audience.
+env:
+  JC_ORG_DOMAIN: {{ $global.orgDomain | quote }}
+  JC_GATEWAY_URL: "http://context-gateway.{{ index .Values "context-gateway" "gateway" "namespace" }}.svc.cluster.local:8080"
+  # The same host without the scheme, for a seeded DataSource that reads the space back
+  # (helsinki-pipeline-service-alerts-bento.yaml): a manifest URL must start with http://.
+  JC_GATEWAY_HOST: "context-gateway.{{ index .Values "context-gateway" "gateway" "namespace" }}.svc.cluster.local:8080"
+  # The public issuer, so the token's `iss` is the one the gateway verifies (KC_HOSTNAME).
+  JC_TOKEN_URL: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/token"
+  # The pipeline-test harness the Portal sends runs as this one client without the pipelines' own
+  # identities, because the `portal-internal` audience is only on it (T-2271); with them it runs
+  # as `{project}/pipeline-test` (T-4050), and no rendered stream uses this.
+  JC_CLIENT_ID: helsinki-pipelines
+  # The pipelines' token service (PL-19, T-1508): where a stream asks for its own pipeline's
+  # token once the Portal renders streams with JC_PORTAL_PIPELINE_IDENTITY=pipeline. Unread
+  # until then.
+  JC_PIPELINE_TOKEN_URL: "http://pipeline-tokens.{{ index .Values "pipeline-runner" "tokens" "namespace" }}.svc.cluster.local:4180/token"
+{{- $runner := index .Values "pipeline-runner" }}
+{{- if and $runner.tokens.enabled $runner.identities.enabled $runner.identities.streams }}
+# Every stream, its reports and sweep (T-4044), and the pipeline-test harness and DataSource
+# probes (T-4050) take their token from the token service as their own principal: the runner
+# reads no client secret, so the `{project}-pipelines` secrets can be retired.
+envSecret: {}
+{{- else }}
+envSecret:
+  JC_CLIENT_SECRET: { secret: keycloak-client-helsinki-pipelines, key: client-secret }
+  # One secret per project that has pipelines (T-2384, PF-46). A rendered stream writes its own
+  # project's client id — `{project}-pipelines`, what the gateway resolves the token's `azp` to —
+  # and names the variable below for the secret, so no credential is written into a stream the
+  # runner's own API serves back. The name is the project uppercased with `-` as `_`; the
+  # reconciler mints it the same way (joinedcontext-portal src/reconciler/streams.rs,
+  # `client_secret_var`), and the client entries are in ../../keycloak-clients.yaml.
+  JC_CLIENT_SECRET_HELSINKI: { secret: keycloak-client-helsinki-pipelines, key: client-secret }
+  JC_CLIENT_SECRET_BANSKABYSTRICA: { secret: keycloak-client-banskabystrica-pipelines, key: client-secret }
+  JC_CLIENT_SECRET_BBSK: { secret: keycloak-client-bbsk-pipelines, key: client-secret }
+  JC_CLIENT_SECRET_ZILINA: { secret: keycloak-client-zilina-pipelines, key: client-secret }
+  JC_CLIENT_SECRET_PRAHA: { secret: keycloak-client-praha-pipelines, key: client-secret }
+  JC_CLIENT_SECRET_SLOVENSKO: { secret: keycloak-client-slovensko-pipelines, key: client-secret }
+  JC_CLIENT_SECRET_BARCELONA: { secret: keycloak-client-barcelona-pipelines, key: client-secret }
+  JC_CLIENT_SECRET_BRATISLAVA: { secret: keycloak-client-bratislava-pipelines, key: client-secret }
+{{- end }}
+
+# The runner starts with the shared resources alone (the caches and the rate limit the
+# rendered streams name, ../../streams/resources.yaml); the streams arrive over its API.
+args:
+  - -w
+  # Timings as histogram buckets, not per-label summaries: the summaries' quantile streams held
+  # 45 % of the runner's heap on dev (T-3537); the Portal reads p99 from the buckets (T-3625).
+  - --set
+  - metrics.prometheus.use_histogram_timing=true
+  # Per stream only the series the Portal reads (joinedcontext-portal src/api/pipelines.rs `family`:
+  # counts, errors, backlog, output latency, the writes' latency). Bento keeps a deleted stream's
+  # series until it restarts, about 900 lines per seeded pipeline, so every scheduled run's name
+  # stayed in memory: 2.7-10.6 MB each, 2.64 GiB on prod (T-5282). Kept: about 80 lines (T-5285,
+  # scripts/runner-rss-rig.py measures it). `--set` splits on commas: the lists are regexes.
+  - --set
+  - 'metrics.mapping=root = if @stream != null && !this.re_match("^(input_received|output_sent|output_error|processor_error|buffer_backlog|output_latency_ns)$") && !(this == "processor_latency_ns" && @label.or("").re_match("^(.*_)?write_[0-9]+$")) { deleted() }'
+  - -r
+  - /streams/resources.yaml
+  - streams
+
+configMap:
+  data:
+    resources.yaml: |
+{{ readFile "../../streams/resources.yaml" | indent 6 }}
+    # The GTFS-RT schema the `protobuf` step of hsl-departures and hsl-service-alerts decodes HSL's
+    # feeds with (T-3891, T-3892), Apache-2.0 from google/transit, mounted alone at /proto below.
+    gtfs-realtime.proto: |
+{{ readFile "../../streams/gtfs-realtime.proto" | indent 6 }}
+
+# The schema again, by subPath into a directory of its own: the steps' `import_paths: [/proto]`.
+# Bento parses every .proto under an import path, and /streams, a ConfigMap mount, holds the file
+# twice (the link and the kubelet's dated copy under ..<timestamp>/), so both streams failed with
+# "symbol transit_realtime.FeedMessage already defined" (T-4037). A subPath file is not updated
+# in place; the config checksum restarts the runner when the schema changes.
+extraVolumeMounts:
+  - name: config
+    mountPath: /proto/gtfs-realtime.proto
+    subPath: gtfs-realtime.proto
+    readOnly: true

@@ -1,0 +1,11 @@
+# PF-56: the integration developer proposes pipelines and their sources; a public Endpoint
+# is another role's (PF-52).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: pipeline-editor
+  namespace: org
+spec:
+  rules:
+    - kinds: [Pipeline, DataSource]
+      verbs: [propose]

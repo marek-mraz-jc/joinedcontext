@@ -1,0 +1,60 @@
+# One Smart Data Model type per catalogue dataset (T-4344): CityWork of the space
+# helsinki, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-public-area-permits
+  namespace: helsinki
+  title: { fi: Yleisten alueiden luvat — Helsinki, en: Public-area permits — Helsinki }
+  description:
+    fi: 'Tapahtumat yleisillä alueilla, kaivuilmoitukset ja tilapäiset liikennejärjestelyt. Kukin lupa viittaa kaupunginosaansa. Lähde: Helsingin kaupunki, Allu, CC BY 4.0.'
+    en: 'Events on public areas, excavation notices and temporary traffic arrangements. Each permit references its district. Source: City of Helsinki, Allu, CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: rjktf6sxt7mdqgdc3cvyf56ezh6if6kh
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-permits
+  # The contact lines stay in the space, as on helsinki-all (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, CC BY 4.0'
+      en: 'Source: City of Helsinki, CC BY 4.0'
+    themes: [GOVE, TRAN]
+    keywords:
+      fi: [luvat, kaivuilmoitukset, liikennejärjestelyt]
+      sv: [tillstånd, grävanmälningar, trafikarrangemang]
+      en: [permits, excavation, traffic arrangements]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: DAILY
+    source:
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Tapahtumat_alue
+        title: { fi: Tapahtumat yleisillä alueilla (Allu), en: Events on public areas (Allu) }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON.
+          en: A WFS layer of the city's map service, as GeoJSON.
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Kaivuilmoitus_alue
+        title: { fi: Kaivuilmoitukset (Allu), en: Excavation notices (Allu) }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON.
+          en: A WFS layer of the city's map service, as GeoJSON.
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Tilapainen_liikennejarjestely_alue
+        title:
+          fi: Tilapäiset liikennejärjestelyt (Allu)
+          en: Temporary traffic arrangements (Allu)
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON.
+          en: A WFS layer of the city's map service, as GeoJSON.

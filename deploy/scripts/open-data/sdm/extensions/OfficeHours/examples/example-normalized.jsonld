@@ -1,0 +1,66 @@
+{
+  "id": "urn:ngsi-ld:OfficeHours:joinedcontext.com:example:1",
+  "type": "OfficeHours",
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "denVTyzdni": {
+    "type": "Property",
+    "value": "denVTyzdni"
+  },
+  "iCOSamospravy": {
+    "type": "Property",
+    "value": "iCOSamospravy"
+  },
+  "identifikatorKontaktnehoMiest": {
+    "type": "Property",
+    "value": "identifikatorKontaktnehoMiest"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "kodDnaVTyzdni": {
+    "type": "Property",
+    "value": "kodDnaVTyzdni"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "nazovSamospravy": {
+    "type": "Property",
+    "value": "nazovSamospravy"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "otvoreneDo": {
+    "type": "Property",
+    "value": "otvoreneDo"
+  },
+  "otvoreneOd": {
+    "type": "Property",
+    "value": "otvoreneOd"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/OfficeHours/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

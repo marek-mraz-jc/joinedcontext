@@ -1,0 +1,19 @@
+# Golemio's /v2/gardens (Operátor ICT, a.s.): 13 records on 2026-10-22; Golemio last refreshed it on 2025-05-23. The key travels as the
+# X-Access-Token header from the secret `golemio`, never as a value here (CC-06, MF-35). Terms: the
+# Golemio API Keys service, attribution "Golemio, Operátor ICT, a.s.", no licence named (T-5268).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: golemio-gardens
+  namespace: praha
+  title: { en: City gardens and parks (Golemio), cs: Pražské zahrady a parky (Golemio) }
+spec:
+  type: http
+  http:
+    url: https://api.golemio.cz/v2/gardens?limit=10000
+    verb: GET
+    headers: { Accept: application/json }
+    authorization:
+      header: X-Access-Token
+      headerRef: { name: golemio, key: token }
+    timeout: 60s

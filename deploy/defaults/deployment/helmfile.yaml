@@ -1,0 +1,18 @@
+---
+environments:
+  # empty environments must exist. When no environments are defined and one is set via CLI,
+  # helmfile will error out.
+  testing:
+    values: []
+  local:
+    values: []
+  production:
+    values: []
+---
+helmfiles:
+  - path: '../helmfile-root.yaml.gotmpl'
+    values:
+      - environments:
+          - testing
+          - local
+          - production

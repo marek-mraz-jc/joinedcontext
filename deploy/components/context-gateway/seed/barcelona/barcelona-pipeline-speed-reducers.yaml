@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: speed-reducers
+  namespace: barcelona
+  title:
+    ca: Reductors de velocitat de Barcelona, cada setmana
+    es: Reductores de velocidad de Barcelona, cada semana
+    en: Barcelona speed reducers, weekly
+spec:
+  class: auto
+  # The city rewrites the file weekly (last-modified Tuesday 00:43 UTC on 2026-10-20).
+  schedule: '50 5 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-speed-reducers }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert: a reducer the file drops or marks as gone leaves by its expiresAt, three weeks after
+  # its last listing.
+  output: { type: StreetFurniture, mode: upsert }
+  # A 0.65 MB file of 1,774 rows, read whole (the 5.1 MB crossings file needs 160 MiB).
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

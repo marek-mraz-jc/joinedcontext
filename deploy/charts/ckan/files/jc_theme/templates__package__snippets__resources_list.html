@@ -1,0 +1,35 @@
+{#
+  The downloads of a dataset in three sections (T-3009): the data as files, the DataStore
+  table first; the APIs; and the data model, folded, because its seven formats are for
+  validators and developers and used to bury the data under them.
+#}
+<section id="dataset-resources" class="resources jc-resources" aria-labelledby="jc-resources-title">
+  <h2 id="jc-resources-title">{{ h.jc_t('resources') }}</h2>
+  {% set sections = h.jc_resource_sections(pkg) %}
+  {% if sections %}
+    {% set can_edit = can_edit or h.check_access('package_update', {'id': pkg.id}) %}
+    {% for section in sections %}
+      <div class="jc-section">
+        {% if section.key == 'schema' %}
+          <details class="jc-schema">
+            <summary>
+              <h3 id="jc-section-{{ section.key }}">{{ section.title }}</h3>
+              <span class="jc-chip">{{ section['items']|length }}</span>
+              <p class="jc-section-lead">{{ section.lead }}</p>
+            </summary>
+        {% else %}
+          <h3 id="jc-section-{{ section.key }}">{{ section.title }}</h3>
+          <p class="jc-section-lead">{{ section.lead }}</p>
+        {% endif %}
+        <ul class="resource-list jc-resource-list" aria-labelledby="jc-section-{{ section.key }}">
+          {% for item in section['items'] %}
+            {% snippet 'package/snippets/resource_item.html', pkg=pkg, res=item.resource, can_edit=can_edit, jc_what=item.what, jc_format=item.format, jc_section=section.key %}
+          {% endfor %}
+        </ul>
+        {% if section.key == 'schema' %}</details>{% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">{{ h.jc_t('no_resources') }}</p>
+  {% endif %}
+</section>

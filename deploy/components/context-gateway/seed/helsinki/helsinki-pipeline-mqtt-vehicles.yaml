@@ -1,0 +1,38 @@
+# The demo trackers into the space (T-4857, PL-76): one Vehicle per tracker, its id from the
+# client id in the topic, which the broker's ACL binds to the tracker's verified token
+# (ADR-N-048 §3). A message that is not {"lat": n, "lon": n, "speed": n, "heading": n} inside
+# the HSL area (the space's quality rules), speed 0..44.5 m/s and heading 0..360, or whose
+# observedAt is more than five minutes from its arrival, is dropped. The space's Vehicle lease
+# (current PT5M) ends a tracker five minutes after its last position.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: mqtt-vehicles
+  namespace: helsinki
+  title: { en: Demo vehicle trackers over MQTT into the space }
+spec:
+  class: auto
+  source:
+    dataSourceRef: { kind: DataSource, name: mqtt-vehicles }
+  compute:
+    kind: bloblang
+    bloblang: |
+      let tracker = meta("mqtt_topic").or("").split("/").index(1).catch("")
+      let received = now()
+      let seen = this.observedAt.or($received).string().catch("")
+      let skew = ($seen.ts_unix_milli() - $received.ts_unix_milli()).catch(null)
+      let lat = this.lat.catch(null)
+      let lon = this.lon.catch(null)
+      let speed = this.speed.catch(null)
+      let heading = this.heading.catch(null)
+      let numbers = $lat.type() == "number" && $lon.type() == "number" && $speed.type() == "number" && $heading.type() == "number"
+      let valid = $tracker.re_match("^helsinki-[a-z0-9-]{1,40}$") && $numbers && $lat >= 59.85 && $lat <= 60.8 && $lon >= 23.9 && $lon <= 25.6 && $speed >= 0 && $speed <= 44.5 && $heading >= 0 && $heading <= 360 && $skew != null && $skew <= 300000 && $skew >= -300000
+      root = if !$valid { deleted() } else { {
+        "id": "urn:ngsi-ld:Vehicle:%v:%v:mqtt-%v".format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), $tracker),
+        "type": "Vehicle",
+        "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [ $lon, $lat ] }, "observedAt": $seen },
+        "speed": { "type": "Property", "value": $speed, "unitCode": "MTS", "observedAt": $seen },
+        "heading": { "type": "Property", "value": $heading, "unitCode": "DD", "observedAt": $seen }
+      } }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

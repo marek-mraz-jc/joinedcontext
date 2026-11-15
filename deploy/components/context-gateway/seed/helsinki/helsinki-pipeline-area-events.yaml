@@ -1,0 +1,17 @@
+# One CityWork per record of `hel-allu-area-events`, written into the city space (T-2787).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: area-events
+  namespace: helsinki
+  title: { en: Events on public areas }
+spec:
+  class: auto
+  # The register is updated several times a day; every six hours keeps a reader within a working day of it.
+  period: 6h
+  schedule: '40 */6 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-allu-area-events }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: CityWork, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

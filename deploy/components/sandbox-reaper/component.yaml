@@ -1,0 +1,4 @@
+---
+component: sandbox-reaper
+parts:
+  - name: reaper

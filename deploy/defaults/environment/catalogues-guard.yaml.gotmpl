@@ -1,0 +1,21 @@
+{{- /*
+  T-4636: every entry of global.catalogues becomes a CKAN release, Secrets, two databases and an
+  edge host of its own (ckan-{name}, db-ckan-{name}, ckan_{name}, {subDomain}.{domain}), so a bad
+  entry stops here, before any of those renders half-named. `catalogue` is the default instance.
+  Sixteen characters keep the longest derived name (a harvest CronJob) inside Kubernetes' limits.
+*/}}
+{{- $names := dict }}
+{{- $hosts := dict }}
+{{- range $c := .Values.global.catalogues | default list }}
+{{- $name := (index $c "name") | default "" | toString }}
+{{- if or (not (regexMatch "^[a-z]([a-z0-9-]{0,14}[a-z0-9])?$" $name)) (eq $name "catalogue") (hasKey $names $name) }}
+{{- fail (printf "global.catalogues: %q is not a catalogue name: a DNS label of at most 16 characters, unique, not catalogue (T-4636)" $name) }}
+{{- end }}
+{{- $_ := set $names $name true }}
+{{- $sub := (index $c "subDomain") | default "" | toString }}
+{{- if or (not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $sub)) (hasKey $hosts $sub) }}
+{{- fail (printf "global.catalogues: %s: subDomain %q is not a DNS label of its own (T-4636)" $name $sub) }}
+{{- end }}
+{{- $_ := set $hosts $sub true }}
+{{- end }}
+{}

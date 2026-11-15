@@ -1,0 +1,96 @@
+---
+postgres:
+  operator:
+    enabled: true
+    namespace: {{ include "jc.operatorNamespace" (dict "global" .Values.global "suffix" "postgres" "deployLayer" .Values.deployLayer) }}
+  cluster:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "postgres") }}
+    name: postgres-cluster
+    # Continuous WAL archiving and daily base backups to an S3-compatible object store
+    # (OPS-09, OPS-10). Off by default: there is no bucket until an operator supplies one,
+    # and a half-configured backup is worse than an honestly absent one. The credentials
+    # are never in these values — `existingSecret` names a Secret with ACCESS_KEY_ID and
+    # ACCESS_SECRET_KEY that the operator provides (SOPS or OpenBao, ADR-N-012).
+    backups:
+      enabled: false
+      # 'artifact-store' archives to the platform's own artifact store (T-5289) and fills in
+      # endpointURL, destinationPath, existingSecret and encryption below; its bucket and key
+      # are made by that store. Same node as the database: it gives PITR and a tested restore,
+      # not survival of a lost node. '' uses the values below (an external store).
+      target: ''
+      provider: 's3'
+      endpointURL: ''
+      destinationPath: ''
+      region: ''
+      bucket: ''
+      path: '/'
+      existingSecret: 'postgres-backup-s3'
+      retentionPolicy: '30d'
+      # Server-side encryption of base backups and WAL in the store. '' for a store without a
+      # KMS: the in-cluster artifact store refuses SSE-S3 ("SSE-S3 requires
+      # RUSTFS_SSE_S3_MASTER_KEY"), so every archived segment would fail.
+      encryption: 'AES256'
+      # CNPG cron has six fields (seconds first): daily at 03:00.
+      schedule: '0 0 3 * * *'
+    # Point-in-time recovery from that archive (OPS-10, OPS-11). `enabled: true` bootstraps
+    # this cluster from the WAL archive instead of `initdb`, which is what a restore is: the
+    # cluster keeps its name and every consumer keeps its connection string. Off everywhere
+    # else, because a running database must never be re-bootstrapped by a stray value.
+    # Runbook 6 in the operations guide is the procedure around it.
+    recovery:
+      enabled: false
+      # The serverName the archive was written under; the cluster's own name by default.
+      sourceCluster: 'postgres-cluster'
+      # An ISO 8601 instant inside the retention window, quoted; empty recovers to the end
+      # of the archive.
+      targetTime: ''
+      # The archive to read. Empty means the one the backups block above writes to — which
+      # is only right while the restored cluster archives somewhere else.
+      provider: ''
+      endpointURL: ''
+      destinationPath: ''
+      region: ''
+      bucket: ''
+      path: '/'
+      existingSecret: 'postgres-backup-s3'
+  databases:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "postgres") }}
+    # A nightly pg_dumpall of the cluster onto a node volume, kept `keepDays` days. Only for an
+    # instance without the object store above: it covers a bad migration, not a lost node.
+    localBackup:
+      enabled: false
+      schedule: '30 2 * * *'
+      keepDays: 7
+      size: 10Gi
+      # The dumps' limit when above `size` (local-path cannot grow the PVC); empty: `size`.
+      cap: ''
+      # The dumps' volume class; empty: the cluster's default.
+      storageClass: ''
+      # Databases left out of the dump, e.g. [antares]. The dump of the rest stops at `size`
+      # and does not start when it would leave the node's disk under 10 % free.
+      excludeDatabases: []
+      # Each dump is age-encrypted to these keys and to the drill key (T-5839): the operator's age1...
+      # public keys, an environment value (T-6982), so no default here; with the dump on and none
+      # set the render fails and names this key. Restore with
+      # `age -d -i <that key> <file>.sql.gz.age | gunzip | psql`.
+      ageRecipients: []
+    # The monthly restore drill (OPS-11, OPS-12, T-0046, T-5101): restores the archive above
+    # into a throwaway Cluster `{cluster}-drill` twice, to its end and to the instant the drill
+    # counted the source's tables, compares the row counts, measures RTO and RPO, writes the
+    # result into the ConfigMap `{cluster}-dr-drill` and one JSON line into its log, and
+    # deletes the copy. With
+    # `backups.enabled: false` it restores nothing and records "no off-site backup to drill".
+    drDrill:
+      enabled: true
+      # 04:00 UTC on the 1st, after the 03:00 base backup.
+      schedule: '0 4 1 * *'
+      # How far a restored database's row count may trail the source (writes after the last
+      # archived WAL segment), in percent of the source's.
+      tolerancePercent: 5
+      # The drill waits while the node has less memory available than this, at most
+      # `timeoutMinutes`, and then records that it was skipped.
+      minMemAvailableMiB: 1536
+      timeoutMinutes: 60
+      storageSize: 8Gi

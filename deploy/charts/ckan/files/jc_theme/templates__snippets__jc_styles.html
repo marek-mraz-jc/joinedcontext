@@ -1,0 +1,20 @@
+{#
+The brand values of this installation as custom properties, and the one stylesheet that
+derives the whole look from them (T-3009). Included by base.html and by the table view, whose
+own template empties the block base.html fills.
+#}
+{% set brand = h.jc_branding() %}
+<style nonce="{{ h.jc_csp_nonce() }}">
+  :root {
+    --jc-primary: {{ brand.colours.primary }};
+    --jc-primary-fg: {{ brand.primaryForeground }};
+    --jc-primary-rgb: {{ brand.primaryRgb }};
+    --jc-secondary: {{ brand.colours.secondary }};
+    --jc-accent: {{ brand.colours.accent }};
+    --jc-background: {{ brand.colours.background }};
+    --jc-text: {{ brand.colours.text }};
+    --jc-font-heading: {{ brand.fonts.heading }};
+    --jc-font-body: {{ brand.fonts.body }};
+  }
+</style>
+<link rel="stylesheet" href="{{ h.url_for_static('/jc-theme.css') }}">

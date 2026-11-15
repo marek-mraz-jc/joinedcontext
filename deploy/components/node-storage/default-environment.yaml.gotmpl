@@ -1,0 +1,7 @@
+---
+node-storage:
+  local-path:
+    # Off by default: only a k3s node whose SELinux is enforcing (dev's MicroOS) needs it (T-3431).
+    enabled: false
+    # No `namespace` key on purpose: the release goes to kube-system, beside the provisioner, and
+    # the components that read every part's namespace must not see that one (helmfile.yaml.gotmpl).

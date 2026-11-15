@@ -1,0 +1,23 @@
+# The one model of the hub (DM-61): the types it registers from the city context and the
+# indicator space, with the IRIs those spaces' models give them. The hub holds registrations,
+# never entities of its own; its endpoint only reads.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: helsinki-hub
+  namespace: helsinki
+  title: { en: Helsinki hub }
+spec:
+  contextSpaceRef: helsinki-hub
+  linkml: ./helsinki-hub.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [Vehicle, KeyPerformanceIndicator]
+  # A published model commits all four artifacts (DM-02); the gateway serves schema/v1 from them
+  # instead of a schema derived from the grants. The slots are the members' (helsinki,
+  # helsinki-kpi), which tests/test_helsinki_seed_models.py holds equal.
+  artifacts:
+    jsonSchema: ./helsinki-hub.v1.schema.json
+    context: ./helsinki-hub.v1.context.jsonld
+    docs: ./helsinki-hub.v1.md
+    example: ./helsinki-hub.v1.example.jsonld

@@ -1,0 +1,18 @@
+# Ignore generated files
+*.lock
+package-lock.json
+yarn.lock
+
+# Ignore node_modules
+node_modules/
+
+# Ignore build outputs
+dist/
+build/
+
+# Ignore gotmpl files
+*.gotmpl
+
+# Ignore all Helm chart template files
+**/charts/*/templates/**
+**/charts/*/templates/**/*

@@ -1,0 +1,143 @@
+{% ckan_extends %}
+{#
+  The dataset page for people (T-2744, DS-01): the description as CKAN's sanitised Markdown,
+  then the rows themselves (T-3009: the DataStore table, which used to be the last of fourteen
+  links), then what a reader asks first (who publishes it, under which licence, how fresh it
+  is), the live API with an example, the downloads, and the rest of the metadata as labels.
+#}
+
+{% block package_notes %}
+  {{ super() }}
+  {# T-5059: an Endpoint's dataset opens its live explorer, read from the Endpoint itself; the
+     DataStore tables below are only for a dataset without one. #}
+  {% set explorer = h.jc_explorer(pkg) %}
+  {% set previews = [] if explorer else h.jc_previews(pkg) %}
+  {% snippet 'package/snippets/jc_explorer.html', explorer=explorer %}
+  {% if previews %}
+    {% set total = h.jc_total(previews) %}
+    <section class="jc-preview" aria-labelledby="jc-preview-title">
+      <div class="jc-preview-head">
+        <h2 id="jc-preview-title">{{ h.jc_t('preview') }}</h2>
+        {% if total is not none %}<span class="jc-chip jc-chip-primary">{{ h.jc_rows(total) }}</span>{% endif %}
+        {% if previews|length > 1 %}<span class="jc-chip">{{ previews|length }} {{ h.jc_t('tables') }}</span>{% endif %}
+      </div>
+      <p class="jc-lead">{{ h.jc_t('preview_lead') }}</p>
+      {# One table per entity type (T-3012). The first is open; a closed one loads nothing until
+         a reader opens it, because a lazy frame inside a closed <details> is never rendered. #}
+      {% for preview in previews %}
+        {% set res = preview.resource %}
+        {% set name = h.resource_display_name(res) %}
+        <details class="jc-table"{% if loop.first %} open{% endif %}>
+          <summary>
+            <span class="jc-table-name">{{ name }}</span>
+            {% if preview.total is not none %}<span class="jc-table-rows">{{ h.jc_rows(preview.total) }}</span>{% endif %}
+          </summary>
+          {% if preview.view %}
+            {# A short table gets a short frame: 20 rows a page at most (T-4333). #}
+            <iframe class="jc-grid" loading="lazy" data-jc-rows="{{ [preview.total or 20, 20]|min }}"
+                    title="{{ h.jc_t('table_title') }}: {{ name }}"
+                    src="{{ h.url_for(pkg.type ~ '_resource.view', id=pkg.name, resource_id=res.id, view_id=preview.view.id) }}"></iframe>
+          {% else %}
+            <p class="jc-lead">{{ h.jc_t('no_view') }}</p>
+          {% endif %}
+          <div class="jc-preview-actions">
+            {% if preview.view %}
+              <a class="btn btn-default" href="{{ h.url_for(pkg.type ~ '_resource.read', id=pkg.name, resource_id=res.id) }}">{{ h.jc_t('open_table') }}<span class="visually-hidden"> {{ name }}</span></a>
+            {% endif %}
+            {% if res.url and h.is_url(res.url) %}
+              <a class="btn btn-primary" href="{{ res.url }}">{{ h.jc_t('download') }} CSV<span class="visually-hidden"> {{ name }}</span></a>
+            {% endif %}
+          </div>
+        </details>
+      {% endfor %}
+      {# The map beside the tables (T-4639), hidden until jc-map.js finds a geometry. #}
+      {% set map = h.jc_map(pkg) %}
+      {% if map %}
+        <details class="jc-table jc-map-card" open hidden>
+          <summary><span class="jc-table-name">{{ h.jc_t('map') }}</span></summary>
+          {% snippet 'snippets/jc_map.html', jc_map_config=map %}
+          <div class="jc-preview-actions">
+            <a class="btn btn-default" href="#jc-preview-title">{{ h.jc_t('map_as_table') }}</a>
+            <details class="jc-map-embed">
+              <summary class="btn btn-default">{{ h.jc_t('map_embed') }}</summary>
+              <p class="jc-lead">{{ h.jc_t('map_embed_lead') }}</p>
+              {# The textarea shows markup as text: the title is escaped once more for the copy. #}
+              <textarea id="jc-map-embed" class="form-control" rows="3" readonly><iframe src="{{ map.embed }}" width="100%" height="480" title="{{ map.title|replace('&', '&amp;')|replace('"', '&quot;') }}" style="border:0" loading="lazy"></iframe></textarea>
+              <button type="button" class="btn btn-default" data-jc-copy="jc-map-embed" data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}"><span class="jc-code-copy-label">{{ h.jc_t('copy') }}</span></button>
+            </details>
+          </div>
+        </details>
+      {% endif %}
+    </section>
+  {% endif %}
+  {% snippet 'package/snippets/jc_visualizations.html', pkg=pkg %}
+  {% set about = h.jc_about(pkg) %}
+  {% if about %}
+    <section class="jc-about" aria-labelledby="jc-about-title">
+      <h2 id="jc-about-title">{{ h.jc_t('about') }}</h2>
+      <dl class="jc-about-list">
+        {#- Dozens of sources (one per town feed, T-5192) fold into one row with a disclosure, so
+            the licence and the contact stay in view; up to three stay rows of their own. -#}
+        {% set source_label = h.jc_t('source') %}
+        {% set sources = about | selectattr(0, 'equalto', source_label) | list %}
+        {% set fold = namespace(done=false) %}
+        {% for label, text, link in about %}
+          {% if label == source_label and sources | length > 3 %}
+            {% if not fold.done %}
+              {% set fold.done = true %}
+              <dt>{{ label }}</dt>
+              <dd><details class="jc-about-sources"><summary>{{ h.jc_t('sources_all').replace('{n}', sources | length | string) }}</summary>
+                <ul>{% for _, s_text, s_link in sources %}<li>{% if s_link %}<a href="{{ s_link }}" rel="noopener">{{ s_text }}</a>{% else %}{{ s_text }}{% endif %}</li>{% endfor %}</ul>
+              </details></dd>
+            {% endif %}
+          {% else %}
+          <dt>{{ label }}</dt>
+          <dd>{% if link %}<a href="{{ link }}" rel="noopener">{{ text }}</a>{% else %}{{ text }}{% endif %}</dd>
+          {% endif %}
+        {% endfor %}
+      </dl>
+    </section>
+  {% endif %}
+  {% set live = h.jc_live(pkg) %}
+  {% if live %}
+    <section class="jc-live" aria-labelledby="jc-live-title">
+      <h2 id="jc-live-title">{{ h.jc_t('live') }}</h2>
+      <p>{{ h.jc_t('live_lead') }}</p>
+      <div class="jc-copy">
+        <label for="jc-live-url" class="visually-hidden">{{ h.jc_t('live') }}</label>
+        {# A block that wraps, not a field that cuts the address at a phone's edge (T-4333). #}
+        <pre id="jc-live-url" class="jc-live-url" tabindex="0"><code>{% snippet 'snippets/jc_breakable.html', text=live.url %}</code></pre>
+        <button type="button" class="btn btn-default" data-jc-copy="jc-live-url" data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}">{{ h.jc_t('copy') }}</button>
+      </div>
+      <p class="jc-example-label" id="jc-example-label">{{ h.jc_t('example') }}</p>
+      <pre aria-labelledby="jc-example-label"><code>{% snippet 'snippets/jc_breakable.html', text=live.example %}</code></pre>
+      <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
+    </section>
+  {% endif %}
+{% snippet 'snippets/jc_mcp_install.html', live=live %}
+{% endblock %}
+
+{% block package_tags %}{% endblock %}
+
+{% block package_additional_info %}
+  {% set more = h.jc_more(pkg) %}
+  {% if more %}
+    <section class="additional-info" aria-labelledby="jc-more-title">
+      <h2 id="jc-more-title">{{ h.jc_t('more') }}</h2>
+      <dl class="jc-about-list">
+        {% for key, value in more %}
+          {% set label, text, link = h.jc_extra(key, value) %}
+          <dt>{{ label }}</dt>
+          <dd>{% if link %}<a href="{{ link }}" rel="noreferrer">{{ text }}</a>{% else %}{{ text }}{% endif %}</dd>
+        {% endfor %}
+      </dl>
+    </section>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script src="{{ h.url_for_static('/jc-frame.js') }}" defer></script>
+  <script src="{{ h.url_for_static('/jc-viz.js') }}" defer></script>
+  <script type="module" src="{{ h.url_for_static('/jc-map.js') }}"></script>
+{% endblock %}

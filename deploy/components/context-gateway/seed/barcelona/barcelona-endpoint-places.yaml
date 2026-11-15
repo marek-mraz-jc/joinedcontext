@@ -1,0 +1,61 @@
+# The city's register of facilities (equipaments) as one public dataset (T-5265): libraries, sports
+# halls, schools, markets, social services, transport, pharmacies, hotels and the rest of the
+# register's 23 packages as Smart Data Models PointOfInterest, refreshed daily from Open Data BCN; the drinking and ornamental fountains join it weekly (T-5431).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: barcelona-places
+  namespace: barcelona
+  title: { ca: Equipaments de Barcelona, es: Equipamientos de Barcelona, en: Barcelona facilities }
+  description:
+    ca: "Els equipaments de la ciutat de Barcelona: cultura i lleure, esports, educació, serveis socials, administració, mercats, centres d'informació, serveis religiosos, medi ambient, cementiris, mitjans de comunicació, companyies de serveis, restaurants, transport, farmàcies, hospitals i atenció primària, hotels, lavabos públics, dutxes de platja, punts d'informació turística i refugis climàtics, i les fonts de beure i ornamentals; nom, família, adreça, punt i telèfon. Font: Open Data BCN, CC BY 4.0."
+    es: 'Los equipamientos de la ciudad de Barcelona: cultura y ocio, deportes, educación, servicios sociales, administración, mercados, centros de información, servicios religiosos, medio ambiente, cementerios, medios de comunicación, compañías de servicios, restaurantes, transporte, farmacias, hospitales y atención primaria, hoteles, lavabos públicos, duchas de playa, puntos de información turística y refugios climáticos, y las fuentes de agua potable y ornamentales; nombre, familia, dirección, punto y teléfono. Fuente: Open Data BCN, CC BY 4.0.'
+    en: 'The facilities of the city of Barcelona: culture and leisure, sports, education, social services, administration, markets, information centres, places of worship, environment, cemeteries, media, utility companies, restaurants, transport, pharmacies, hospitals and primary care, hotels, public toilets, beach showers, tourist information points and climate shelters, and the drinking and ornamental fountains; name, family, address, point and telephone. Source: Open Data BCN, CC BY 4.0.'
+spec:
+  contextSpaceRef: barcelona
+  slug: qjos5uyy46rmn7hzxupmldkcwt2wzghd
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-places
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [GOVE, EDUC]
+    keywords:
+      ca: [equipaments, serveis, cultura, esports, educació]
+      es: [equipamientos, servicios, cultura, deportes, educación]
+      en: [facilities, services, culture, sport, education]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: DAILY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset?q=equipament
+        title: { ca: Equipaments de Barcelona, en: Barcelona facilities }
+        description:
+          ca: El registre d'equipaments de la ciutat (Guia BCN), CC BY 4.0.
+          en: The city's register of facilities (Guia BCN), CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/fonts
+        title: { ca: Fonts de beure de Barcelona, en: Barcelona drinking fountains }
+        description:
+          ca: Les fonts de beure de la ciutat, un fitxer cada any, CC BY 4.0.
+          en: The city's drinking fountains, one file a year, CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/fonts-ornamentals
+        title: { ca: Fonts ornamentals de Barcelona, en: Barcelona ornamental fountains }
+        description:
+          ca: Les fonts ornamentals de la ciutat, un fitxer cada any, CC BY 4.0.
+          en: The city's ornamental fountains, one file a year, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: equipaments }

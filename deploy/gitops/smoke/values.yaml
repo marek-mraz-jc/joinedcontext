@@ -1,0 +1,9 @@
+# gitops/cmp/generate.sh sets revision and image; gitops/<environment>.yaml the rest.
+revision: ""
+image: ""
+environment: ""
+domain: ""
+realm: ""
+components: []
+# How long the gate waits for every Application to be Synced at the revision and Healthy.
+waitSeconds: 900

@@ -2,11 +2,13 @@
 //! Outbound SSRF guard (W12):
 //! - All outbound fetches (CIMD metadata, upstream OIDC JWKS/token, back-channel logout) go through
 //!   this guard.
-//! - `https` only (except configured in-cluster addresses such as `*.svc.cluster.local`).
+//! - `https` only; `http` only to a host listed in [`OutboundPolicy::private_hosts`].
 //! - Host allow-list where configured.
 //! - Resolved IP address checked against private, loopback, link-local, multicast, CGNAT, and cloud
-//!   metadata (`169.254.169.254`) ranges unless the target is a configured in-cluster address or
-//!   explicit test loopback.
+//!   metadata (`169.254.169.254`) ranges. The Kubernetes API host (exactly
+//!   [`KUBERNETES_API_HOSTS`], `https` on 443) and a listed private host may resolve to a private
+//!   address, never to loopback, `0.0.0.0/8`, link-local or cloud metadata. An address literal is
+//!   never exempt (test loopback aside).
 //! - DNS answer pinned on the HTTP client, 5 s timeout, 1 MiB response body cap, no redirects followed.
 
 use ipnet::IpNet;
@@ -21,6 +23,18 @@ use url::Url;
 
 pub const MAX_OUTBOUND_BYTES: usize = 1024 * 1024;
 pub const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(5);
+/// The Kubernetes API server's in-cluster names: the only hosts reached on a private address
+/// without being listed, and the only hosts a cluster JWKS fetch sends the ServiceAccount token to.
+pub const KUBERNETES_API_HOSTS: [&str; 2] = [
+    "kubernetes.default.svc",
+    "kubernetes.default.svc.cluster.local",
+];
+
+/// Client attributes holding an address kaisatsu posts to (back-channel sign-out notice).
+pub const CLIENT_OUTBOUND_ATTRIBUTES: [&str; 1] = ["backchannel.logout.url"];
+/// Identity-provider settings holding an address kaisatsu fetches from.
+pub const IDP_OUTBOUND_CONFIG: [&str; 2] = ["jwksUrl", "tokenUrl"];
+
 /// The most cluster JWKS URLs the cache holds.
 const CLUSTER_JWKS_ENTRIES: usize = 16;
 
@@ -60,11 +74,77 @@ struct CachedJwks {
 /// Test-only canned answers by URL: `(status, body)`.
 pub type MockResponses = Arc<RwLock<HashMap<String, (u16, Vec<u8>)>>>;
 
+/// One entry of `[kaisatsu] outbound_private_hosts`: an exact host name, optionally with a port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateHost {
+    host: String,
+    port: Option<u16>,
+}
+
+impl PrivateHost {
+    /// Parses `host` or `host:port`: case-insensitive, a trailing dot removed. An address literal,
+    /// a wildcard, a suffix rule (`.svc.cluster.local`) or a scheme is refused, so only a name the
+    /// deployment chose by hand is exempt.
+    pub fn parse(raw: &str) -> std::result::Result<Self, String> {
+        let raw = raw.trim();
+        let (host, port) = match raw.rsplit_once(':') {
+            Some((h, p)) => (
+                h,
+                Some(
+                    p.parse::<u16>()
+                        .ok()
+                        .filter(|p| *p != 0)
+                        .ok_or_else(|| format!("'{raw}': the port must be 1-65535"))?,
+                ),
+            ),
+            None => (raw, None),
+        };
+        let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+        let label_ok = |l: &str| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        };
+        if host.is_empty() || host.len() > 253 || !host.split('.').all(label_ok) {
+            return Err(format!(
+                "'{raw}' is not an exact host name (no wildcard, suffix, scheme or path; e.g. portal.jc.svc.cluster.local:8080)"
+            ));
+        }
+        if host.trim_matches(['[', ']']).parse::<IpAddr>().is_ok()
+            || host
+                .split('.')
+                .all(|l| l.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return Err(format!("'{raw}' is an address, not a host name"));
+        }
+        Ok(Self { host, port })
+    }
+
+    fn matches(&self, host: &str, port: u16) -> bool {
+        self.host == host && self.port.is_none_or(|p| p == port)
+    }
+}
+
+/// Why a URL may skip the public-address rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exempt {
+    No,
+    /// The Kubernetes API or a listed private host: a private address, never a forbidden-always one.
+    Private,
+    /// [`OutboundPolicy::test_loopback`] and a loopback literal.
+    TestLoopback,
+}
+
 #[derive(Debug, Clone)]
 pub struct OutboundPolicy {
-    /// Allowed in-cluster HTTP/HTTPS host suffixes or exact hosts (e.g. `.svc.cluster.local`,
-    /// `kubernetes.default.svc.cluster.local`).
-    pub in_cluster_hosts: Vec<String>,
+    /// Hosts besides the Kubernetes API that may resolve to a private address and may use `http`
+    /// (`[kaisatsu] outbound_private_hosts`, empty by default).
+    pub private_hosts: Vec<PrivateHost>,
+    /// Tests only: a loopback address literal (`127.0.0.1`, `[::1]`) is reachable over `http`, so
+    /// a test serves a local listener. Never set from configuration.
+    pub test_loopback: bool,
     /// Optional allow-list of public hosts for CIMD fetches (`claude.ai`, `vscode.dev`).
     pub allowed_hosts: Option<Vec<String>>,
     /// Test-only mock responses keyed by URL so unit/e2e tests can run offline.
@@ -76,11 +156,8 @@ pub struct OutboundPolicy {
 impl Default for OutboundPolicy {
     fn default() -> Self {
         Self {
-            in_cluster_hosts: vec![
-                ".svc.cluster.local".into(),
-                "kubernetes.default.svc".into(),
-                "kubernetes.default.svc.cluster.local".into(),
-            ],
+            private_hosts: Vec::new(),
+            test_loopback: false,
             allowed_hosts: None,
             mock_responses: Arc::new(RwLock::new(HashMap::new())),
             cluster: ClusterCredentials::default(),
@@ -120,15 +197,90 @@ impl OutboundGuard {
         self.mock_posts.read().get(url).cloned().unwrap_or_default()
     }
 
-    fn is_in_cluster_host(&self, host: &str) -> bool {
-        let lower = host.to_ascii_lowercase();
-        self.policy.in_cluster_hosts.iter().any(|allowed| {
-            if allowed.starts_with('.') {
-                lower.ends_with(allowed)
-            } else {
-                &lower == allowed
+    /// The Kubernetes API server named exactly, over `https` on 443.
+    fn is_kubernetes_api(url: &Url) -> bool {
+        url.scheme() == "https"
+            && url.port_or_known_default() == Some(443)
+            && url
+                .host_str()
+                .is_some_and(|h| KUBERNETES_API_HOSTS.contains(&h.to_ascii_lowercase().as_str()))
+    }
+
+    fn exemption(&self, url: &Url) -> Exempt {
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        let host = host.strip_suffix('.').unwrap_or(&host);
+        if self.policy.test_loopback
+            && host
+                .trim_matches(['[', ']'])
+                .parse::<IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+        {
+            return Exempt::TestLoopback;
+        }
+        let port = url.port_or_known_default().unwrap_or(0);
+        if Self::is_kubernetes_api(url)
+            || self
+                .policy
+                .private_hosts
+                .iter()
+                .any(|p| p.matches(host, port))
+        {
+            return Exempt::Private;
+        }
+        Exempt::No
+    }
+
+    /// The address under an IPv6 form that embeds an IPv4 one (mapped, compatible, NAT64
+    /// `64:ff9b::/96`, 6to4 `2002::/16`).
+    fn embedded_v4(v6: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+        if let Some(mapped) = v6.to_ipv4_mapped() {
+            return Some(mapped);
+        }
+        let segs = v6.segments();
+        let v4 = |hi: u16, lo: u16| {
+            std::net::Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8)
+        };
+        // ::a.b.c.d (IPv4-compatible) and 64:ff9b::a.b.c.d (NAT64)
+        if segs[..6] == [0, 0, 0, 0, 0, 0] && !v6.is_loopback() && !v6.is_unspecified()
+            || segs[..6] == [0x64, 0xff9b, 0, 0, 0, 0]
+        {
+            return Some(v4(segs[6], segs[7]));
+        }
+        // 2002:AABB:CCDD::/48 (6to4)
+        (segs[0] == 0x2002).then(|| v4(segs[1], segs[2]))
+    }
+
+    /// An address no exemption reaches: loopback, `0.0.0.0/8`, unspecified, link-local (cloud
+    /// metadata `169.254.169.254` included), multicast and broadcast.
+    #[must_use]
+    pub fn is_always_forbidden_ip(ip: IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(v4) => {
+                v4.octets()[0] == 0
+                    || v4.is_loopback()
+                    || v4.is_link_local()
+                    || v4.is_multicast()
+                    || v4.is_broadcast()
             }
-        })
+            IpAddr::V6(v6) => match Self::embedded_v4(v6) {
+                Some(v4) => Self::is_always_forbidden_ip(IpAddr::V4(v4)),
+                None => {
+                    v6.is_loopback()
+                        || v6.is_unspecified()
+                        || v6.is_multicast()
+                        || (v6.segments()[0] & 0xffc0) == 0xfe80
+                }
+            },
+        }
+    }
+
+    /// Whether `ip`, resolved for `url`, is refused under the URL's exemption.
+    fn refuses_resolved(exempt: Exempt, ip: IpAddr) -> bool {
+        match exempt {
+            Exempt::No => Self::is_forbidden_ip(ip),
+            Exempt::Private => Self::is_always_forbidden_ip(ip),
+            Exempt::TestLoopback => false,
+        }
     }
 
     /// Checks whether an IP address is private, loopback, link-local, metadata (`169.254.169.254`),
@@ -167,35 +319,15 @@ impl OutboundGuard {
                     || v4.is_multicast()
                     || in_any(V4_RESERVED)
             }
-            IpAddr::V6(v6) => {
-                if let Some(mapped) = v6.to_ipv4_mapped() {
-                    return Self::is_forbidden_ip(IpAddr::V4(mapped));
+            IpAddr::V6(v6) => match Self::embedded_v4(v6) {
+                Some(v4) => Self::is_forbidden_ip(IpAddr::V4(v4)),
+                None => {
+                    v6.is_loopback()
+                        || v6.is_unspecified()
+                        || v6.is_multicast()
+                        || in_any(V6_RESERVED)
                 }
-                let segs = v6.segments();
-                let embedded_low = std::net::Ipv4Addr::new(
-                    (segs[6] >> 8) as u8,
-                    segs[6] as u8,
-                    (segs[7] >> 8) as u8,
-                    segs[7] as u8,
-                );
-                // ::a.b.c.d (IPv4-compatible) and 64:ff9b::a.b.c.d (NAT64)
-                if segs[..6] == [0, 0, 0, 0, 0, 0] && !v6.is_loopback() && !v6.is_unspecified()
-                    || segs[..6] == [0x64, 0xff9b, 0, 0, 0, 0]
-                {
-                    return Self::is_forbidden_ip(IpAddr::V4(embedded_low));
-                }
-                // 2002:AABB:CCDD::/48 (6to4)
-                if segs[0] == 0x2002 {
-                    let v4 = std::net::Ipv4Addr::new(
-                        (segs[1] >> 8) as u8,
-                        segs[1] as u8,
-                        (segs[2] >> 8) as u8,
-                        segs[2] as u8,
-                    );
-                    return Self::is_forbidden_ip(IpAddr::V4(v4));
-                }
-                v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || in_any(V6_RESERVED)
-            }
+            },
         }
     }
 
@@ -214,8 +346,8 @@ impl OutboundGuard {
             .ok_or_else(|| KaisatsuError::OutboundRefused("outbound URL has no host".into()))?
             .to_ascii_lowercase();
 
-        let in_cluster = self.is_in_cluster_host(&host);
-        if parsed.scheme() != "https" && !(in_cluster && parsed.scheme() == "http") {
+        let exempt = self.exemption(&parsed);
+        if parsed.scheme() != "https" && !(exempt != Exempt::No && parsed.scheme() == "http") {
             return Err(KaisatsuError::OutboundRefused(format!(
                 "outbound scheme '{}' is refused; https required",
                 parsed.scheme()
@@ -231,7 +363,7 @@ impl OutboundGuard {
         }
 
         if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>()
-            && !in_cluster
+            && exempt != Exempt::TestLoopback
             && Self::is_forbidden_ip(ip)
         {
             return Err(KaisatsuError::OutboundRefused(format!(
@@ -239,6 +371,44 @@ impl OutboundGuard {
             )));
         }
         Ok(parsed)
+    }
+
+    /// Each non-empty `(field, url)` a client or identity provider stores, checked as a send
+    /// checks it before any lookup: the first refused one answers 422 naming the field.
+    pub fn check_saved<'a>(
+        &self,
+        fields: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<()> {
+        for (field, url) in fields {
+            if url.is_empty() {
+                continue;
+            }
+            if let Err(e) = self.validate_url(url, None) {
+                let why = match e {
+                    KaisatsuError::OutboundRefused(why) => why,
+                    other => other.to_string(),
+                };
+                return Err(KaisatsuError::Validation {
+                    message: format!(
+                        "{field}: {why} (an in-cluster host must be listed in [kaisatsu] outbound_private_hosts)"
+                    ),
+                    fields: std::collections::BTreeMap::from([(field.to_owned(), vec![why])]),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::check_saved`] over a client's [`CLIENT_OUTBOUND_ATTRIBUTES`].
+    pub fn check_client(
+        &self,
+        attributes: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        self.check_saved(
+            CLIENT_OUTBOUND_ATTRIBUTES
+                .iter()
+                .filter_map(|k| attributes.get(*k).map(|v| (*k, v.as_str()))),
+        )
     }
 
     /// Reads at most [`MAX_OUTBOUND_BYTES`] of `resp`, refusing before buffering more (a declared
@@ -283,14 +453,15 @@ impl OutboundGuard {
     /// pod's ServiceAccount token as bearer and the cluster CA as the only root, each file used
     /// when it exists. Cached for [`ClusterCredentials::jwks_ttl`]; `refresh` (a token whose
     /// `kid` the cached set lacks) reads it again, at most once per
-    /// [`ClusterCredentials::jwks_min_refetch`]. A URL on any other host is refused before a
-    /// request: the token never leaves the cluster.
+    /// [`ClusterCredentials::jwks_min_refetch`]. A URL on any host but [`KUBERNETES_API_HOSTS`]
+    /// (`https`, port 443) is refused before a request, a listed private host included: the
+    /// token goes to the Kubernetes API only.
     pub async fn cluster_jwks(&self, raw_url: &str, refresh: bool) -> Result<serde_json::Value> {
         let url = self.validate_url(raw_url, None)?;
-        let host = url.host_str().unwrap_or_default();
-        if !self.is_in_cluster_host(host) {
+        if !Self::is_kubernetes_api(&url) && self.exemption(&url) != Exempt::TestLoopback {
             return Err(KaisatsuError::OutboundRefused(format!(
-                "host '{host}' is not an in-cluster host for a cluster JWKS"
+                "host '{}' is not the Kubernetes API (https on port 443) for a cluster JWKS",
+                url.host_str().unwrap_or_default()
             )));
         }
         if let Some(hit) = self.cluster_jwks.read().get(url.as_str()) {
@@ -352,7 +523,7 @@ impl OutboundGuard {
 
         let host = url.host_str().unwrap_or_default().to_owned();
         let port = url.port_or_known_default().unwrap_or(443);
-        let in_cluster = self.is_in_cluster_host(&host);
+        let exempt = self.exemption(&url);
 
         let addrs: Vec<SocketAddr> = tokio::time::timeout(
             OUTBOUND_TIMEOUT,
@@ -369,7 +540,7 @@ impl OutboundGuard {
             ));
         }
         for addr in &addrs {
-            if !in_cluster && Self::is_forbidden_ip(addr.ip()) {
+            if Self::refuses_resolved(exempt, addr.ip()) {
                 return Err(KaisatsuError::OutboundRefused(format!(
                     "resolved address {} is private/loopback/metadata",
                     addr.ip()
@@ -377,11 +548,13 @@ impl OutboundGuard {
             }
         }
 
-        // Pin the resolved address so DNS rebinding cannot switch the target on connect (W12).
+        // Pin the resolved address so DNS rebinding cannot switch the target on connect (W12),
+        // and take no proxy from the environment: a proxy would resolve and dial the name itself.
         let mut builder = reqwest::Client::builder()
             .timeout(OUTBOUND_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
-            .resolve(&host, addrs[0]);
+            .resolve(&host, addrs[0])
+            .no_proxy();
         if let Some(pem) = ca_pem {
             let roots = reqwest::Certificate::from_pem_bundle(pem)
                 .map_err(|_| KaisatsuError::OutboundRefused("unreadable cluster CA".into()))?;
@@ -431,7 +604,7 @@ impl OutboundGuard {
         }
         let host = url.host_str().unwrap_or_default().to_owned();
         let port = url.port_or_known_default().unwrap_or(443);
-        let in_cluster = self.is_in_cluster_host(&host);
+        let exempt = self.exemption(&url);
 
         let addrs: Vec<SocketAddr> = tokio::time::timeout(
             OUTBOUND_TIMEOUT,
@@ -448,7 +621,7 @@ impl OutboundGuard {
             ));
         }
         for addr in &addrs {
-            if !in_cluster && Self::is_forbidden_ip(addr.ip()) {
+            if Self::refuses_resolved(exempt, addr.ip()) {
                 return Err(KaisatsuError::OutboundRefused(format!(
                     "resolved address {} is private/loopback/metadata",
                     addr.ip()
@@ -460,6 +633,7 @@ impl OutboundGuard {
             .timeout(OUTBOUND_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .resolve(&host, addrs[0])
+            .no_proxy()
             .build()
             .map_err(|e| KaisatsuError::OutboundRefused(e.to_string()))?;
 
@@ -479,21 +653,140 @@ impl OutboundGuard {
 mod tests {
     use super::*;
 
-    /// The pod's ServiceAccount token goes to an in-cluster host only: any other JWKS URL is
-    /// refused before a lookup, with a public host or a cluster-looking name alike.
+    fn listing(hosts: &[&str]) -> OutboundGuard {
+        OutboundGuard::new(OutboundPolicy {
+            private_hosts: hosts
+                .iter()
+                .map(|h| PrivateHost::parse(h).unwrap())
+                .collect(),
+            ..OutboundPolicy::default()
+        })
+    }
+
+    /// The pod's ServiceAccount token goes to the Kubernetes API only: any other JWKS URL is
+    /// refused before a lookup, a public host, a cluster-looking name, another in-cluster
+    /// Service, a host listed in `outbound_private_hosts`, another port or `http` alike.
     #[tokio::test]
-    async fn a_cluster_jwks_is_read_from_an_in_cluster_host_only() {
-        let guard = OutboundGuard::default();
+    async fn a_cluster_jwks_is_read_from_the_kubernetes_api_only() {
+        let guard = listing(&["jwks.kube-system.svc.cluster.local"]);
         for url in [
             "https://jwks.example.com/openid/v1/jwks",
             "https://kubernetes.default.svc.cluster.local.example.com/openid/v1/jwks",
+            "https://jwks.kube-system.svc.cluster.local/openid/v1/jwks",
+            "https://evil.default.svc.cluster.local/openid/v1/jwks",
+            "https://kubernetes.default.svc.cluster.local:8443/openid/v1/jwks",
         ] {
             let why = guard
                 .cluster_jwks(url, false)
                 .await
                 .unwrap_err()
                 .to_string();
-            assert!(why.contains("not an in-cluster host"), "{url}: {why}");
+            assert!(why.contains("not the Kubernetes API"), "{url}: {why}");
+        }
+        assert!(
+            guard
+                .cluster_jwks("http://kubernetes.default.svc/openid/v1/jwks", false)
+                .await
+                .is_err()
+        );
+        guard.insert_mock(
+            "https://kubernetes.default.svc/openid/v1/jwks",
+            200,
+            br#"{"keys":[{"kty":"EC"}]}"#.to_vec(),
+        );
+        assert!(
+            guard
+                .cluster_jwks("https://KUBERNETES.default.svc/openid/v1/jwks", false)
+                .await
+                .is_ok()
+        );
+    }
+
+    /// No suffix rule: an in-cluster name is reachable over `http` or on a private address only
+    /// when `outbound_private_hosts` lists it exactly (and its port, when the entry names one).
+    #[test]
+    fn only_a_listed_exact_host_skips_the_public_address_rule() {
+        let none = OutboundGuard::default();
+        let listed = listing(&["portal.jc.svc.cluster.local:8080", "Idp.Corp.Example."]);
+        let url = |u: &str| Url::parse(u).unwrap();
+        for unlisted in [
+            "http://portal.portal.svc.cluster.local:8080/logout",
+            "http://jwks.kube-system.svc.cluster.local/x",
+            "http://kubernetes.default.svc/x",
+        ] {
+            assert!(none.validate_url(unlisted, None).is_err(), "{unlisted}");
+            assert!(listed.validate_url(unlisted, None).is_err(), "{unlisted}");
+        }
+        for (g, u) in [
+            (&none, "https://portal.portal.svc.cluster.local/logout"),
+            (&listed, "https://portal.jc.svc.cluster.local:9090/logout"),
+            (&listed, "https://idp.corp.example.evil/x"),
+        ] {
+            assert_eq!(g.exemption(&url(u)), Exempt::No, "{u}");
+        }
+        for u in [
+            "http://portal.jc.svc.cluster.local:8080/logout",
+            "https://PORTAL.jc.svc.cluster.local.:8080/logout",
+            "http://idp.corp.example/x",
+            "https://idp.corp.example:8443/x",
+        ] {
+            assert!(listed.validate_url(u, None).is_ok(), "{u}");
+            assert_eq!(listed.exemption(&url(u)), Exempt::Private, "{u}");
+        }
+        assert_eq!(
+            none.exemption(&url("https://kubernetes.default.svc.cluster.local/x")),
+            Exempt::Private
+        );
+        // A private answer passes for an exempt host only; loopback, 0/8, link-local and
+        // metadata never do.
+        let private: IpAddr = "10.43.0.1".parse().unwrap();
+        assert!(OutboundGuard::refuses_resolved(Exempt::No, private));
+        assert!(!OutboundGuard::refuses_resolved(Exempt::Private, private));
+        for never in [
+            "127.0.0.1",
+            "0.1.2.3",
+            "169.254.169.254",
+            "::1",
+            "::ffff:127.0.0.1",
+            "fe80::1",
+            "224.0.0.1",
+        ] {
+            let ip: IpAddr = never.parse().unwrap();
+            assert!(
+                OutboundGuard::refuses_resolved(Exempt::Private, ip),
+                "{never}"
+            );
+        }
+        // Literals stay refused even beside a listing.
+        assert!(listed.validate_url("http://10.0.0.1/x", None).is_err());
+        assert!(listed.validate_url("https://127.0.0.1/x", None).is_err());
+    }
+
+    #[test]
+    fn a_private_host_entry_is_an_exact_name() {
+        assert_eq!(
+            PrivateHost::parse("Portal.JC.svc.cluster.local.:8080"),
+            Ok(PrivateHost {
+                host: "portal.jc.svc.cluster.local".into(),
+                port: Some(8080)
+            })
+        );
+        for bad in [
+            "",
+            ".svc.cluster.local",
+            "*.svc.cluster.local",
+            "10.0.0.1",
+            "10.0.0.1:80",
+            "[::1]",
+            "::1",
+            "http://portal",
+            "portal/x",
+            "portal:0",
+            "portal:http",
+            "a..b",
+            "-a.b",
+        ] {
+            assert!(PrivateHost::parse(bad).is_err(), "{bad}");
         }
     }
 
@@ -576,14 +869,14 @@ mod tests {
                 "expected {bad} to be refused by OutboundGuard"
             );
         }
-        // In-cluster HTTP callback for Portal back-channel logout (RI line 790) is permitted
+        // An in-cluster callback is refused unless `outbound_private_hosts` lists its host.
         assert!(
             guard
                 .validate_url(
                     "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout",
                     None
                 )
-                .is_ok()
+                .is_err()
         );
     }
 }

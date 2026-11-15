@@ -1,0 +1,54 @@
+/* The city's site (T-6453): layout fixes over Decidim 0.32.2's own styles. Colours stay in the
+   organization's settings. Served from public/ and linked from head_extra, so no pack rebuild. */
+
+/* Slovak words broke mid-word in headings ("Zodpoved-nosť", "Ban-skú"). */
+h1, h2, h3, .card__list-title { hyphens: none !important; overflow-wrap: break-word; }
+
+/* Empty boxes Decidim keeps when a space has no taxonomy or no create button. */
+.accountability__taxonomies:not(:has(li)),
+.proposal-list__aside__button-container:not(:has(*)),
+.layout-main__section:has(> .editor-content:empty) { display: none; }
+
+/* Budget titles are the only thing that tells two projects apart: never clip them. */
+.project-item .card__list-title {
+  display: block;
+  overflow: visible;
+  white-space: normal;
+  -webkit-line-clamp: unset;
+}
+
+@media (max-width: 640px) {
+  /* A long process title ran under the Help tab. */
+  .participatory-space__container h1,
+  [class*="hero"] h1 { font-size: 1.75rem; line-height: 1.2; padding-inline-end: 3.5rem; }
+
+  /* Amount under the title, so the title gets the whole width. */
+  .project-item { flex-direction: column; align-items: stretch; }
+  .project-item .card__list,
+  .project-item .budget__card__list-project { width: 100%; max-width: none; }
+
+  /* Like, comment and share stay framed buttons with their words, side by side. */
+  .layout-main__buttons { flex-wrap: wrap; justify-content: flex-start; gap: 0.5rem; }
+  .layout-main__buttons .button {
+    min-height: 2.75rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--secondary);
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+  }
+  .layout-main__buttons .button span,
+  .layout-main__buttons .button > .hidden { display: inline; }
+
+  .layout-main__buttons > * { margin-inline-start: 0 !important; }
+  .project-item .card__list-content { width: 100%; }
+  .project-item .budget__card__list-project { padding-block: 0.25rem; }
+
+  /* An empty aside kept 48 px of gap before the comments. */
+  .layout-item { gap: 1.5rem; }
+  .layout-2col { gap: 1rem; }
+  .layout-2col__aside { padding-block-end: 0; }
+  .accountability__filters { margin-block-end: 0; }
+
+  /* Four statistics in two columns instead of four tall rows. */
+  .statistic__container { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

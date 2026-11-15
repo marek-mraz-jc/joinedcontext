@@ -1,0 +1,355 @@
+id: https://joinedcontext.com/models/zilina/zilina-verejne
+name: zilina-verejne
+title: Open data of Žilina
+description: >-
+  What the city's public space carries side by side (DM-01, DM-61): the hourly readings of the
+  city's one air-quality station as the European Environment Agency republishes them, the city's
+  immovable national cultural monuments from the Monuments Board's register placed through the
+  national register of addresses, and the railway stations of the city from the national train
+  timetable.
+  One model, one space, one public endpoint. Where Smart Data Models has the class, its IRI is
+  cited rather than minted (DM-04, DM-16). Sources: Research/zilina-open-data-sources.md.
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  jc: https://joinedcontext.com/models/
+  sdm: https://smartdatamodels.org/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+default_prefix: sdm
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+
+slots:
+  name:
+    slot_uri: schema:name
+    description: The name, per language, as the publisher writes it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov
+          cs: Název
+          en: Name
+          de: Name
+      ngsi_ld_kind: LanguageProperty
+      upstream_source: https://schema.org/name
+  address:
+    slot_uri: schema:address
+    description: The street address, one line, as the register of addresses writes it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Adresa
+          cs: Adresa
+          en: Address
+          de: Adresse
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/address
+  dataProvider:
+    slot_uri: sdm:dataProvider
+    description: >-
+      Who publishes the data the entity was read from, with the credit its licence asks for, as
+      an application shows it beside the data.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Poskytovateľ údajov
+          cs: Poskytovatel dat
+          en: Data provider
+          de: Datenanbieter
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  source:
+    slot_uri: sdm:source
+    description: The open-data service the entity was read from.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zdroj
+          cs: Zdroj
+          en: Source
+          de: Quelle
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  stationCode:
+    slot_uri: jc:stationCode
+    description: The station's EoI code in the European air-quality network, such as `SK0020A`.
+    required: true
+    pattern: ^SK[0-9]{4}A$
+    examples:
+      - value: SK0020A
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kód stanice
+          cs: Kód stanice
+          en: Station code
+          de: Stationscode
+      ngsi_ld_kind: Property
+  dateObserved:
+    slot_uri: sdm:dateObserved
+    description: The end of the latest hour a reading of the entity covers.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Čas merania
+          cs: Čas měření
+          en: Observed
+          de: Messzeit
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  pm10:
+    slot_uri: sdm:pm10
+    description: Particulate matter up to 10 µm, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PM10
+          cs: PM10
+          en: PM10
+          de: PM10
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  pm25:
+    slot_uri: sdm:pm25
+    description: Particulate matter up to 2.5 µm, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PM2,5
+          cs: PM2,5
+          en: PM2.5
+          de: PM2,5
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  no2:
+    slot_uri: sdm:no2
+    description: Nitrogen dioxide, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Oxid dusičitý (NO₂)
+          cs: Oxid dusičitý (NO₂)
+          en: Nitrogen dioxide (NO₂)
+          de: Stickstoffdioxid (NO₂)
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  o3:
+    slot_uri: sdm:o3
+    description: Ozone, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: ug/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Ozón (O₃)
+          cs: Ozon (O₃)
+          en: Ozone (O₃)
+          de: Ozon (O₃)
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  co:
+    slot_uri: sdm:co
+    description: Carbon monoxide, the hour's mean at the station.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: mg/m3 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Oxid uhoľnatý (CO)
+          cs: Oxid uhelnatý (CO)
+          en: Carbon monoxide (CO)
+          de: Kohlenmonoxid (CO)
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+  monumentNumber:
+    slot_uri: jc:monumentNumber
+    description: >-
+      The monument's number in the central list of the Monuments Fund (Č. ÚZPF), with the index
+      of the object when the monument has several (`529/1`).
+    required: true
+    pattern: ^[0-9]+/[0-9]+$
+    examples:
+      - value: '529/1'
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Číslo pamiatky
+          cs: Číslo památky
+          en: Monument number
+          de: Denkmalnummer
+      ngsi_ld_kind: Property
+  monumentKind:
+    slot_uri: jc:monumentKind
+    description: What the object is, in the register's unified name (KOSTOL, KÚRIA, MEŠTIANSKY DOM).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh objektu
+          cs: Druh objektu
+          en: Object
+          de: Objektart
+      ngsi_ld_kind: Property
+  architecturalStyle:
+    slot_uri: jc:architecturalStyle
+    description: The prevailing style, as the register writes it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Sloh
+          cs: Sloh
+          en: Style
+          de: Stil
+      ngsi_ld_kind: Property
+  constructionPeriod:
+    slot_uri: jc:constructionPeriod
+    description: When the object was built, as the register writes it (a year, a century, a range).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obdobie výstavby
+          cs: Období výstavby
+          en: Built
+          de: Bauzeit
+      ngsi_ld_kind: Property
+  cadastralArea:
+    slot_uri: jc:cadastralArea
+    description: The cadastral area the object stands in.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Katastrálne územie
+          cs: Katastrální území
+          en: Cadastral area
+          de: Katastralgemeinde
+      ngsi_ld_kind: Property
+  ownershipForm:
+    slot_uri: jc:ownershipForm
+    description: >-
+      The form of ownership as the register categorises it (state, church, private); never the
+      owner, whom the register does not name and this model would not carry.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Vlastníctvo
+          cs: Vlastnictví
+          en: Ownership
+          de: Eigentum
+      ngsi_ld_kind: Property
+  stopCode:
+    slot_uri: jc:stopCode
+    description: The station's `stop_id` in the ŽSR timetable.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kód stanice
+          cs: Kód stanice
+          en: Station code
+          de: Stationscode
+      ngsi_ld_kind: Property
+      upstream_source: https://gtfs.org/schedule/reference/#stopstxt
+  dailyDepartures:
+    slot_uri: jc:dailyDepartures
+    description: >-
+      How many trains leave the station on the day the pipeline ran, by the timetable's calendar
+      and its exceptions; a train that ends its run at the station does not count.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Denné odchody vlakov
+          cs: Denní odjezdy vlaků
+          en: Trains leaving per day
+          de: Abfahrten pro Tag
+      ngsi_ld_kind: Property
+
+classes:
+  AirQualityObserved:
+    class_uri: sdm:AirQualityObserved
+    description: One air-quality station in the city and the latest hourly means it reported.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Environment
+      label:
+        tag: label
+        value:
+          sk: Meranie kvality ovzdušia
+          cs: Měření kvality ovzduší
+          en: Air quality reading
+          de: Luftqualitätsmessung
+    slots: [name, stationCode, dateObserved, pm10, pm25, no2, o3, co, dataProvider, source]
+  PointOfInterest:
+    class_uri: sdm:PointOfInterest
+    description: >-
+      One immovable national cultural monument in the city, placed at its address. The register's
+      parcel numbers and authors are left out; ownership is a category only.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.PointOfInterest
+      label:
+        tag: label
+        value:
+          sk: Miesto
+          cs: Místo
+          en: Place
+          de: Ort
+    slots:
+      - name
+      - monumentNumber
+      - monumentKind
+      - architecturalStyle
+      - constructionPeriod
+      - cadastralArea
+      - ownershipForm
+      - address
+      - dataProvider
+      - source
+  GtfsStop:
+    class_uri: sdm:GtfsStop
+    description: One railway station in the city and how many trains leave it today.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.UrbanMobility
+      label:
+        tag: label
+        value:
+          sk: Zastávka
+          cs: Zastávka
+          en: Stop
+          de: Haltestelle
+    slots: [name, stopCode, dailyDepartures, dataProvider, source]

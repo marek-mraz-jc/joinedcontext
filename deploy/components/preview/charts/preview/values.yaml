@@ -1,0 +1,20 @@
+# One code-branch preview (docs Deployment/17, ADR-N-062). `just dev-preview <slug>` renders this
+# chart with the slug and the branch's image digests and applies it; nothing in the platform's
+# helmfile renders it, so no environment carries a preview by accident.
+
+# The branch as a DNS-1123 label of at most 40 characters (T-5547 computes it): the namespace is
+# pv-{slug}, the host preview-{slug}.{domain}, the database and role pv_{slug}.
+slug: ''
+# The dev cluster's domain and the namespace dev runs in; the preview reaches dev only there,
+# and only Keycloak and Postgres.
+domain: dev.joinedcontext.com
+devNamespace: dev
+# How long the sandbox reaper lets the namespace live (Go duration, at most the 14-day ceiling).
+ttl: 48h
+ingressClass: traefik
+clusterIssuer: letsencrypt-prod
+# The images by digest, repository@sha256:...: the branch's `pv-` build for what it changed,
+# dev's pinned digest for the rest (components/portal/images.yaml).
+images:
+  portal: ''
+  portalUi: ''

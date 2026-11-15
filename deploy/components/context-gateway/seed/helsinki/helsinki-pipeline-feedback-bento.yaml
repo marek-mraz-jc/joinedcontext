@@ -1,0 +1,143 @@
+# The mapping of the feedback-requests pipeline (PL-03, T-5257): one Smart Data Models
+# service_requests entity (typed ServiceRequest in this space) per report the City of Helsinki
+# published in its feedback system, Open311 GeoReport v2. The DataSource reads the services list
+# (five sectors); this mapping then asks the requests list by date window, because the city
+# answers at most 200 reports and only from the window asked (Open311_rajapintakuvaus_011025.pdf:
+# the last 90 days or the first 200 answers). Every hour reads the last 12 days in two windows, so
+# a status change shows within the hour; the run at 02:17 UTC reads 90 days in 15 windows, which
+# loads the history and heals a missed hour. About 115 reports a week are published (2026-10-15..22).
+#
+# Only what the city publishes is read, and of it never `media_url` (a reporter's photo can show
+# people and number plates) nor the Open311 reporter fields (name, e-mail, phone, device), which the
+# public list leaves out anyway.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = if content().length() > 1048576 {
+          throw("the services list is %d bytes, more than the 1 MiB read".format(content().length()))
+        } else if this.type() != "array" || this.length() == 0 {
+          throw("the feedback system lists no service: nothing is written")
+        } else { this }
+
+    # One message per date window, each carrying the sector names by code.
+    - mapping: |
+        let names = this.fold({}, item -> if item.value.service_code.or(null) == null { item.tally } else {
+          item.tally.assign({ item.value.service_code.string(): item.value.service_name.or("").string() })
+        })
+        let full = now().ts_format("15", "UTC") == "02"
+        let windows = if $full { 15 } else { 2 }
+        let end = now().ts_unix() + 86400
+        root = range(0, $windows).map_each(w -> {
+          "names": $names,
+          "query": "start_date=%s&end_date=%s".format(
+            ($end - (w + 1) * 518400).ts_format("2006-01-02T15:04:05Z", "UTC"),
+            ($end - w * 518400 - 1).ts_format("2006-01-02T15:04:05Z", "UTC"))
+        })
+    - unarchive: { format: json_array }
+    - split: { size: 1 }
+    - branch:
+        request_map: |
+          meta query = this.query
+          root = ""
+        processors:
+          - sleep: { duration: '500ms' }
+          - http:
+              url: https://palautteet.hel.fi/public-api/open311-public-service/v1/requests.json?${! @query }
+              verb: GET
+              headers:
+                Accept: application/json
+                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public feedback)
+              timeout: 60s
+              retries: 2
+        result_map: |
+          root.requests = if content().length() > 8388608 { throw("a feedback window over 8 MiB") }
+            else if this.type() != "array" { throw("the feedback system answered no list") } else { this }
+
+    # Plausibility (owner 2026-10-22T18:10Z). A report with no number, no filing time, a filing time
+    # more than a day ahead or a status Open311 does not name is dropped; a point outside Helsinki
+    # and 1 km around it (also 0,0 or a swapped latitude and longitude) loses its point and keeps the
+    # report, as does a report filed with no point. Each is counted by reason in the run's log.
+    - mapping: |
+        let limit = now().ts_unix() + 86400
+        map reason {
+          let filed = this.requested_datetime.or("").ts_unix().catch(null)
+          root = if !this.service_request_id.or("").string().re_match("^[0-9]{1,15}$") { "no report number" }
+            else if $filed == null { "no filing time" }
+            else if $filed > this.limit { "filed in the future" }
+            else if !["PROCESSING", "READY", "OPEN", "CLOSED"].contains(this.status.or("").string().uppercase()) { "unknown status" }
+            else { null }
+        }
+        let rows = this.requests.map_each(r -> r.assign({ "_drop": r.assign({ "limit": $limit }).apply("reason") }))
+        let usable = $rows.filter(r -> r._drop == null)
+        let kept = $usable.unique(r -> r.service_request_id.string())
+        let located = $kept.map_each(r -> r.assign({ "_point": [r.long.or("").string().number().catch(null), r.lat.or("").string().number().catch(null)] }))
+        let inside = $located.map_each(r -> r.assign({ "_where": if r._point.any(c -> c == null) { "no position" }
+          else if r._point.index(0) < 24.76 || r._point.index(0) > 25.29 || r._point.index(1) < 59.91 || r._point.index(1) > 60.31 { "outside Helsinki" }
+          else { null } }))
+        let tally = $rows.filter(r -> r._drop != null).map_each(r -> r._drop).concat($inside.filter(r -> r._where != null).map_each(r -> r._where + " (kept without a point)"))
+        let tally = $tally.fold({}, item -> item.tally.assign({ item.value: item.tally.get(item.value).or(0) + 1 }))
+        let dups = $usable.length() - $kept.length()
+        meta dropped = (if $dups > 0 { $tally.assign({ "duplicate": $dups }) } else { $tally }).format_json(no_indent: true)
+        meta kept = $kept.length().string()
+        meta window = this.query
+        meta full = if this.requests.length() >= 200 { "; the window answered 200, the most the city gives, so it may hold more" } else { "" }
+        let names = this.names
+        root = $inside.map_each(r -> r.without("_drop").assign({ "_name": $names.get(r.service_code.or("").string()).or(null) }))
+    - log:
+        level: INFO
+        message: 'feedback-requests: ${! @window }: ${! @kept } reports kept, by reason ${! @dropped }${! @full }'
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        # Every time in UTC, the shape the model's datetime slots and their queries expect.
+        map utc {
+          root = this.ts_unix().ts_format("2006-01-02T15:04:05Z", "UTC")
+        }
+        # Published text as plain text without contact details: the city's answers come as HTML,
+        # and a reporter or an answer may type an email, a phone number, a signed name (T-5257) or a
+        # Finnish number plate (T-5697).
+        map public_text {
+          let plain = this.re_replace_all("(?i)<br\\s*/?>|</(div|p|li)>", "\n").re_replace_all("<[^>]*>", "").unescape_html()
+          let email = $plain.re_replace_all("[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+", "[email removed]")
+          let phone = $email.re_replace_all("(?:\\+|\\b0)\\d(?:[ -]?\\d){5,}|\\+?\\d(?:[ ]?\\d){6,}", "[phone removed]")
+          let plate = $phone.re_replace_all("(^|[^\\p{L}\\p{N}-])[A-ZÅÄÖ]{2,3}-[0-9]{1,3}([^\\p{L}\\p{N}-]|$)", "$1[plate removed]$2")
+          let signed = $plate.re_replace_all("(?is)\\n[^\\S\\n]*(ystävällisin terveisin|terveisin|med vänliga hälsningar|vänliga hälsningar|hälsningar|best regards|kind regards|regards)\\b.*$", "")
+          root = $signed.re_replace_all("[\\t\\x{00a0} ]+", " ").re_replace_all("\\s*\\n\\s*", "\n").trim()
+        }
+        let updated = this.updated_datetime.or("").apply("utc").catch(null)
+        let expected = this.expected_datetime.or("").apply("utc").catch(null)
+        let text = this.description.or("").string().apply("public_text")
+        let notes = this.status_notes.or("").string().apply("public_text")
+        let code = this.service_code.or("").string()
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:open311-%v".format("ServiceRequest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.service_request_id.string()),
+          "type": "ServiceRequest",
+          "service_request_id": { "type": "Property", "value": this.service_request_id.string() },
+          "status": { "type": "Property", "value": if ["READY", "CLOSED"].contains(this.status.string().uppercase()) { "closed" } else { "open" } },
+          # Free text in the reporter's own language, which the system does not record.
+          "description": if $text == "" { null } else {
+            { "type": "LanguageProperty", "languageMap": { "@none": $text.slice(0, [$text.length(), 10000].min()) } }
+          },
+          "service_code": if $code == "" { null } else { { "type": "Property", "value": $code } },
+          # A code the services list does not name keeps its code and gets no name.
+          "service_name": if this._name.or("") == "" { null } else { { "type": "Property", "value": this._name } },
+          "status_notes": if $notes == "" { null } else {
+            { "type": "Property", "value": $notes.slice(0, [$notes.length(), 10000].min()) }
+          },
+          "agency_responsible": if this.agency_responsible.or("") == "" { null } else {
+            { "type": "Property", "value": this.agency_responsible }
+          },
+          "requested_datetime": { "type": "Property", "value": this.requested_datetime.apply("utc") },
+          "updated_datetime": if $updated == null { null } else { { "type": "Property", "value": $updated } },
+          "expected_datetime": if $expected == null { null } else { { "type": "Property", "value": $expected } },
+          "address_string": if this.address.or("") == "" { null } else { { "type": "Property", "value": this.address.string().trim() } },
+          "location": if this._where != null { null } else {
+            { "type": "GeoProperty", "value": { "type": "Point", "coordinates": this._point } }
+          },
+          "source": { "type": "Property", "value": "https://palautteet.hel.fi/public-api/open311-public-service/v1/" }
+        }
+        root = root.filter(entry -> entry.value != null)
+
+    # One request per window rather than one per report.
+    - archive: { format: json_array }

@@ -1,0 +1,6 @@
+---
+component: context-gateway
+parts:
+  - name: gateway
+  # The Portal's Role here: the spaces' personal-data keys it hands the gateway (DM-121).
+  - name: portal-access

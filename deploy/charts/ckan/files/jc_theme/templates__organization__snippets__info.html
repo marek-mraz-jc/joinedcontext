@@ -1,0 +1,20 @@
+{% ckan_extends %}
+{# The publisher box beside a dataset and on the publisher's page: the chart's badge and words
+   where CKAN has none, so no page says "There is no description for this organization". #}
+{% block image %}
+  {% set org = organization or group %}
+  {% set jc = h.jc_org(org) %}
+  <div class="image">
+    <a href="{{ h.url_for(org.type ~ '.read', id=org.name) }}">
+      <img src="{{ jc.image or h.url_for_static('/base/images/placeholder-organization.png') }}" width="200" alt="" />
+    </a>
+  </div>
+{% endblock %}
+{% block description %}
+  {% set org = organization or group %}
+  {% set jc = h.jc_org(org) %}
+  {% if jc.description %}
+    <p class="description">{{ h.markdown_extract(jc.description, 180) }}</p>
+    <p class="read-more">{% link_for _('read more'), named_route=org.type ~ '.about', id=org.name %}</p>
+  {% endif %}
+{% endblock %}

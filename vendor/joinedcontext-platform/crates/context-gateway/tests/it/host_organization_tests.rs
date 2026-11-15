@@ -82,6 +82,11 @@ fn space(project: &str) -> Space {
 }
 
 fn app(realm: &common::Realm) -> Router {
+    app_with(realm, &[])
+}
+
+/// [`app`] whose Organizations declare `domains`.
+fn app_with(realm: &common::Realm, domains: &[(&str, &str)]) -> Router {
     let gateway = Gateway::new(
         Broker::new("http://127.0.0.1:1"),
         Box::new(PolicyPdp),
@@ -101,6 +106,10 @@ fn app(realm: &common::Realm) -> Router {
         organizations: [("pa", "alpha"), ("pb", "beta")]
             .into_iter()
             .map(|(p, o)| (p.to_owned(), o.to_owned()))
+            .collect(),
+        domains: domains
+            .iter()
+            .map(|(o, d)| ((*o).to_owned(), (*d).to_owned()))
             .collect(),
         ..Provenance::without_organizations()
     });
@@ -324,6 +333,64 @@ async fn every_listing_on_one_host_holds_nothing_of_the_other_organization() {
         .await;
         assert_eq!(status, StatusCode::OK, "{slug}: {body}");
     }
+}
+
+/// S-3-14: on an Organization's own host the catalogue's publisher is that Organization's
+/// domain, never the installation's; a token naming the Endpoint's address on that host is
+/// accepted there, one naming another host is not.
+#[tokio::test]
+async fn a_bound_host_publishes_its_own_domain_and_accepts_its_own_resource_url() {
+    let realm = common::Realm::new();
+    let app = app_with(&realm, &[("alpha", "alpha.test"), ("beta", "beta.test")]);
+    let (status, body) = send(&app, Some("beta"), Method::GET, "/catalog.jsonld", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body.contains("https://beta.test/"),
+        "beta publishes: {body}"
+    );
+    assert!(
+        !body.contains("city.test/\""),
+        "the installation publishes: {body}"
+    );
+
+    let read = |audience: String| {
+        let app = app.clone();
+        let token = realm.mint(&json!({
+            "iss": common::ISSUER,
+            "sub": "ana",
+            "preferred_username": "ana",
+            "aud": audience,
+            "exp": common::in_seconds(300),
+            "iat": common::in_seconds(-10),
+        }));
+        async move {
+            let mut request = Request::builder()
+                .method(Method::GET)
+                .uri(format!("/api/endpoint/{BETA}/ngsi-ld/v1/entities?type=Box"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("a request");
+            request
+                .extensions_mut()
+                .insert(HostOrganization("beta".to_owned()));
+            request
+                .extensions_mut()
+                .insert(HostBase("http://api.beta.test:8080".to_owned()));
+            app.oneshot(request).await.expect("an answer").status()
+        }
+    };
+    let own = read(format!("http://api.beta.test:8080/api/endpoint/{BETA}")).await;
+    assert_ne!(
+        own,
+        StatusCode::UNAUTHORIZED,
+        "beta's resource URL on beta's host"
+    );
+    let other = read(format!("http://api.alpha.test/api/endpoint/{BETA}")).await;
+    assert_eq!(
+        other,
+        StatusCode::UNAUTHORIZED,
+        "another host's resource URL"
+    );
 }
 
 /// jc-multiorg-portal: with the host's link base beside its Organization (`HostBase`), every

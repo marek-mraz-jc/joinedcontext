@@ -1,0 +1,18 @@
+# The city's open datasets (T-4167, T-4281): the CKAN at opendata.dev.joinedcontext.com holds five
+# bodies' catalogues; this source lists the city's organization alone, anonymously, so no other
+# body's dataset and no private one reaches its index. The region's are `bbsk/data-portal`.
+# Read once a night.
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: data-portal
+  namespace: banskabystrica
+  title: { sk: Otvorené údaje mesta Banská Bystrica, en: The city's open datasets }
+spec:
+  source: ckan
+  ckanInstanceRef: banskabystrica
+  organizations: [banskabystrica]
+  schedule: '40 3 * * *'
+  maxPages: 500
+  languages: [sk, en]
+  visibility: public

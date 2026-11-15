@@ -1,0 +1,44 @@
+# Planting by cadastral area under the 10,000 trees project and replacement planting: one public dataset of the hub (T-5274), item 1533dde678ad47b583a5a39d53332b33, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vysadba-v-katastralnych-uzemiach-v
+  namespace: bratislava
+  title:
+    sk: Výsadba v katastrálnych územiach v Bratislave v rámci projektu 10 000 stromov a náhradnej výsadby
+    en: Planting by cadastral area under the 10,000 trees project and replacement planting
+  description:
+    sk: 'Ukazovatele tabuľky „Výsadba v katastrálnych územiach v Bratislave v rámci projektu 10 000 stromov a náhradnej výsadby“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Planting by cadastral area under the 10,000 trees project and replacement planting”, one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 6lgazs2z4ededk2va7wzsnzn2sbjfmuh
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vysadba-v-katastralnych-uzemiach-v
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ENVI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/1533dde678ad47b583a5a39d53332b33
+        title:
+          sk: Výsadba v katastrálnych územiach v Bratislave v rámci projektu 10 000 stromov a náhradnej výsadby
+          en: Planting by cadastral area under the 10,000 trees project and replacement planting
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Výsadba v katastrálnych územiach v Bratislave v rámci projektu 10 000 stromov a náhradnej výsadby. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Planting by cadastral area under the 10,000 trees project and replacement planting. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics }

@@ -1,0 +1,19 @@
+# One AdministrativeArea per record of `hel-quarters`, written into the city space (T-5256).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: quarters
+  namespace: helsinki
+  title: { en: City quarters }
+spec:
+  class: auto
+  # The layer is refreshed daily but a quarter changes only with a new detailed plan: weekly.
+  period: 168h
+  schedule: '5 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-quarters }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: AdministrativeArea, mode: upsert }
+  # About 6,000 outlines in one 7 MB answer: the mapping alone was killed at 128 MiB and ran in
+  # 192 MiB (docker --memory, 2026-10-26); 256 is the cap a pipeline may ask (Development/12 §4).
+  quotas: { maxMemoryMb: 256, cpuMillicores: 200 }

@@ -1,0 +1,429 @@
+{
+  "gateway": [
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "id": "urn:ngsi-ld:Event:helsinki:fair,urn:ngsi-ld:Event:helsinki:talk"
+      },
+      "file": "host-test/fair-and-talk.json",
+      "anonymous": true
+    },
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "id": "urn:ngsi-ld:Event:helsinki:later"
+      },
+      "file": "host-test/later.json"
+    }
+  ],
+  "steps": [
+    {
+      "call": "POST /api/itineraries",
+      "body": {
+        "day": "2030-02-30",
+        "ids": [
+          "urn:ngsi-ld:Event:helsinki:fair"
+        ],
+        "lang": "en"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/itineraries",
+      "body": {
+        "day": "2020-01-01",
+        "ids": [
+          "urn:ngsi-ld:Event:helsinki:fair"
+        ],
+        "lang": "en"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/itineraries",
+      "body": {
+        "day": "2030-10-20",
+        "ids": [],
+        "lang": "en"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/itineraries",
+      "body": {
+        "day": "2030-10-20",
+        "ids": [
+          "urn:ngsi-ld:Place:x"
+        ],
+        "lang": "en"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/itineraries",
+      "body": {
+        "day": "2030-10-20",
+        "ids": [
+          "urn:ngsi-ld:Event:a&type=Place"
+        ],
+        "lang": "en"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/itineraries",
+      "body": {
+        "day": "2030-10-20",
+        "ids": [
+          "urn:ngsi-ld:Event:helsinki:fair"
+        ],
+        "lang": "de"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/itineraries",
+      "body": {
+        "day": "2030-10-20",
+        "ids": [
+          "urn:ngsi-ld:Event:helsinki:fair"
+        ],
+        "picks": []
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/itineraries",
+      "body": {
+        "day": "2030-10-20",
+        "ids": [
+          "urn:ngsi-ld:Event:helsinki:later"
+        ],
+        "lang": "en"
+      },
+      "status": 409
+    },
+    {
+      "call": "POST /api/itineraries",
+      "body": {
+        "day": "2030-10-20",
+        "ids": [
+          "urn:ngsi-ld:Event:helsinki:fair",
+          "urn:ngsi-ld:Event:helsinki:talk"
+        ],
+        "lang": "en"
+      },
+      "status": 201,
+      "expect": {
+        "/picks": [
+          "fair",
+          "talk"
+        ],
+        "/day": "2030-10-20",
+        "/mine": true
+      },
+      "length": {
+        "/items": 2
+      },
+      "save": {
+        "code": "/code"
+      }
+    },
+    {
+      "call": "GET /api/itineraries/{code}",
+      "status": 200,
+      "expect": {
+        "/day": "2030-10-20",
+        "/lang": "en",
+        "/picks": [
+          "fair",
+          "talk"
+        ]
+      },
+      "length": {
+        "/items": 2
+      }
+    },
+    {
+      "call": "GET /api/itineraries/{code}/ics",
+      "status": 200,
+      "download": "/url",
+      "downloaded": "SUMMARY:Fair\\, autumn\r\nLOCATION:Messukeskus\r\n"
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "POST /api/itineraries",
+      "caller": "anonymous",
+      "body": {
+        "day": "2030-10-20",
+        "ids": [
+          "urn:ngsi-ld:Event:helsinki:fair",
+          "urn:ngsi-ld:Event:helsinki:talk"
+        ],
+        "lang": "en"
+      },
+      "status": 201,
+      "expect": {
+        "/mine": false
+      },
+      "save": {
+        "anon": "/code"
+      },
+      "rows": {
+        "itineraries": 2
+      }
+    },
+    {
+      "call": "GET /api/itineraries/{anon}",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "/day": "2030-10-20"
+      }
+    },
+    {
+      "call": "GET /api/days",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/days",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/days",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/code": "{code}",
+        "/0/events": 2
+      },
+      "save": {
+        "day": "/0/id"
+      }
+    },
+    {
+      "call": "DELETE /api/days/{day}",
+      "caller": "viewer",
+      "status": 404,
+      "rows": {
+        "itineraries": 2
+      }
+    },
+    {
+      "call": "DELETE /api/days/{day}",
+      "caller": "steward",
+      "status": 404,
+      "rows": {
+        "itineraries": 2
+      }
+    },
+    {
+      "call": "DELETE /api/days/{day}",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/featured",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "POST /api/featured",
+      "caller": "anonymous",
+      "body": {
+        "eventId": "urn:ngsi-ld:Event:helsinki:fair"
+      },
+      "status": 401
+    },
+    {
+      "call": "POST /api/featured",
+      "caller": "viewer",
+      "body": {
+        "eventId": "urn:ngsi-ld:Event:helsinki:fair",
+        "roles": [
+          "steward"
+        ]
+      },
+      "status": 403,
+      "expect": {
+        "/detail": "this needs the role steward"
+      },
+      "rows": {
+        "featured": 0
+      }
+    },
+    {
+      "call": "POST /api/featured",
+      "caller": "steward",
+      "body": {
+        "eventId": "urn:ngsi-ld:Place:x"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/featured",
+      "caller": "steward",
+      "body": {
+        "eventId": "urn:ngsi-ld:Event:helsinki:fair",
+        "note": " free entry "
+      },
+      "status": 201,
+      "expect": {
+        "/note": "free entry"
+      },
+      "save": {
+        "feat": "/id"
+      },
+      "rows": {
+        "featured": 1
+      }
+    },
+    {
+      "call": "POST /api/featured",
+      "caller": "steward",
+      "body": {
+        "eventId": "urn:ngsi-ld:Event:helsinki:fair"
+      },
+      "status": 409,
+      "rows": {
+        "featured": 1
+      }
+    },
+    {
+      "call": "PUT /api/featured/{feat}",
+      "caller": "viewer",
+      "body": {
+        "note": "mine now"
+      },
+      "status": 403
+    },
+    {
+      "call": "PUT /api/featured/{feat}",
+      "caller": "steward",
+      "body": {
+        "note": "bring a coat"
+      },
+      "status": 204
+    },
+    {
+      "call": "GET /api/featured",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "/0/eventId": "urn:ngsi-ld:Event:helsinki:fair",
+        "/0/note": "bring a coat"
+      },
+      "length": {
+        "": 1
+      }
+    },
+    {
+      "call": "GET /api/featured",
+      "as": "second",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "DELETE /api/featured/{feat}",
+      "caller": "viewer",
+      "status": 403,
+      "rows": {
+        "featured": 1
+      }
+    },
+    {
+      "call": "DELETE /api/featured/{feat}",
+      "caller": "steward",
+      "status": 204,
+      "rows": {
+        "featured": 0
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/itineraries/{code}",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "GET /api/itineraries/{code}/ics",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "GET /api/itineraries/ABCDEF123456",
+      "status": 404
+    },
+    {
+      "call": "GET /api/itineraries/zzzzzzzzzzzz",
+      "status": 404
+    },
+    {
+      "call": "GET /api/days",
+      "as": "second",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "DELETE /api/days/{day}",
+      "status": 204,
+      "rows": {
+        "itineraries": 1
+      }
+    },
+    {
+      "call": "GET /api/itineraries/{code}",
+      "status": 404
+    },
+    {
+      "call": "GET /api/itineraries/{anon}",
+      "caller": "anonymous",
+      "status": 200
+    },
+    {
+      "call": "GET /api/history",
+      "status": 200,
+      "length": {
+        "": 6
+      },
+      "expect": {
+        "/0/action": "delete",
+        "/0/target": "itineraries/{day}",
+        "/5/action": "insert"
+      }
+    }
+  ]
+}

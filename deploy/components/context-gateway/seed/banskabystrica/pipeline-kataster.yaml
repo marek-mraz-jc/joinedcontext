@@ -1,0 +1,26 @@
+# The cadastral parcels of Banská Bystrica (T-4697), one CadastralParcel per parcel of register C,
+# into the city's public space once a week. One cadastral area for now, 801062 Banská Bystrica
+# (19,773 parcels, about 31 MB a refresh): the integrator's capacity call of 2026-10-19 (the node
+# at 91-92 % memory); the other eight areas are one line each in the mapping's zone list. Current
+# state only (history off): an unchanged parcel writes nothing.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: kataster
+  namespace: banskabystrica
+  title: { sk: Parcely katastra nehnuteľností, en: Cadastral parcels }
+spec:
+  # A schedule, not a period: the Portal runs a pipeline by its period whenever it has one.
+  class: scheduled
+  # Sundays (UTC), three runs that each write a third of the pages (the mapping picks the third by
+  # the 8 h slot of the day): the cadastre's service is least busy then, and parcels change by the
+  # week at most.
+  schedule: '41 2,10,18 * * 0'
+  source:
+    dataSourceRef: { kind: DataSource, name: kataster-inspire }
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-verejne:banskabystrica-verejne
+  output: { type: CadastralParcel, mode: replace }
+  quotas:
+    # One page of 1,000 parcels (about 1.6 MB of GeoJSON) is held at a time.
+    maxMemoryMb: 192
+    cpuMillicores: 100

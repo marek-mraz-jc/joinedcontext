@@ -1,0 +1,82 @@
+# The mapping of the parking-sections pipeline (PL-03, T-5262): one OnStreetParking per regulated
+# surface parking section of B:SM and kind of zone, from Open Data BCN trams-aparcament-superficie.
+#
+# The file has one row per curb piece: a section (ID_TRAM) of one kind (TIPUS_TRAM) spans up to 28
+# pieces, each with its start and end, and repeats the section's address, places (PLACES) and rate
+# and timetable codes on every piece (10,596 sections of 17,275 rows on 2026-10-22, the codes and
+# places the same on every piece of a section). The section becomes one entity, its pieces one
+# MultiLineString (a LineString when it has one).
+#
+# Kinds: AZL blue zone, VM green zone (mixed), VR green zone for residents, DUM loading and
+# unloading, BUS coaches; each named in the Smart Data Models category enum, the code kept as
+# zoneCode. The rate and timetable codes (tarifes- and horaris-aparcament-superficie) are kept
+# as tariffCode, rate/timetable.
+#
+# Plausibility (owner 2026-10-22): a row with an unknown kind, a non-numeric id or position, places
+# outside 0..1000 or not whole, an end outside Barcelona (lon 2.04..2.24, lat 41.30..41.48, the
+# space's area; a swapped or 0,0 position falls outside it) is left out, and a piece listed twice
+# in its section is kept once; each counted by its reason in the run's log line. A file that is
+# not the parking CSV, or names no section, fails the run and writes nothing.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("the parking file is %d bytes, more than the 16 MB read".format(content().length())) } else { content().string() }
+        - mapping: |
+            let rows = content().string().trim_prefix("﻿").parse_csv().catch([])
+            let need = ["ID_TRAM", "TIPUS_TRAM", "ADREÇA", "PLACES", "ID_TARIFA", "ID_HORARIO", "LATITUD_I", "LONGITUD_I", "LATITUD_F", "LONGITUD_F"]
+            let header = $rows.index(0).catch({}).keys()
+            root = if $rows.length() == 0 || !$need.all(k -> $header.contains(k)) { throw("the parking file does not have the columns %v".format($need.join(", "))) } else { $rows }
+        - mapping: |
+            let kinds = ["AZL", "VM", "VR", "DUM", "BUS"]
+            let rows = this.map_each(r -> {
+              "k": r.ID_TRAM.or("").trim() + "-" + r.TIPUS_TRAM.or("").trim(),
+              "id": r.ID_TRAM.or("").trim(),
+              "z": r.TIPUS_TRAM.or("").trim(),
+              "a": r.get("ADREÇA").or("").trim(),
+              "n": r.PLACES.or("").trim().number().catch(null),
+              "t": r.ID_TARIFA.or("").trim() + "/" + r.ID_HORARIO.or("").trim(),
+              "p": [[r.LONGITUD_I.or("").trim().number().catch(null), r.LATITUD_I.or("").trim().number().catch(null)],
+                    [r.LONGITUD_F.or("").trim().number().catch(null), r.LATITUD_F.or("").trim().number().catch(null)]]
+            })
+            let shaped = $rows.filter(r -> r.id.re_match("^[0-9]{1,9}$") && $kinds.contains(r.z) && r.p.flatten().all(v -> v != null))
+            let counted = $shaped.filter(r -> r.n != null && r.n >= 0 && r.n <= 1000 && r.n == r.n.floor())
+            let inside = $counted.filter(r -> r.p.all(q -> q.index(0) >= 2.04 && q.index(0) <= 2.24 && q.index(1) >= 41.30 && q.index(1) <= 41.48))
+            let sorted = $inside.sort_by(r -> r.k)
+            let groups = $sorted.enumerated().map_each(e -> if e.index > 0 && $sorted.index(e.index - 1).k != e.value.k { ["|", e.value] } else { [e.value] }).flatten().split_by(x -> x == "|")
+            let category = {
+              "AZL": ["blueZone", "feeCharged"],
+              "VM": ["greenZone", "feeCharged"],
+              "VR": ["greenZone", "forResidents", "onlyWithPermit"],
+              "DUM": ["forLoadUnload", "onlyWithPermit"],
+              "BUS": ["feeCharged"]
+            }
+            let vehicle = { "AZL": ["car"], "VM": ["car"], "VR": ["car"], "DUM": ["van", "lorry"], "BUS": ["bus"] }
+            let entities = $groups.filter(g -> g.length() > 0).map_each(g -> g.index(0).(f -> g.map_each(r -> r.p).unique(p -> p.format_json()).(lines -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:bsm-%v-%v".format("OnStreetParking", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.id, f.z.lowercase()),
+              "type": "OnStreetParking",
+              "name": if f.a == "" { null } else { { "type": "Property", "value": f.a } },
+              "location": { "type": "GeoProperty", "value": if lines.length() == 1 { { "type": "LineString", "coordinates": lines.index(0) } } else { { "type": "MultiLineString", "coordinates": lines } } },
+              "category": { "type": "Property", "value": $category.get(f.z) },
+              "allowedVehicleType": { "type": "Property", "value": $vehicle.get(f.z) },
+              "totalSpotNumber": { "type": "Property", "value": f.n.int64() },
+              "zoneCode": { "type": "Property", "value": f.z },
+              "tariffCode": { "type": "Property", "value": f.t },
+              "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/ca/dataset/trams-aparcament-superficie" }
+            }.filter(kv -> kv.value != null))))
+            let pieces = $entities.map_each(e -> if e.location.value.type == "LineString" { 1 } else { e.location.value.coordinates.length() }).sum()
+            root = if $entities.length() == 0 { throw("the parking file names no section") } else { {
+              "entities": $entities,
+              "dropped": {
+                "malformedRow": $rows.length() - $shaped.length(),
+                "placesOutOfRange": $shaped.length() - $counted.length(),
+                "pieceOutOfArea": $counted.length() - $inside.length(),
+                "duplicatePiece": $inside.length() - $pieces
+              }
+            } }
+        - log:
+            level: INFO
+            message: 'parking-sections: ${! json("entities").length() } sections written, left out by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.entities
+        - unarchive: { format: json_array }

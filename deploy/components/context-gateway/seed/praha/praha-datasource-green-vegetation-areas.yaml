@@ -1,0 +1,18 @@
+# IPR Praha's geoportal item 518e85700665441f86ded81dd0653a71 (Sdílená data o zeleni – vegetační prvky – plocha), 140,653 on 2026-10-25: the layer's description
+# on IPR's ArcGIS server, whose field list and coded values the mapping reads before it pages
+# through the layer's FeatureServer. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5683).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-green-vegetation-areas
+  namespace: praha
+  title:
+    en: 'Shared green register: vegetation areas (IPR Praha)'
+    cs: Sdílená data o zeleni – vegetační prvky – plocha (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_VP_P/FeatureServer/0?f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

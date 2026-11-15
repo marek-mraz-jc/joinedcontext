@@ -1,0 +1,28 @@
+---
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: context-broker-recreate-strategy
+  annotations:
+    reason: >-
+      One broker process per database (ANTARES_BUS=local): a rolling update runs a second
+      matcher beside the old one, and the old pod's writes keep a boot migration's ACCESS
+      EXCLUSIVE lock out until the startup probe gives up (dev 2026-10-19, migration 0011:
+      three restarts in four minutes). Recreate stops the old pod first; the gap is the boot
+      time, about 47 s on dev (T-5311). Re-check when a NATS bus allows two replicas.
+spec:
+  exceptions:
+    - policyName: require-rolling-update
+      ruleNames:
+        - require-rolling-update-deployment
+        - autogen-require-rolling-update-deployment
+  match:
+    any:
+      - resources:
+          kinds:
+            - Deployment
+          # `main` and every broker of global.contextBrokers (context-broker-{name}), which
+          # renders the same base values (F-R2DEP2-019).
+          names:
+            - context-broker
+            - context-broker-*

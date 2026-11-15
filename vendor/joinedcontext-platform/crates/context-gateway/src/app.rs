@@ -379,11 +379,15 @@ impl Gateway {
 
     /// Every value that names this endpoint as an RFC 8707 resource.
     pub(crate) fn audiences_for(&self, endpoint: &Endpoint) -> Vec<String> {
-        audiences_of(
+        let mut audiences = audiences_of(
             &endpoint.slug,
             &endpoint.base_path,
             self.public_url.as_deref(),
-        )
+        );
+        if let Some(base) = self.host_base() {
+            audiences.push(format!("{base}{}", endpoint.base_path));
+        }
+        audiences
     }
 
     /// The audience of the broker `endpoint`'s space lives on, the one a federated read's
@@ -402,6 +406,9 @@ impl Gateway {
         if let Some(base) = self.public_url.as_deref() {
             audiences.push(format!("{base}{HUB_PATH}"));
         }
+        if let Some(base) = self.host_base() {
+            audiences.push(format!("{base}{HUB_PATH}"));
+        }
         audiences
     }
 
@@ -411,6 +418,9 @@ impl Gateway {
     pub(crate) fn server_audiences(&self, server: &crate::mcp::server::McpServer) -> Vec<String> {
         let mut audiences = vec![server.client()];
         if let Some(base) = self.public_url.as_deref() {
+            audiences.push(format!("{base}{}", server.path()));
+        }
+        if let Some(base) = self.host_base() {
             audiences.push(format!("{base}{}", server.path()));
         }
         audiences
@@ -444,6 +454,33 @@ impl Gateway {
     /// The Organization `project` belongs to (ADR-N-054 2.3).
     pub(crate) fn organization_of(&self, project: &str) -> Option<String> {
         self.provenance.load().organizations.get(project).cloned()
+    }
+
+    /// The domain of the Organization owning `project`'s spaces, the one its writes wait on
+    /// (PF-41, S-3-14): on a deployment of one Organization the installation's when the
+    /// repository names no other, on several only the domain the project's Organization
+    /// declares, and none (the write is refused) when either is unknown.
+    pub(crate) fn domain_of(&self, project: &str) -> Option<String> {
+        let provenance = self.provenance.load();
+        let declared = provenance
+            .organizations
+            .get(project)
+            .and_then(|organization| provenance.domains.get(organization));
+        let single = provenance.domains.len() < 2 && provenance.declared_organizations < 2;
+        match declared {
+            Some(domain) => Some(domain.clone()),
+            None if single => Some(self.org_domain.clone()),
+            None => None,
+        }
+    }
+
+    /// The base of the Organization's own host the request came in on, when it is not the
+    /// configured public URL: a resource URL naming it names this gateway too (RFC 8707).
+    fn host_base(&self) -> Option<String> {
+        HOST_BASE
+            .try_with(Clone::clone)
+            .ok()
+            .filter(|base| !base.is_empty() && Some(base.as_str()) != self.public_url.as_deref())
     }
 
     /// What the repository says about each Project and Endpoint, its Organizations included.

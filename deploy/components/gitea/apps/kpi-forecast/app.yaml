@@ -1,0 +1,70 @@
+# Every Helsinki KPI with its trend, a short forecast and the points that look wrong (T-3332,
+# T-3350). The analysis runs in the visitor's browser as WebAssembly compiled from the Rust crate
+# in wasm/ (AP-142): a least-squares trend, robust Holt-Winters (additive) with a 95 % interval,
+# and the readings three robust deviations off the model, per indicator. A server WASM App (`kind:
+# wasm`, ADR-N-044): its component on the shared host (server/) records every indicator's forecast
+# once a day with the day it was made, from the history it reads itself, so a later visit sets it
+# against what came, and writes monthly reports of the forecasts against the readings as CSV; all
+# in the App's own schema (migrations/) and prefix. Hand written, so no generated-by annotation
+# (AP-35).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: kpi-forecast
+  namespace: helsinki
+  title:
+    en: "Helsinki KPIs: trend and forecast"
+    fi: "Helsingin mittarit: trendi ja ennuste"
+  description:
+    en: "Every Helsinki indicator with its trend over the last days, a short forecast with its interval, and the readings that look wrong."
+    fi: "Jokainen Helsingin mittari: trendi viime päiviltä, lyhyt ennuste vaihteluväleineen ja poikkeavat lukemat."
+spec:
+  kind: wasm
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_kpi-forecast.git
+      ref: main
+  # The interface is built with Node; the crate in wasm/ with Rust, to wasm32 (AP-142).
+  build:
+    node: "22"
+    rust: "1.90"
+  storage:
+    sql: { migrations: migrations, quotaMiB: 100 }
+    blob: { quotaMiB: 256 }
+  # Every period's forecasts of the day, recorded at 03:20 UTC whether or not anybody opens the
+  # page, as the App's own job principal through its own Endpoint (AP-154, AP-159, T-3372).
+  server:
+    jobs:
+      - name: daily-forecasts
+        schedule: "20 3 * * *"
+        export: record-forecasts
+  # Who does what (T-3827): the server decides from the signed-in person, never from the page.
+  roles:
+    - name: viewer
+      title: { en: "Viewer", fi: "Katselija" }
+      description: "Follows indicators of their own and finds them first; reads every published forecast."
+    - name: steward
+      title: { en: "Steward", fi: "Ylläpitäjä" }
+      description: "What a viewer does, and publishes an indicator's forecast with the period and horizon they choose and a note, which every reader sees; withdraws one. Reads the whole history."
+  access:
+    - role: viewer
+      subjects: [{ group: kpi-forecast-viewer }]
+    - role: steward
+      subjects: [{ group: kpi-forecast-steward }]
+  # The indicator endpoint of Helsinki is public: an anonymous reader gets what the public role
+  # is granted and nothing more.
+  visibility: public
+  lifecycle: published
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki-kpi
+      types: [KeyPerformanceIndicator]
+      # What the KPI entities carry on dev (2026-10-08, 16 indicators): the value with its time,
+      # the name, the formula and the source. The history is the temporal read of currentValue,
+      # at most the 90 days the longest period offers.
+      attrs: [name, currentValue, calculationFormula, source]
+      operations: [queryEntity, retrieveEntity, queryTemporal, retrieveTemporal]
+      temporalQ:
+        window: P90D
+      representations: [ngsi-ld, ogc-features]

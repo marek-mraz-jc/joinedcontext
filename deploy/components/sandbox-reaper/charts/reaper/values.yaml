@@ -1,0 +1,42 @@
+---
+# The kubectl image the script runs in. Filled from components/sandbox-reaper/images.yaml.
+image:
+  repository: ''
+  tag: ''
+  digest: ''
+  pullPolicy: IfNotPresent
+
+# Hourly. A sandbox is reaped within an hour of its Time-To-Live, which is close enough for a
+# 14 day ceiling and rare enough that the Job history stays readable.
+schedule: '17 * * * *'
+
+# The ceiling of OPS-44 and PF-19, in calendar days. The chart refuses to render above 14.
+ceilingDays: 14
+
+# Log what would be deleted and delete nothing. The reaper removes namespaces, so an
+# installation that has not yet labelled its sandboxes has a way to watch it first.
+dryRun: false
+
+serviceMesh:
+  enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

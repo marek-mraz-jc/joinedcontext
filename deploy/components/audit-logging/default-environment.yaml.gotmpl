@@ -1,0 +1,30 @@
+---
+audit-logging:
+  collector:
+    # Off until an object store is named. The component's whole purpose is writing somewhere
+    # durable, and a collector shipping into a bucket that does not exist looks healthy while
+    # the audit trail it is supposed to keep goes nowhere (OPS-42).
+    enabled: false
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "audit-logging") }}
+
+    # The append-only bucket. `existingSecret` names a Secret the operator supplies, holding
+    # `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY` for a credential that may write and nothing
+    # else; the collector reads them as environment variables and no credential is ever
+    # rendered from these values (CC-06).
+    bucket: ''
+    region: ''
+    endpointURL: ''
+    existingSecret: 'audit-logging-s3'
+
+    # What the bucket's Object Lock must be set to. OPS-42 is a floor, so the values may
+    # raise it and the chart refuses to render below it.
+    retentionDays: 90
+    objectLockMode: COMPLIANCE
+
+    # The pods whose logs are the audit trail, by `app.kubernetes.io/name`. These are the
+    # three of OPS-42: the Context Gateway, Keycloak and the forge. The values are the ones
+    # their charts set, which is why Keycloak appears as `keycloakx`.
+    audited:
+      - context-gateway-gateway
+      - keycloakx
+      - gitea

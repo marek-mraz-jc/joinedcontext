@@ -1,0 +1,17 @@
+# The demo vehicles' broker (T-4857, ADR-N-048 §2.5): the dedicated port 18830 the allowance
+# assigns, so a tracker that sends no SNI still connects; TLS ends in RMQTT with the host's
+# certificate. Each tracker publishes only on vehicles/<its client id>/position.
+apiVersion: joinedcontext.com/v1alpha1
+kind: MqttBroker
+metadata:
+  name: vehicles
+  namespace: helsinki
+  title: { en: Helsinki demo vehicle trackers, fi: Helsingin esittelyajoneuvojen paikantimet }
+spec:
+  port: 18830
+  roles:
+    - name: trackers
+      serviceAccounts: [vehicle-demo]
+      publish:
+        - vehicles/${clientid}/position
+  limits: { maxMessageBytes: 1024, messagesPerSecond: 2, maxConnections: 20 }

@@ -1,0 +1,21 @@
+{
+  "@context": [
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld",
+    "statistical-observation.v1.context.jsonld"
+  ],
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:joinedcontext.com:susr-as:as1001rs-SK0-2024-UKAZ01-TOTAL",
+  "type": "KeyPerformanceIndicator",
+  "dataSet": { "type": "Property", "value": "as1001rs" },
+  "indicator": { "type": "Property", "value": "UKAZ01" },
+  "name": { "type": "Property", "value": "Počet obyvateľov k 31. 12." },
+  "refArea": { "type": "Property", "value": "SK0" },
+  "refPeriod": { "type": "Property", "value": "2024" },
+  "dimensionKey": { "type": "Property", "value": "TOTAL" },
+  "kpiValue": { "type": "Property", "value": 5419451, "observedAt": "2025-12-19T00:00:00Z" },
+  "source": {
+    "type": "Property",
+    "value": "https://data.statistics.sk/api/v2/dataset/as1001rs/all/all/all?lang=sk&type=json"
+  },
+  "isPartOf": { "type": "Property", "value": "https://opendata.dev.joinedcontext.com/dataset/susr-as1001rs" },
+  "dateObserved": { "type": "Property", "value": "2025-12-19T00:00:00Z" }
+}

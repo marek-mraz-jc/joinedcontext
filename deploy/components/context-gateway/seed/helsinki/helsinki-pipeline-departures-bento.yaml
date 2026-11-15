@@ -1,0 +1,129 @@
+# The mapping of the hsl-departures pipeline (PL-03, T-3891): HSL's GTFS-RT trip updates, the
+# whole network every 30 s (about 640 kB and 20 000 stop time updates in the day), become the next
+# five departures of a curated set of stops, written onto each GtfsStop as one JsonProperty
+# `departures`. No entity per trip or departure, and a stop outside the set is never written
+# (T-3889 load budget): 231 stops, one upsert each per refresh.
+#
+# The feed is protobuf. The runner decodes it with Bento's `protobuf` processor and the GTFS-RT
+# schema it carries beside its shared resources (`components/pipeline-runner/streams/
+# gtfs-realtime.proto`, mounted alone at /proto), so no WASM step is needed. Not /streams: Bento
+# reads every .proto under an import path, and a ConfigMap mount holds the file twice (its link
+# and the kubelet's dated copy), "symbol already defined" (T-4037).
+#
+# What HSL's feed holds (measured 2026-10-12): each stop time update carries an expected
+# `departure.time` or `arrival.time` and no `delay` (0 of 19 211), and a trip carries its route
+# and direction but no headsign. A departure keeps the delay, and the scheduled time it implies,
+# only when HSL sends one; the headsign is the PublicTransportRoute's of the same route and direction. A
+# cancelled trip HSL lists with its stops marks each of them `canceled`, a skipped stop
+# `skipped`; both stay in the list, so a reader sees what will not run. A cancelled trip listed
+# without stops names no stop and is not placed.
+#
+# The feed's own timestamp is "now": a departure before it is gone. An empty feed keeps what the
+# stops show for five minutes (the `departures` cache), then writes every stop's list empty,
+# rather than showing departures that left long ago.
+
+pipeline:
+  processors:
+    # A body over 4 MiB is not HSL's feed (about 640 kB at the day's peak): refused before decoding.
+    - mapping: |
+        root = if content().length() > 4194304 { throw("the trip updates feed is %d bytes, more than the 4 MiB read".format(content().length())) } else { content() }
+
+    - protobuf:
+        operator: to_json
+        message: transit_realtime.FeedMessage
+        import_paths: [/proto]
+
+    # A body too large or not a feed is dropped here, as the runner drops a failed fetch (the error
+    # stays counted in processor_error): nothing below may read it as an empty feed and clear the
+    # stops.
+    - mutation: root = if errored() { deleted() }
+
+    # The five minutes an empty feed keeps the departures already written.
+    - branch:
+        request_map: root = if this.entity.or([]).length() > 0 { "fresh" } else { "empty" }
+        processors:
+          - switch:
+              - check: content().string() == "fresh"
+                processors:
+                  - cache:
+                      resource: departures
+                      operator: set
+                      key: trip-updates
+                      value: '1'
+                  - mapping: root = "write"
+              - processors:
+                  - cache: { resource: departures, operator: exists, key: trip-updates }
+                  - mapping: root = if content().string() == "true" { "keep" } else { "write" }
+        result_map: meta departures = content().string()
+    # A mutation, not a mapping: `root = this` deep-copies the whole decoded feed (T-4071).
+    - mutation: |
+        root = if meta("departures") == "keep" { deleted() }
+
+    - mapping: |
+        # Every metro platform (stops.txt vehicle_type 1): 60.
+        let metro = [
+          "1020601", "1020602", "1020603", "1020604", "1040601", "1040602", "1100601", "1100602", "1111601", "1111602",
+          "1121601", "1121602", "1201601", "1201602", "1310601", "1310602", "1310603", "1310604", "1420601", "1420602",
+          "1431601", "1431602", "1431603", "1431604", "1452601", "1452602", "1453601", "1453602", "1454601", "1454602",
+          "1473601", "1473602", "1473603", "1473604", "1541601", "1541602", "1541603", "1541604", "2211601", "2211602",
+          "2214601", "2214602", "2214603", "2214604", "2222601", "2222602", "2222603", "2222604", "2314601", "2314602",
+          "2411601", "2411602", "2412601", "2412602", "2413601", "2413602", "2441601", "2441602", "2441603", "2441604"
+        ]
+        # Every commuter train platform (vehicle_type 109): 131.
+        let train = [
+          "1020501", "1020502", "1020503", "1020551", "1020552", "1020553", "1172503", "1172553", "1174501", "1174502",
+          "1174503", "1174504", "1174551", "1174552", "1174553", "1174554", "1250501", "1250551", "1285501", "1285551",
+          "1291501", "1291502", "1291503", "1291551", "1294502", "1294552", "1331501", "1331551", "1333502", "1333552",
+          "1370501", "1370551", "1382501", "1382551", "1392501", "1392551", "1411501", "1411551", "1465501", "1465502",
+          "1465551", "1465552", "2111502", "2111503", "2111504", "2111552", "2118501", "2118551", "2131501", "2131551",
+          "2132502", "2132552", "2161501", "2161551", "2511501", "2511551", "2611502", "2611552", "2611554", "2612501",
+          "2612551", "3010501", "3010551", "4150501", "4150502", "4150551", "4150552", "4170501", "4170502", "4170551",
+          "4170552", "4230501", "4230551", "4250501", "4250551", "4520501", "4520551", "4530501", "4530551", "4600501",
+          "4600551", "4610501", "4610503", "4610504", "4610505", "4610506", "4610551", "4610553", "4700501", "4700551",
+          "4730501", "4730551", "4740501", "4740551", "4810501", "4810551", "5010503", "5010505", "5010506", "5010509",
+          "5010510", "5010513", "5010553", "5010555", "5010556", "5010559", "5010560", "5020501", "5020502", "5020503",
+          "5020506", "5020551", "5020552", "5020553", "5020556", "6010501", "6010503", "6010504", "6010505", "6010506",
+          "6010551", "6010553", "6010554", "6010555", "6010556", "9040501", "9040502", "9040505", "9040506", "9090501",
+          "9090502"
+        ]
+        # The 40 bus stops (vehicle_type 3) with the most rows in stop_times.txt of the feed of 2026-10-12.
+        let bus = [
+          "1112126", "1113131", "1020201", "1111116", "1433113", "1431111", "1434112", "1020106", "1111142", "1434154",
+          "1020105", "1173111", "1220111", "1220182", "1113140", "1121124", "1220110", "1220282", "1173102", "1250104",
+          "1250101", "1291167", "1160104", "1160107", "1180206", "1100125", "1121130", "1210101", "1220102", "1220104",
+          "1284116", "1434170", "1434173", "1434174", "1284115", "1240118", "1434169", "1240103", "1434171", "1160109"
+        ]
+        let wanted = $metro.concat($train, $bus).fold({}, t -> t.tally.merge({ (t.value): true }))
+        let now = this.header.timestamp.or("0").number()
+        let at = $now.ts_format("2006-01-02T15:04:05Z", "UTC")
+        let urn = "urn:ngsi-ld:%v:%v:%v:%v"
+        # Only the updates of a kept stop become rows, and each stop takes its own five from the rows
+        # sorted once: grouping all rows with `fold` and `merge` copied the growing table on every
+        # row, and the runner, holding this pass every 30 s beside 100 other streams, was
+        # OOMKilled (T-4071).
+        let rows = this.entity.or([]).filter(e -> e.tripUpdate != null).map_each(e -> e.tripUpdate.stopTimeUpdate.or([]).filter(u -> $wanted.get(u.stopId.or("")) == true).map_each(u -> {
+          "stop": u.stopId.or(""),
+          "route": e.tripUpdate.trip.routeId.or(""),
+          "direction": e.tripUpdate.trip.directionId.or(0),
+          "time": u.departure.time.or(u.arrival.time).or("0").number(),
+          "delay": u.departure.delay.or(u.arrival.delay),
+          "status": if e.tripUpdate.trip.scheduleRelationship.or("") == "CANCELED" { "canceled" } else if u.scheduleRelationship.or("") == "SKIPPED" { "skipped" } else { "scheduled" }
+        })).flatten().filter(r -> r.time >= $now && r.route.re_match("^[A-Za-z0-9._-]{1,64}$")).sort_by(r -> r.time)
+        root = $metro.concat($train, $bus).map_each(stop -> {
+          "id": $urn.format("GtfsStop", env("JC_ORG_DOMAIN"), env("JC_SPACE"), stop),
+          "type": "GtfsStop",
+          "departures": {
+            "type": "JsonProperty",
+            "json": $rows.filter(r -> r.stop == stop).slice(0, 5).map_each(r -> {
+              "route": $urn.format("GtfsRoute", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.route),
+              "routeId": r.route,
+              "directionId": r.direction,
+              "expected": r.time.ts_format("2006-01-02T15:04:05Z", "UTC"),
+              "scheduled": if r.delay != null { (r.time - r.delay.number()).ts_format("2006-01-02T15:04:05Z", "UTC") },
+              "delay": if r.delay != null { r.delay.number() },
+              "status": r.status
+            }.filter(f -> f.value != null)),
+            "observedAt": $at
+          }
+        })
+    - unarchive: { format: json_array }

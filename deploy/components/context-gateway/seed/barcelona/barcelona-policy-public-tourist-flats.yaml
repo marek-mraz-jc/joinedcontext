@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-tourist-flats
+  namespace: barcelona
+  title:
+    ca: Lectura pública dels habitatges d'ús turístic
+    es: Lectura pública de las viviendas de uso turístico
+    en: Public read of licensed tourist flats
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  # The slice the Endpoint tourist-flats publishes, read only, with the discovery a client needs first
+  # (T-4258, EP-116). The space keeps no history of this type, so no temporal operation.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: TouristRental

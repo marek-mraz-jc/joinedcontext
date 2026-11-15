@@ -24,6 +24,13 @@ async fn stop_signal() {
 }
 
 fn main() -> ExitCode {
+    // `jc doctor domains --config jc.toml`: the operator's check of records and certificates.
+    {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if args.first().map(String::as_str) == Some("doctor") {
+            return ExitCode::from(jc::doctor::command(&args[1..]));
+        }
+    }
     // `jc validate --as-portal ...`: the Portal's judge over a checkout, offline (P-15), so the
     // seed CI runs the rules of the image it pins.
     #[cfg(feature = "portal")]

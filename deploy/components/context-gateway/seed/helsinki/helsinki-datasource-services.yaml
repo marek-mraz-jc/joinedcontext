@@ -1,0 +1,19 @@
+# The city's service register (Service Map): the first page of every unit in Helsinki, 1 000 of 12 465 on 2026-10-22;
+# the services pipeline reads the pages after it (T-5257). Before, ten services only (libraries, health stations,
+# swimming halls, beaches, schools; 219 units). `only=` keeps the page to the fields the mapping reads. No key.
+# CC-BY-4.0, read from the HRI catalogue (package paakaupunkiseudun-palvelukartan-rest-rajapinta).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-servicemap-units
+  namespace: helsinki
+  title:
+    en: 'City services: every unit of the Service Map in Helsinki'
+    fi: Kaupungin palvelut (Palvelukartta)
+spec:
+  type: http
+  http:
+    url: https://api.hel.fi/servicemap/v2/unit/?municipality=helsinki&page_size=1000&only=id,name,location,street_address,address_zip,services,service_nodes,root_service_nodes,contract_type,www,last_modified_time,connections&format=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

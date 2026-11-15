@@ -1,0 +1,20 @@
+---
+decidim:
+  # images/decidim/Dockerfile: Decidim 0.32.2 generated on Ruby 3.4.12 (T-6321) plus
+  # omniauth_openid_connect, the realm initializer and the organization bootstrap, run as 10001.
+  # Published, signed and scanned by .github/workflows/image-decidim.yml, whose run summary prints
+  # the pin.
+  web:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-decidim'
+    tag: '0.32.2'
+    digest: 'sha256:e6005a24decc748ac48303768429d868faf9dedd5e9191c7e5c5dc4f9457022c'
+  # The same image, started as Sidekiq; one pin for both, so they never run two releases.
+  sidekiq:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-decidim'
+    tag: '0.32.2'
+    digest: 'sha256:e6005a24decc748ac48303768429d868faf9dedd5e9191c7e5c5dc4f9457022c'
+  # The Redis the catalogue runs (components/ckan/images.yaml), re-pinned with it.
+  redis:
+    repository: 'docker.io/library/redis'
+    tag: '7-alpine'
+    digest: 'sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499'

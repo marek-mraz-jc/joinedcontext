@@ -1,0 +1,50 @@
+---
+# This Helmfile must be included by your custom Helmfile and should not be applied directly or edited
+# It loads values before loading components, so that components can use those values
+environments:
+  default:
+    values:
+      - defaults/environment/global.yaml
+  # We need to iterate over all environments even the file is always the same, because as soon as an environment is defined,
+  # helmfile will not fall back to default environment automatically
+  {{- range .Values.environments }}
+  {{ . }}:
+    values:
+      - defaults/environment/global.yaml
+      - deployment/environments/{{ . }}/global.yaml.gotmpl
+  {{- end }}
+---
+{{- /*
+The component profile (T-4856). Here and not in an environment values file, because those
+render without the values loaded before them. `full` keeps the environment's list; `minimal`
+and `broker-only` replace it with their list from `componentProfiles` and fill in their sizes
+from `componentProfileValues` under the environment's own values. These values win over
+everything the components layer loads, so every file there sees the profile's list. Then every
+deployed component's hard dependencies (`componentDependencies`) must be deployed too, or the
+render stops here and names what is missing. The operators layer
+(deployment/helmfile-operators.yaml) passes its own short list of the components that own a
+cluster operator and is left as it is.
+*/}}
+{{- $values := .Values }}
+{{- $profile := $values | get "componentProfile" "full" }}
+{{- if ne ($values | get "deployLayer" "") "operators" }}
+{{- if ne $profile "full" }}
+{{- if not (hasKey $values.componentProfiles $profile) }}
+{{- fail (printf "componentProfile %q is unknown: use full, %s" $profile (keys $values.componentProfiles | sortAlpha | join ", ")) }}
+{{- end }}
+{{- $_ := set $values "components" (index $values.componentProfiles $profile) }}
+{{- $values = merge $values (index $values.componentProfileValues $profile | default dict | deepCopy) }}
+{{- end }}
+{{- range $component := $values.components }}
+{{- range $needed := index $values.componentDependencies $component | default list }}
+{{- if not (has $needed $values.components) }}
+{{- fail (printf "component %q needs %q, which componentProfile %q does not deploy: add %q to the component list or drop %q" $component $needed $profile $needed $component) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+helmfiles:
+  # We need to move this into a separate file, because we cannot load values and use them as variables in the same helmfile
+  - path: "./helmfile-components.yaml.gotmpl"
+    values:
+      - {{ toYaml $values | nindent 8 }}

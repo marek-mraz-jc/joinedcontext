@@ -1,0 +1,123 @@
+---
+# Meshed, the runner reaches the forge and the Portal through their inbound proxies on 4143 and
+# its own proxy needs the control plane; the kubelet reaches the proxy's admin port.
+gitea-runner-linkerd:
+  podSelector:
+    app.kubernetes.io/name: gitea-runner
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 4143
+
+portal-linkerd-from-gitea-runner:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea-runner
+          componentNamespace: gitea-runner
+      ports:
+        - port: 4143
+          protocol: TCP
+
+# The lane token's refresher (T-2636), meshed like the forge's bootstrap Job: its proxy needs
+# the control plane, and its two calls land on the forge's and Keycloak's inbound proxies.
+lane-token-linkerd-control-plane:
+  componentNamespace: gitea
+  podSelector:
+    app.kubernetes.io/name: lane-token
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 4143
+
+gitea-linkerd-from-lane-token:
+  componentNamespace: gitea
+  podSelector:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/instance: gitea-forge
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lane-token
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 4143
+
+keycloak-linkerd-from-lane-token:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lane-token
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 4143

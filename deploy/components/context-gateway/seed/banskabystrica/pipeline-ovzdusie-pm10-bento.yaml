@@ -1,0 +1,40 @@
+# The mapping of the ovzdusie-pm10 pipeline (PL-03, T-2781): the latest valid hourly mean of
+# particulate matter up to 10 µm at SK0263A, Banská Bystrica's urban-background station of the
+# Slovak Hydrometeorological Institute, as the European Environment Agency republishes it
+# (up-to-date E2a data, one Parquet file per sampling point). One entity per station: the PM10
+# and the PM2.5 stream each write their own attribute of it, and the upsert merges them.
+#
+# The station's own host (SHMÚ) does not answer, and the file carries neither the station's
+# name nor its place, so both come from the EEA station metadata (PanEuropean_metadata.csv,
+# read 2026-09-25): station SK0263A, urban background, 19.115268 E, 48.733256 N, 425 m.
+
+pipeline:
+  processors:
+    - parquet_decode: {}
+    - archive: { format: json_array }
+    - mapping: |
+        let attribute = "pm10"
+        let station = "SK0263A"
+        # Parquet INT96: [nanoseconds of the day, low and high 32 bits, Julian day]. The times
+        # are UTC+1, the offset EEA's download service has always used (its CSV printed
+        # "+01:00"); read as UTC, the latest hour of a file fetched at 05:59 UTC ends at 06:00.
+        map instant {
+          root = ((this.index(2) - 2440588) * 86400 + ((this.index(1) * 4294967296 + this.index(0)) / 1000000000).floor() - 3600).ts_format("2006-01-02T15:04:05Z07:00", "UTC")
+        }
+        # Validity 1, 2 and 3 are valid readings; -1 and -99 are not (EEA vocabulary
+        # "observationvalidity"). A value that is not a number, or is negative, is no reading.
+        # The decoder hands INT96 and byte columns over as Go values Bloblang cannot index; read
+        # back from the archived JSON they are plain arrays, numbers and strings.
+        let valid = content().parse_json().or([]).filter(r -> [1, 2, 3].contains(r.Validity) && r.End.type() == "array" && r.End.length() == 3 && r.Value.number().catch(-1) >= 0)
+        let latest = $valid.sort_by(r -> r.End.index(2) * 86400 + (r.End.index(1) * 4294967296 + r.End.index(0)) / 1000000000).slice(-1).index(0).catch(null)
+        root = if $latest == null { [] } else { [{
+          "id": "urn:ngsi-ld:%v:%v:%v:eea-%v".format("AirQualityObserved", "banskabystrica.sk", env("JC_SPACE"), $station),
+          "type": "AirQualityObserved",
+          "name": { "type": "LanguageProperty", "languageMap": { "sk": "Stanica SK0263A, mestské pozadie", "en": "Station SK0263A, urban background" } },
+          "stationCode": { "type": "Property", "value": $station },
+          $attribute: { "type": "Property", "value": $latest.Value.number(), "unitCode": "GQ", "observedAt": $latest.End.apply("instant") },
+          "dateObserved": { "type": "Property", "value": $latest.End.apply("instant") },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [19.115268, 48.733256] } },
+          "dataProvider": { "type": "Property", "value": "European Environment Agency, air quality data reported by SHMÚ (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://eeadmz1-downloads-api-appservice.azurewebsites.net/" }
+        }] }

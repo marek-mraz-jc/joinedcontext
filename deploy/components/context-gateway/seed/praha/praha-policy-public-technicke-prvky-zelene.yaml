@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-technicke-prvky-zelene
+  namespace: praha
+  title: { cs: 'Veřejné čtení: technické prvky zeleně' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-technicke-prvky-zelene, and only
+  # the records of its three IPR layers (green-tech-(points|lines|areas)-): the space's other GreenAsset stay with their own datasets (T-5682).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: GreenAsset
+          idPattern: ^urn:ngsi-ld:GreenAsset:[a-z0-9.-]+:praha-mesto:green-tech-(points|lines|areas)-[0-9a-f-]{36}$

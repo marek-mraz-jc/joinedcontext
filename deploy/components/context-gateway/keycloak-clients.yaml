@@ -1,0 +1,276 @@
+---
+# The gateway's own identity when it calls the Portal (T-1500, PF-46, AG-52).
+#
+# The Portal's internal listener holds the list of running workspace previews, which is a
+# project's configuration, and it answers a caller it can name: this client, with a token an
+# audience mapper binds to `portal-internal`. The NetworkPolicy that admits the gateway to port
+# 9090 stays, as the second control — a pod that reached the port through a policy mistake holds
+# no token of this client and reads nothing. CLAUDE.md's rule is the shape: "every workload via a
+# ServiceAccount client with audience-bound tokens; no static keys between cluster services".
+#
+# `client_credentials` only: nobody logs in as the gateway, so every browser flow is off.
+# Federated (PF-47, T-2868): the client trusts the gateway pod's own ServiceAccount, whose
+# projected token the gateway presents as JC_OIDC_CLIENT_ASSERTION_FILE, and holds no secret
+# (components/context-gateway/values/gateway/base-values.yaml.gotmpl).
+context-gateway:
+  name: Context Gateway
+  description: Service account of the Context Gateway on the Portal's internal listener; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  federated:
+    release: context-gateway.gateway
+    serviceAccount: context-gateway
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-internal-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: portal-internal
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+# The conformance suite's identity on the endpoint surface (T-0277, PF-45). A workload never
+# gets a static key: it is a confidential client with a service account, and the gateway maps
+# the token's `azp` to the ServiceAccount manifest of the same name (`{project}-{name}`, so
+# `banskabystrica-conformance` is the account `conformance` of project `banskabystrica` in the
+# development seed). The audience mapper is what binds the token to the seeded endpoint:
+# the gateway accepts a token only when `aud` names the slug it is called on.
+banskabystrica-conformance:
+  # An account of the demo seed: rendered by the development profile only (T-1720, CC-73).
+  profiles: [development]
+  # A test object: never in a production realm, even one that reads dev's values (T-4678).
+  test: true
+  name: Conformance suite
+  description: Service account of the ETSI conformance suite; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - context-gateway
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: seeded-endpoint-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          # The conformance space's Endpoint (F-BNT1-002), not public-air: the account writes
+          # nowhere the city publishes.
+          included.custom.audience: dv7iyelohbhylxfilexaneobbl
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # The WebSocket isolation run (T-4909, conformance e2e/journeys/48) proposes two sandbox
+      # Endpoints under these slugs for its own run and deletes them after it; nothing else
+      # holds them. The token reaches them only while they exist, and the run's own Policies
+      # decide what it reads and writes there.
+      - name: ws-isolation-endpoint-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: hcwfp3wxr45cjxjwqsfcyxgv4klxb2ob
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: ws-isolation-other-space-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: mieqdukdwfv24izi5qxkia3e3qolhbvp
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# A workload on the Portal's side (T-2245, PF-45, PF-49): the account `pipeline-proposer` of
+# project `helsinki` in the development seed. Its token's audience is the Portal's API client and
+# nothing else, so the Portal accepts it (the MCP door and the REST API) and every endpoint of the
+# gateway refuses it; the Portal maps `azp` to the manifest and grants its roles without approve.
+helsinki-pipeline-proposer:
+  profiles: [development]
+  name: Helsinki pipeline proposer
+  description: Service account that proposes DataSource and Pipeline manifests over the Portal API and MCP; client_credentials only, no browser flow
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - context-gateway
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: portal-api-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.client.audience: portal-api
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# The identity a phone uses to reach an endpoint's MCP route (T-0336, AG-32, PF-45, PF-46).
+#
+# One client for the mobile apps, not one per endpoint: in OAuth 2.1 the client is the app
+# and the endpoint is the resource, and RFC 8707 is what binds a token to one endpoint.
+# The app asks for `resource=https://{host}/api/endpoint/{slug}/mcp`, Keycloak issues a
+# token whose audience is that URL, and the gateway accepts it on that endpoint and on no
+# other. A client per endpoint would multiply registrations without narrowing anything,
+# because the audience is what narrows.
+#
+# Public client, so there is no secret on a device somebody can lose; PKCE S256 is
+# therefore mandatory rather than optional. Dynamic client registration stays off: the
+# redirect URIs below are the ones the known mobile clients use, and a registration
+# endpoint open to anybody would let a stranger add their own.
+mcp-mobile:
+  name: MCP mobile connector
+  description: Public PKCE client the Claude and ChatGPT mobile apps use to reach an endpoint's MCP route
+  subdomain: ''
+  # Unused: the apps' own callbacks replace the computed list below, but the template
+  # builds one before the override merges, and it needs a path to build it from.
+  redirectPath: /
+  rawValues:
+    publicClient: true
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    attributes:
+      pkce.code.challenge.method: S256
+    # A token handed to an AI vendor names the resource it is for and nothing else (T-5611).
+    # The realm's default `roles` scope would add every client the person holds a role of to
+    # `aud` (its audience-resolve mapper: `account` and each `app-*`), so this client leaves it
+    # out and maps the realm roles the Portal and the Endpoint Policies read itself.
+    defaultClientScopes: &mcp-default-scopes
+      - acr
+      - basic
+      - email
+      - profile
+    protocolMappers: &mcp-realm-roles
+      - name: realm-roles
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-realm-role-mapper
+        consentRequired: false
+        config:
+          claim.name: realm_access.roles
+          jsonType.label: String
+          multivalued: 'true'
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+          userinfo.token.claim: 'false'
+          introspection.token.claim: 'true'
+    # The Portal MCP server (/api/v1/mcp) wants `aud: portal-api`; the optional realm scope
+    # `mcp:portal` adds it when the app asks for it (T-0637).
+    optionalClientScopes:
+      - address
+      - phone
+      - offline_access
+      - microprofile-jwt
+      - mcp:portal
+      # One Portal connector (T-5954): ChatGPT asks for `connector:{id}` at /c/{id}.
+      - connector
+    # The apps come back to their own callback URLs, which are not on this host, so they
+    # are listed verbatim rather than derived from the domain.
+    redirectUris:
+      - https://claude.ai/api/mcp/auth_callback
+      - https://claude.com/api/mcp/auth_callback
+      - https://chatgpt.com/connector_platform_oauth_redirect
+      - https://platform.openai.com/chatkit-oauth-callback
+
+# The identity a client on the person's own computer uses for the Portal MCP server: Claude
+# Code, an IDE, MCP Inspector (T-5611, RFC 8252).
+#
+# Such a client receives the code on a loopback port it opens for the login, so the callback is
+# http://localhost:{port}/callback or http://127.0.0.1:{port}/callback with a port that changes
+# per login. Keycloak (RedirectUtils, 26.x) ignores the port of a registered loopback URI and
+# matches scheme, host and path exactly, so the two URIs below take any port and nothing else:
+# no wildcard, and a page on any other host or path is refused. A process on the same computer
+# that grabs the port first gets a code it cannot redeem without the PKCE verifier.
+#
+# A separate client and not two more callbacks on `mcp-mobile`: a laptop token gets a short life
+# and no `offline_access`, so a token left in a terminal's config dies with the Keycloak session
+# instead of living for a month. Public, no secret, PKCE S256, no dynamic registration.
+mcp-local:
+  name: MCP connector on your computer
+  description: Public PKCE client with loopback callbacks for Claude Code and other local MCP clients
+  subdomain: ''
+  # Unused: the loopback callbacks replace the computed list, as on `mcp-mobile`.
+  redirectPath: /
+  rawValues:
+    publicClient: true
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    attributes:
+      pkce.code.challenge.method: S256
+      # Five minutes per access token, refreshed within a session of at most eight hours.
+      access.token.lifespan: '300'
+      client.session.idle.timeout: '1800'
+      client.session.max.lifespan: '28800'
+    defaultClientScopes: *mcp-default-scopes
+    protocolMappers: *mcp-realm-roles
+    optionalClientScopes:
+      - mcp:portal
+      - connector
+    redirectUris:
+      - http://localhost/callback
+      - http://127.0.0.1/callback
+
+# The identity a connector uses for the MCP hub at /api/mcp: one connector over several
+# Endpoints (T-2490, ADR-N-025 section 4, EP-87, EP-88).
+#
+# Its tokens name the hub (`aud: mcp-hub`, from the mapper below) and reach only the Endpoints
+# their `endpoint:{slug}` scopes pick. The default scope `endpoint:*` (T-4114, ADR-N-025 4b) is the
+# one-login choice the consent screen names: every Endpoint the person may read. The Portal's reconciler renders one optional client scope
+# `endpoint:{slug}` on this client per MCP-enabled Endpoint; consent is on, so the person sees
+# which Endpoints the connector asks for before any token exists. The gateway accepts a hub token
+# at /api/mcp only, never at an Endpoint's own URL, and each call is still the Endpoint's own
+# Policy decision. Public and PKCE S256 like mcp-mobile, with the same known callbacks and no
+# dynamic registration.
+mcp-hub:
+  name: MCP hub connector
+  description: Public PKCE client for one MCP connector over the Endpoints a person picks
+  subdomain: ''
+  redirectPath: /
+  rawValues:
+    publicClient: true
+    consentRequired: true
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    attributes:
+      pkce.code.challenge.method: S256
+    defaultClientScopes:
+      - acr
+      - basic
+      - email
+      - profile
+      - roles
+      - endpoint:*
+    optionalClientScopes:
+      - offline_access
+    redirectUris:
+      - https://claude.ai/api/mcp/auth_callback
+      - https://claude.com/api/mcp/auth_callback
+      - https://chatgpt.com/connector_platform_oauth_redirect
+      - https://platform.openai.com/chatkit-oauth-callback
+    protocolMappers:
+      - name: mcp-hub-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.client.audience: mcp-hub
+          access.token.claim: 'true'
+          id.token.claim: 'false'

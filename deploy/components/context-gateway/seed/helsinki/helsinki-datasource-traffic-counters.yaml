@@ -1,0 +1,18 @@
+# The city's own induction loop (LAM) traffic counting stations from its traffic measurement API
+# (lidotiku.api.hel.fi), 27 stations on 2026-10-22 in one page. No key. CC BY 4.0, read from the
+# HRI catalogue (packages helsingin-liikennemittausten-tilastorajapinta and liikennemaarat-helsingissa).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: lidotiku-traffic-counters
+  namespace: helsinki
+  title:
+    en: Traffic counters (City of Helsinki traffic measurement API)
+    fi: Liikennelaskimet (Helsingin liikennemittausten tilastorajapinta)
+spec:
+  type: http
+  http:
+    url: https://lidotiku.api.hel.fi/api/counters/?source=HEL%20LAM&page_size=1000
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

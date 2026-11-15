@@ -1,0 +1,327 @@
+# The mapping of the statistics-zsj pipeline (T-5674): the hub's census 2021 tables of the basic settlement units (ZSJ) of the city as Smart Data Models
+# KeyPerformanceIndicator, one entity per table, figure, area and period, with the mapping text of the
+# statistics pipeline (T-5274); only `tables` differs.
+pipeline:
+  processors:
+    - mapping: |
+        # name: the id prefix and the dataset's Endpoint idPattern; path: the Feature Service as the
+        # hub's URL writes it; areas: district (the 17 city districts), okres (Bratislava I to V),
+        # city (Bratislava as a whole), zsj (the census's basic settlement units of the city), obec
+        # (the municipalities of the Bratislava Region) or kraj (the Bratislava region, NUTS 3 SK010);
+        # area: the area column (a zsj's 7-digit code), none for a table of the city alone; label: a
+        # zsj's name column, within: its city district's code column; year: the period column (a
+        # year, a range of years, two ranges compared, a day or a month such as 2018-06), quarter:
+        # its quarter column, month: its month column (1 to 12), spans: the range each year of it
+        # stands for (a model's 1991 is 1991-2021), or fixed: the year or range the table's title or
+        # the item's description names; by: breakdown columns (age, sex,
+        # category), each one segment of the id and one part of the name, or {code, name, optional}:
+        # the id segment from the code column, the name part from the name column (a budget item's
+        # code and title), an optional one left out of both where its cell is empty; abs: the figure
+        # without its sign (an age pyramid writes the men's side negative); only: [column, prefix]
+        # keeps the rows of one breakdown (all school founders, not the districts' own schools);
+        # values: [column, id segment, Slovak label, minimum, maximum], null where no bound holds.
+        # A table of events or bookings asks the hub for sums: group: the columns or expressions
+        # (SUBSTRING of a date) one figure stands for, in the order the hub names its answer
+        # (an expression answers as EXPR_1); stats: [statistic, column or expression, answer
+        # column]; where: the rows counted (the year-end month of a running ledger); labels: a
+        # breakdown code by its Slovak word; past: a period that starts after today is a wrong
+        # date in the ledger, dropped.
+        let tables = [
+          {"name": "pocet-bytov-podla-celkovej-plochy-zsj", "item": "05d7fd0e6487438fa1843d6cfa1d3fc5", "path": "Po%C4%8Det%20bytov%20pod%C4%BEa%20celkovej%20plochy%20bytu%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1ch", "title": "Počet bytov podľa celkovej plochy bytu v základných sídelných jednotkách", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Do_40_m2", "do-40-m2", "Byty podľa celkovej plochy: Do 40 m2", 0, null], ["F41_m2_do_80_m2", "41-m2-do-80-m2", "Byty podľa celkovej plochy: 41 m2 do 80 m2", 0, null], ["F81_m2_do_120_m2", "81-m2-do-120-m2", "Byty podľa celkovej plochy: 81 m2 do 120 m2", 0, null], ["F121_m2_a_viac", "121-m2-a-viac", "Byty podľa celkovej plochy: 121 m2 a viac", 0, null], ["Spolu", "spolu", "Byty podľa celkovej plochy: Spolu", 0, null]]},
+          {"name": "pocet-bytov-podla-obytnej-plochy-zsj", "item": "167a939e420a4920bcc35f7c45b4e9d7", "path": "Po%C4%8Det%20bytov%20pod%C4%BEa%20obytnej%20plochy%20bytu%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1ch", "title": "Počet bytov podľa obytnej plochy bytu v základných sídelných jednotkách", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Do_40_m2", "do-40-m2", "Byty podľa obytnej plochy: Do 40 m2", 0, null], ["F41_m2_do_80_m2", "41-m2-do-80-m2", "Byty podľa obytnej plochy: 41 m2 do 80 m2", 0, null], ["F81_m2_do_120_m2", "81-m2-do-120-m2", "Byty podľa obytnej plochy: 81 m2 do 120 m2", 0, null], ["F121_m2_a_viac", "121-m2-a-viac", "Byty podľa obytnej plochy: 121 m2 a viac", 0, null], ["Spolu", "spolu", "Byty podľa obytnej plochy: Spolu", 0, null]]},
+          {"name": "pocet-bytov-podla-obyvanosti-zsj", "item": "4a8f9d10e4b04e77ac3a316e97d4ebe1", "path": "Po%C4%8Det%20bytov%20pod%C4%BEa%20ob%C3%BDvanosti%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1ch", "title": "Počet bytov podľa obývanosti v základných sídelných jednotkách", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Obývaný", "obyvany", "Byty podľa obývanosti: Obývaný", 0, null], ["Neobývaný", "neobyvany", "Byty podľa obývanosti: Neobývaný", 0, null], ["Nezistená_obývanosť", "nezistena-obyvanost", "Byty podľa obývanosti: Nezistená obývanosť", 0, null], ["Spolu", "spolu", "Byty podľa obývanosti: Spolu", 0, null]]},
+          {"name": "pocet-bytov-podla-poctu-miestnosti-zsj", "item": "899203befc3f4515a8a10703a71a7c11", "path": "Po%C4%8Det%20bytov%20pod%C4%BEa%20po%C4%8Dtu%20obytn%C3%BDch%20miestnost%C3%AD%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1ch", "title": "Počet bytov podľa počtu obytných miestností v základných sídelných jednotkách", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["F1", "1", "Byty podľa počtu obytných miestností: 1", 0, null], ["F2", "2", "Byty podľa počtu obytných miestností: 2", 0, null], ["F3", "3", "Byty podľa počtu obytných miestností: 3", 0, null], ["F4", "4", "Byty podľa počtu obytných miestností: 4", 0, null], ["F5_", "5", "Byty podľa počtu obytných miestností: 5+", 0, null], ["Nezistený", "nezisteny", "Byty podľa počtu obytných miestností: Nezistený", 0, null], ["Spolu", "spolu", "Byty podľa počtu obytných miestností: Spolu", 0, null]]},
+          {"name": "obyvatelia-podla-dovodu-pristahovania-zsj", "item": "f140143421034873bf9054d4f305252e", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20d%C3%B4vodu%20pris%C5%A5ahovania%20do%20s%C3%BA%C4%8Dasn%C3%A9ho%20miesta%20pobytu%20v%20z%C3%A1kladn%C3%BDch%20s", "title": "Počet obyvateľov podľa dôvodu prisťahovania do súčasného miesta pobytu v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Bytový", "bytovy", "Obyvatelia podľa dôvodu prisťahovania: Bytový", 0, null], ["Rodinný", "rodinny", "Obyvatelia podľa dôvodu prisťahovania: Rodinný", 0, null], ["Zamestnanie", "zamestnanie", "Obyvatelia podľa dôvodu prisťahovania: Zamestnanie", 0, null], ["Podnikanie", "podnikanie", "Obyvatelia podľa dôvodu prisťahovania: Podnikanie", 0, null], ["Štúdium", "studium", "Obyvatelia podľa dôvodu prisťahovania: Štúdium", 0, null], ["Iný", "iny", "Obyvatelia podľa dôvodu prisťahovania: Iný", 0, null], ["Nezistené", "nezistene", "Obyvatelia podľa dôvodu prisťahovania: Nezistené", 0, null], ["Spolu", "spolu", "Obyvatelia podľa dôvodu prisťahovania: Spolu", 0, null]]},
+          {"name": "obyvatelia-podla-materinskeho-jazyka-zsj", "item": "6b756025d4e844f1a23089f066c446b1", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20materinsk%C3%A9ho%20jazyka%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1ch%20-%20anonym", "title": "Počet obyvateľov podľa materinského jazyka v základných sídelných jednotkách", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Slovenský", "slovensky", "Obyvatelia podľa materinského jazyka: Slovenský", 0, null], ["Maďarský", "madarsky", "Obyvatelia podľa materinského jazyka: Maďarský", 0, null], ["Rómsky", "romsky", "Obyvatelia podľa materinského jazyka: Rómsky", 0, null], ["Rusínsky", "rusinsky", "Obyvatelia podľa materinského jazyka: Rusínsky", 0, null], ["Ukrajinský", "ukrajinsky", "Obyvatelia podľa materinského jazyka: Ukrajinský", 0, null], ["Český", "cesky", "Obyvatelia podľa materinského jazyka: Český", 0, null], ["Nemecký", "nemecky", "Obyvatelia podľa materinského jazyka: Nemecký", 0, null], ["Poľský", "polsky", "Obyvatelia podľa materinského jazyka: Poľský", 0, null], ["Chorvátsky", "chorvatsky", "Obyvatelia podľa materinského jazyka: Chorvátsky", 0, null], ["Jidiš", "jidis", "Obyvatelia podľa materinského jazyka: Jidiš", 0, null], ["Bulharský", "bulharsky", "Obyvatelia podľa materinského jazyka: Bulharský", 0, null], ["Ostatné", "ostatne", "Obyvatelia podľa materinského jazyka: Ostatné", 0, null], ["Nezistený", "nezisteny", "Obyvatelia podľa materinského jazyka: Nezistený", 0, null], ["Spolu", "spolu", "Obyvatelia podľa materinského jazyka: Spolu", 0, null]]},
+          {"name": "obyvatelia-podla-miesta-pobytu-zsj", "item": "44975438b830498396bdfd3658574eab", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20miesta%20trval%C3%A9ho%20pobytu%20alebo%20obvykl%C3%A9ho%20bydliska%20v%20z%C3%A1kladn%C3%BDch%20s", "title": "Počet obyvateľov podľa miesta trvalého pobytu alebo obvyklého bydliska v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Miesto_trvalého_pobytu_alebo_ob", "miesto-trvaleho-pobytu-alebo-obvykleho-bydliska-zhodne-s-trvalym-pobytom", "Obyvatelia podľa miesta trvalého pobytu alebo obvyklého bydliska: Miesto trvalého pobytu alebo obvyklého bydliska - zhodné s trvalým pobytom", 0, null], ["Miesto_trvalého_pobytu_alebo__1", "miesto-trvaleho-pobytu-alebo-obvykleho-bydliska-inde-v-sr", "Obyvatelia podľa miesta trvalého pobytu alebo obvyklého bydliska: Miesto trvalého pobytu alebo obvyklého bydliska - inde v SR", 0, null], ["Miesto_trvalého_pobytu_alebo__2", "miesto-trvaleho-pobytu-alebo-obvykleho-bydliska-v-zahranici", "Obyvatelia podľa miesta trvalého pobytu alebo obvyklého bydliska: Miesto trvalého pobytu alebo obvyklého bydliska - v zahraničí", 0, null], ["Spolu", "spolu", "Obyvatelia podľa miesta trvalého pobytu alebo obvyklého bydliska: Spolu", 0, null]]},
+          {"name": "obyvatelia-podla-vzdelania-zsj", "item": "b18553d437144c50b93189bcae777f59", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20najvy%C5%A1%C5%A1ieho%20dosiahnut%C3%A9ho%20vzdelania%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch", "title": "Počet obyvateľov podľa najvyššieho dosiahnutého vzdelania v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Vysokoškolské_bakalárske", "vysokoskolske-bakalarske", "Obyvatelia podľa najvyššieho dosiahnutého vzdelania: Vysokoškolské bakalárske", 0, null], ["Vysokoškolské_magisterské__inži", "vysokoskolske-magisterske-inzinierske-doktorske", "Obyvatelia podľa najvyššieho dosiahnutého vzdelania: Vysokoškolské magisterské, inžinierske, doktorské", 0, null], ["Vysokoškolské_doktorandské", "vysokoskolske-doktorandske", "Obyvatelia podľa najvyššieho dosiahnutého vzdelania: Vysokoškolské doktorandské", 0, null], ["Spolu", "spolu", "Obyvatelia podľa najvyššieho dosiahnutého vzdelania: Spolu", 0, null]]},
+          {"name": "obyvatelia-podla-jazyka-na-verejnosti-zsj", "item": "f7f2aa0077444096a3a15080aa611e86", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20naj%C4%8Dastej%C5%A1ie%20pou%C5%BE%C3%ADvan%C3%A9ho%20jazyka%20%20na%20verejnosti%20v%20z%C3%A1kladn%C3%BDch%20s%C3%AD", "title": "Počet obyvateľov podľa najčastejšie používaného jazyka  na verejnosti v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Slovenský", "slovensky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Slovenský", 0, null], ["Maďarský", "madarsky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Maďarský", 0, null], ["Rómsky", "romsky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Rómsky", 0, null], ["Rusínsky", "rusinsky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Rusínsky", 0, null], ["Ukrajinský", "ukrajinsky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Ukrajinský", 0, null], ["Český", "cesky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Český", 0, null], ["Nemecký", "nemecky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Nemecký", 0, null], ["Poľský", "polsky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Poľský", 0, null], ["Chorvátsky", "chorvatsky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Chorvátsky", 0, null], ["Jidiš", "jidis", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Jidiš", 0, null], ["Bulharský", "bulharsky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Bulharský", 0, null], ["Anglický", "anglicky", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Anglický", 0, null], ["Ostatné", "ostatne", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Ostatné", 0, null], ["Nezistený", "nezisteny", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Nezistený", 0, null], ["Spolu", "spolu", "Obyvatelia podľa jazyka najčastejšie používaného na verejnosti: Spolu", 0, null]]},
+          {"name": "obyvatelia-podla-jazyka-v-domacnosti-zsj", "item": "82eaa4774a54409fb783d612c01e126e", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20naj%C4%8Dastej%C5%A1ie%20pou%C5%BE%C3%ADvan%C3%A9ho%20jazyka%20%20v%20dom%C3%A1cnosti%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADd", "title": "Počet obyvateľov podľa najčastejšie používaného jazyka  v domácnosti v ZSJ", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Slovenský", "slovensky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Slovenský", 0, null], ["Maďarský", "madarsky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Maďarský", 0, null], ["Rómsky", "romsky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Rómsky", 0, null], ["Rusínsky", "rusinsky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Rusínsky", 0, null], ["Ukrajinský", "ukrajinsky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Ukrajinský", 0, null], ["Český", "cesky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Český", 0, null], ["Nemecký", "nemecky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Nemecký", 0, null], ["Poľský", "polsky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Poľský", 0, null], ["Chorvátsky", "chorvatsky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Chorvátsky", 0, null], ["Jidiš", "jidis", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Jidiš", 0, null], ["Bulharský", "bulharsky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Bulharský", 0, null], ["Anglický", "anglicky", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Anglický", 0, null], ["Ostatné", "ostatne", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Ostatné", 0, null], ["Nezistený", "nezisteny", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Nezistený", 0, null], ["Spolu", "spolu", "Obyvatelia podľa jazyka najčastejšie používaného v domácnosti: Spolu", 0, null]]},
+          {"name": "obyvatelia-podla-nabozenstva-zsj", "item": "631822c9c3104a3c8c66932755849a7c", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20n%C3%A1bo%C5%BEensk%C3%A9ho%20vyznania%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1ch%20-%20anon", "title": "Počet obyvateľov podľa náboženského vyznania v základných sídelných jednotkách", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Rímskokatolícka_cirkev", "rimskokatolicka-cirkev", "Obyvatelia podľa náboženského vyznania: Rímskokatolícka cirkev", 0, null], ["Evanjelická_cirkev_augsburského", "evanjelicka-cirkev-augsburskeho-vyznania", "Obyvatelia podľa náboženského vyznania: Evanjelická cirkev augsburského vyznania", 0, null], ["Gréckokatolícka_cirkev", "greckokatolicka-cirkev", "Obyvatelia podľa náboženského vyznania: Gréckokatolícka cirkev", 0, null], ["Reformovaná_kresťanská_cirkev", "reformovana-krestanska-cirkev", "Obyvatelia podľa náboženského vyznania: Reformovaná kresťanská cirkev", 0, null], ["Pravoslávna_cirkev", "pravoslavna-cirkev", "Obyvatelia podľa náboženského vyznania: Pravoslávna cirkev", 0, null], ["Náboženská_spoločnosť_Jehovovi_", "nabozenska-spolocnost-jehovovi-svedkovia", "Obyvatelia podľa náboženského vyznania: Náboženská spoločnosť Jehovovi svedkovia", 0, null], ["Evanjelická_cirkev_metodistická", "evanjelicka-cirkev-metodisticka", "Obyvatelia podľa náboženského vyznania: Evanjelická cirkev metodistická", 0, null], ["Kresťanské_zbory", "krestanske-zbory", "Obyvatelia podľa náboženského vyznania: Kresťanské zbory", 0, null], ["Apoštolská_cirkev", "apostolska-cirkev", "Obyvatelia podľa náboženského vyznania: Apoštolská cirkev", 0, null], ["Bratská_jednota_baptistov", "bratska-jednota-baptistov", "Obyvatelia podľa náboženského vyznania: Bratská jednota baptistov", 0, null], ["Cirkev_adventistov_siedmeho_dňa", "cirkev-adventistov-siedmeho-dna", "Obyvatelia podľa náboženského vyznania: Cirkev adventistov siedmeho dňa", 0, null], ["Cirkev_bratská", "cirkev-bratska", "Obyvatelia podľa náboženského vyznania: Cirkev bratská", 0, null], ["Ústredný_zväz_židovských_nábože", "ustredny-zvaz-zidovskych-nabozenskych-obci", "Obyvatelia podľa náboženského vyznania: Ústredný zväz židovských náboženských obcí", 0, null], ["Starokatolícka_cirkev", "starokatolicka-cirkev", "Obyvatelia podľa náboženského vyznania: Starokatolícka cirkev", 0, null], ["Cirkev_československá_husitská", "cirkev-ceskoslovenska-husitska", "Obyvatelia podľa náboženského vyznania: Cirkev československá husitská", 0, null], ["Novoapoštolská_cirkev", "novoapostolska-cirkev", "Obyvatelia podľa náboženského vyznania: Novoapoštolská cirkev", 0, null], ["Bahájské_spoločenstvo", "bahajske-spolocenstvo", "Obyvatelia podľa náboženského vyznania: Bahájské spoločenstvo", 0, null], ["Cirkev_Ježiša_Krista_Svätých_ne", "cirkev-jezisa-krista-svatych-neskorsich-dni", "Obyvatelia podľa náboženského vyznania: Cirkev Ježiša Krista Svätých neskorších dní", 0, null], ["Iné", "ine", "Obyvatelia podľa náboženského vyznania: Iné", 0, null], ["Bez_vyznania", "bez-vyznania", "Obyvatelia podľa náboženského vyznania: Bez vyznania", 0, null], ["Nezistené", "nezistene", "Obyvatelia podľa náboženského vyznania: Nezistené", 0, null], ["Spolu", "spolu", "Obyvatelia podľa náboženského vyznania: Spolu", 0, null]]},
+          {"name": "obyvatelia-podla-narodnosti-zsj", "item": "f0611c059abd4149ae998cf28eac1dd0", "path": "Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20n%C3%A1rodnosti%20v%20z%C3%A1kladn%C3%BDch%20s%C3%ADdeln%C3%BDch%20jednotk%C3%A1ch%20-%20anonymizov", "title": "Počet obyvateľov podľa národnosti v základných sídelných jednotkách - anonymizované", "areas": "zsj", "area": "Základná_sídelná_jednotka___kód", "label": "Základná_sídelná_jednotka___náz", "within": "Obec___kód", "fixed": "2021", "values": [["Slovenská", "slovenska", "Obyvatelia podľa národnosti: Slovenská", 0, null], ["Maďarská", "madarska", "Obyvatelia podľa národnosti: Maďarská", 0, null], ["Rómska", "romska", "Obyvatelia podľa národnosti: Rómska", 0, null], ["Rusínska", "rusinska", "Obyvatelia podľa národnosti: Rusínska", 0, null], ["Ukrajinská", "ukrajinska", "Obyvatelia podľa národnosti: Ukrajinská", 0, null], ["Česká", "ceska", "Obyvatelia podľa národnosti: Česká", 0, null], ["Nemecká", "nemecka", "Obyvatelia podľa národnosti: Nemecká", 0, null], ["Poľská", "polska", "Obyvatelia podľa národnosti: Poľská", 0, null], ["Chorvátska", "chorvatska", "Obyvatelia podľa národnosti: Chorvátska", 0, null], ["Srbská", "srbska", "Obyvatelia podľa národnosti: Srbská", 0, null], ["Ruská", "ruska", "Obyvatelia podľa národnosti: Ruská", 0, null], ["Židovská", "zidovska", "Obyvatelia podľa národnosti: Židovská", 0, null], ["Moravská", "moravska", "Obyvatelia podľa národnosti: Moravská", 0, null], ["Bulharská", "bulharska", "Obyvatelia podľa národnosti: Bulharská", 0, null], ["Ostatné", "ostatne", "Obyvatelia podľa národnosti: Ostatné", 0, null], ["Nezistená", "nezistena", "Obyvatelia podľa národnosti: Nezistená", 0, null], ["Spolu", "spolu", "Obyvatelia podľa národnosti: Spolu", 0, null]]}
+        ]
+        let listed = this.services.or([]).map_each(s -> s.name.or(""))
+        let found = $tables.filter(t -> $listed.contains(t.path.unescape_url_query()))
+        let missing = $tables.filter(t -> !$listed.contains(t.path.unescape_url_query())).map_each(t -> t.name)
+        meta missing = $missing.join(", ")
+        root = if content().length() > 1048576 {
+          throw("the hub's list of services is %d bytes, more than the 1 MiB read".format(content().length()))
+        } else if this.error.or(null) != null {
+          throw("the hub refused its list of services: %s".format(this.error.message.or("no reason given")))
+        } else if $found.length() == 0 {
+          throw("the hub lists none of the statistics tables: nothing is written")
+        } else { $found }
+    - switch:
+        - check: '@missing != ""'
+          processors:
+            - log:
+                level: WARN
+                message: 'statistics: the hub no longer lists ${! @missing }, left out of this run'
+    - unarchive: { format: json_array }
+
+    # One table at a time, read in pages of 1,000 rows (the hub's smallest maxRecordCount) until
+    # the hub says no more, at most 20 pages; a table with more fails instead of writing part of
+    # it. The path and the query are the constants above, never text of an answer. A table line
+    # with `group` asks the hub for its sums instead of its rows: one row a group, ordered by the
+    # group so the pages do not overlap.
+    - for_each:
+        - branch:
+            request_map: |
+              meta path = this.path
+              meta query = if this.group.or("") == "" { "where=1%3D1&outFields=*" } else {
+                "where=" + this.where.or("1=1").escape_url_query() +
+                "&groupByFieldsForStatistics=" + this.group.escape_url_query() +
+                "&orderByFields=" + this.group.escape_url_query() +
+                "&outStatistics=" + this.stats.map_each(s -> { "statisticType": s.index(0), "onStatisticField": s.index(1), "outStatisticFieldName": s.index(2) }).format_json(no_indent: true).escape_url_query()
+              }
+              root = { "rows": [], "offset": 0, "more": true }
+            processors:
+              - while:
+                  check: this.more && !errored()
+                  max_loops: 20
+                  processors:
+                    - branch:
+                        request_map: |
+                          meta offset = this.offset.string()
+                          root = ""
+                        processors:
+                          - sleep: { duration: '200ms' }
+                          - http:
+                              url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/${! @path }/FeatureServer/0/query?${! @query }&resultOffset=${! @offset }&resultRecordCount=1000&f=json
+                              verb: GET
+                              headers:
+                                Accept: application/json
+                                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+                              timeout: 30s
+                              retries: 2
+                        result_map: |
+                          root.rows = if content().length() > 4194304 {
+                            throw("the table answer is over 4 MiB")
+                          } else if this.error.or(null) != null {
+                            throw("the hub refused the query: %s".format(this.error.message.or("no reason given")))
+                          } else { root.rows.concat(this.features.or([]).map_each(f -> f.attributes)) }
+                          root.offset = root.offset + 1000
+                          root.more = this.exceededTransferLimit.or(false)
+            result_map: |
+              root.rows = if this.more { throw("the table holds more than 20,000 rows, more than 20 pages") } else { this.rows }
+    # A table the hub refuses is logged and left out of this run; the others still write.
+    - catch:
+        - log: { level: WARN, message: 'statistics: ${! json("name") } not read: ${! error() }' }
+        - mapping: root = deleted()
+    - archive: { format: json_array }
+
+    # Plausibility (owner 2026-10-22T18:10Z): dropped and counted by reason, never guessed at: an
+    # area outside the city; no period; a breakdown cell left empty; a figure that is no number or
+    # lies outside its bounds; one figure twice for the same breakdown, area and period (the first
+    # is kept).
+    - mapping: |
+        # The 17 city districts by their name folded to ASCII, with their ZÚJ code (the
+        # AdministrativeArea id the districts pipeline writes). The hub writes names three ways:
+        # with diacritics, without them and abbreviated ("D. N. Ves", dots dropped: a key with a dot
+        # is a path to `get`); the mosquito table writes č as è and ň as ò (a cp1250 text read as
+        # Latin-1), folded here too, and its 2025 figures with a space between thousands.
+        let districts = {
+          "stare mesto": ["528595", "Staré Mesto"], "podunajske biskupice": ["529311", "Podunajské Biskupice"],
+          "p biskupice": ["529311", "Podunajské Biskupice"], "ruzinov": ["529320", "Ružinov"], "vrakuna": ["529338", "Vrakuňa"],
+          "nove mesto": ["529346", "Nové Mesto"], "raca": ["529354", "Rača"], "vajnory": ["529362", "Vajnory"],
+          "devinska nova ves": ["529371", "Devínska Nová Ves"], "d n ves": ["529371", "Devínska Nová Ves"],
+          "dubravka": ["529389", "Dúbravka"], "karlova ves": ["529397", "Karlova Ves"], "devin": ["529401", "Devín"],
+          "lamac": ["529419", "Lamač"], "zahorska bystrica": ["529427", "Záhorská Bystrica"], "z bystrica": ["529427", "Záhorská Bystrica"],
+          "cunovo": ["529435", "Čunovo"], "jarovce": ["529443", "Jarovce"], "petrzalka": ["529460", "Petržalka"], "rusovce": ["529494", "Rusovce"]
+        }
+        # The five okresy (LAU 1, Bratislava I to V, codes 101 to 105), written in Roman or Arabic
+        # numerals; the city as a whole by its municipality code. A table of the whole region keeps
+        # the Bratislava okresy, a table of Bratislava beside Slovakia the Bratislava rows.
+        let okresy = {
+          "bratislava i": ["101", "Bratislava I"], "bratislava ii": ["102", "Bratislava II"], "bratislava iii": ["103", "Bratislava III"],
+          "bratislava iv": ["104", "Bratislava IV"], "bratislava v": ["105", "Bratislava V"], "bratislava 1": ["101", "Bratislava I"],
+          "bratislava 2": ["102", "Bratislava II"], "bratislava 3": ["103", "Bratislava III"], "bratislava 4": ["104", "Bratislava IV"],
+          "bratislava 5": ["105", "Bratislava V"]
+        }
+        # A table of the region beside Slovakia keeps the region's rows.
+        let kraje = { "bratislavsky kraj": ["sk010", "Bratislavský kraj"] }
+        # A table without an area column ("*") is the city's, and so is its row named after the city.
+        let city = ["582000", "Bratislava"]
+        # A basic settlement unit (ZSJ) by its 7-digit code, named with its city district, kept only
+        # inside one of the 17; a municipality of the region by its name, the hub giving no code.
+        let parts = $districts.values()
+        map fold {
+          root = this.string().lowercase().replace_all_many([
+            "á", "a", "ä", "a", "à", "a", "â", "a", "č", "c", "ç", "c", "ď", "d", "é", "e", "ě", "e", "ë", "e", "í", "i", "ĺ", "l",
+            "ľ", "l", "ň", "n", "ó", "o", "ô", "o", "ö", "o", "ő", "o", "ŕ", "r", "ř", "r", "š", "s", "ť", "t", "ú", "u", "ü", "u",
+            "ű", "u", "ů", "u", "ý", "y", "ž", "z", "è", "c", "ò", "n", ".", ""
+          ]).re_replace_all("\\s+", " ").trim()
+        }
+        map segment {
+          root = this.apply("fold").re_replace_all("[^a-z0-9]+", "-").trim("-")
+        }
+        map number {
+          root = if this == null { null } else { this.string().re_replace_all("[\\s %]", "").replace_all(",", ".").number().catch(null) }
+        }
+        map magnitude {
+          let n = this.apply("number")
+          root = if $n == null { null } else { $n.abs() }
+        }
+        map yearmonth {
+          let y = this.slice(0, 4).number().int64()
+          let m = this.slice(5, 7).number().int64()
+          let february = if $y % 4 == 0 && ($y % 100 != 0 || $y % 400 == 0) { "29" } else { "28" }
+          root = {
+            "from": this + "-01",
+            "to": this + "-" + ["31", $february, "31", "30", "31", "30", "31", "31", "30", "31", "30", "31"].index($m - 1),
+            "slug": this,
+            "label": ["január", "február", "marec", "apríl", "máj", "jún", "júl", "august", "september", "október", "november", "december"].index($m - 1) + " " + $y.string(),
+            "frequency": "monthly"
+          }
+        }
+        map years {
+          let v = this.string().trim()
+          let y = $v.re_find_all("(19|20)[0-9]{2}")
+          root = if $v.re_match("^(19|20)[0-9]{2}$") {
+            { "from": $v + "-01-01", "to": $v + "-12-31", "slug": $v, "label": $v, "frequency": "yearly" }
+          } else if $v.re_match("^(19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2}$") {
+            { "from": $y.index(0) + "-01-01", "to": $y.index(1) + "-12-31", "slug": $y.join("-"), "label": $y.join("–") }
+          } else if $v.re_match("^(19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2} a (19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2}$") {
+            # Two ranges compared ("2017 – 2019 a 2000 – 2002"): the period spans both.
+            {
+              "from": $y.sort().index(0) + "-01-01", "to": $y.sort().index(3) + "-12-31", "slug": $y.join("-"),
+              "label": $y.index(0) + "–" + $y.index(1) + " a " + $y.index(2) + "–" + $y.index(3)
+            }
+          } else if $v.re_match("^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}$") && $v.ts_parse("2006-01-02").catch(null) != null {
+            { "from": $v, "to": $v, "slug": $v, "label": $v, "frequency": "daily" }
+          } else if $v.re_match("^(19|20)[0-9]{2}-(0[1-9]|1[0-2])$") { $v.apply("yearmonth") } else { null }
+        }
+        map quarter {
+          let y = this.index(0)
+          # "3" or the transit table's "3.Q".
+          let q = this.index(1).re_replace_all("^([1-4])\\s*\\.?\\s*[Qq]$", "$1")
+          root = if $y.re_match("^(19|20)[0-9]{2}$") && $q.re_match("^[1-4]$") {
+            {
+              "from": $y + "-" + ["01-01", "04-01", "07-01", "10-01"].index($q.number() - 1),
+              "to": $y + "-" + ["03-31", "06-30", "09-30", "12-31"].index($q.number() - 1),
+              "slug": $y + "-q" + $q,
+              "label": $q + ". štvrťrok " + $y,
+              "frequency": "quarterly"
+            }
+          } else { null }
+        }
+        # A month column holds 1 to 12, with or without a leading zero; anything else is no period.
+        map month {
+          let y = this.index(0)
+          let m = this.index(1).trim_prefix("0")
+          root = if $y.re_match("^(19|20)[0-9]{2}$") && $m.re_match("^([1-9]|1[0-2])$") {
+            {
+              "from": "%s-%02d-01".format($y, $m.number().int64()),
+              "to": "%s-%02d-%s".format($y, $m.number().int64(), if $m == "2" && $y.number().int64() % 4 == 0 && ($y.number().int64() % 100 != 0 || $y.number().int64() % 400 == 0) { "29" } else {
+                ["31", "28", "31", "30", "31", "30", "31", "31", "30", "31", "30", "31"].index($m.number().int64() - 1)
+              }),
+              "slug": "%s-%02d".format($y, $m.number().int64()),
+              "label": "%d/%s".format($m.number().int64(), $y),
+              "frequency": "monthly"
+            }
+          } else { null }
+        }
+        map period {
+          let t = this.table
+          let r = this.row
+          root = if $t.fixed.or("") != "" { $t.fixed.apply("years") }
+            else if $t.spans.or(null) != null { $t.spans.get($r.get($t.year).or("").string().trim()).or("").apply("years") }
+            else if $t.quarter.or("") != "" { [$r.get($t.year).or("").string().trim(), $r.get($t.quarter).or("").string().trim()].apply("quarter") }
+            else if $t.month.or("") != "" { [$r.get($t.year).or("").string().trim(), $r.get($t.month).or("").string().trim()].apply("month") }
+            else { $r.get($t.year).or("").apply("years") }
+        }
+        map areaname {
+          root = if this.table.area.or("") == "" { "*" } else { this.row.get(this.table.area).or("").apply("fold") }
+        }
+        # Each breakdown cell as its id segment and its label; a label read as Latin-1 from cp1250
+        # text ("Raèianska") gets its č and ň back.
+        map breakdown {
+          let r = this.row
+          let labels = this.table.labels.or({})
+          # "Nan" is the hub's word for a category it did not detect: no breakdown.
+          root = this.table.by.or([]).map_each(c -> if c.type() == "string" { { "code": c } } else { c }).map_each(c -> c.assign({
+            "raw": $r.get(c.code).or("").string().trim()
+          })).map_each(c -> c.assign({ "raw": if c.raw.lowercase() == "nan" { "" } else { $labels.get(c.raw).or(c.raw) } })).map_each(c -> {
+            "segment": c.raw.apply("segment"),
+            "label": (if c.name.or("") != "" { $r.get(c.name).or("").string().trim() } else { c.raw }).replace_all_many(["è", "č", "ò", "ň"]),
+            "optional": c.optional.or(false)
+          })
+        }
+        map zsj {
+          let code = this.row.get(this.table.area).or("").string().trim()
+          let name = this.row.get(this.table.label).or("").string().trim()
+          let within = this.row.get(this.table.within).or("").string().trim()
+          let part = this.parts.filter(d -> d.index(0) == $within)
+          root = if $code.re_match("^[0-9]{7}$") && $name != "" && $part.length() > 0 { [$code, $name + " (" + $part.index(0).index(1) + ")"] } else { null }
+        }
+        map obec {
+          let name = this.row.get(this.table.area).or("").string().trim()
+          root = if $name.apply("segment") != "" { [$name.apply("segment"), $name] } else { null }
+        }
+        let cells = this.map_each(t -> t.rows.or([]).filter(r -> if t.only.or(null) == null { true } else {
+          r.get(t.only.index(0)).or("").string().has_prefix(t.only.index(1))
+        }).map_each(r -> t.values.map_each(v -> {
+          "table": t.without("rows", "values"),
+          "value": v,
+          "area": if t.areas == "district" { $districts.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if t.areas == "okres" { $okresy.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if t.areas == "zsj" { { "table": t, "row": r, "parts": $parts }.apply("zsj") }
+            else if t.areas == "obec" { { "table": t, "row": r }.apply("obec") }
+            else if t.areas == "kraj" { $kraje.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if ["*", $city.index(1).lowercase()].contains({ "table": t, "row": r }.apply("areaname")) { $city } else { null },
+          "by": { "table": t, "row": r }.apply("breakdown"),
+          "period": { "table": t, "row": r }.apply("period"),
+          "number": r.get(v.index(0)).apply(if t.abs.or(false) { "magnitude" } else { "number" })
+        }))).flatten().flatten()
+        map reason {
+          let v = this.value
+          root = if this.area == null {
+              { "district": "not a city district", "okres": "not a Bratislava okres", "city": "not Bratislava",
+                "zsj": "not a ZSJ of the city", "obec": "no municipality", "kraj": "not the Bratislava region" }.get(this.table.areas)
+            }
+            else if this.period == null { "no period" }
+            else if this.table.past.or(false) && this.period.from > now().ts_format("2006-01-02") { "in the future" }
+            else if this.by.filter(b -> b.segment == "" && !b.optional).length() > 0 { "no breakdown" }
+            else if this.number == null { "no number" }
+            else if ($v.index(3) != null && this.number < $v.index(3)) || ($v.index(4) != null && this.number > $v.index(4)) { "out of range" }
+            else { null }
+        }
+        let marked = $cells.map_each(c -> c.assign({
+          "_drop": c.apply("reason"),
+          "_id": ([c.table.name, c.value.index(1)].concat(c.by.map_each(b -> b.segment).filter(s -> s != "")).concat([c.area.index(0).or(""), c.period.slug.or("")])).join(".")
+        }))
+        let usable = $marked.filter(c -> c._drop == null)
+        let once = $usable.unique(c -> c._id)
+        let tally = $marked.filter(c -> c._drop != null).fold({}, item -> item.tally.assign({ item.value._drop: item.tally.get(item.value._drop).or(0) + 1 }))
+        let dups = $usable.length() - $once.length()
+        meta dropped = (if $dups > 0 { $tally.assign({ "duplicate": $dups }) } else { $tally }).format_json(no_indent: true)
+        meta kept = $once.length().string()
+        root = if $once.length() == 0 { throw("the statistics tables hold no usable figure: nothing is written") } else { $once }
+    - log:
+        level: INFO
+        message: 'statistics: ${! @kept } figures kept, dropped by reason ${! @dropped }'
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44).
+        let t = this.table
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this._id),
+          "type": "KeyPerformanceIndicator",
+          "name": { "type": "Property", "value": ([this.value.index(2)].concat(this.by.map_each(b -> b.label).filter(l -> l != "")).concat([this.area.index(1), this.period.label])).join(", ") },
+          "description": { "type": "Property", "value": $t.title },
+          "process": { "type": "Property", "value": this.value.index(2) },
+          "category": { "type": "Property", "value": ["quantitative"] },
+          "kpiValue": { "type": "Property", "value": this.number },
+          "calculationPeriod": { "type": "Property", "value": { "from": this.period.from, "to": this.period.to } },
+          # Smart Data Models names hourly to yearly; a period of several years carries none.
+          "calculationFrequency": if this.period.frequency.or("") == "" { null } else { { "type": "Property", "value": this.period.frequency } },
+          "area": { "type": "Property", "value": this.area.index(1) },
+          "organization": { "type": "Property", "value": "Hlavné mesto SR Bratislava" },
+          "dataProvider": { "type": "Property", "value": "Hlavné mesto SR Bratislava, data.bratislava.sk (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://data.bratislava.sk/datasets/" + $t.item }
+        }
+        root = root.filter(entry -> entry.value != null)
+
+    - split: { size: 500 }
+    - archive: { format: json_array }

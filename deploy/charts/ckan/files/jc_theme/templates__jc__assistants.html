@@ -1,0 +1,63 @@
+{% extends "page.html" %}
+
+{# "Use it in your AI assistant" (T-4585, T-4628, T-4634, T-4643), for a citizen or a clerk: one
+   card per assistant whose app takes our connector, ChatGPT, Claude, Grok and Gemini behind its flag (off since
+   T-4735), each its logo, its name and one link to our guide, which the whole card opens; no store
+   link, since no directory lists the connector yet (T-4735). The address the guides paste stands once under the
+   cards, as text a person without script selects by hand. Everything for developers (Claude Code,
+   the editors, any MCP client) folds away at the end, closed. #}
+{% set page = h.jc_assistants() %}
+
+{% block subtitle %}{{ h.jc_t('assistants') }}{% endblock %}
+
+{% block breadcrumb_content %}
+  <li class="active"><a href="{{ h.url_for('jc_pages.assistants') }}">{{ h.jc_t('assistants') }}</a></li>
+{% endblock %}
+
+{% block primary %}
+  <div class="primary col-12" role="main"><article class="module-content jc-page jc-assistants">
+    <h1 class="page-heading">{{ h.jc_t('assistants') }}</h1>
+    {% if page %}
+      <p>{{ page.lead }}</p>
+      <p class="jc-connector-status">{{ h.jc_t('connector_status') }}</p>
+      {% with prompt = page.prompt %}{% include "jc/connector_note.html" %}{% endwith %}
+      <ul class="jc-assistant-cards">
+        {% for card in page.cards %}
+          <li class="jc-assistant-card">
+            <h2 id="jc-card-{{ card.id }}">{% include card.logo %}{{ card.name }}</h2>
+            <p class="jc-card-links">
+              <a class="jc-card-link" href="{{ h.url_for('jc_pages.guide', id=card.id) }}" aria-describedby="jc-card-{{ card.id }}">{{ card.guide_label }}</a>
+            </p>
+          </li>
+        {% endfor %}
+      </ul>
+      <p class="jc-store-address">{{ h.jc_t('store_address') }}
+        <span id="jc-store-url" class="jc-store-url">{{ page.mcp.url_parts | join('<wbr>' | safe) }}</span>
+        <button type="button" class="btn btn-default" data-jc-copy="jc-store-url" data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}"><span class="jc-code-copy-label">{{ h.jc_t('copy') }}</span></button>
+      </p>
+      <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
+      {% if page.sources %}
+        {# T-4659: the websites the connector's search_documents reads, so a visitor sees what it covers. #}
+        <section class="jc-assistant-sources" aria-labelledby="jc-assistant-sources">
+          <h2 id="jc-assistant-sources">{{ h.jc_t('assistants_sources') }}</h2>
+          <p>{{ h.jc_t('assistants_sources_lead') }}</p>
+          <ul>
+            {% for source in page.sources %}
+              <li><a href="{{ source.url }}" rel="noopener noreferrer">{{ source.site }}</a>
+                <span class="jc-source-publisher">{{ source.publisher }}</span>
+                <span class="jc-source-languages">{{ h.jc_t('assistants_source_languages') }}: {{ source.languages }}</span></li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
+      <details class="jc-developers">
+        <summary>{{ h.jc_t('for_developers') }}</summary>
+        {% snippet 'snippets/jc_mcp_install.html', editors_only=True, live=True %}
+      </details>
+    {% else %}
+      <p class="jc-empty">{{ h.jc_t('coming_soon') }}</p>
+    {% endif %}
+  </article></div>
+{% endblock %}
+
+{% block secondary %}{% endblock %}

@@ -1,0 +1,301 @@
+---
+context-broker:
+  broker:
+    # The public release (owner order 2026-10-06, T-3068): v0.1.2, cosign-verified keyless as
+    # joinedcontext/Antares-NGSI-LD-Context-Broker full.yml@refs/tags/v0.1.2. Its migrations
+    # run forward only; the database was dumped first (pg_dump -Fc, 3.5 GB, 2026-10-07, in
+    # postgres-cluster-1:/var/lib/postgresql/data/t3068/). Rollback: dev-173
+    # (ghcr.io/marek-mraz/antares-broker@sha256:a3a3431976b1bb6fd26f43630a120d19a3961d6c5445d81e04bce404eed712d4)
+    # and that dump restored.
+    #
+    # The jc build (T-3642, Antares T-3636): the same broker with FEATURES=full,jc-policy (views,
+    # MCP, OData, WebSocket and the joinedcontext policy engine), from Antares dev 8bd85c5 by
+    # image-jc.yml run 38141581298, cosign-signed keyless by that workflow, SBOM attested. Its
+    # one new migration over v0.1.2 is 0008_views.sql, a new table only, so the rollback to
+    # 0.1.2 above needs no restore.
+    # Antares dev 6770b73 (image-jc green 2026-10-12T00:35Z): x-jc-did names a data-space
+    # participant (T-3809), which the gateway's broker-view MCP needs (T-3647); no new migration
+    # over 5ed3183.
+    # Its FEATURES are full,jc-policy,linkml: the LinkML surface ANTARES_API_SURFACES mounts (T-3804).
+    # Antares dev eb30b4f (image-jc run 38201052761 green 2026-10-12): the broker refuses
+    # private egress except the hosts ANTARES_EGRESS_PRIVATE_HOSTS names (T-3908, T-3909); no
+    # new migration over 6770b73.
+    # Antares dev e6484ba (train 20261012-1042): per (tenant, type) retention of current state and
+    # history under /q/retention, deleted in bounded batches (T-3900), with T-4003 T-4019 T-3786
+    # T-3933/34 T-3936 T-3948 T-3980 T-4021 T-4034; no new migration over eb30b4f.
+    # Antares dev 058db12 (train 20261012-1301): T-3956 T-3880 T-4009 T-3805 T-4030 T-4031 T-4018;
+    # no new migration and no new ANTARES_* key over e6484ba.
+    # Antares dev 2a48c7a (train 20261012-1619): the notifier's steps get 60 s deadlines, so one
+    # stuck delivery no longer stops every notification (T-4102, T-4084), access/explain for the
+    # gateway (T-3881), T-4079 T-4083; no new migration or ANTARES_* key over 058db12.
+    # Antares dev c9df233: tenant move (T-4001, T-4016), T-4057, T-4118; no new migration or
+    # runtime ANTARES_* key over 2a48c7a.
+    # Antares dev f248288: view all, Accept precedence and LdContext (T-3947); no new migration
+    # or ANTARES_* key over c9df233.
+    # Antares dev d335893: each subscription delivers on its own lane, so a hung endpoint no
+    # longer stalls matching (T-4086); rumqttc vendored, vendor/ copied before cargo chef (T-4129);
+    # no new migration or runtime ANTARES_* key over f248288.
+    # Antares dev e25ec9c (train 20261013-0011): retention sets the rule's tenant, so the history
+    # sweep deletes under the broker's RLS-bound role (T-3900); upsert through a view in one read
+    # (T-4085); OGC Part 3 CQL2 and items through the view scan (T-3745, T-3759); no new
+    # migration or runtime ANTARES_* key over d335893.
+    # Antares dev 79be5ab (train 20261013-0509): T-4020 T-3715 T-3946 T-3747 T-3822 T-4133 T-3752
+    # (OGC collections from the view's LinkML, fan-out 1011/503, view-all contexts); no new
+    # migration or runtime ANTARES_* key over d032654.
+    # Antares dev c0be313 (trains 20261013-0555, -0704, -1004): T-3645 T-3912 T-3959 T-3773 T-3945
+    # T-3817 T-3937 T-3831 T-3985 T-4017 T-3962; no new migration or runtime ANTARES_* key over 79be5ab.
+    repository: 'ghcr.io/marek-mraz-jc/antares-broker-jc'
+    # Antares dev cc368be (train 20261016-0506 T-4258 MCP tools); no new migration or runtime
+    # ANTARES_* key over b2ba711.
+    # Antares dev 7535b90 (T-4246 T-4250 T-4272 T-4275 T-4310 T-4298): migration 0009 adds one
+    # constant-default column to temporal_entities (catalog only, T-4310); schema and
+    # temporal_entities dumped before the apply (t4310/ on the postgres volume). No new runtime
+    # ANTARES_* key over cc368be.
+    # Antares dev 7ff20d6 (trains to 20261018-0050, T-4543 and 85 commits over 7535b90): Subscriptions
+    # made over a socket are leased (ANTARES_WS_SUBSCRIPTION_LEASE_SECS, default 121) and swept, so
+    # a closed socket or a dead gateway leaves none behind. No migration over 7535b90.
+    # Antares dev ac45ec0 (train 20261018-0230, T-4549): a byte budget over the delivery lanes
+    # (ANTARES_DELIVERY_LANE_BYTES, default 256 MiB), the fix for the OOMKills at 1536Mi on dev
+    # 2026-10-17/18. No migration over 7ff20d6.
+    # Antares dev 6fded37 (train 20261018-0325, T-4480 T-4464 T-4486 T-4507): MCP unit labels, per-type
+    # query guide, temporal dedup on write (ANTARES_TEMPORAL_DEDUP, default on). No migration over ac45ec0.
+    # Antares dev 4bdbbc8 (train 20261018-0521, T-4455 T-4462 T-4537): per-type decision on multi-type
+    # view reads, the SensorThings surface (served with `sta` in ANTARES_API_SURFACES), describe_type.
+    # No migration and no new runtime ANTARES_* key over 6fded37.
+    # Antares dev e67f07f (train 20261018-0754, T-4562 T-4564): batch writes admitted under an in-flight
+    # byte budget (ANTARES_BATCH_INFLIGHT_BYTES, default 4 MiB, 503 + Retry-After past it), delivery
+    # lanes 128 MiB, paged /types and /attributes details. No migration over 4bdbbc8.
+    # Antares dev 4a42248 (train 20261018-1009, T-4494 and 22 commits over e67f07f): one Query Entities
+    # across many views (/x/views/_union, ANTARES_UNION_MAX_VIEWS), OGC file writers bounded by
+    # ANTARES_EXPORT_FILES (503 past it), the NGSI-LD primer as MCP instructions. No migration
+    # over e67f07f. (9d7a594, with T-4610, failed its ETSI image gate and was not pushed.)
+    # Antares dev b1def0c (trains to 20261018-1311, T-4414 T-4610 T-4477 T-2890 T-4487 and 23
+    # commits over 4a42248): layered history retention (ANTARES_RETENTION_HISTORY_DEFAULT, P28D in
+    # base values, owner 2026-10-18), expiry takes history (DM-97). Migration 0010 is one partial
+    # index on entities, a scan of current state only, never of attr_instances.
+    # Antares dev 8e2a24c (T-4624 T-4532 over b1def0c): batch writes take at most
+    # ANTARES_BATCH_INFLIGHT (default 8) of the pool, so reads keep the rest. No migration.
+    # Antares dev aa47684 (train 20261018-2259, T-4672 over 8e2a24c): LinkML slots carry rank and
+    # title, which the T-4672 seeds already write; 8e2a24c closed the LinkML and OGC surface of
+    # every view whose model has them (prod smoke 81/8, 2026-10-19). linkml-model only, no migration.
+    # Antares dev deceaf1 (train 0825-1, T-4669 T-4721 and 27 commits over aa47684), the first ship
+    # image (dev-3, ship.yml@refs/heads/dev): migration 0011 adds attr_instances.version (constant
+    # default) and provenance and the attr_versions table; 0012 adds entity_types with its triggers,
+    # two indexes on entities (first type, partial GIN over multi-typed) and one backfill scan.
+    # New keys ANTARES_HISTORY_BACKFILL (default off), ANTARES_PROVENANCE_FROM (unset: channel api)
+    # and ANTARES_SUMMARY_* (MCP summarize budgets, defaults in code).
+    # Antares dev 919dce7 (dev-6, ship 39255876184, trains 1045-1 T-4683 and 1228-1 T-4736 over
+    # deceaf1): /types?details=true reads each Entity once by a keyset walk (100k pg 1.5 s against
+    # about 10 s); the types timing test asserts the probe plan. No migration.
+    # Antares dev 5e18030 (dev-7, train 1239-1 T-4722 over 919dce7): OData route.rs dispatches
+    # $apply, OGC terms/crs modules moved, xray gate runs under bash. No migration.
+    # Antares dev b6013fd (dev-8, train 1623 T-4669 over 5e18030): the temporal dedup reads the
+    # newest stored row only, not the attribute's whole history. No migration.
+    # Antares dev c51c56e (dev-9, train 1859 T-4669 T-4753 over b6013fd): entity writes lock FOR NO
+    # KEY UPDATE, so history appends stop lock-timing out; writes take the union of holding view
+    # rules. No migration.
+    # Antares dev a8e8129 (dev-10, train 1913 T-4755 over c51c56e): one filter path; a socket's own
+    # Subscription is decided as Query Entities (ADR-0026 rule 4). No migration.
+    # Antares dev dfbd3ad (dev-11, train 2242 T-4781 over a8e8129): the type page reads through
+    # two leakproof index arms. Migration 0013 builds i_entities_first_type_id and
+    # i_entities_multi_type_id (plain CREATE INDEX, writes wait) and drops i_entities_first_type:
+    # roll it with the broker scaled to 0 so no old pod holds a write against the build.
+    # Antares dev a53c40c (dev-12, train 0039 T-4773 T-4778 over dfbd3ad): antares-api split into
+    # router/ops/notify modules (no logic change), SQL injection and RLS mutant-killing tests. No
+    # migration.
+    # Antares dev 2fb7fae (dev-13, T-4794 over a53c40c): temporal.rs only, with history, erasure
+    # and temporal-window tests. No migration.
+    # Antares dev ec5be07 (dev-14, T-4803 over 2fb7fae): linkml-model keeps permissible-value
+    # annotations, so the schema PUT of T-4803's model-tools carries sk enum labels. No migration.
+    # Antares dev 6230e20 (dev-15, T-4800 over ec5be07): temporal values and entity pages up to
+    # 1,000 (ANTARES_TEMPORAL_INSTANCE_LIMIT / ANTARES_MAX_LIMIT), MCP names "more" and the
+    # hourly aggregation. No migration.
+    # Antares dev 0109b05 (dev-16, T-4804 over 6230e20): entity pages without limit and temporal
+    # reads without lastN answer 100; the ceilings stay 1,000; /q/health publishes the limits.
+    # No migration.
+    # Antares dev 53ab566 (dev-17, train 1838 T-4837 with T-4823's e110589 over 0109b05): every
+    # write path takes the entity members (expiresAt among them) out of the Attribute names a view
+    # judges, so a pipeline's expiresAt is no longer refused through an endpoint view; Attribute
+    # expiresAt through views and the sweep's prune. Migration 0014 adds entities.attrs_expire_at,
+    # a plain CREATE INDEX (writes wait) and a per-Tenant backfill: roll it with the broker scaled
+    # to 0, as 0013. Rollback: dev-16 (0014 only adds a column and an index).
+    # Antares dev 58f5347 (dev-19, trains 0800 and 1352: T-4852 T-4855 T-4906 T-4916 T-4978 and others
+    # over 53ab566): history retention drops whole weekly partitions (T-4906), RLS index paths. Migration
+    # 0015 adds a STORED generated column to entities (a full rewrite, 4 GB on dev) and plain indexes:
+    # rolled with the broker at 0 in an announced window. Rollback: dev-17 (0015 only adds a column, a
+    # function and indexes). Signed by ship.yml on dev at 58f5347.
+    # Antares dev 3c43f32 (dev-24, trains 2025-1 and 2049: T-5050 vehicle batch write path, T-5056 history
+    # opt-in, T-5063, T-4926): migration 0016 is CREATE STATISTICS only (no rewrite, no window). The image
+    # knows ANTARES_TEMPORAL_RECORD=ruled and ANTARES_PG_BATCH_ASYNC_COMMIT, set in base-values in this same
+    # commit. Rollback: dev-19 with both keys removed. Signed by ship.yml on dev at 3c43f32.
+    # Antares dev 2cbf46f (dev-27, trains 2117, 2305 and 0017: T-5157 onChange judges late instances so retried
+    # Vehicle batches stop writing a row per ~4.5 s, and the retention sweep runs what waited longest first with
+    # 5 s per delete statement; T-5062 T-5088 T-5099 T-5105 T-5121): no migration, no new runtime key.
+    # Rollback: dev-24. Signed by ship.yml on dev at 2cbf46f.
+    # Antares dev 5337d72 (dev-30, trains 0147, 0151 and 0313 over 2cbf46f: T-5167 an attribute whose type changes
+    # replaces its instance, so no value sits beside a languageMap; T-5095 the image knows ANTARES_METRICS_PORT
+    # (unset here, metrics stay on the API port until T-5095's deployment half); T-4918 docs, T-5105 tests).
+    # No migration. Rollback: dev-27. Signed by ship.yml on dev at 5337d72.
+    # Antares dev 5dea7dd (dev-32, trains 0427 and 0508 over 5337d72: T-5057 one history btree; migration 0017 is a
+    # no-op on a database with history, the maintenance job builds {partition}_u_time CONCURRENTLY and swaps
+    # per partition, ~7.6 GB a week until the swap (dev disk 56 % at the pin); T-4919 ordered OData reads).
+    # Rollback: dev-30 (0017 rollback compatible). Signed by ship.yml on dev at 5dea7dd.
+    # Antares dev 27d8e07 (dev-35, trains 0552, 0552-2 and 0730 over 5dea7dd: T-5100 OGC history collections, T-4921
+    # WebSocket hub fan-out and notification throttle, T-4920 T-5092 T-5190 tests/docs/CI). No migration, no new
+    # runtime key. Rollback: dev-32. Signed by ship.yml on dev at 27d8e07.
+    # Antares dev 4e68f99 (dev-36, train 0709 over 27d8e07: T-5157 a retention step that fails rests and halves its
+    # batch, slow steps are logged). No migration, no new runtime key. Rollback: dev-35. Signed by ship.yml on dev at 4e68f99.
+    # Antares dev 2acd15b (dev-37, over 4e68f99: T-5136 typed location paths under RLS). Migration 0018 adds two
+    # btree indexes on entities without CONCURRENTLY (591 074 rows, 1.7 GB on dev: seconds of write lock); pooled sessions
+    # set max_parallel_workers_per_gather=0. Rollback: dev-36 (0018 rollback compatible). Signed by ship.yml on dev at 2acd15b.
+    # Antares dev 73f3d24 (dev-39, over 2acd15b: T-5207 versioned mapping contracts, T-5202 the feed surface, built with
+    # FEATURES ...,ical,feed so ANTARES_API_SURFACES may name feed; T-5211 T-5198 CI). No migration, no new runtime key.
+    # Rollback: dev-37 (only while ANTARES_API_SURFACES does not name feed). Signed by ship.yml on dev at 73f3d24.
+    # Antares dev 5ed44bf (dev-42, over 73f3d24: T-5234 fat LTO, T-5131 T-5193 history ids and entity indexes, T-5204
+    # HEAD Content-Length, T-5205 STA Thing/properties/type filter, T-5206; same FEATURES ...,ical,feed). Migration 0019
+    # drops the unused GIN i_entities_jsonb (no data). No new runtime key. Rollback: dev-39 (0019 rollback compatible).
+    # Signed by ship.yml on dev at 5ed44bf (dispatched run 39834395804; the train push started no run).
+    # Antares dev f945ccb (dev-43, over 5ed44bf: T-5169 OGC id filters lowered to the id list, T-5333 OData Untyped
+    # Property filterable; same FEATURES). No migration, no new runtime key. Rollback: dev-42. Signed by ship.yml on dev at f945ccb.
+    # Antares dev 4b73e52 (dev-44, over f945ccb: T-5246, T-5157, T-5200, T-5134, T-5279 area_overview; same FEATURES).
+    # Migration 0020 adds empty iri_ids, attr_rows and history_cutover (NULL), rollback compatible. New runtime keys
+    # ANTARES_SUMMARY_CONCURRENCY/_MAX_BYTES keep their defaults (not set here). Rollback: dev-43. Signed by ship.yml on dev at 4b73e52.
+    # Antares dev 18dd4c2 (dev-45, over 4b73e52: T-5361 provenance actor percent-decoded, writtenAt per history row; same
+    # FEATURES). No migration, no new runtime key. Rollback: dev-44. Signed by ship.yml on dev at 18dd4c2.
+    # Antares dev 6930e9c (dev-46, over 18dd4c2: T-5362 audit mode for shared spaces, broker half; same FEATURES).
+    # No migration, no new runtime key. Rollback: dev-45. Signed by ship.yml on dev at 6930e9c.
+    # Antares dev c0643c9 (dev-47, over 6930e9c: T-5349 STA name filter via name_key, T-5159 WS fan-out bookkeeping
+    # per drain; same FEATURES). Migration 0021 adds generated entities.name_key and rewrites entities under ACCESS
+    # EXCLUSIVE: the broker stalls during the apply. No new runtime key. Rollback: dev-46 (0021 rollback = compatible). Signed by
+    # ship.yml on dev at c0643c9.
+    # Antares dev cc87f2e (dev-49, over c0643c9: T-5243 iri_no PL/pgSQL, T-5249 short history unlogged, T-5208, T-5304,
+    # T-5443, T-5245/T-3700 ws test fixes, c148135 feed surface built in). Migration 0022 replaces iri_no (compatible);
+    # 0023 (breaking) turns attr_rows into a LIST(short) parent over attr_rows_long and the UNLOGGED attr_rows_short: on dev
+    # attr_rows holds one child of 16 kB (2026-10-23T15:18Z), so it runs in moments; Recreate (2a531a7) stops the old
+    # release first. No new runtime key. Rollback: dev-47 plus a restore (0023 is breaking). Signed by ship.yml on dev at cc87f2e.
+    # Antares dev 55aa715 (dev-67, over cc87f2e: T-5501 views digest, T-5303 entity_values, T-4934 attribute catalogue,
+    # 20688b81 views access/attributes (T-5750), T-5700 guard bypasses, T-5661 T-5502 T-5726; same FEATURES). Migrations
+    # 0024 (entity_values + backfill: ~18M rows from 1.41M entities on dev, writes wait until it commits), 0025
+    # (entity_attrs), 0026 (views digest generated column), all rollback = "compatible". New runtime keys keep their
+    # defaults (none set here). Rollback: dev-49. Signed by ship.yml on dev at 55aa715 (run of 2026-10-26T03:20Z).
+    # Antares dev 6a2e3d5 (dev-71, over 55aa715: T-5747, T-5704, T-5738; same FEATURES). No migration, no new runtime
+    # key. Rollback: dev-67. Signed by ship.yml on dev at 6a2e3d5 (run 40280827268).
+    # Antares dev ae822e8 (dev-73, over 6a2e3d5: T-5661 id-prefix probes by byte range; same FEATURES). Migration
+    # 0027 (CREATE INDEX i_entities_id_bytes, blocks entity writes seconds per million rows), rollback = "compatible";
+    # no new runtime key. Rollback: dev-71. Signed by ship.yml on dev at ae822e8 (run 40310437461).
+    # Antares dev 93c3bbc (dev-77, over ae822e8: T-5787 view id-prefix ranges for the Bratislava KPI datasets, T-5777
+    # temporal window caps, lastN newest rows, F-ANT1 MCP fixes, request memory bounds, zstd for RUSTSEC-2026-0391/0398/
+    # 0403/0410 (T-5793); same FEATURES). Migration 0028 (ADD COLUMN temporal_entities.offset_until with a stable
+    # default: catalog only, no rewrite), rollback = "compatible". New runtime key ANTARES_WS_QUEUE_BYTES keeps its
+    # default. Rollback: dev-73. Signed by ship.yml on dev at 93c3bbc (run 40379008655).
+    # Antares dev 2535495 (dev-80, over 93c3bbc: T-5826 a dataset view counted in the store by its translatable
+    # idPattern, T-5827 a masked receiverInfo no longer follows a new endpoint uri, T-5816 MCP decision page, T-5805
+    # comma ids; same FEATURES). No migration. New runtime key ANTARES_MCP_CONFIRM_URL stays unset (default).
+    # Rollback: dev-77. Signed by ship.yml on dev at 2535495 (run 40433810842).
+    # Antares dev 70486ab (dev-82, over 2535495: T-5835 OGC history reads drop an attrs list past half the URI cap,
+    # T-5657 batch upsert update mode replaces each named attribute whole; same FEATURES). No migration, no new key.
+    # Rollback: dev-80. Signed by ship.yml on dev at 70486ab (run 40441664675).
+    # Antares dev 31f3465 (dev-84, over 70486ab: T-5842 a prohibition naming attributes takes back only those,
+    # T-5826 Rule idPatterns bind as regexp_like (ordered id range scan), T-5838 receiverInfo sealed at rest under
+    # ANTARES_SECRET_KEY; same FEATURES). No migration. New runtime key ANTARES_SECRET_KEY stays unset here (boot
+    # warns, receiverInfo stays plaintext) until T-5839 part 0 adds it. Rollback: dev-82. Signed by ship.yml on dev
+    # at 31f3465 (run 40455113093).
+    # Antares dev e48eaf3 (dev-85, over 31f3465: T-5843 a sealed credential opens inside its decoded buffer, no copy;
+    # same FEATURES). No migration, no new key. Rollback: dev-84. Signed by ship.yml on dev at e48eaf3 (run 40459890393).
+    # Antares dev bcb9082 (dev-86, over e48eaf3: T-5847 gzip/br response compression on the served router; same
+    # FEATURES). No migration, no new key. Needs the gateway at platform >= fc27d53 (asks for plain bytes). Rollback: dev-85.
+    # Signed by ship.yml on dev at bcb9082 (run 40502309689).
+    # Antares dev 0e5bc9a (dev-87, over bcb9082: T-5849 br quality 2, gzip level 1, 1 KiB minimum; same FEATURES).
+    # No migration, no new key. The gateway asks for plain bytes since fc27d53 (live). Rollback: dev-86.
+    # Signed by ship.yml on dev at 0e5bc9a (run 40513043812).
+    # Antares dev d43ac52 (dev-88, over 0e5bc9a: T-5859 vendored rumqttc reads PEM with rustls-pki-types, rustls-pemfile
+    # and its RUSTSEC-2025-0134 ignore gone; T-5858 compose only). No migration, no new key. Rollback: dev-87.
+    # Signed by ship.yml on dev at d43ac52 (run 40557136916).
+    # Antares dev d81a193 (dev-89, over d43ac52: T-4937 batch admission clock on web_time for wasm32; the native
+    # broker keeps std Instant; same FEATURES). No migration, no new key. Rollback: dev-88.
+    # Signed by ship.yml on dev at d81a193 (run 40606467553).
+    # Antares dev daeea7d (dev-90, over d81a193: T-5835 temporal history pages through the split-rule union, so a
+    # wide type list no longer 414s; same FEATURES). No migration, no new key. Rollback: dev-89.
+    # Signed by ship.yml on dev at daeea7d (run 40620036936).
+    # Antares dev a376b65 (dev-91, over daeea7d: T-5894 merged @context cache bounded at 64 MiB of heap instead of
+    # 2 million terms; same FEATURES). No migration, no new key. Rollback: dev-90.
+    # Signed by ship.yml on dev at a376b65 (run 40646951161).
+    # Antares dev c9c3a1e (dev-99, over a376b65: trains 20261028-1049..2133, T-5895 T-5896 T-5904 T-5913 T-5898
+    # T-5916 T-5909 T-5912 T-5935 T-5936 T-5918 T-5919 T-5905 T-5906 T-5933 T-5907 T-5955; the joinedcontext
+    # engine refuses every write of an x-jc-read-only caller; same FEATURES). No migration; new optional keys
+    # ANTARES_MEMORY_BUDGET, ANTARES_SCHEMA_WRITES, ANTARES_VIEW_IDLE keep their defaults. Rollback: dev-91.
+    # Signed by ship.yml on dev at c9c3a1e (run 40780917799).
+    # Antares dev a48423e (dev-101, over c9c3a1e: trains 20261028-2239..20261029-0326, T-5933 T-5991 T-6000 T-6017:
+    # pool slots freed after a failed release ping over TLS, zip 9.0.5 for CVE-2026-115905; same FEATURES).
+    # No migration, no new key. Rollback: dev-99.
+    # Signed by ship.yml on dev at a48423e (run 40817974367).
+    # Antares dev 7375b1c (dev-113, over a48423e: 33 train merges, T-5396 T-5616 T-5772 T-5835 T-5889 T-5911
+    # T-6001 T-6021 T-6034..T-6036 T-6046 T-6049 T-6052 T-6055 T-6056 T-6066 T-6070 T-6072 T-6074 T-6085 T-6100).
+    # Migrations 0029 (entity_values update trigger writes the difference; function only) and 0030
+    # (temporal_entities.bare, constant default, catalog only). Schema and temporal_entities dumped before the
+    # apply (t5835/ on the postgres volume, 20261029T2315Z). No new runtime key (ANTARES_POLICY_SUBJECT_HEADERS
+    # is already set). Rollback: dev-101 (the store ignores missing migrations) and that dump restored.
+    # Signed by ship.yml on dev at 7375b1c (run 40955556681).
+    # Antares dev 9d1f190 (dev-117, over 7375b1c: trains T-6143 T-6151 T-6159 T-6182): liveness /q/health answers
+    # 503 STORE_WEDGED after 300 s of a fully held pool while a fresh connection works (T-6182), the big-tenant
+    # size estimate when the exact scan fails (T-6159). No migration, no new runtime key. Rollback: dev-113.
+    # Antares dev 13dc5d9 (dev-118, over 9d1f190: train T-6204): the tenant size estimate falls back to the entity
+    # count when the split by type passes its bound. No migration, no new runtime key. Rollback: dev-117.
+    # Antares dev 49924e5 (dev-120, over 13dc5d9: trains T-6211 T-6212): per-type write grants, the subscriber's
+    # context on notify checks, trust headers dropped on forwards, keyset sweep (T-6211); the confirmed
+    # fixes of review R2ANT2 (T-6212). No migration, no new runtime key. Rollback: dev-118.
+    # Antares dev 35d8f61 (dev-122, over 49924e5: trains T-6213 R2ANT3 and T-6214 R2ANT4 review fixes in sql,
+    # ops, store, notifier, ws, odata and cql2). No migration, no new runtime key. Rollback: dev-120.
+    # Antares dev 84e5915 (dev-127, over a9a9299: T-6276 MCP query tools take limit 0 with count and pick/omit id and type;
+    # T-6312 attribute write judgement bound only where views reads it (each feature alone builds again);
+    # T-6277 Q count test warm-up). No migration, no new runtime key. Rollback: dev-124.
+    # Signed by ship.yml on dev at 84e5915 (run 41288339133).
+    # Antares dev 05a4a8a (dev-128, over 84e5915: T-6327). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-127. Signed by ship.yml on dev at 05a4a8a (run 41299390776).
+    # Antares dev 937158c (dev-129, over 05a4a8a: T-6332). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-128. Signed by ship.yml on dev at 937158c (run 41307823489).
+    # Antares dev de08327 (dev-130, over 937158c: T-6337 audit rows keep their own retention). No migration file;
+    # new runtime key ANTARES_RETENTION_AUDIT with default P2Y, so the deployment sets nothing; the broker builds an
+    # observed_at index CONCURRENTLY at start and gives up after 10 s. Rollback: dev-129. Hand pin (new key).
+    # Signed by ship.yml on dev at de08327 (run 41310288042).
+    # Antares dev ef22d76 (dev-131, over de08327: T-6338). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-130. Signed by ship.yml on dev at ef22d76 (run 41312558844).
+    # Antares dev 6efd24e (dev-132, over ef22d76: T-6342). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-131. Signed by ship.yml on dev at 6efd24e (run 41322778520).
+    # Antares dev 859855f (dev-133, over 6efd24e: T-6346). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-132. Signed by ship.yml on dev at 859855f (run 41325285429).
+    # Antares dev f783f19 (dev-134, over 859855f: T-6351). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-133. Signed by ship.yml on dev at f783f19 (run 41330805130).
+    # Antares dev eeb2636 (dev-135, over f783f19: T-6355, T-6356, T-6371). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-134. Signed by ship.yml on dev at eeb2636 (run 41360875743).
+    # Antares dev b46464f (dev-136, over eeb2636: T-6419). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-135. Signed by ship.yml on dev at b46464f (run 41395225148).
+    # Antares dev f31d852 (dev-137, over b46464f: T-6432). Migration 0031 (DROP POLICY tenant_update ON attr_versions,
+    # rollback compatible). New key ANTARES_POLICY_SUBJECT_FROM: unset keeps today's behaviour, T-6433 sets it.
+    # Hand pin. Rollback: dev-136. Signed by ship.yml on dev at f31d852 (run 41432030286).
+    # Antares dev f2291c5 (dev-138, over f31d852: T-6371). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-137. Signed by ship.yml on dev at f2291c5 (run 41470809179).
+    # Antares dev 4386508 (dev-139, over f2291c5: T-6497, T-6499). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-138. Signed by ship.yml on dev at 4386508 (run 41535007202).
+    # Antares dev dc1da08 (dev-140, over 4386508: T-6508). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-139. Signed by ship.yml on dev at dc1da08 (run 41549943302).
+    # Antares dev 4cab024 (dev-141, over dc1da08: T-6591, T-6592). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-140. Signed by ship.yml on dev at 4cab024 (run 42000103963).
+    # Antares dev b683bfc (dev-142, over 4cab024: T-6596). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-141. Signed by ship.yml on dev at b683bfc (run 42008477046).
+    # Antares dev a8ff4dc (dev-150, over b683bfc: T-6508, T-6605, T-6606, T-6608, T-6609, T-6610, T-6611, T-6612, T-6614, T-6618, T-6619, T-6621, T-6628, T-6631, T-6642, T-6657, T-6660, T-6666, T-6677, T-6679, T-6681, T-6691). Hand pin (T-6690): migration
+    # 0032 scope rows, backfilled per Tenant under FORCE RLS since T-6610; dev schema at 31, no 32 applied; no new runtime key.
+    # Rollback: dev-142 (0032 is "compatible" in Antares migrations.rollback.toml). Signed by ship.yml on dev at a8ff4dc (run 42547141334).
+    # Antares dev fb0ef76 (dev-151, over a8ff4dc: T-6701). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-150. Signed by ship.yml on dev at fb0ef76 (run 42689647357).
+    # Antares dev fe9c016 (dev-152, over fb0ef76: T-6702, T-6703). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-151. Signed by ship.yml on dev at fe9c016 (run 42723273641).
+    # Antares dev 29c3fb6 (dev-153, over fe9c016: T-6659, T-6773, T-6792). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-152. Signed by ship.yml on dev at 29c3fb6 (run 43115767777).
+    # Antares dev fb8faac (dev-154, over 29c3fb6: T-6862). No migration, no new runtime key
+    # (pinned by pin-images, T-6330). Rollback: dev-153. Signed by ship.yml on dev at fb8faac (run 43577184674).
+    tag: 'dev-154'
+    digest: 'sha256:bbcb45e7675f3fd8175feff34ba320bbb3c074e3f1477d37a0d1b2dab5beceaf'
+    # The Antares dev commit this digest is the ship.yml image of: scripts/pin-images.py antares judges the
+    # range from here and moves it with the digest (T-6330).
+    commit: 'fb8faace29f4f20d55ac5852b85e43cd9f200543'

@@ -1,0 +1,82 @@
+---
+context-broker:
+  podSelector:
+    app.kubernetes.io/name: context-broker-broker
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    # CoreDNS. Every rule below names a Service, and a Service name is worth nothing
+    # without this one.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Delivering a notification itself (plan 5.5, T-3653): a subscription stored through a view
+    # names its subscriber, and the broker sends what `pre_notify` lets through straight to it.
+    # The address arrives in a subscription, so the allowance is a range, and every private
+    # range is excepted: a subscription cannot steer the broker at the cluster, the node or a
+    # metadata service (G11, T-3882). A subscriber inside this cluster needs its own rule.
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 9090
+    # The Prometheus that scrapes /q/metrics (components/monitoring), from its own namespace
+    # only (T-3771); no peer is rendered while monitoring.prometheusNamespace is empty. The
+    # metrics port alone: 9090 is the API (T-5095).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 9464
+
+postgres-from-context-broker:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-broker-broker
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 5432

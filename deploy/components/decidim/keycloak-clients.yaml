@@ -1,0 +1,48 @@
+---
+# Browser sign-in for the participation platform (ADR-N-065): Decidim's OmniAuth OpenID Connect
+# strategy, registered as provider `keycloak`, with PKCE. Its secret reaches the pods as
+# keycloak-client-decidim, like every confidential client's.
+decidim:
+  # What the login page names ("Sign in to {name} · {organization}"): a key the login theme
+  # translates (components/keycloak/charts/theme).
+  name: ${jcClientParticipation}
+  description: Confidential client of the participation platform (Decidim) for human login
+  subdomain: participacia
+  redirectPath: /users/auth/keycloak/callback
+  componentNamespaces:
+    - decidim
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    attributes:
+      pkce.code.challenge.method: S256
+# Sidekiq's identity for Publish to context space (T-6458): client_credentials only, no browser
+# flow. The id is the ServiceAccount `decidim-publish` of project `slovensko` (components/decidim/seed),
+# which the gateway maps by `azp` and whose Policy is all it may do. A client of this file carries
+# no `managed-by` attribute, so the Portal never writes it. Its one audience is the Endpoint
+# slovensko-participacia-zapis; the secret reaches Sidekiq as keycloak-client-slovensko-decidim-publish.
+slovensko-decidim-publish:
+  name: Decidim publisher
+  description: Service account of Decidim's Sidekiq; client_credentials, writes to the Endpoint slovensko-participacia-zapis alone
+  subdomain: ''
+  redirectPath: /
+  componentNamespaces:
+    - decidim
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    protocolMappers:
+      - name: participacia-zapis-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: o6av726lj6atb4mn5o5ptnujabssdilo
+          access.token.claim: 'true'
+          id.token.claim: 'false'

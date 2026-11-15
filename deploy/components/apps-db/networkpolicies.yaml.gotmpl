@@ -1,0 +1,19 @@
+{{- /* apps-db holds every App's rows, so it reaches the internet only to archive them (T-6218,
+       R2DEP1 F-004): 443 opens where `apps-db.cluster.backups` is on and names an external store.
+       Off (the default) or `target: artifact-store` (dev) archives nothing over 443, and this file
+       renders empty. The defaults keep backups off, so an environment that does not set them
+       has nothing to read here. */}}
+{{- $backups := dig "apps-db" "cluster" "backups" dict .Values }}
+{{- if and (dig "enabled" false $backups) (ne (dig "target" "" $backups) "artifact-store") }}
+apps-db-object-store:
+  podSelector:
+    cnpg.io/cluster: apps-db
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}

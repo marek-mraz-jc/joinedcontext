@@ -1,0 +1,92 @@
+# The mapping of the nrpzs-health-care pipeline (T-5691, PL-03): one PointOfInterest of category
+# healthCareProvider per place of care in Prague of the national register of health care providers
+# (NRPZS, ÚZIS ČR, CC BY 4.0): 41,020 places in the country on 2026-10-01, 6,979 of them in Prague,
+# 4,473 run by a legal person.
+#
+# Ids: urn:ngsi-ld:PointOfInterest:{org}:{space}:nrpzs-{ZZ_misto_poskytovani_ID}, the register's own
+# id of the place of care; the Policy public-zdravotni-a-socialni-sluzby names them.
+#
+# Personal data (T-5691 Security): only places run by a legal person (poskytovatel_osoba_typ
+# "právnická osoba") are written. A place of a sole trader carries the person's name as its name and
+# can be their home, so it is dropped and counted. The professional representative, the phone and the
+# e-mail are never read. A legal person's trade name stays, as the commercial register publishes it.
+#
+# Read: the place's name (ZZ_nazev), its kind (ZZ_druh_nazev), the street and house numbers, the
+# provider's web page (left out unless it is an http(s) URL of printable ASCII) and the register's
+# point ZZ_GPS, written POINT(latitude longitude) and turned to longitude, latitude. The point is the register's own, so every entity
+# names the register in dataProvider and source.
+#
+# Plausibility (owner 2026-10-22T18:10Z): the file is checked for the columns read; a row outside
+# Prague (ZZ_kraj_kod CZ010), of a sole trader, without an id or a name, without a point, outside
+# Prague's box (the city plus about 1 km) and a second row of one id or of one name in one 0.0002°
+# cell (about 15 m) is dropped; the log line counts each reason. A file over 64 MiB, one without
+# those columns, without a Prague row, or one where fewer than half the legal persons' Prague rows
+# survive fails the run, so the places already written stay.
+#
+# Memory: the 28 MB file is filtered as text to the lines naming CZ010 (9,556) before one row at a
+# time is parsed; the run passed at 128 MiB and failed at 96 MiB with docker --memory on 2026-10-25 (T-5691), so the quota is 256.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let text = if content().length() > 67108864 { throw("NRPZS answered %v bytes; more than 64 MiB is not the register".format(content().length())) } else { content().string() }
+            let lines = $text.split("\n")
+            let header = $lines.index(0).trim().trim_prefix("﻿")
+            let columns = $header.parse_csv(false).index(0).or([])
+            let need = ["ZZ_misto_poskytovani_ID", "ZZ_nazev", "ZZ_druh_nazev", "ZZ_kraj_kod", "ZZ_ulice", "ZZ_cislo_domovni_orientacni", "ZZ_GPS", "poskytovatel_osoba_typ", "poskytovatel_web"]
+            let missing = $need.filter(c -> !$columns.contains(c))
+            let candidates = $lines.slice(1).filter(l -> l.contains("\"CZ010\""))
+            let rows = if $missing.length() > 0 {
+              throw("the NRPZS file lacks the columns %v; the register changed its layout".format($missing.join(", ")))
+            } else {
+              $candidates.map_each(l -> ($header + "\n" + l.trim()).parse_csv().index(0).catch({})).map_each(r -> {
+                "id": r.ZZ_misto_poskytovani_ID.or("").trim(),
+                "name": r.ZZ_nazev.or("").trim().re_replace_all("\\s+", " "),
+                "kind": r.ZZ_druh_nazev.or("").trim().re_replace_all("\\s+", " "),
+                "region": r.ZZ_kraj_kod.or(""),
+                "legal": r.poskytovatel_osoba_typ.or("") == "právnická osoba",
+                "street": [r.ZZ_ulice.or("").trim(), r.ZZ_cislo_domovni_orientacni.or("").trim()].filter(s -> s != "").join(" "),
+                "web": r.poskytovatel_web.or("").trim(),
+                "c": if r.ZZ_GPS.or("").trim().re_match("^POINT\\([0-9]{1,3}[.][0-9]+ [0-9]{1,3}[.][0-9]+\\)$") { r.ZZ_GPS.trim().re_replace_all("^POINT\\(([0-9.]+) ([0-9.]+)\\)$", "$2,$1").split(",").map_each(n -> n.number()) } else { [] }
+              })
+            }
+            let prague = $rows.filter(r -> r.region == "CZ010")
+            root = if $prague.length() == 0 {
+              throw("the NRPZS file lists no place of care in Prague; the download failed")
+            } else {
+              { "read": $lines.filter(l -> l.trim() != "").length() - 1, "rows": $prague }
+            }
+        - mapping: |
+            let rows = this.rows
+            let legal = $rows.filter(r -> r.legal)
+            let usable = $legal.filter(r -> r.id.re_match("^[0-9]{1,12}$") && r.name != "")
+            let located = $usable.filter(r -> r.c.length() == 2)
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let unique = $inside.unique(r -> r.id).unique(r -> "%v|%v|%v".format(r.name.lowercase(), (r.c.index(0) / 0.0002).floor(), (r.c.index(1) / 0.0002).floor()))
+            meta read = this.read
+            meta prague = $rows.length()
+            meta private = $rows.length() - $legal.length()
+            meta unusable = $legal.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            root = if $unique.length() * 2 < $legal.length() {
+              throw("NRPZS: only %v of %v places of legal persons in Prague have an id, a name and a point in Prague".format($unique.length(), $legal.length()))
+            } else { $unique }
+        - log:
+            level: INFO
+            message: 'nrpzs-health-care: read ${! meta("read") } rows, ${! meta("prague") } in Prague; dropped ${! meta("private") } of sole traders, ${! meta("unusable") } without id or name, ${! meta("outside") } without a point in Prague, ${! meta("duplicate") } duplicates'
+        - unarchive: { format: json_array }
+        - mapping: |
+            let web = [this.web].filter(w -> w != "").map_each(w -> if w.re_match("^https?://") { w } else { "https://" + w }).filter(w -> w.re_match("^https?://[^\\s/]+\\.[\\x21-\\x7e]+$"))
+            root = {
+              "id": "urn:ngsi-ld:%v:%v:%v:nrpzs-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
+              "type": "PointOfInterest",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": this.name } },
+              "serviceCategory": { "type": "Property", "value": "healthCareProvider" },
+              "facilityType": if this.kind != "" { { "type": "Property", "value": this.kind } } else { null },
+              "address": if this.street != "" { { "type": "Property", "value": { "streetAddress": this.street, "addressLocality": "Praha", "addressCountry": "CZ" } } } else { null },
+              "url": if $web.length() > 0 { { "type": "Property", "value": $web.index(0) } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": this.c } },
+              "dataProvider": { "type": "Property", "value": "Národní registr poskytovatelů zdravotních služeb, ÚZIS ČR (CC BY 4.0); poloha z registru" },
+              "source": { "type": "Property", "value": "https://datanzis.uzis.gov.cz/data/NR-01-NRPZS/NR-01-06/Otevrena-data-NR-01-06-nrpzs-mista-poskytovani-zdravotnich-sluzeb.csv" }
+            }.filter(kv -> kv.value != null)

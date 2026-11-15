@@ -1,0 +1,46 @@
+# T-4636: an example of a further catalogue (global.catalogues), proof that a city is a values
+# folder and an environment block (example-environment.yaml) and nothing else. It renders and
+# passes kubeconform in tests/test_ckan_catalogues.py and is applied to no cluster: the dev node is
+# one cpx42 near its memory, and a real second city is an owner decision.
+
+ckan:
+  replicaCount: 1
+  storage:
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 200m
+      memory: 352Mi
+    limits:
+      cpu: '2'
+      memory: 2Gi
+
+solr:
+  heap: 256m
+  storage:
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 1Gi
+
+redis:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# The city's one publisher; its datasets come from the reconciler's Endpoints, no harvest.
+organizations:
+  example-city:
+    initials: EC
+    colour: '#2b5f8a'
+    description:
+      en: Open data of Example City, published through joinedcontext endpoints.
+      sk: Otvorené údaje mesta Example City, publikované cez endpointy joinedcontext.

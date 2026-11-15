@@ -1,0 +1,24 @@
+# The steward may set a station's status (AP-62, GW16): one attribute of one type, for the
+# person the RoleBinding names, through the operations endpoint. The public read grant is
+# public-bikes; the pipelines' upsert grant is pipelines-write. Nothing here is deletable.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: bikes-ops-steward
+  namespace: helsinki
+  title: { en: The steward sets a station's status }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: user, id: de300000-0000-4000-8000-000000000001 } # demo.steward
+  operations:
+    - retrieveOps
+    - updateAttrs
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: BikeHireDockingStation
+      propertyNames: [status]

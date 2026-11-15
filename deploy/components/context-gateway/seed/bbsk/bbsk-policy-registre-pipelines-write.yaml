@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: registre-pipelines-write
+  namespace: bbsk
+  title: { sk: Kanály zapisujú registre, en: The ingestion pipelines write the registers }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-registre }
+  assigner: did:web:bbsk.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is what a poll does; no delete: a record the region stops publishing stays until a
+  # person removes it.
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: AdministrativeArea
+        - type: PublicOrganization
+        - type: PointOfInterest
+        - type: Bridge

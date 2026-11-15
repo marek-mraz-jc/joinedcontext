@@ -1,0 +1,171 @@
+# The mapping of the od-register-investicii-bodova-vrstva pipeline, generated from the T-4254 mapping: one PublicInvestment per row of
+# "Register investícií - bodová vrstva" (https://opendata.dev.joinedcontext.com/dataset/bbsk-register-investicii-bodova-vrstva-e0b3b4). Do not edit: change the mapping and run scripts/open-data/generate.py.
+
+pipeline:
+  processors:
+    # A layer that answers an error or no feature list is the service failing, so the run fails
+    # where it can be seen rather than writing nothing.
+    - mapping: |
+        root = if this.error.or(null) != null || this.features.or(null) == null { throw("the layer answered no features: %v".format(this.error.message.or(""))) } else { this }
+    # Page 0 as it came. When the layer says there is more, it is asked how many rows it holds and
+    # every further page of them is read (T-5288), one page at a time: the runner fetches, maps and
+    # writes a page before the next, so a layer of any size runs in a page's memory (jc-ekiben-paging).
+    - branch:
+        request_map: |
+          root = if this.properties.exceededTransferLimit.or(false) { "" } else { deleted() }
+        processors:
+          - http:
+              url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Pripoji%C5%A51_FINAL_JITTERED_XYTableToPoint_ExportFeatures/FeatureServer/0/query?where=1%3D1&returnCountOnly=true&f=json"
+              verb: GET
+              headers:
+                Accept: application/json
+              timeout: 60s
+              retries: 2
+              rate_limit: pipeline_egress
+        result_map: |
+          root.rowCount = this.count.or(this.error.message.or("no count"))
+    - mapping: |
+        let rows = this.rowCount.or(null)
+        root = if !this.properties.exceededTransferLimit.or(false) { [this] } else if errored() || $rows.type() != "number" { [{ "problem": "the layer did not say how many rows it holds: %v".format(error().or($rows)) }] } else if this.features.length() < [1000, $rows].min() { [{ "problem": "the layer answered %v rows where 1000 were asked, so its pages would skip rows".format(this.features.length()) }] } else if $rows <= 1000 { [this] } else { [this].concat(range(1, (($rows + 999) / 1000).floor()).map_each(p -> { "offset": p * 1000, "rowCount": $rows })) }
+    - unarchive:
+        format: json_array
+    # Each page its own batch: fetched, mapped and written before the next is read.
+    - split:
+        size: 1
+    - switch:
+        - check: this.offset.or(null) != null
+          processors:
+            - mapping: |
+                meta offset = this.offset
+                meta rows = this.rowCount
+                root = ""
+            - http:
+                url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Pripoji%C5%A51_FINAL_JITTERED_XYTableToPoint_ExportFeatures/FeatureServer/0/query?where=1%3D1&outFields=Index_,ID_IA,N%C3%A1zov,Vecn%C3%A1_oblas%C5%A5,Okres_Kraj,K%C3%B3d_okresu_kraja,Obstar%C3%A1vacia_cena,Rozpo%C4%8Det_aktu%C3%A1lny,%C4%8Cerpanie_spolu,%C3%9Arad_OvZP_OvZP,%C3%9Arad_OvZP_I%C4%8CO,Rok_zaradenia,I%C4%8CO_organiz%C3%A1cia,Aktu%C3%A1lny_stav,OBJECTID_1,I%C4%8CO,Ofici%C3%A1lny_n%C3%A1zov,Zau%C5%BE%C3%ADvan%C3%BD_n%C3%A1zov,Zau%C5%BE%C3%ADvan%C3%BD_n%C3%A1zov_kr%C3%A1tky,Kateg%C3%B3ria,Obec_NUTS,Obec_n%C3%A1zov,Okres_n%C3%A1zov,Adresa,Akt%C3%ADvne,D%C3%A1tum_z%C3%A1niku,Pozn%C3%A1mka,LAT_jitter,LON_jitter,Rok_text,Aktu%C3%A1lny_stav_upraven%C3%BD,Sektor_OvZP_upraveny,Zau%C5%BE%C3%ADvan%C3%BD_n%C3%A1zov_upraven%C3%BD,GEOM_LAT_BACKUP,GEOM_LON_BACKUP&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=${! @offset }&resultRecordCount=1000&orderByFields=OBJECTID"
+                verb: GET
+                headers:
+                  Accept: application/geo+json
+                timeout: 60s
+                retries: 2
+                rate_limit: pipeline_egress
+            - mapping: |
+                root = if errored() { throw("the page at %v did not come: %v".format(@offset, error())) } else if this.features.or(null) == null { { "problem": "the page at %v answered no features: %v".format(@offset, this.error.message.or("")) } } else if this.features.length() < [1000, @rows - @offset].min() { { "problem": "the page at %v answered %v rows where %v were due".format(@offset, this.features.length(), [1000, @rows - @offset].min()) } } else { this }
+    # A refusal above fails the run and writes none of its page's rows; earlier pages stay written
+    # and the failed run deletes nothing (sourceDeletes waits for a finished run).
+    - mapping: |
+        root = if this.problem.or(null) != null { throw(this.problem) } else { this }
+    - mapping: |
+        root = this.features.or([])
+    - unarchive:
+        format: json_array
+    - mapping: |
+        # Slovak notation: a space (or a no-break one) between thousands, a comma before the decimals, so
+        # "10 700,01" is 10700.01 (T-4324); a text without a comma keeps its dot, "1.5" is one and a half.
+        map number {
+          let s = this.string().re_replace_all("[ 	  ]", "")
+          let t = if $s.contains(",") { $s.replace_all(".", "").replace_all(",", ".") } else { $s }
+          root = $t.number().catch(null)
+        }
+        map integer {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v.round().int64() } }
+        }
+        map float {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        map string {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": $v } }
+        }
+        map string_list {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": [$v] } }
+        }
+        map uri {
+          root = this.apply("string")
+        }
+        # An Esri date is milliseconds since the epoch; a WordPress one is text.
+        # `match` rebinds `this` to what it matches, so the value is named first.
+        map datetime {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02T15:04:05Z", "UTC").catch(null),
+            "string" => $x.ts_parse("2006-01-02T15:04:05").ts_format("2006-01-02T15:04:05Z", "UTC").catch($x.ts_format("2006-01-02T15:04:05Z", "UTC").catch(null)),
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        # The instant a row was observed, from its `observedAt` column: a bare year is its first instant,
+        # anything else reads as a datetime (T-4288).
+        map observed {
+          let x = this
+          root = if $x == null { null } else if $x.string().re_match("^[0-9]{4}$") { $x.string() + "-01-01T00:00:00Z" } else {
+            $x.apply("datetime").value.catch(null)
+          }
+        }
+        # A measured Property with the instant it holds, so SensorThings charts it (T-4288).
+        map stamped {
+          root = if this.p == null || this.at == null { this.p } else { this.p.merge({ "observedAt": this.at }) }
+        }
+        map date {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02", "UTC").catch(null),
+            # ISO, or the Slovak "29.08.2026" and "1. 3. 2024".
+            "string" => if $x.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}") { $x.slice(0, 10) } else {
+              $x.re_replace_all("[.] +", ".").trim().ts_parse("2.1.2006").ts_format("2006-01-02", "UTC").catch(null)
+            },
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        let local = "register-investicii-bodova-vrstva-" + {"Index_": this.properties."Index_", "ID_IA": this.properties."ID_IA", "Názov": this.properties."Názov", "Vecná_oblasť": this.properties."Vecná_oblasť", "Okres_Kraj": this.properties."Okres_Kraj", "Kód_okresu_kraja": this.properties."Kód_okresu_kraja", "Obstarávacia_cena": this.properties."Obstarávacia_cena", "Rozpočet_aktuálny": this.properties."Rozpočet_aktuálny", "Čerpanie_spolu": this.properties."Čerpanie_spolu", "Úrad_OvZP_OvZP": this.properties."Úrad_OvZP_OvZP", "Úrad_OvZP_IČO": this.properties."Úrad_OvZP_IČO", "Rok_zaradenia": this.properties."Rok_zaradenia", "IČO_organizácia": this.properties."IČO_organizácia", "Aktuálny_stav": this.properties."Aktuálny_stav", "OBJECTID_1": this.properties."OBJECTID_1", "IČO": this.properties."IČO", "Oficiálny_názov": this.properties."Oficiálny_názov", "Zaužívaný_názov": this.properties."Zaužívaný_názov", "Zaužívaný_názov_krátky": this.properties."Zaužívaný_názov_krátky", "Kategória": this.properties."Kategória", "Obec_NUTS": this.properties."Obec_NUTS", "Obec_názov": this.properties."Obec_názov", "Okres_názov": this.properties."Okres_názov", "Adresa": this.properties."Adresa", "Aktívne": this.properties."Aktívne", "Dátum_zániku": this.properties."Dátum_zániku", "Poznámka": this.properties."Poznámka", "LAT_jitter": this.properties."LAT_jitter", "LON_jitter": this.properties."LON_jitter", "Rok_text": this.properties."Rok_text", "Aktuálny_stav_upravený": this.properties."Aktuálny_stav_upravený", "Sektor_OvZP_upraveny": this.properties."Sektor_OvZP_upraveny", "Zaužívaný_názov_upravený": this.properties."Zaužívaný_názov_upravený", "GEOM_LAT_BACKUP": this.properties."GEOM_LAT_BACKUP", "GEOM_LON_BACKUP": this.properties."GEOM_LON_BACKUP"}.format_json(no_indent: true).hash("sha256").encode("hex").slice(0, 24).re_replace_all("[^A-Za-z0-9._~-]", "-").slice(0, 80)
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("PublicInvestment", "bbsk.sk", env("JC_SPACE"), $local),
+          "type": "PublicInvestment",
+          "index": this.properties."Index_".apply("string"),
+          "identifier": this.properties."ID_IA".apply("string"),
+          "name": this.properties."Názov".apply("string"),
+          "vecnaOblast": this.properties."Vecná_oblasť".apply("string"),
+          "okresKraj": this.properties."Okres_Kraj".apply("string"),
+          "kodOkresuKraja": this.properties."Kód_okresu_kraja".apply("integer"),
+          "obstaravaciaCena": this.properties."Obstarávacia_cena".apply("float"),
+          "rozpocetAktualny": this.properties."Rozpočet_aktuálny".apply("float"),
+          "cerpanieSpolu": this.properties."Čerpanie_spolu".apply("float"),
+          "uradOvZPOvZP": this.properties."Úrad_OvZP_OvZP".apply("string"),
+          "uradOvZPICO": this.properties."Úrad_OvZP_IČO".apply("string"),
+          "rokZaradenia": this.properties."Rok_zaradenia".apply("string"),
+          "iCOOrganizacia": this.properties."IČO_organizácia".apply("string"),
+          "aktualnyStav": this.properties."Aktuálny_stav".apply("string"),
+          "oBJECTID1": this.properties."OBJECTID_1".apply("integer"),
+          "iCO": this.properties."IČO".apply("string"),
+          "oficialnyNazov": this.properties."Oficiálny_názov".apply("string"),
+          "zauzivanyNazov": this.properties."Zaužívaný_názov".apply("string"),
+          "zauzivanyNazovKratky": this.properties."Zaužívaný_názov_krátky".apply("string"),
+          "kategoria": this.properties."Kategória".apply("string"),
+          "obecNUTS": this.properties."Obec_NUTS".apply("string"),
+          "obecNazov": this.properties."Obec_názov".apply("string"),
+          "okresNazov": this.properties."Okres_názov".apply("string"),
+          "adresa": this.properties."Adresa".apply("string"),
+          "aktivne": this.properties."Aktívne".apply("string"),
+          "datumZaniku": this.properties."Dátum_zániku".apply("string"),
+          "poznamka": this.properties."Poznámka".apply("string"),
+          "lATJitter": this.properties."LAT_jitter".apply("float"),
+          "lONJitter": this.properties."LON_jitter".apply("float"),
+          "rokText": this.properties."Rok_text".apply("string"),
+          "aktualnyStavUpraveny": this.properties."Aktuálny_stav_upravený".apply("string"),
+          "sektorOvZPUpraveny": this.properties."Sektor_OvZP_upraveny".apply("string"),
+          "zauzivanyNazovUpraveny": this.properties."Zaužívaný_názov_upravený".apply("string"),
+          "gEOMLATBACKUP": this.properties."GEOM_LAT_BACKUP".apply("float"),
+          "gEOMLONBACKUP": this.properties."GEOM_LON_BACKUP".apply("float"),
+          "location": if this.geometry.or(null) == null { null } else { { "type": "GeoProperty", "value": this.geometry } },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Pripoji%C5%A51_FINAL_JITTERED_XYTableToPoint_ExportFeatures/FeatureServer/0/query?where=1%3D1&outFields=Index_,ID_IA,N%C3%A1zov,Vecn%C3%A1_oblas%C5%A5,Okres_Kraj,K%C3%B3d_okresu_kraja,Obstar%C3%A1vacia_cena,Rozpo%C4%8Det_aktu%C3%A1lny,%C4%8Cerpanie_spolu,%C3%9Arad_OvZP_OvZP,%C3%9Arad_OvZP_I%C4%8CO,Rok_zaradenia,I%C4%8CO_organiz%C3%A1cia,Aktu%C3%A1lny_stav,OBJECTID_1,I%C4%8CO,Ofici%C3%A1lny_n%C3%A1zov,Zau%C5%BE%C3%ADvan%C3%BD_n%C3%A1zov,Zau%C5%BE%C3%ADvan%C3%BD_n%C3%A1zov_kr%C3%A1tky,Kateg%C3%B3ria,Obec_NUTS,Obec_n%C3%A1zov,Okres_n%C3%A1zov,Adresa,Akt%C3%ADvne,D%C3%A1tum_z%C3%A1niku,Pozn%C3%A1mka,LAT_jitter,LON_jitter,Rok_text,Aktu%C3%A1lny_stav_upraven%C3%BD,Sektor_OvZP_upraveny,Zau%C5%BE%C3%ADvan%C3%BD_n%C3%A1zov_upraven%C3%BD,GEOM_LAT_BACKUP,GEOM_LON_BACKUP&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=0&resultRecordCount=1000&orderByFields=OBJECTID" },
+          "isPartOf": { "type": "Property", "value": "https://opendata.dev.joinedcontext.com/dataset/bbsk-register-investicii-bodova-vrstva-e0b3b4" }
+        }.filter(entry -> entry.value != null)
+    # One request per run's batch rather than one per row.
+    - split:
+        size: 1000
+        byte_size: 2097152
+    - archive:
+        format: json_array

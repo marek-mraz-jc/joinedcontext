@@ -1,0 +1,23 @@
+---
+global:
+  domain: staging.example.org
+  # The organisation's own domain in every entity id; production has no placeholder (CC-73).
+  orgDomain: example.org
+  profile: production
+  # security.txt (RFC 9116, T-1721): an example contact of the example domain.
+  securityTxt:
+    contact: mailto:security@staging.example.org
+    expires: "2027-09-24T00:00:00Z"
+  instanceSlug: staging
+  serviceMesh:
+    # nginx ingress lives in the host cluster, outside this vcluster's mesh,
+    # so it can't present a Linkerd mTLS identity to the APISIX data plane.
+    allowUnauthenticatedIngress: true
+  ingress:
+    enabled: true
+    clusterIssuer: 'letsencrypt-prod'
+    ingressClass: 'nginx'
+# The project whose streams the pipeline runner carries: named here, never the demo city (CC-73).
+pipeline-runner:
+  runner:
+    project: city

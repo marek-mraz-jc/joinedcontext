@@ -1,0 +1,34 @@
+# The city's indicator space (PF-54): every KPI a pipeline computes for `banskabystrica` is one
+# KeyPerformanceIndicator entity here, never in the space it reads.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: banskabystrica-kpi
+  namespace: banskabystrica
+  title: { sk: Ukazovatele mesta, en: City indicators }
+  description:
+    sk: Jeden záznam na ukazovateľ, s jeho vzorcom, oknom a zdrojmi.
+    en: One entity per indicator, with its formula, its window and its sources.
+spec:
+  urnSegment: banskabystrica-kpi
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: key-performance-indicator }
+  defaultLocale: sk
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: KeyPerformanceIndicator
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        calculationFormula: { record: onChange, heartbeat: P7D }
+        calculationPeriod: { record: onChange, heartbeat: P7D }
+        computedBy: { record: onChange, heartbeat: P7D }
+        currentValue: { record: onChange, heartbeat: P7D }
+        derivedFrom: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        title: { record: onChange, heartbeat: P7D }
+        # updatedAt is the run's own clock, new on every run: no history of its own (DM-132, T-5848).
+        updatedAt: { record: never }

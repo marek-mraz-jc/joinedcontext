@@ -1,0 +1,22 @@
+---
+# embedder renders here with an example pin, because components/embedder/images.yaml holds none
+# until the monorepo's image-embedder.yml publishes the first signed digest. This render is never
+# applied; an environment that deploys embedder pins the real digest in
+# components/embedder/images.yaml instead.
+images:
+  embedder:
+    server:
+      repository: 'ghcr.io/marek-mraz-jc/jc-embedder'
+      tag: 'main'
+      digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000'
+# jc of this environment is the one caller: its kaisatsu at the public issuer signs the
+# assistant's client-credentials tokens for audience `embedder`.
+embedder:
+  server:
+    deployments:
+      - name: addons
+        issuer: https://jc.addons.example.org/id/realms/jc
+        jwksUrl: https://jc.addons.example.org/id/realms/jc/protocol/openid-connect/certs
+        clients:
+          - jc-assistant
+        maxTextsPerMinute: 1200

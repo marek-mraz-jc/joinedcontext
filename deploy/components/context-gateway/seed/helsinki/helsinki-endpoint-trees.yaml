@@ -1,0 +1,51 @@
+# One Smart Data Model type per catalogue dataset (T-4344): Tree of the space helsinki, read
+# through its own Policy, which narrows the space's public read to this type (T-5378).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-trees
+  namespace: helsinki
+  title:
+    fi: Puurekisteri, katu- ja puistopuut — Helsinki
+    en: Tree register, street and park trees — Helsinki
+  description:
+    fi: 'Helsingin puurekisterin katu- ja puistopuut: suomenkielinen nimi (name), tieteellinen nimi (species), rungon paksuusluokka (trunkDiameterClass), istutusvuosi kun tiedossa (plantingYear), kasvupaikka katu tai puisto (treeSetting) ja kadun tai puiston nimi (treeSite). Smart Data Models -kirjastossa ei ole puumallia, joten Tree ja sen kentät ovat alustan omia. Lähde: Helsingin kaupunki, CC BY 4.0.'
+    en: "The street and park trees of Helsinki's tree register: the Finnish name (name), the scientific name (species), the trunk diameter class (trunkDiameterClass), the planting year where known (plantingYear), whether the tree stands along a street or in a park (treeSetting) and the street or park's name (treeSite). Smart Data Models has no tree model, so Tree and its properties are the platform's own. Source: City of Helsinki, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: xwl3gxuwwqw3gqqxlme2wz2rwsvhqdx4
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-trees
+  # The contact lines stay in the space, as on helsinki-all (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, CC BY 4.0'
+      en: 'Source: City of Helsinki, CC BY 4.0'
+    themes: [ENVI]
+    keywords:
+      fi: [puut, katupuut, puistopuut, puurekisteri, kaupunkiluonto]
+      sv: [träd, gatuträd, parkträd, trädregister, stadsnatur]
+      en: [trees, street trees, park trees, tree register, urban nature]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: DAILY
+    source:
+      - url: https://hri.fi/data/fi/dataset/helsingin-kaupungin-puurekisteri
+        title: { fi: Helsingin kaupungin puurekisteri, en: City of Helsinki tree register }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso Puurekisteri_piste, GeoJSON. Luetaan päivittäin neljässä osassa (putket trees-0…3).
+          en: The WFS layer Puurekisteri_piste of the city map service, as GeoJSON. Read daily in four parts (pipelines trees-0…3).
+    pipelineRef: { kind: Pipeline, name: trees-0 }
