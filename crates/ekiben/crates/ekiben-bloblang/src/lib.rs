@@ -27,6 +27,10 @@ pub mod methods_structured;
 pub mod methods_time;
 pub mod msgpack;
 pub mod ngsild;
+#[rustfmt::skip]
+mod params;
+#[cfg(test)]
+mod params_tests;
 pub mod parser;
 mod required_params;
 pub mod time_format;
