@@ -503,7 +503,10 @@ mod tests {
         for bad in ["a.b", "*", ">", "a>b", "a*"] {
             assert!(TenantId::new(bad).is_err(), "should reject {bad:?}");
         }
-        assert!(TenantId::new(&"x".repeat(128)).is_ok(), "128 is the boundary");
+        assert!(
+            TenantId::new(&"x".repeat(128)).is_ok(),
+            "128 is the boundary"
+        );
         assert!(TenantId::new(&"x".repeat(129)).is_err(), "129 is refused");
     }
 
