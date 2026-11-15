@@ -1116,10 +1116,8 @@ mod tests {
         )
         .unwrap();
         let ttl = crate::shacl(&m);
-        assert!(
-            ttl.contains("sh:minInclusive 0") && ttl.contains("sh:maxInclusive 5"),
-            "{ttl}"
-        );
+        assert!(ttl.contains("sh:minInclusive 0"), "{ttl}");
+        assert!(ttl.contains("sh:maxInclusive 5"), "{ttl}");
         let schema: serde_json::Value = serde_json::from_str(&crate::json_schema(&m)).unwrap();
         let p = &schema["definitions"]["Car"]["properties"]["occupancy"];
         assert_eq!((&p["minimum"], &p["maximum"]), (&json!(0), &json!(5)));

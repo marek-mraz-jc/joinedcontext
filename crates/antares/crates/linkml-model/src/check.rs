@@ -760,6 +760,7 @@ mod tests {
             )
         };
         assert!(read(r#"{"range": "integer", "minimum_value": 0}"#).is_ok());
+        assert!(read(r#"{"range": "double", "maximum_value": 0.5}"#).is_ok());
         assert!(matches!(
             read(r#"{"range": "string", "minimum_value": 0}"#),
             Err(crate::Error::NotImplemented(_))
