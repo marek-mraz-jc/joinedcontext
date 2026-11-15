@@ -2549,7 +2549,8 @@
       "button": "Otestovať pripojenie",
       "running": "Testuje sa…",
       "read": "Pripojené: {records, plural, one {načítaný # záznam} few {načítané # záznamy} other {načítaných # záznamov}} ({bytes} bajtov). Prvý z nich:",
-      "failed": "Nič sa nenačítalo: {reason}. Skontrolujte adresu a prihlasovacie údaje a otestujte znova."
+      "failed": "Nič sa nenačítalo: {reason}. Skontrolujte adresu a prihlasovacie údaje a otestujte znova.",
+      "pages": "Prečítané {pages, plural, one {# stránka} few {# stránky} other {# stránok}}."
     },
     "usedBy": {
       "title": "Používajú ho",
@@ -2559,6 +2560,79 @@
       "title": "Pripravené nastavenia",
       "lead": "Nastavenie zapíše zdroj, jeho pipeline aj plán v jednej zmene z niekoľkých odpovedí. Príklad: kanál GBFS mestských bicyklov načítaný každú minútu.",
       "back": "Späť na zdroje údajov"
+    },
+    "preset": {
+      "title": "Predvoľba otvoreného API",
+      "hint": "Pre službu CKAN, ArcGIS, OData, WFS, OGC API Features alebo SensorThings: platforma ju sama stránkuje a nájde záznamy. Pri voľbe predvoľby nechajte Stránkovanie a Záznamy sú v prázdne.",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (dátové sady alebo riadky datastore)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Záznamov na stránku",
+      "organization": "Organizácia",
+      "resourceId": "ID zdroja",
+      "objectIdField": "Pole ID objektu",
+      "outFields": "Čítané polia",
+      "typeNames": "Typ prvku",
+      "srsName": "Súradnicový systém",
+      "expand": "Súvisiace entity"
+    },
+    "paging": {
+      "title": "Stránkovanie",
+      "hint": "Pre stránkované API bez predvoľby: ako sa žiada o ďalšiu stránku. Test pripojenia prejde všetky stránky a povie, koľko ich prečítal.",
+      "mode": "Ďalšia stránka podľa",
+      "modes": {
+        "page": "Číslo stránky",
+        "offset": "Posun a limit",
+        "cursor": "Kurzor v odpovedi",
+        "link": "Hlavička Link (rel=next)",
+        "nextUrl": "Ďalšia URL v odpovedi"
+      },
+      "param": "Parameter stránky",
+      "start": "Prvá stránka alebo posun",
+      "sizeParam": "Parameter veľkosti stránky",
+      "size": "Veľkosť stránky",
+      "offsetParam": "Parameter posunu",
+      "limitParam": "Parameter limitu",
+      "limit": "Limit",
+      "cursor": "Cesta ku kurzoru",
+      "cursorParam": "Parameter kurzora",
+      "cursorHeader": "Hlavička kurzora",
+      "next": "Cesta k ďalšej URL",
+      "total": "Cesta k celkovému počtu",
+      "more": "Cesta k ďalším stránkam",
+      "maxPages": "Najviac stránok",
+      "maxRecords": "Najviac záznamov",
+      "delay": "Pauza medzi stránkami"
+    },
+    "discover": {
+      "title": "Nájsť v službe",
+      "hint": "Prečíta vlastný zoznam služby raz na runneri projektu, len verejné služby, a ponúkne, čo táto predvoľba vie čítať.",
+      "needs": "Zvoľte API v Predvoľbe otvoreného API a napíšte URL služby, aby ste videli, čo ponúka.",
+      "button": "Nájsť",
+      "running": "Čítam službu…",
+      "pick": "Nájdené {count, plural, one {# položka} few {# položky} other {# položiek}}",
+      "pickHint": "Vyberte jednu; Použiť ju zapíše do formulára, kde ju ešte môžete zmeniť.",
+      "use": "Použiť",
+      "useNeeds": "Najprv vyberte položku zo zoznamu.",
+      "truncated": "Služba vypisuje viac, než Portál číta; ak chýba vaša položka, zadajte užšiu URL.",
+      "none": "Služba nevypisuje nič, čo by táto predvoľba čítala. Skontrolujte URL a druh API.",
+      "failed": "Nič sa nevypísalo: {reason}. Skontrolujte URL a druh API a skúste to znova.",
+      "used": "Zapísané do formulára: {value}.",
+      "fields": {
+        "organization": "Organizácia",
+        "layer": "Vrstva",
+        "entitySet": "Sada entít",
+        "typeNames": "Typ prvku",
+        "collection": "Kolekcia",
+        "thing": "Thing"
+      },
+      "refused": "Požiadajte správcu projektu o rolu, ktorá navrhuje zdroje údajov."
     }
   },
   "pipelines": {

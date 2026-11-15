@@ -120,7 +120,12 @@
     "Panel",
     "Filter: {field}",
     "Logo (SVG)",
-    "ArcGIS Hub"
+    "ArcGIS Hub",
+    "ArcGIS Feature Service",
+    "WFS 2.0",
+    "OGC SensorThings",
+    "Thing",
+    "Limit"
   ],
   "cs": [
     "@context",
@@ -240,7 +245,12 @@
     "Interval",
     "Panel",
     "Logo (SVG)",
-    "ArcGIS Hub"
+    "ArcGIS Hub",
+    "ArcGIS Feature Service",
+    "WFS 2.0",
+    "OGC SensorThings",
+    "Thing",
+    "Limit"
   ],
   "de": [
     "@context",
@@ -414,6 +424,11 @@
     "Filter: {field}",
     "Logo (SVG)",
     "Favicon (SVG)",
-    "ArcGIS Hub"
+    "ArcGIS Hub",
+    "ArcGIS Feature Service",
+    "WFS 2.0",
+    "OGC SensorThings",
+    "Thing",
+    "Limit"
   ]
 }

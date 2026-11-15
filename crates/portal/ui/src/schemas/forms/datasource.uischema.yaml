@@ -162,6 +162,162 @@ spec:
         sk: "Len pre tabuľku: hárok na čítanie podľa názvu záložky, napríklad Stanice 2026. Prázdne pole číta prvý hárok."
         cs: "Jen pro tabulku: list ke čtení podle názvu záložky, například Stanice 2026. Prázdné pole čte první list."
         de: "Nur für eine Tabelle: das zu lesende Blatt nach seinem Reiternamen, zum Beispiel Stationen 2026. Leer gelassen das erste Blatt."
+    http.preset.kind:
+      help:
+        en: "The kind of service the URL names, for example ArcGIS Feature Service for …/FeatureServer/0/query."
+        sk: "Druh služby, ktorú URL označuje, napríklad ArcGIS Feature Service pre …/FeatureServer/0/query."
+        cs: "Druh služby, kterou URL označuje, například ArcGIS Feature Service pro …/FeatureServer/0/query."
+        de: "Die Art des Dienstes, den die URL nennt, zum Beispiel ArcGIS Feature Service für …/FeatureServer/0/query."
+    http.preset.pageSize:
+      help:
+        en: "1 to 10000, 1000 when empty, for example 200. Lower it when the service answers slowly."
+        sk: "1 až 10000, prázdne = 1000, napríklad 200. Znížte, keď služba odpovedá pomaly."
+        cs: "1 až 10000, prázdné = 1000, například 200. Snižte, když služba odpovídá pomalu."
+        de: "1 bis 10000, leer = 1000, zum Beispiel 200. Senken Sie den Wert, wenn der Dienst langsam antwortet."
+    http.preset.organization:
+      help:
+        en: "CKAN only: the organization whose datasets are read, for example bcn. Find lists them."
+        sk: "Len CKAN: organizácia, ktorej dátové sady sa čítajú, napríklad bcn. Nájsť ich vypíše."
+        cs: "Jen CKAN: organizace, jejíž datové sady se čtou, například bcn. Najít je vypíše."
+        de: "Nur CKAN: die Organisation, deren Datensätze gelesen werden, zum Beispiel bcn. Suchen listet sie."
+    http.preset.resourceId:
+      help:
+        en: "CKAN only: the resource whose datastore rows are read, for example 5b8f3a5e-0c1e-4f53-9d4a-1f2a3b4c5d6e."
+        sk: "Len CKAN: zdroj, ktorého riadky datastore sa čítajú, napríklad 5b8f3a5e-0c1e-4f53-9d4a-1f2a3b4c5d6e."
+        cs: "Jen CKAN: zdroj, jehož řádky datastore se čtou, například 5b8f3a5e-0c1e-4f53-9d4a-1f2a3b4c5d6e."
+        de: "Nur CKAN: die Ressource, deren Datastore-Zeilen gelesen werden, zum Beispiel 5b8f3a5e-0c1e-4f53-9d4a-1f2a3b4c5d6e."
+    http.preset.objectIdField:
+      help:
+        en: "ArcGIS only: the field that keeps the order stable across pages, OBJECTID when empty."
+        sk: "Len ArcGIS: pole, ktoré drží stále poradie naprieč stránkami, prázdne = OBJECTID."
+        cs: "Jen ArcGIS: pole, které drží stálé pořadí napříč stránkami, prázdné = OBJECTID."
+        de: "Nur ArcGIS: das Feld, das die Reihenfolge über Seiten stabil hält, leer = OBJECTID."
+    http.preset.outFields:
+      help:
+        en: "ArcGIS only: each field by name, for example objectid and naz_mco; never *."
+        sk: "Len ArcGIS: každé pole menom, napríklad objectid a naz_mco; nikdy *."
+        cs: "Jen ArcGIS: každé pole jménem, například objectid a naz_mco; nikdy *."
+        de: "Nur ArcGIS: jedes Feld mit Namen, zum Beispiel objectid und naz_mco; nie *."
+    http.preset.typeNames:
+      help:
+        en: "WFS only: the feature type read, for example avoindata:Helsinki_osoiteluettelo. Find lists them."
+        sk: "Len WFS: čítaný typ prvku, napríklad avoindata:Helsinki_osoiteluettelo. Nájsť ich vypíše."
+        cs: "Jen WFS: čtený typ prvku, například avoindata:Helsinki_osoiteluettelo. Najít je vypíše."
+        de: "Nur WFS: die gelesene Objektart, zum Beispiel avoindata:Helsinki_osoiteluettelo. Suchen listet sie."
+    http.preset.srsName:
+      help:
+        en: "WFS only: the coordinates asked for, EPSG:4326 when empty."
+        sk: "Len WFS: požadované súradnice, prázdne = EPSG:4326."
+        cs: "Jen WFS: požadované souřadnice, prázdné = EPSG:4326."
+        de: "Nur WFS: die angefragten Koordinaten, leer = EPSG:4326."
+    http.preset.expand:
+      help:
+        en: "SensorThings only: what is read with each entity, for example Datastreams/Observations."
+        sk: "Len SensorThings: čo sa číta s každou entitou, napríklad Datastreams/Observations."
+        cs: "Jen SensorThings: co se čte s každou entitou, například Datastreams/Observations."
+        de: "Nur SensorThings: was mit jeder Entität gelesen wird, zum Beispiel Datastreams/Observations."
+    http.paging.mode:
+      help:
+        en: "How the API names its next page, for example Offset and limit for ?offset=0&limit=100."
+        sk: "Ako API označuje ďalšiu stránku, napríklad Posun a limit pre ?offset=0&limit=100."
+        cs: "Jak API označuje další stránku, například Posun a limit pro ?offset=0&limit=100."
+        de: "Wie die API ihre nächste Seite nennt, zum Beispiel Offset und Limit für ?offset=0&limit=100."
+    http.paging.param:
+      help:
+        en: "Page number: the parameter name, page when empty."
+        sk: "Číslo stránky: meno parametra, prázdne = page."
+        cs: "Číslo stránky: jméno parametru, prázdné = page."
+        de: "Seitennummer: der Parametername, leer = page."
+    http.paging.start:
+      help:
+        en: "Page number or offset: where the walk starts, for example 1 for a page number, 0 for an offset."
+        sk: "Kde prechádzanie začína, napríklad 1 pre číslo stránky, 0 pre posun."
+        cs: "Kde procházení začíná, například 1 pro číslo stránky, 0 pro posun."
+        de: "Wo das Blättern beginnt, zum Beispiel 1 für eine Seitennummer, 0 für einen Offset."
+    http.paging.sizeParam:
+      help:
+        en: "Page number: the parameter the size is sent in, for example per_page."
+        sk: "Číslo stránky: parameter, v ktorom sa posiela veľkosť, napríklad per_page."
+        cs: "Číslo stránky: parametr, ve kterém se posílá velikost, například per_page."
+        de: "Seitennummer: der Parameter für die Größe, zum Beispiel per_page."
+    http.paging.size:
+      help:
+        en: "Page number: the records asked for per page, for example 100; a shorter page ends the walk."
+        sk: "Číslo stránky: záznamov na stránku, napríklad 100; kratšia stránka prechádzanie ukončí."
+        cs: "Číslo stránky: záznamů na stránku, například 100; kratší stránka procházení ukončí."
+        de: "Seitennummer: Datensätze pro Seite, zum Beispiel 100; eine kürzere Seite beendet das Blättern."
+    http.paging.offsetParam:
+      help:
+        en: "Offset: the parameter name, offset when empty, for example $skip or resultOffset."
+        sk: "Posun: meno parametra, prázdne = offset, napríklad $skip alebo resultOffset."
+        cs: "Posun: jméno parametru, prázdné = offset, například $skip nebo resultOffset."
+        de: "Offset: der Parametername, leer = offset, zum Beispiel $skip oder resultOffset."
+    http.paging.limitParam:
+      help:
+        en: "Offset: the page size parameter, limit when empty, for example $top or resultRecordCount."
+        sk: "Posun: parameter veľkosti stránky, prázdne = limit, napríklad $top alebo resultRecordCount."
+        cs: "Posun: parametr velikosti stránky, prázdné = limit, například $top nebo resultRecordCount."
+        de: "Offset: der Seitengrößenparameter, leer = limit, zum Beispiel $top oder resultRecordCount."
+    http.paging.limit:
+      help:
+        en: "Offset: the records asked for per page, for example 500."
+        sk: "Posun: záznamov na stránku, napríklad 500."
+        cs: "Posun: záznamů na stránku, například 500."
+        de: "Offset: Datensätze pro Seite, zum Beispiel 500."
+    http.paging.cursor:
+      help:
+        en: "Cursor: where the answer holds the next cursor, for example meta.next."
+        sk: "Kurzor: kde odpoveď drží ďalší kurzor, napríklad meta.next."
+        cs: "Kurzor: kde odpověď drží další kurzor, například meta.next."
+        de: "Cursor: wo die Antwort den nächsten Cursor hält, zum Beispiel meta.next."
+    http.paging.cursorParam:
+      help:
+        en: "Cursor: the query parameter it is sent back in, for example cursor."
+        sk: "Kurzor: parameter dopytu, v ktorom sa vracia, napríklad cursor."
+        cs: "Kurzor: parametr dotazu, ve kterém se vrací, například cursor."
+        de: "Cursor: der Abfrageparameter, in dem er zurückgeht, zum Beispiel cursor."
+    http.paging.cursorHeader:
+      help:
+        en: "Cursor: the header it is sent back in instead, for example X-Next-Cursor."
+        sk: "Kurzor: hlavička, v ktorej sa vracia namiesto parametra, napríklad X-Next-Cursor."
+        cs: "Kurzor: hlavička, ve které se vrací místo parametru, například X-Next-Cursor."
+        de: "Cursor: der Header, in dem er statt eines Parameters zurückgeht, zum Beispiel X-Next-Cursor."
+    http.paging.next:
+      help:
+        en: "Next URL: where the answer holds it, for example @odata.nextLink or links[rel=next].href."
+        sk: "Ďalšia URL: kde ju odpoveď drží, napríklad @odata.nextLink alebo links[rel=next].href."
+        cs: "Další URL: kde ji odpověď drží, například @odata.nextLink nebo links[rel=next].href."
+        de: "Nächste URL: wo die Antwort sie hält, zum Beispiel @odata.nextLink oder links[rel=next].href."
+    http.paging.total:
+      help:
+        en: "Where the first page announces the count, for example numberMatched; a run that reads another number fails."
+        sk: "Kde prvá stránka ohlasuje počet, napríklad numberMatched; beh s iným počtom zlyhá."
+        cs: "Kde první stránka ohlašuje počet, například numberMatched; běh s jiným počtem selže."
+        de: "Wo die erste Seite die Anzahl nennt, zum Beispiel numberMatched; ein Lauf mit anderer Anzahl schlägt fehl."
+    http.paging.more:
+      help:
+        en: "A true or false that says another page exists, for example exceededTransferLimit."
+        sk: "Hodnota true alebo false, že existuje ďalšia stránka, napríklad exceededTransferLimit."
+        cs: "Hodnota true nebo false, že existuje další stránka, například exceededTransferLimit."
+        de: "Ein true oder false, ob es eine weitere Seite gibt, zum Beispiel exceededTransferLimit."
+    http.paging.maxPages:
+      help:
+        en: "1 to 10000, 1000 when empty; reaching it fails the run as incomplete."
+        sk: "1 až 10000, prázdne = 1000; dosiahnutie znamená neúplný beh."
+        cs: "1 až 10000, prázdné = 1000; dosažení znamená neúplný běh."
+        de: "1 bis 10000, leer = 1000; wird es erreicht, ist der Lauf unvollständig."
+    http.paging.maxRecords:
+      help:
+        en: "The most records one run reads, for example 50000; reaching it fails the run."
+        sk: "Najviac záznamov jedného behu, napríklad 50000; dosiahnutie beh ukončí chybou."
+        cs: "Nejvíc záznamů jednoho běhu, například 50000; dosažení běh ukončí chybou."
+        de: "Die meisten Datensätze eines Laufs, zum Beispiel 50000; wird es erreicht, schlägt der Lauf fehl."
+    http.paging.delay:
+      help:
+        en: "For example 200ms or 1s, at most a minute."
+        sk: "Napríklad 200ms alebo 1s, najviac minúta."
+        cs: "Například 200ms nebo 1s, nejvýš minuta."
+        de: "Zum Beispiel 200ms oder 1s, höchstens eine Minute."
     http.authorization.scheme:
       help:
         en: Authentication prefix sent in the header, defaulting to Bearer when left blank.

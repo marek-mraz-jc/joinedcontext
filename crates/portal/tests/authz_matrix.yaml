@@ -1240,6 +1240,11 @@ routes:
     rule: "project-verb:propose:DataSource"
     expect: [403, 403, allow, allow, 403, allow, 404, 403]
     note: "a saved source read once on the runner (T-4819); the fixture runs no runner, so an allowed caller gets its 503; a caller who may not read the project gets 404, as for every named resource"
+  - route: POST /projects/{project}/datasource-discovery
+    rule: "project-verb:propose:DataSource"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    body: {"kind": "ckan", "url": "https://feeds.example/"}
+    note: "a public service's listing read once on the runner for a preset's choices (T-7076); the fixture runs no runner, so an allowed caller gets its 503"
   - route: GET /projects/{project}/mqttbrokers/{name}/measured
     rule: "project-verb:read:MqttBroker"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]

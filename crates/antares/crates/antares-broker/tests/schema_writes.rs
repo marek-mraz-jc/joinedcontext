@@ -402,6 +402,21 @@ async fn odata_writes_meet_the_same_refusal_and_read_back_what_keeps() {
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
     assert!(!b.to_string().contains("pm10"), "{b}");
+    // the same on the view's OGC collection
+    #[cfg(feature = "ogc")]
+    {
+        let (s, b) = send_as(
+            &app,
+            "POST",
+            "/x/views/levels/ogc/features/collections/Sensor/items",
+            Some(&json!({"type": "Feature", "id": "urn:ngsi-ld:Sensor:lvo",
+                "geometry": null, "properties": {"level": "low"}})),
+            "application/geo+json",
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+        assert!(!b.to_string().contains("pm10"), "{b}");
+    }
 
     // any other 400 of the NGSI-LD route keeps the surface's own fixed text
     let (s, b) = send(
