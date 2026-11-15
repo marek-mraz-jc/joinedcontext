@@ -30,13 +30,11 @@ describe("the http form's preset and paging blocks", () => {
   const http = (dataSourceSchema(t, "http").properties as Record<string, JsonSchema>).http;
   const blocks = http.properties as Record<string, JsonSchema>;
 
-  it.each(["preset", "paging"])("gives every %s field a hint with an example or a default", (block) => {
+  // Their help, in four locales, is checked with every DataSource field's in form_help.test.ts.
+  it.each(["preset", "paging"])("titles every %s field in words", (block) => {
     const fields = blocks[block].properties as Record<string, JsonSchema>;
     expect(Object.keys(fields).length).toBeGreaterThan(5);
-    for (const [name, field] of Object.entries(fields)) {
-      expect(field.title, name).not.toMatch(/^datasources\./);
-      expect(field.description, name).toMatch(/for example|when empty|at most/);
-    }
+    for (const [name, field] of Object.entries(fields)) expect(field.title, name).not.toMatch(/^datasources\./);
   });
 
   it("offers the preset kinds and paging modes jc-core reads, by name", () => {
@@ -45,7 +43,6 @@ describe("the http form's preset and paging blocks", () => {
     expect(kinds.every((k) => !k.title.startsWith("datasources."))).toBe(true);
     const modes = (blocks.paging.properties as Record<string, JsonSchema>).mode.oneOf as Array<{ const: string }>;
     expect(modes.map((m) => m.const)).toEqual(["page", "offset", "cursor", "link", "nextUrl"]);
-    expect(blocks.records.description).toMatch(/for example data\.stations/);
   });
 });
 

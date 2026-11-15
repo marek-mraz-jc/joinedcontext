@@ -632,7 +632,6 @@ export function dataSourceSchema(
         records: {
           type: "string",
           title: t("datasources.field.records"),
-          description: t("datasources.field.recordsHelp"),
           pattern: RECORDS_PATH,
         },
         preset: presetSchema(t),
@@ -694,9 +693,10 @@ export type PresetKind = (typeof PRESET_KINDS)[number];
 /** How `spec.http.paging` names the next page (jc-core `HttpPagingMode`). */
 export const PAGING_MODES = ["page", "offset", "cursor", "link", "nextUrl"] as const;
 
-/** A field of the preset or paging block, its hint under it: `datasources.<block>.<name>Hint`. */
+/** A field of the preset or paging block, titled `datasources.<block>.<name>`; its help is in
+ * forms/datasource.uischema.yaml, as every DataSource field's is. */
 function hinted(t: (key: string) => string, block: string, name: string, schema: JsonSchema): JsonSchema {
-  return { ...schema, title: t(`datasources.${block}.${name}`), description: t(`datasources.${block}.${name}Hint`) };
+  return { ...schema, title: t(`datasources.${block}.${name}`) };
 }
 
 /**
