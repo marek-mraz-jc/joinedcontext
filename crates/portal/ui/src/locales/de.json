@@ -2882,7 +2882,23 @@
       "maskedKept": "{count, plural, one {# Datensatz bleibt in der Liste: ein Wert wurde als Geheimnis maskiert, und eine Wiederholung würde die Maske schreiben. Das nächste Lesen der Quelle bringt ihn erneut.} other {# Datensätze bleiben in der Liste: ein Wert wurde jeweils als Geheimnis maskiert, und eine Wiederholung würde die Maske schreiben. Das nächste Lesen der Quelle bringt sie erneut.}}",
       "newest": "Neueste",
       "older": "Ältere Datensätze",
-      "openRun": "Seinen Lauf öffnen"
+      "openRun": "Seinen Lauf öffnen",
+      "groups": {
+        "title": "Nach Regel",
+        "lead": "Alle aufbewahrten Datensätze nach verletzter Regel und Attribut, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe.",
+        "export": "CSV exportieren",
+        "exporting": "Wird exportiert…",
+        "exportHint": "Alle aufbewahrten Datensätze mit Regel und Grund, Geheimnisse maskiert und personenbezogene Attribute ausgelassen. Die Datei: {file}.",
+        "count": "{count, plural, one {# Datensatz} other {# Datensätze}}",
+        "allowed": "Das Modell erlaubt:",
+        "fix": {
+          "model": "Im Datenmodell beheben: Es lehnt dieses Attribut oder diesen Wert ab. Ist die Quelle richtig, erweitern Sie den Slot oder deklarieren Sie das Attribut.",
+          "mapping": "Im Mapping beheben: Es schreibt einen Wert falscher Form. Wandeln Sie ihn um oder bilden Sie ihn auf das ab, was der Slot annimmt.",
+          "step": "Den Schritt beheben: Ein Schritt der Pipeline ist an diesen Datensätzen gescheitert. Den Fehler zeigt der Lauf des Datensatzes.",
+          "runner": "Der Runner hat diese Datensätze ohne Modellregel abgelehnt. Seine Worte zeigt der Lauf des Datensatzes."
+        },
+        "example": "Beispiel"
+      }
     },
     "runs": {
       "open": "Läufe und Protokoll",

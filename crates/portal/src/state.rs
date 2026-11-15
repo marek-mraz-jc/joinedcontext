@@ -225,6 +225,9 @@ impl AppState {
         ));
         let activity_events = crate::activity::ActivityHub::new();
         let activity = crate::activity::ActivityStore::new(None).with_hub(activity_events.clone());
+        let model_schemas = Arc::new(crate::pipeline_validation::ModelSchemas::with_linkml_stage(
+            config.pipeline_linkml_stage,
+        ));
         Self {
             bearer,
             catalogue_http: crate::api::catalogue::CKAN_HTTP.clone(),
@@ -255,7 +258,7 @@ impl AppState {
             quality_checks,
             space_usage,
             space_moves: Arc::default(),
-            model_schemas: Arc::default(),
+            model_schemas,
             rejected: Arc::new(crate::pipeline_outcomes::RejectedStore::new(None)),
             trash: Arc::new(crate::entity_trash::TrashStore::new(None)),
             comments: Arc::new(crate::entity_comments::CommentStore::new(None)),
@@ -1028,7 +1031,9 @@ impl AppState {
             let mut views = crate::reconciler::views::ViewSync::new(broker, token_file)
                 .with_broker_template(self.config.broker_url_template.clone());
             if let Some(url) = self.config.model_tools_url.clone() {
-                views = views.with_model_tools(url);
+                views = views
+                    .with_model_tools(url)
+                    .with_linkml(Arc::clone(&self.model_schemas));
             }
             let views = Arc::new(views);
             self.views = Some(Arc::clone(&views));

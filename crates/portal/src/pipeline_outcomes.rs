@@ -47,6 +47,23 @@ pub struct Rejected {
     pub run: Option<String>,
 }
 
+/// One rule broken at one path, how often and its newest records (G-21): what the rejected list
+/// is grouped by, counted over every record kept, not a page.
+#[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectedGroup {
+    pub rule: String,
+    pub path: String,
+    pub count: u64,
+    /// The group's newest records, at most [`EXAMPLES`].
+    pub examples: Vec<Rejected>,
+}
+
+/// How many records a group shows.
+pub const EXAMPLES: usize = 3;
+/// How many groups one answer holds, the largest first.
+pub const GROUPS: usize = 50;
+
 type Key = (String, String);
 
 /// One row of `pipeline_rejected` as Postgres answers it.
@@ -184,23 +201,7 @@ impl RejectedStore {
                 .bind(limit as i64)
                 .fetch_all(pool)
                 .await?;
-                Ok(rows
-                    .into_iter()
-                    .map(
-                        |(id, at, record, rule, path, message, step, run)| Rejected {
-                            id,
-                            at: at
-                                .format(&time::format_description::well_known::Rfc3339)
-                                .unwrap_or_default(),
-                            record,
-                            rule,
-                            path,
-                            message,
-                            step,
-                            run,
-                        },
-                    )
-                    .collect())
+                Ok(rows.into_iter().map(from_row).collect())
             }
             Inner::Memory(map) => {
                 let map = map.read().unwrap_or_else(|e| e.into_inner());
@@ -215,6 +216,87 @@ impl RejectedStore {
                             .collect()
                     })
                     .unwrap_or_default())
+            }
+        }
+    }
+
+    /// The pipeline's kept records grouped by rule and path, the largest group first (then the
+    /// one refused last), at most [`GROUPS`], each with its newest [`EXAMPLES`].
+    pub async fn groups(
+        &self,
+        project: &str,
+        pipeline: &str,
+    ) -> Result<Vec<RejectedGroup>, sqlx::Error> {
+        match &self.inner {
+            Inner::Postgres(pool) => {
+                let counted: Vec<(String, String, i64, Vec<i64>)> = sqlx::query_as(
+                    "SELECT rule, path, count(*), (array_agg(id ORDER BY id DESC))[1:$3] \
+                     FROM pipeline_rejected WHERE project = $1 AND pipeline = $2 \
+                     GROUP BY rule, path ORDER BY count(*) DESC, max(id) DESC LIMIT $4",
+                )
+                .bind(project)
+                .bind(pipeline)
+                .bind(EXAMPLES as i32)
+                .bind(GROUPS as i64)
+                .fetch_all(pool)
+                .await?;
+                let ids: Vec<i64> = counted.iter().flat_map(|(.., ids)| ids.clone()).collect();
+                let rows: Vec<Row> = sqlx::query_as(
+                    "SELECT id, at, record, rule, path, message, step, run FROM pipeline_rejected \
+                     WHERE project = $1 AND pipeline = $2 AND id = ANY($3) ORDER BY id DESC",
+                )
+                .bind(project)
+                .bind(pipeline)
+                .bind(&ids)
+                .fetch_all(pool)
+                .await?;
+                let examples: Vec<Rejected> = rows.into_iter().map(from_row).collect();
+                Ok(counted
+                    .into_iter()
+                    .map(|(rule, path, count, ids)| RejectedGroup {
+                        examples: examples
+                            .iter()
+                            .filter(|r| ids.contains(&r.id))
+                            .cloned()
+                            .collect(),
+                        rule,
+                        path,
+                        count: u64::try_from(count).unwrap_or_default(),
+                    })
+                    .collect())
+            }
+            Inner::Memory(map) => {
+                let map = map.read().unwrap_or_else(|e| e.into_inner());
+                let mut groups: Vec<RejectedGroup> = Vec::new();
+                let newest_first = map
+                    .get(&(project.to_owned(), pipeline.to_owned()))
+                    .map(|(_, list)| list.iter().rev())
+                    .into_iter()
+                    .flatten();
+                let mut index: HashMap<(&str, &str), usize> = HashMap::new();
+                for record in newest_first {
+                    let at = *index
+                        .entry((record.rule.as_str(), record.path.as_str()))
+                        .or_insert_with(|| {
+                            groups.push(RejectedGroup {
+                                rule: record.rule.clone(),
+                                path: record.path.clone(),
+                                count: 0,
+                                examples: Vec::new(),
+                            });
+                            groups.len() - 1
+                        });
+                    if let Some(group) = groups.get_mut(at) {
+                        group.count += 1;
+                        if group.examples.len() < EXAMPLES {
+                            group.examples.push(record.clone());
+                        }
+                    }
+                }
+                // Stable: a tie keeps the group refused last first, as the database orders.
+                groups.sort_by_key(|g| std::cmp::Reverse(g.count));
+                groups.truncate(GROUPS);
+                Ok(groups)
             }
         }
     }
@@ -327,6 +409,21 @@ impl RejectedStore {
                 Ok(taken)
             }
         }
+    }
+}
+
+fn from_row((id, at, record, rule, path, message, step, run): Row) -> Rejected {
+    Rejected {
+        id,
+        at: at
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default(),
+        record,
+        rule,
+        path,
+        message,
+        step,
+        run,
     }
 }
 
@@ -625,6 +722,44 @@ mod tests {
             step,
             run: Some("2026-10-07T08:00:00Z".into()),
         }
+    }
+
+    /// G-21: the groups count every kept record, not a page: the largest group first, each with
+    /// its newest examples, and another pipeline's records stay out.
+    #[tokio::test]
+    async fn the_groups_count_every_kept_record_by_rule_and_path() {
+        let store = RejectedStore::new(None);
+        for n in 0..60 {
+            let why = if n % 3 == 0 {
+                reason("sh:in", "window", None)
+            } else {
+                reason("sh:datatype", "pm10", None)
+            };
+            store
+                .reject("p", "a", &json!({ "n": n }), &why)
+                .await
+                .expect("kept");
+        }
+        store
+            .reject("p", "b", &json!({ "n": 0 }), &reason("id", "id", None))
+            .await
+            .expect("kept");
+        let groups = store.groups("p", "a").await.expect("groups");
+        let counted: Vec<(&str, &str, u64)> = groups
+            .iter()
+            .map(|g| (g.rule.as_str(), g.path.as_str(), g.count))
+            .collect();
+        assert_eq!(
+            counted,
+            [("sh:datatype", "pm10", 40), ("sh:in", "window", 20)]
+        );
+        let newest: Vec<Value> = groups[0]
+            .examples
+            .iter()
+            .map(|r| r.record["n"].clone())
+            .collect();
+        assert_eq!(newest, [json!(59), json!(58), json!(56)]);
+        assert!(store.groups("q", "a").await.expect("none").is_empty());
     }
 
     #[tokio::test]

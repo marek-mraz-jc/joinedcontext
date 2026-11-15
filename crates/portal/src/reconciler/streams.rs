@@ -576,7 +576,8 @@ impl StreamDeployer {
             "{}/internal/pipelines/{project}/{pipeline}/rejected",
             internal.trim_end_matches('/')
         );
-        if !crate::pipeline_validation::insert_stage(stream, &schema, &sink) {
+        let linkml = schemas.stage_linkml(project, space);
+        if !crate::pipeline_validation::insert_stage(stream, &schema, linkml.as_deref(), &sink) {
             tracing::warn!(
                 project,
                 pipeline,
@@ -5934,6 +5935,7 @@ output:
         assert!(crate::pipeline_validation::insert_stage(
             &mut stream,
             &schema,
+            None,
             "http://portal/rejected"
         ));
         let labels = processor_labels(&stream);

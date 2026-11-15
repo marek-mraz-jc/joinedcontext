@@ -1,0 +1,25 @@
+[package]
+name = "ekiben-linkml"
+version = "0.1.0"
+edition.workspace = true
+# Links linkml-model (EUPL-1.2): kept out of the ekiben workspace, whose crates stay permissive
+# (crates/ekiben/deny.toml), and registered by the jc binary that links both.
+license = "EUPL-1.2"
+publish = false
+description = "The runner's linkml_validate processor: a pipeline's record checked against its space's LinkML model (G-19, PL-59)."
+
+[dependencies]
+ekiben-core = { path = "../../ekiben/crates/ekiben-core" }
+linkml-model = { path = "../../antares/crates/linkml-model", version = "0.3.0" }
+serde_json = "1.0.154"
+async-trait = "0.1.92"
+
+[dev-dependencies]
+ekiben-processors = { path = "../../ekiben/crates/ekiben-processors" }
+ekiben-bloblang = { path = "../../ekiben/crates/ekiben-bloblang" }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "sync"] }
+criterion = "0.8.2"
+
+[[bench]]
+name = "validate_bench"
+harness = false

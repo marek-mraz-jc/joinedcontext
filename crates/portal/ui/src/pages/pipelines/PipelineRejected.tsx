@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../../api/client";
 import type { components } from "../../api/schema";
 import { usePermissions } from "../../api/permissions";
+import { download } from "../models/diagramExport";
 import { RecordView,
   Alert,
   Badge,
@@ -22,6 +23,7 @@ import { RecordView,
 } from "../../components/ui";
 
 type Rejected = components["schemas"]["Rejected"];
+type RejectedGroup = components["schemas"]["RejectedGroupView"];
 type RetryAnswer = components["schemas"]["RetryAnswer"];
 
 const PAGE = 50;
@@ -91,6 +93,28 @@ export function PipelineRejectedDialog({
     },
   });
 
+  // Every kept record counted by rule and path on the server: a page of 50 would miscount (G-21).
+  const groups = useQuery({
+    queryKey: [...listKey, "groups"],
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/api/v1/projects/{project}/pipelines/{name}/rejected/groups", {
+          params: { path: { project, name } },
+        }),
+      ),
+  });
+  const exported = useMutation({
+    mutationFn: async () => {
+      const csv: unknown = await unwrap(
+        await api.GET("/api/v1/projects/{project}/pipelines/{name}/rejected/export", {
+          params: { path: { project, name } },
+          parseAs: "text",
+        }),
+      );
+      download(typeof csv === "string" ? csv : "", `${project}-${name}-rejected.csv`, "text/csv;charset=utf-8");
+    },
+  });
+
   const items: Rejected[] = page.data?.items ?? [];
   const toggle = (id: number) =>
     setSelected((current) => {
@@ -152,6 +176,21 @@ export function PipelineRejectedDialog({
           <Alert role="alert" tone="danger">
             {error}
           </Alert>
+        ) : null}
+        {groups.data && groups.data.groups.length > 0 ? (
+          <RejectedGroups
+            groups={groups.data.groups}
+            exporting={exported.isPending}
+            exportError={
+              exported.error
+                ? exported.error instanceof ApiError
+                  ? (exported.error.problem?.detail ?? exported.error.message)
+                  : t("app.error.generic")
+                : null
+            }
+            onExport={() => exported.mutate()}
+            fileName={`${project}-${name}-rejected.csv`}
+          />
         ) : null}
         {page.isError ? (
           <Alert role="alert" tone="danger">
@@ -274,5 +313,100 @@ export function PipelineRejectedDialog({
         )}
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * The rejected records counted by the rule they broke and where (G-21), the largest group first:
+ * what to fix first, whether the fix belongs in the data model or in the mapping, and for an enum
+ * the values the model allows. The export takes every kept record to whoever owns the source.
+ */
+function RejectedGroups({
+  groups,
+  exporting,
+  exportError,
+  onExport,
+  fileName,
+}: {
+  groups: RejectedGroup[];
+  exporting: boolean;
+  exportError: string | null;
+  onExport: () => void;
+  fileName: string;
+}): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <section aria-labelledby="rejected-groups" className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <h3 id="rejected-groups" className="text-body font-semibold text-fg">
+            {t("pipelines.rejected.groups.title")}
+          </h3>
+          <p className="text-caption text-fg-subtle">{t("pipelines.rejected.groups.lead")}</p>
+        </div>
+        <div className="shrink-0">
+          <Button
+            size="sm"
+            disabled={exporting}
+            disabledReason={exporting ? t("pipelines.rejected.groups.exporting") : undefined}
+            onClick={onExport}
+          >
+            {exporting ? t("pipelines.rejected.groups.exporting") : t("pipelines.rejected.groups.export")}
+          </Button>
+        </div>
+      </div>
+      <p className="text-caption text-fg-subtle">
+        {t("pipelines.rejected.groups.exportHint", { file: fileName })}
+      </p>
+      {exportError ? (
+        <Alert role="alert" tone="danger">
+          {exportError}
+        </Alert>
+      ) : null}
+      <ul className="flex flex-col gap-2">
+        {groups.map((group, index) => (
+          <li
+            key={`${group.rule}\u0000${group.path}`}
+            className="min-w-0 rounded border border-border bg-surface"
+          >
+            {/* The largest group opens; the rest stay one line each, so the records stay in view. */}
+            <details open={index === 0} className="group">
+              <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-2 rounded p-3 hover:bg-surface-subtle [&::-webkit-details-marker]:hidden">
+                <span
+                  aria-hidden="true"
+                  className="inline-block text-fg transition-transform group-open:rotate-90"
+                >
+                  ▸
+                </span>
+                <Badge mono tone="danger">
+                  {group.rule}
+                </Badge>
+                {group.path ? <span className="font-mono text-caption text-fg">{group.path}</span> : null}
+                <span className="ml-auto text-caption font-semibold tabular-nums text-fg">
+                  {t("pipelines.rejected.groups.count", { count: group.count })}
+                </span>
+              </summary>
+              <div className="flex flex-col gap-2 px-3 pb-3">
+                <p className="text-body text-fg">{t(`pipelines.rejected.groups.fix.${group.fix}`)}</p>
+                {group.allowed && group.allowed.length > 0 ? (
+                  <p className="text-body text-fg">
+                    {t("pipelines.rejected.groups.allowed")}{" "}
+                    <span className="font-mono">{group.allowed.join(", ")}</span>
+                  </p>
+                ) : null}
+                {group.examples[0] ? (
+                  <figure className="border-l-2 border-border pl-2">
+                    <figcaption className="text-caption text-fg-subtle">
+                      {t("pipelines.rejected.groups.example")}
+                    </figcaption>
+                    <p className="break-words text-body text-fg">{group.examples[0].message}</p>
+                  </figure>
+                ) : null}
+              </div>
+            </details>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

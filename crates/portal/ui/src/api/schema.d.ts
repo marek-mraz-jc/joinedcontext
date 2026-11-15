@@ -6578,6 +6578,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Rejected Records
+         * @description Every record the pipeline holds rejected (at most 1000), newest first, as CSV: its rule, attribute, step, run, message and the record as JSON, secrets masked as they were kept and the attributes the project's models mark personal withheld (G-21, PL-61, PL-110). Needs read on the pipeline.
+         */
+        get: operations["export_rejected"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Group Rejected Records
+         * @description Every record the pipeline holds rejected, counted by the rule it broke and the attribute it broke it at, the largest group first, each with its newest three records (secrets masked), where the fix belongs and, for an enum, the values the model allows (G-21, PL-61). Needs read on the pipeline.
+         */
+        get: operations["get_rejected_groups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/pipelines/{name}/rejected/retry": {
         parameters: {
             query?: never;
@@ -12837,6 +12877,39 @@ export interface components {
              *     validation stage.
              */
             step?: number | null;
+        };
+        /**
+         * @description One rule broken at one path, how often and its newest records (G-21): what the rejected list
+         *     is grouped by, counted over every record kept, not a page.
+         */
+        RejectedGroup: {
+            /** Format: int64 */
+            count: number;
+            /** @description The group's newest records, at most [`EXAMPLES`]. */
+            examples: components["schemas"]["Rejected"][];
+            path: string;
+            rule: string;
+        };
+        /** @description One group with where its fix belongs. */
+        RejectedGroupView: components["schemas"]["RejectedGroup"] & {
+            /** @description The values the model allows at `path`, for an `sh:in` group. */
+            allowed?: string[];
+            /**
+             * @description Where the fix belongs: `model` (the space's data model refuses the value or the
+             *     attribute), `mapping` (the mapping writes the wrong shape), `step` (a step of the pipeline
+             *     failed) or `runner` (the runner refused it without a model rule).
+             */
+            fix: string;
+        };
+        /** @description The rejected list grouped by rule and path (G-21): what a steward fixes first. */
+        RejectedGroups: {
+            /** @description The largest group first, at most 50. */
+            groups: components["schemas"]["RejectedGroupView"][];
+            /**
+             * Format: int64
+             * @description How many records the pipeline holds, at most 1000 (PL-61).
+             */
+            total: number;
         };
         /** @description One page of a pipeline's rejected records. */
         RejectedPage: {
@@ -39449,6 +39522,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RejectedPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Pipeline not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The list could not be read */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    export_rejected: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Pipeline name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/csv, one row per rejected record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Pipeline not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The list or a model could not be read */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    get_rejected_groups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Pipeline name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RejectedGroups"];
                 };
             };
             /** @description Unauthorized */
