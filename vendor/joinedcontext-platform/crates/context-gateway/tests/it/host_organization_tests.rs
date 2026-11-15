@@ -336,6 +336,96 @@ async fn every_listing_on_one_host_holds_nothing_of_the_other_organization() {
     }
 }
 
+/// alpha's Endpoint and space open data (EP-187), beta's not, with no host Organization.
+fn open_data_app(realm: &common::Realm) -> Router {
+    let mut open = endpoint(ALPHA, "Alphabox", "pa");
+    open.open_data = true;
+    let mut open_space = space("pa");
+    Arc::make_mut(&mut open_space.endpoint).open_data = true;
+    let gateway = Gateway::new(
+        Broker::new("http://127.0.0.1:1"),
+        Box::new(PolicyPdp),
+        "city.test",
+    )
+    .serve([open, endpoint(BETA, "Betabox", "pb")])
+    .serve_spaces([open_space, space("pb")])
+    .authenticate(
+        Arc::new(realm.verifier()),
+        ServiceAccounts::new(),
+        Some("https://api.city.test".to_owned()),
+    );
+    gateway.replace_servers(vec![server("pa", "open", Audience::Public)]);
+    router(Arc::new(gateway))
+}
+
+/// One GET as `jc` hands it over from a host of `role` (`x-jc-host-role`), or from none.
+async fn get_as(app: &Router, role: Option<&str>, path: &str) -> (StatusCode, String) {
+    let mut request = Request::builder().uri(path);
+    if let Some(role) = role {
+        request = request.header("x-jc-host-role", role);
+    }
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::empty()).expect("a request"))
+        .await
+        .expect("an answer");
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+        .await
+        .expect("a body");
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// H2c (T-7011, evidence/T-6991/design.md §3): the open data host serves open-data Endpoints and
+/// spaces alone; any other Endpoint, space or MCP server answers there as an unknown one does,
+/// its title nowhere. The API host and a request from no host role answer every one as before.
+#[tokio::test]
+async fn the_open_data_host_answers_an_endpoint_that_is_not_open_data_as_unknown() {
+    let realm = common::Realm::new();
+    let app = open_data_app(&realm);
+    let unknown = get_as(
+        &app,
+        Some("opendata"),
+        "/api/endpoint/zzzzzzzzzzzzzzzzzzzzzzzzzz/",
+    )
+    .await;
+    assert_eq!(unknown.0, StatusCode::NOT_FOUND, "{}", unknown.1);
+    let closed = [
+        format!("/api/endpoint/{BETA}/"),
+        format!("/api/endpoint/{BETA}/ngsi-ld/v1/entities?type=AirQualityObserved"),
+        format!("/api/endpoint/{BETA}/access"),
+        format!("/.well-known/oauth-protected-resource/api/endpoint/{BETA}"),
+        "/cs/space-pb".to_owned(),
+        "/api/mcp/pa/open/.well-known/oauth-protected-resource".to_owned(),
+        "/.well-known/oauth-protected-resource/api/mcp".to_owned(),
+    ];
+    for path in &closed {
+        let (status, body) = get_as(&app, Some("opendata"), path).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (unknown.0, unknown.1.as_str()),
+            "{path}"
+        );
+        assert!(!body.contains("Betabox"), "{path}: {body}");
+    }
+    for path in [format!("/api/endpoint/{ALPHA}/"), "/cs/space-pa".to_owned()] {
+        let (status, body) = get_as(&app, Some("opendata"), &path).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+    }
+    // The API host and no host role: every Endpoint, space and server as today.
+    for role in [Some("api"), None] {
+        for path in [
+            format!("/api/endpoint/{ALPHA}/"),
+            format!("/api/endpoint/{BETA}/"),
+            "/cs/space-pb".to_owned(),
+            "/api/mcp/pa/open/.well-known/oauth-protected-resource".to_owned(),
+        ] {
+            let (status, body) = get_as(&app, role, &path).await;
+            assert_eq!(status, StatusCode::OK, "{role:?}{path}: {body}");
+        }
+    }
+}
+
 /// S-3-14: on an Organization's own host the catalogue's publisher is that Organization's
 /// domain, never the installation's; a token naming the Endpoint's address on that host is
 /// accepted there, one naming another host is not.
