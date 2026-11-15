@@ -9,6 +9,8 @@ pub mod cli;
 pub mod env;
 pub mod error;
 pub mod executor;
+pub mod fake;
+mod fake_data;
 pub mod functions;
 pub mod go_fmt;
 pub mod go_json;

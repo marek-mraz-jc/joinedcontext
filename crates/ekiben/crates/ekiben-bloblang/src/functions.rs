@@ -255,7 +255,7 @@ pub(crate) fn eval_function(
                 .ok_or_else(|| format!("variable '{vname}' undefined"))
         }
         "cosine_similarity" => eval_cosine_similarity(args, ctx),
-        "fake" => Ok(Value::String("fake_value".to_string())),
+        "fake" => crate::fake::fake(&eval_single_string_arg(args, "function", Some(""), ctx)?),
         "ngsild_urn" => crate::ngsild::eval_urn(args, ctx),
         "ngsild_ref" => crate::ngsild::eval_ref(args, ctx),
         "ngsild_point" => crate::ngsild::eval_point(args, ctx),
