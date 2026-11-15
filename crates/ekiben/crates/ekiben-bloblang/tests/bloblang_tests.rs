@@ -177,6 +177,49 @@ root.tail = this.text.slice(2)
 }
 
 #[test]
+fn time_and_url_parsers_refuse_a_multibyte_character_where_ascii_is_expected() {
+    for (mapping, input) in [
+        (
+            r#"root = this.v.ts_parse("Jan 2 2006")"#,
+            r#"{"v":"Ja\u00e9 2 2026"}"#,
+        ),
+        (r#"root = this.v.ts_parse("3PM")"#, r#"{"v":"3P\u00e9"}"#),
+        (
+            r#"root = this.v.ts_strptime("%b %d")"#,
+            r#"{"v":"Ja\u00e9 02"}"#,
+        ),
+        (
+            r#"root = this.v.ts_strptime("%I%p")"#,
+            r#"{"v":"03p\u00e9"}"#,
+        ),
+        (
+            r#"root = this.v.unescape_url_query()"#,
+            r#"{"v":"%a\u00e9"}"#,
+        ),
+    ] {
+        let err = run_map(mapping, input).expect_err(mapping);
+        assert!(!err.is_empty(), "{mapping}");
+    }
+    let ok = run_map(
+        r#"root = this.v.unescape_url_query()"#,
+        r#"{"v":"a%41+%C3%A9"}"#,
+    );
+    assert_eq!(ok.unwrap().as_deref(), Some("aA \u{e9}"));
+}
+
+#[test]
+fn nanoid_refuses_a_length_outside_its_bounds() {
+    for len in ["0", "-1", "100000000000"] {
+        let err = run_map(&format!("root = nanoid({len})"), "{}").expect_err(len);
+        assert!(err.contains("nanoid length"), "{len}: {err}");
+    }
+    let id = run_map("root = nanoid(length: 65536)", "{}")
+        .unwrap()
+        .unwrap();
+    assert_eq!(id.len(), 65536);
+}
+
+#[test]
 fn bento_arithmetic_md_degradation_and_comparisons() {
     // Grounded in website/docs/guides/bloblang/arithmetic.md and internal/bloblang/query/arithmetic.go
     let out = run_map(

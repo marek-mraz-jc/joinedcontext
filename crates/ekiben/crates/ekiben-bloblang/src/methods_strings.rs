@@ -1178,9 +1178,13 @@ fn unescape_url_query(s: &str) -> Result<String, String> {
                 if i + 2 >= bytes.len() {
                     return Err(format!("invalid URL escape {:?}", &s[i..]));
                 }
-                let hex_slice = &s[i + 1..i + 3];
-                let byte = u8::from_str_radix(hex_slice, 16)
-                    .map_err(|_| format!("invalid URL escape \"%{}%\"", hex_slice))?;
+                let hex = &bytes[i + 1..i + 3];
+                let byte = std::str::from_utf8(hex)
+                    .ok()
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+                    .ok_or_else(|| {
+                        format!("invalid URL escape \"%{}%\"", String::from_utf8_lossy(hex))
+                    })?;
                 out.push(byte);
                 i += 3;
             }
