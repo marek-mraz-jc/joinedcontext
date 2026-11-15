@@ -2748,6 +2748,7 @@ antares-broker v0.3.0
 │       ├── tokio feature "sync" (*)
 │       ├── tokio feature "time" (*)
 │       ├── tracing feature "default" (*)
+│       ├── percent-encoding feature "default" (*)
 │       ├── async-nats feature "crypto"
 │       │   └── async-nats v0.50.0
 │       │       ├── rustls-webpki v0.103.16 (*)
