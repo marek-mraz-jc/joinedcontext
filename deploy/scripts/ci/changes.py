@@ -49,12 +49,12 @@ FULL = ("tests/conftest.py", "tests/pyproject.toml", "tests/uv.lock", "defaults/
         "ci/example-deployments/helmfile.yaml", "ci/example-deployments/environments/_layers/",
         "scripts/render.sh", "scripts/render-all.sh", ENVS_FILE, "ci/golden/list-objects.py", "policies/")
 # Read by nothing a test checks, or gated by the render job alone.
-NO_TESTS = re.compile(r"(\.md$|^\ci/test-durations\.json$|^\ci/golden/[^/]+\.txt$|^releases/|^LICENSE$)")
+NO_TESTS = re.compile(r"(\.md$|^ci/test-durations\.json$|^ci/golden/[^/]+\.txt$|^releases/|^LICENSE$)")
 # Every rendered object of every component: networking, memory, schema and layout rules.
 RENDER_TESTS = ("tests/test_networkpolicies.py", "tests/test_memory_budget.py", "tests/test_values_schemas.py",
                 "tests/test_deployment_layout.py", "tests/test_production_baseline.py")
-ENV_PATH = re.compile(r"^(?:\ci/example-deployments/environments|deployment/environments)/([a-z0-9-]+)/|"
-                      r"^\ci/golden/([a-z0-9-]+)\.txt$|^gitops/([a-z0-9-]+)\.yaml$")
+ENV_PATH = re.compile(r"^(?:ci/example-deployments/environments|deployment/environments)/([a-z0-9-]+)/|"
+                      r"^ci/golden/([a-z0-9-]+)\.txt$|^gitops/([a-z0-9-]+)\.yaml$")
 COMPONENT = re.compile(r"^components/([a-z0-9-]+)/")
 # The scoped set gets a shard per this many seconds of ci/test-durations.json (about four minutes of
 # pytest wall at scripts/ci/test-shard.py's PARALLEL), at most SHARDS; the full set takes SHARDS.

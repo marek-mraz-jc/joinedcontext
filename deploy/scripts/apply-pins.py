@@ -82,7 +82,7 @@ FULL = "full"
 # Files that change how helmfile builds a release (needs, hooks, conditions, the release list)
 # rather than what it renders: a scoped sync cannot be judged from the render.
 STRUCTURE = re.compile(r"(^|/)helmfile[^/]*\.(ya?ml|gotmpl)$|^components/[^/]+/component\.yaml$"
-                       r"|^defaults/deployment/|^\ci/example-deployments/helmfile\.yaml$")
+                       r"|^defaults/deployment/|^ci/example-deployments/helmfile\.yaml$")
 # A structure file inside one component changes only that component's releases.
 COMPONENT = re.compile(r"^components/([^/]+)/")
 FULL_SYNC_HOURS = 6

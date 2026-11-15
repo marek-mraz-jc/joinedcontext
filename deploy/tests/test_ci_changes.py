@@ -113,7 +113,7 @@ ENVS = ["local", "production", "dev", "smartcity", "minimal"]
 def test_a_change_selects_the_test_files_that_read_it(files, tests):
     got = changes.scope(files, TESTS, ENVS)
     assert got["full"] is False and got["tests"] == tests
-    assert got["envs"] == ["dev"] and got["demo"] is False
+    assert got["envs"] == ["production"] and got["demo"] is False
 
 
 @pytest.mark.parametrize("files", [
@@ -129,10 +129,10 @@ def test_an_unknown_or_shared_path_selects_the_full_set(files):
     assert got == {"full": True, "tests": [], "envs": ENVS, "pins": True, "demo": True}
 
 
-def test_an_environment_file_renders_that_environment_beside_dev():
+def test_an_environment_file_renders_that_environment_beside_production():
     got = changes.scope(["ci/example-deployments/environments/smartcity/portal.yaml.gotmpl",
                          "ci/golden/minimal.txt", "tests/test_other.py"], TESTS, ENVS)
-    assert got["envs"] == ["dev", "smartcity", "minimal"] and got["tests"] == ["tests/test_other.py"]
+    assert got["envs"] == ["production", "smartcity", "minimal"] and got["tests"] == ["tests/test_other.py"]
 
 
 def test_a_pin_verifies_signatures_and_a_demo_change_renders_the_demo():
@@ -151,7 +151,7 @@ def test_the_cli_prints_the_scoped_set(repo):
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "seed")
     got = outputs(repo, base)
-    assert (got["full"], got["tests"], got["envs"], got["pins"]) == ("false", "tests/test_seed.py", "dev", "false")
+    assert (got["full"], got["tests"], got["envs"], got["pins"]) == ("false", "tests/test_seed.py", "production", "false")
 
 
 def write_release(root, name, objects):
