@@ -764,9 +764,9 @@ row of logo buttons that wraps, and the sections stack at every width, each a ca
 .jc-guide-menu a[aria-current] { border-color: var(--jc-primary); background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); }
 .jc-guide .jc-mcp-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: .5rem; }
 .jc-guide .jc-mcp-links .btn { min-block-size: 2.75rem; display: inline-flex; align-items: center; justify-content: center; }
-.jc-guide-up { margin: 1rem 0 0; }
+.jc-guide-up { margin-block: 1rem 0; }
 .jc-guide-up a { display: inline-flex; align-items: center; min-block-size: 2.75rem; }
-.jc-guide h4 { font-size: 1rem; margin: 1.25rem 0 .5rem; }
+.jc-guide h4 { font-size: 1rem; margin-block: 1.25rem .5rem; }
 .jc-guide-steps { padding-inline-start: 1.25rem; }
 .jc-guide-steps li { margin-block-end: .5rem; }
 .jc-guide-steps .jc-code { margin-block: .5rem .75rem; }
