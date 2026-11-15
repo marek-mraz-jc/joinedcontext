@@ -411,15 +411,6 @@ impl OutboundGuard {
         )
     }
 
-    /// [`Self::check_saved`] over an identity provider's [`IDP_OUTBOUND_CONFIG`].
-    pub fn check_idp(&self, config: &std::collections::BTreeMap<String, String>) -> Result<()> {
-        self.check_saved(
-            IDP_OUTBOUND_CONFIG
-                .iter()
-                .filter_map(|k| config.get(*k).map(|v| (*k, v.as_str()))),
-        )
-    }
-
     /// Reads at most [`MAX_OUTBOUND_BYTES`] of `resp`, refusing before buffering more (a declared
     /// `Content-Length` over the cap is refused without reading the body at all).
     async fn read_capped(mut resp: reqwest::Response) -> Result<Vec<u8>> {
