@@ -24,7 +24,7 @@ jobs:
       - env: { SECONDS_TO_FUZZ: "${{ inputs.seconds }}" }
         run: |
           case "$SECONDS_TO_FUZZ" in ''|*[!0-9]*) echo "seconds: a whole number" >&2; exit 1 ;; esac
-          cargo +nightly fuzz run script --release -- -dict=fuzz/script.dict -max_total_time="$SECONDS_TO_FUZZ" -timeout=10 -rss_limit_mb=2048
+          cargo +nightly fuzz run script --release --target x86_64-unknown-linux-gnu -- -dict=fuzz/script.dict -max_total_time="$SECONDS_TO_FUZZ" -timeout=10 -rss_limit_mb=2048
       - if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: ekiben-js-fuzz-artifacts, path: crates/ekiben/crates/ekiben-js/fuzz/artifacts }

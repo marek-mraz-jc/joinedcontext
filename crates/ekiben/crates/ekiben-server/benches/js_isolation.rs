@@ -62,7 +62,9 @@ fn main() {
         .expect("victim pipeline");
     let spin: Arc<dyn Processor> = reg
         .build_processor_list(
-            &[component(serde_json::json!({"javascript": {"code": "while (true) {}", "timeout_ms": 200}}))],
+            &[component(
+                serde_json::json!({"javascript": {"code": "while (true) {}", "timeout_ms": 200}}),
+            )],
             &pctx,
         )
         .expect("javascript")
@@ -85,9 +87,13 @@ fn main() {
         let mut took: Vec<Duration> = rt.block_on(async {
             let mut took = Vec::with_capacity(CALLS);
             for _ in 0..CALLS {
-                let batch = vec![Part::from_str(r#"{"id":"p-1","name":"  station  ","score":21}"#)];
+                let batch = vec![Part::from_str(
+                    r#"{"id":"p-1","name":"  station  ","score":21}"#,
+                )];
                 let at = Instant::now();
-                let res = execute_all(&pctx, &victim, vec![batch]).await.expect("victim runs");
+                let res = execute_all(&pctx, &victim, vec![batch])
+                    .await
+                    .expect("victim runs");
                 took.push(at.elapsed());
                 std::hint::black_box(res);
             }
