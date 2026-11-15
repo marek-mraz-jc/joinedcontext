@@ -105,6 +105,11 @@ pub struct PipelineSpec {
     /// row comes from (PL-106…PL-110).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<super::pipeline_history::History>,
+    /// Per written type, how chosen attributes are written: their `observedAt`, `unitCode` and
+    /// `datasetId`, the source's system members dropped and its own dates kept (G-15). The
+    /// rendered stream applies them after the author's steps, before history and lifetime.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<super::pipeline_attributes::AttributeRules>,
     /// How the pipeline follows a record its source removed (PL-96…PL-100); absent, nothing is
     /// deleted, as with `mode: never`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1133,6 +1138,21 @@ impl PipelineSpec {
                 .map(|out| out.entity_type.as_deref())
                 .collect();
             super::pipeline_history::validate(&self.history, written.as_ref())?;
+        }
+        if !self.attributes.is_empty() {
+            let outputs = self.outputs();
+            let written: Option<std::collections::BTreeSet<&str>> = outputs
+                .iter()
+                .map(|out| out.entity_type.as_deref())
+                .collect();
+            super::pipeline_attributes::validate(
+                &self.attributes,
+                &super::pipeline_attributes::Context {
+                    written: written.as_ref(),
+                    history: &self.history,
+                    author_texts: &self.author_texts(),
+                },
+            )?;
         }
         if let Some(source_deletes) = &self.source_deletes {
             source_deletes.validate(&super::pipeline_source_deletes::Context {

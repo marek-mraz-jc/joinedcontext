@@ -764,6 +764,16 @@ impl StreamDeployer {
 
                 let stream_spaces = StreamSpaces::of(mirror, &ns, &spec);
                 let spaces = &stream_spaces.spaces;
+                // `unitCode: model` (G-15) is written as the code the space's model declares.
+                let mut spec = spec;
+                if let Some(schemas) = self.model_schemas().filter(|_| !spec.attributes.is_empty())
+                {
+                    for space in spaces {
+                        if let Some(model) = schemas.get(&ns, space) {
+                            jcctl::attributes::resolve_units(&mut spec, &model);
+                        }
+                    }
+                }
                 // Every output's Endpoint, from the mirror (PL-52, PL-55).
                 let slugs: Result<Vec<String>, String> = spec
                     .outputs()
@@ -5896,6 +5906,58 @@ output:
             .expect("processors")
             .iter()
             .position(|p| p["label"] == LIFETIME_LABEL)
+    }
+
+    /// G-15: `spec.attributes` renders one `attributes` step right before the history and
+    /// lifetime steps (PL-107 order), naming the pipeline's own datasetId; a pipeline without
+    /// rules renders none.
+    #[test]
+    fn attribute_rules_render_one_step_before_history_and_lifetime() {
+        let ds = helsinki_datasource_spec();
+        let mut value = serde_json::to_value(with_lifetime(
+            &helsinki_pipeline_spec(),
+            &serde_json::json!([{ "type": "Bus", "entity": { "rolling": "PT1H" } }]),
+        ))
+        .expect("serializes");
+        value["history"] = serde_json::json!([{ "type": "Bus", "attributes": [{ "names": ["speed"], "keep": "every", "observedAt": "received" }] }]);
+        value["attributes"] = serde_json::json!([{ "type": "Bus", "systemMembers": "strip",
+            "rules": [{ "names": ["position"], "observedAt": "now", "datasetId": "pipeline" }] }]);
+        let spec: PipelineSpec = serde_json::from_value(value).expect("a PipelineSpec");
+        let stream = render_stream(
+            &spec,
+            "buses",
+            "helsinki",
+            &ds,
+            "hsl-citybikes-free",
+            "busslug",
+            None,
+        )
+        .expect("renders");
+        let labels = processor_labels(&stream);
+        let at = labels
+            .iter()
+            .position(|l| l == ATTRIBUTES_LABEL)
+            .expect("an attributes step");
+        assert_eq!(labels[at + 1], HISTORY_LABEL, "{labels:?}");
+        assert_eq!(labels[at + 2], LIFETIME_LABEL, "{labels:?}");
+        let text = stream["pipeline"]["processors"][at]["mapping"]
+            .as_str()
+            .expect("a mapping");
+        assert!(text.contains("urn:jc:pipeline:buses"), "{text}");
+        assert!(text.contains("root.createdAt = deleted()"), "{text}");
+        let plain = render_stream(
+            &helsinki_pipeline_spec(),
+            "buses",
+            "helsinki",
+            &ds,
+            "hsl-citybikes-free",
+            "busslug",
+            None,
+        )
+        .expect("renders");
+        assert!(!processor_labels(&plain)
+            .iter()
+            .any(|l| l == ATTRIBUTES_LABEL));
     }
 
     #[test]

@@ -53,6 +53,7 @@ pub fn render_stream(
         (None, None) => {}
     }
 
+    processors.extend(attributes_step(pipeline, name)?);
     processors.extend(history_step(pipeline)?);
     processors.extend(source_events_step(pipeline));
     processors.extend(lifetime_step(pipeline)?);
@@ -108,6 +109,9 @@ fn bento_page_rows(bento: &str) -> Result<Option<u64>, RenderError> {
 
 /// The label of a pipeline's compute step, the studio's `compute` node (PL-66).
 pub const COMPUTE_LABEL: &str = "compute";
+
+/// The label of the step `spec.attributes` compiles to (G-15).
+pub const ATTRIBUTES_LABEL: &str = "attributes";
 
 /// The label of the step `spec.history` compiles to (PL-107).
 pub const HISTORY_LABEL: &str = "history";
@@ -281,6 +285,18 @@ pub(super) fn with_source_failures(stream: &mut Value, url: &str) {
 /// `spec.history` as its one Bento step (PL-107, T-4845): the planned `observedAt` of each
 /// attribute, after the author's steps and before the lifetime step, whose `from: observedAt`
 /// then reads the same time.
+/// The step of `spec.attributes` (G-15), after the author's steps and before the history step:
+/// each rule's `observedAt`, `unitCode` and `datasetId`, the source's system members dropped and
+/// its dates kept. `name` is the pipeline's, for the `datasetId` `urn:jc:pipeline:<name>`.
+pub(crate) fn attributes_step(
+    pipeline: &PipelineSpec,
+    name: &str,
+) -> Result<Option<Value>, RenderError> {
+    let step =
+        jcctl::attributes::step(pipeline, name).map_err(|e| RenderError::Custom(e.to_string()))?;
+    Ok(step.map(|text| labelled(serde_json::json!({ "mapping": text }), ATTRIBUTES_LABEL)))
+}
+
 pub(crate) fn history_step(pipeline: &PipelineSpec) -> Result<Option<Value>, RenderError> {
     let step = jcctl::history::step(pipeline).map_err(|e| RenderError::Custom(e.to_string()))?;
     Ok(step.map(|text| labelled(serde_json::json!({ "mapping": text }), HISTORY_LABEL)))
@@ -576,6 +592,12 @@ pub fn render_endpoint_stream(
         COMPUTE_LABEL,
     ));
 
+    processors.extend(attributes_step(
+        pipeline,
+        stream_key
+            .rsplit_once('/')
+            .map_or(stream_key, |(_, name)| name),
+    )?);
     processors.extend(history_step(pipeline)?);
     processors.extend(source_events_step(pipeline));
     processors.extend(lifetime_step(pipeline)?);
@@ -1024,6 +1046,7 @@ pub fn render_merged(
         processors.extend(routing);
         Some(cases)
     };
+    processors.extend(attributes_step(pipeline, name)?);
     processors.extend(history_step(pipeline)?);
     processors.extend(source_events_step(pipeline));
     processors.extend(lifetime_step(pipeline)?);
