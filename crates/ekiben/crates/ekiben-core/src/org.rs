@@ -68,6 +68,11 @@ pub struct OrgQuotas {
     /// a listed name cannot be re-pointed at the node itself.
     #[serde(default)]
     pub private_hosts: Vec<String>,
+    /// Whether this organization's `ftp` inputs may use plain FTP (`tls: none`), which sends the
+    /// password and every file in the clear (an ekiben extension, T-7087). Off: FTPS only. Set by
+    /// the operator in the quotas file or `PUT /orgs/{org}/quotas`, never by a stream.
+    #[serde(default)]
+    pub allow_plain_ftp: bool,
 }
 
 fn default_max_concurrent_streams() -> usize {
@@ -102,6 +107,7 @@ impl Default for OrgQuotas {
             allowed_http_hosts: None,
             nats_subject_prefix: None,
             private_hosts: Vec::new(),
+            allow_plain_ftp: false,
         }
     }
 }

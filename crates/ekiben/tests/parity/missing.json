@@ -50,6 +50,14 @@
    "reason": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)"
   },
   {
+   "name": "inputs/ftp",
+   "reason": "files under a path glob of an FTP server, explicit FTPS unless the allow_plain_ftp quota (ekiben-io-remote, T-7087 G-11)"
+  },
+  {
+   "name": "inputs/imap",
+   "reason": "attachments of the unread mails of an IMAPS mailbox, marked or moved after the ack (ekiben-io-remote, T-7087 G-11)"
+  },
+  {
    "name": "inputs/ngsi_ld",
    "reason": "E7 NGSI-LD component (ekiben-io-ngsild), the runner's own way to an Endpoint"
   },
