@@ -535,6 +535,27 @@ fn a_csv_http_body_reaches_the_steps_one_row_per_message() {
     );
 }
 
+/// T-7058: a spreadsheet body splits the same way, through ekiben's `unarchive` format `xlsx`.
+#[test]
+fn an_xlsx_http_body_reaches_the_steps_one_row_per_message() {
+    let spec = source(&CSV_HTTP.replace("format: csv", "format: xlsx"));
+    let out = render(
+        "pipeline:\n  processors:\n    - mapping: root = this\n",
+        &spec,
+        &context("stations-csv"),
+    )
+    .expect("renders");
+    let doc: serde_norway::Value = serde_norway::from_str(&out).expect("yaml");
+    let processors = doc["pipeline"]["processors"]
+        .as_sequence()
+        .expect("processors");
+    assert_eq!(
+        processors[2]["unarchive"]["format"].as_str(),
+        Some("xlsx"),
+        "{out}"
+    );
+}
+
 /// PL-114, T-6572: a JSON body with `records` reaches the author's steps one element of that
 /// array per message, after the body bound (PL-113), so a GBFS feed of 460 stations is 460
 /// messages and none of them carries the whole 100 KB page.
@@ -573,10 +594,11 @@ fn a_json_http_body_with_records_reaches_the_steps_one_element_per_message() {
     assert_eq!(processors[5]["mapping"].as_str(), Some("root = this"));
 }
 
-/// PL-114: `csv` is the only body format; anything else is refused when the manifest is read.
+/// PL-114: `csv` and `xlsx` are the body formats; anything else is refused when the manifest is
+/// read.
 #[test]
 fn an_unknown_http_body_format_is_refused() {
-    let yaml = CSV_HTTP.replace("format: csv", "format: xlsx");
+    let yaml = CSV_HTTP.replace("format: csv", "format: parquet");
     assert!(ResourceEnvelope::<DataSourceSpec>::from_yaml(&yaml).is_err());
 }
 

@@ -321,7 +321,7 @@ pub fn input_of(spec: &DataSourceSpec, context: &InputContext) -> Value {
 /// GTFS-realtime prepends its protobuf decoder: the feed arrives as protobuf and every pipeline
 /// reading it would otherwise decode it again in its own mapping. An `http` connection refuses a
 /// body over its `maxBytes` (`body_bound`), then, with an `archive`, reads its named members
-/// (`archive_processors`), with `format: csv` splits it into one message per row and with
+/// (`archive_processors`), with `format: csv` or `xlsx` splits it into one message per row and with
 /// `records` into one message per element of that array (PL-114).
 pub fn prepended_processors(spec: &DataSourceSpec, context: &InputContext) -> Vec<Value> {
     if let (DataSourceType::Http, Some(http)) = (&spec.source_type, spec.http.as_ref()) {
@@ -329,8 +329,10 @@ pub fn prepended_processors(spec: &DataSourceSpec, context: &InputContext) -> Ve
         if let Some(archive) = &http.archive {
             processors.extend(archive_processors(spec, archive, context));
         }
-        if http.format == Some(HttpBodyFormat::Csv) {
-            processors.push(csv_rows());
+        match http.format {
+            Some(HttpBodyFormat::Csv) => processors.push(rows_of("csv")),
+            Some(HttpBodyFormat::Xlsx) => processors.push(rows_of("xlsx")),
+            None => {}
         }
         if let Some(mapping) = http
             .records
@@ -384,9 +386,10 @@ fn json_records(mapping: String) -> [Value; 3] {
 }
 
 /// One message per CSV row, keyed by the header, as the `csv` input sends them (PL-114).
-fn csv_rows() -> Value {
+/// The `unarchive` that splits a body of `format` into one message per row.
+fn rows_of(format: &str) -> Value {
     let mut unarchive = Mapping::new();
-    unarchive.insert(key("format"), text("csv"));
+    unarchive.insert(key("format"), text(format));
     let mut processor = Mapping::new();
     processor.insert(key("unarchive"), Value::Mapping(unarchive));
     Value::Mapping(processor)
