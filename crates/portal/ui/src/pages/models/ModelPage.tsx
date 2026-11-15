@@ -372,6 +372,8 @@ export function ModelPage({
                     </div>
                   ))}
                 </dl>
+                {/* Said on the page too: a touch screen shows no tooltip of the disabled Edit model. */}
+                <p className="text-body text-fg-muted">{t("models.page.editUnread")}</p>
               </section>
             ) : null}
           </div>

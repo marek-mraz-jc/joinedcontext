@@ -135,6 +135,8 @@ describe("a failed read", () => {
     expect(within(known).getByText(en.models.lifecycleOption.published)).toBeInTheDocument();
     expect(within(known).getByRole("link", { name: "ilma" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: en.models.page.edit })).toHaveAccessibleDescription(en.models.page.editUnread);
+    // A touch screen has no tooltip: the reason is on the page as well.
+    expect(within(known).getByText(en.models.page.editUnread)).toBeInTheDocument();
   });
 
   it("is not told as a missing create form", async () => {
