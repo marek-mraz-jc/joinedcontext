@@ -67,6 +67,23 @@ pub(crate) fn eval_number_family(
         "sin" => Some(target_val.get_number().map(|f| Value::Float(f.sin()))),
         "cos" => Some(target_val.get_number().map(|f| Value::Float(f.cos()))),
         "tan" => Some(target_val.get_number().map(|f| Value::Float(f.tan()))),
+        // ekiben extensions: a result outside the reals (asin(2), sqrt(-1), exp(1000)) is an
+        // error, not a NaN carried into a coordinate.
+        "atan" | "asin" | "acos" | "sqrt" | "exp" => Some(target_val.get_number().and_then(|x| {
+            let y = match name {
+                "atan" => x.atan(),
+                "asin" => x.asin(),
+                "acos" => x.acos(),
+                "sqrt" => x.sqrt(),
+                _ => x.exp(),
+            };
+            finite(name, x, y)
+        })),
+        "atan2" => Some((|| {
+            let y = target_val.get_number()?;
+            let x = ctx.eval_expr(get_first_arg(args, "x")?)?.get_number()?;
+            finite("atan2", y, y.atan2(x))
+        })()),
         "pow" => Some((|| {
             let base = target_val.get_number()?;
             let exp_expr = get_first_arg(args, "exponent")?;
@@ -282,4 +299,15 @@ fn parse_human_bytes(s: &str) -> Result<i64, String> {
         _ => return Err(format!("unrecognized byte unit in '{s}'")),
     };
     Ok((num * mult).round() as i64)
+}
+
+fn finite(name: &str, x: f64, y: f64) -> Result<Value, String> {
+    if y.is_finite() {
+        Ok(Value::Float(y))
+    } else {
+        Err(format!(
+            "{name} of {} is not a finite number",
+            crate::value::format_go_float(x)
+        ))
+    }
 }
