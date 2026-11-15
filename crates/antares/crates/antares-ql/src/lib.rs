@@ -193,6 +193,17 @@ impl QNode {
         out
     }
 
+    /// Every Attribute path this expression references, in source order, each whole: its
+    /// sub-Attribute and metadata segments and its linked-entity hops included. What a policy
+    /// layer reads to judge which members a query filters by (S-3-08), parsed as the store
+    /// will run it rather than re-split from the text.
+    pub fn paths(&self) -> Vec<&QPath> {
+        match self {
+            QNode::And(ns) | QNode::Or(ns) => ns.iter().flat_map(Self::paths).collect(),
+            QNode::Cmp { path, .. } | QNode::Exists { path, .. } => vec![path],
+        }
+    }
+
     /// True when any referenced Attribute path uses a `attr{…}` linked-entity
     /// hop (4.9 LinkedEntityRelation). Purge (5.6.21.4) must reject filter
     /// conditions that include Linked Entity attributes.

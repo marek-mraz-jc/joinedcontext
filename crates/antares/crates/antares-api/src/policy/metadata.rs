@@ -122,7 +122,7 @@ impl Metadata {
             windowed |= name == "timerel";
             timed |= name == "timeproperty";
             let named = match name {
-                "q" | "orderBy" => named_members(value),
+                "q" | "orderBy" => named_members(name, value),
                 "timeproperty" if ["observedAt", "createdAt", "modifiedAt"].contains(&value) => {
                     if self.everywhere(value) {
                         Vec::new()
@@ -136,7 +136,7 @@ impl Metadata {
             };
             if let Some((attr, member)) = named
                 .into_iter()
-                .find(|(attr, member)| !self.members(attr, ctx).contains(*member))
+                .find(|(attr, member)| !passes(self.members(attr, ctx), member))
             {
                 return Some(format!(
                     "{name} names `{attr}.{member}`, {STRIPPED}; ask without it"
@@ -281,6 +281,11 @@ fn is_attribute(o: &Map<String, Value>) -> bool {
     })
 }
 
+/// Whether `members` show `member`: a change's `reason` shows under `provenance` too.
+fn passes(members: &BTreeSet<String>, member: &str) -> bool {
+    members.contains(member) || (member == "reason" && members.contains("provenance"))
+}
+
 /// The query string's pairs, decoded as `negotiate::CleanParams` decodes them.
 fn form_urlencoded(query: &str) -> Vec<(String, String)> {
     let decode = |s: &str| crate::negotiate::percent_decode(s.replace('+', " ").as_bytes());
@@ -294,22 +299,57 @@ fn form_urlencoded(query: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The `(Attribute, member)` pairs a `q` or `orderBy` names as `attr.member`.
-fn named_members(text: &str) -> Vec<(String, &'static str)> {
-    let mut found = Vec::new();
-    let words = text.split(|c: char| {
-        matches!(
-            c,
-            ';' | '|' | '(' | ')' | '!' | '=' | '<' | '>' | '~' | ',' | '"'
-        ) || c.is_whitespace()
-    });
-    for word in words {
-        let path: Vec<&str> = word.split('.').collect();
-        let [attribute, member, rest @ ..] = path.as_slice() else {
-            continue;
-        };
-        let attribute = attribute.split('[').next().unwrap_or_default();
-        let member = match (*member, rest.first().copied()) {
+/// The `(Attribute, member)` pairs a `q` or `orderBy` (`parameter`) filters or orders by
+/// (S-3-08): a `q` read as `antares_ql` parses it, so a member behind a sub-Attribute
+/// (`NO2.sub.observedAt`) or a linked-entity hop is named too, an `orderBy` (and a `q` the
+/// parser refuses, which the read refuses as well) term by term, an absolute IRI keeping the
+/// dots of its own address.
+fn named_members(parameter: &str, text: &str) -> Vec<(String, &'static str)> {
+    let paths: Vec<Vec<String>> = match antares_ql::parse_q(text) {
+        Ok(q) if parameter == "q" => q.paths().into_iter().map(|p| p.path.clone()).collect(),
+        _ => text
+            .split(|c: char| {
+                matches!(
+                    c,
+                    ';' | '|' | '(' | ')' | '!' | '=' | '<' | '>' | '~' | ',' | '"' | '{' | '}'
+                ) || c.is_whitespace()
+            })
+            .map(dotted)
+            .collect(),
+    };
+    paths
+        .iter()
+        .filter_map(|path| {
+            let (attribute, rest) = path.split_first()?;
+            let attribute = attribute.split('[').next().unwrap_or_default();
+            let rest: Vec<&str> = rest
+                .iter()
+                .map(|s| s.split('[').next().unwrap_or_default())
+                .collect();
+            let member = member_of(&rest)?;
+            (!attribute.is_empty()).then(|| (attribute.to_owned(), member))
+        })
+        .collect()
+}
+
+/// A term split on its dots, an absolute IRI's address kept whole on its first segment
+/// (`https://uri.etsi.org/ngsi-ld/default-context/NO2.observedAt`).
+fn dotted(term: &str) -> Vec<String> {
+    let cut = term.rfind(['/', '#']).map_or(0, |at| at + 1);
+    let (address, local) = term.split_at(cut);
+    let mut segments: Vec<String> = local.split('.').map(str::to_owned).collect();
+    if let Some(first) = segments.first_mut() {
+        first.insert_str(0, address);
+    }
+    segments
+}
+
+/// The metadata member the segments after an Attribute name, `None` when they name only
+/// sub-Attributes or a version's own provenance members.
+fn member_of(segments: &[&str]) -> Option<&'static str> {
+    for (at, segment) in segments.iter().enumerate() {
+        let next = segments.get(at + 1).copied();
+        let member = match (*segment, next) {
             ("observedAt", _) => "observedAt",
             ("unitCode", _) => "unitCode",
             ("createdAt", _) => "createdAt",
@@ -317,13 +357,14 @@ fn named_members(text: &str) -> Vec<(String, &'static str)> {
             ("modifiedBy", Some("organization")) => "modifiedBy.organization",
             ("modifiedBy", Some("actorKind")) => "modifiedBy.actorKind",
             ("modifiedBy", _) => "modifiedBy.actor",
+            ("provenance", Some(kept)) if VERSION_PROVENANCE.contains(&kept) => return None,
+            ("provenance", Some("reason")) => "reason",
+            ("provenance", _) => "provenance",
             _ => continue,
         };
-        if !attribute.is_empty() {
-            found.push((attribute.to_owned(), member));
-        }
+        return Some(member);
     }
-    found
+    None
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -613,5 +654,36 @@ mod tests {
         assert!(m.refusal("timeproperty=modifiedAt", core()).is_some());
         assert!(m.refusal("timeproperty=observedAt", core()).is_none());
         assert!(m.refusal("q=pm10>40&attrs=pm10", core()).is_none());
+    }
+
+    /// S-3-08: a member behind a sub-Attribute, a linked-entity hop, an absolute IRI in
+    /// `orderBy` or a provenance path is named as plainly as `attr.member`; a value that only
+    /// looks like a path, and a version's own provenance members, are not.
+    #[test]
+    fn a_stripped_member_behind_a_sub_attribute_iri_or_link_is_refused() {
+        let m = public();
+        let refused = |query: &str| m.refusal(query, core());
+        for query in [
+            "q=pm10.sensor.unitCode==%22GQ%22",
+            "q=(pm10.sensor.modifiedBy.actor==%22u%22)|name==%22x%22",
+            "q=owner{pm10.modifiedAt}>2026-01-01T00:00:00Z",
+            "orderBy=pm10.sensor.unitCode",
+            "orderBy=https://uri.etsi.org/ngsi-ld/default-context/pm10.unitCode;desc",
+            "q=pm10.provenance.actor==%22u%22",
+            "q=pm10.provenance.reason==%22stuck%22",
+        ] {
+            assert!(
+                refused(query).is_some_and(|why| why.contains(STRIPPED)),
+                "{query}"
+            );
+        }
+        for query in [
+            "q=name==%22pm10.unitCode%22",
+            "q=pm10.sensor.observedAt>2026-01-01T00:00:00Z",
+            "orderBy=https://uri.etsi.org/ngsi-ld/default-context/pm10.observedAt",
+            "q=pm10.provenance.writtenAt>2026-01-01T00:00:00Z",
+        ] {
+            assert!(refused(query).is_none(), "{query}");
+        }
     }
 }

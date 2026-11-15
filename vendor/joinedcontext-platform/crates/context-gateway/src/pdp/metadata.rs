@@ -215,7 +215,7 @@ impl Passed {
     pub fn refusal(&self, params: &[(String, String)]) -> Option<ProblemDetails> {
         for (name, value) in params {
             let named = match name.as_str() {
-                "q" | "orderBy" => named_members(value),
+                "q" | "orderBy" => named_members(name, value),
                 "timeproperty" => match value.as_str() {
                     "observedAt" => vec![("*".to_owned(), ObservedAt, "observedAt")],
                     "createdAt" => vec![("*".to_owned(), CreatedAt, "createdAt")],
@@ -228,7 +228,10 @@ impl Passed {
                 let stripped = if attribute == "*" {
                     !self.everywhere(member)
                 } else {
-                    !self.members(&attribute).contains(&member)
+                    let members = self.members(&attribute);
+                    // a change's reason shows under `provenance` too
+                    !members.contains(&member)
+                        && !(member == Reason && members.contains(&Provenance))
                 };
                 if stripped {
                     let what = if attribute == "*" {
@@ -334,22 +337,48 @@ fn strip_instance(members: &Members, instance: &mut Map<String, Value>) -> bool 
     true
 }
 
-/// The `(attribute, member, word)` triples a `q` or `orderBy` names as `attr.member`.
-fn named_members(text: &str) -> Vec<(String, MetadataMember, &'static str)> {
-    let mut found = Vec::new();
-    let words = text.split(|c: char| {
-        matches!(
-            c,
-            ';' | '|' | '(' | ')' | '!' | '=' | '<' | '>' | '~' | ',' | '"'
-        ) || c.is_whitespace()
-    });
-    for word in words {
-        let path: Vec<&str> = word.split('.').collect();
-        let [attribute, member, rest @ ..] = path.as_slice() else {
-            continue;
-        };
-        let attribute = attribute.split('[').next().unwrap_or_default();
-        let member = match (*member, rest.first().copied()) {
+/// The `(attribute, member, word)` triples a `q` or `orderBy` (`parameter`) filters or orders
+/// by (S-3-08), as the broker's metadata layer reads them: a `q` through `antares_ql`'s parsed
+/// paths, so a member behind a sub-attribute or a linked-entity hop is named too, an `orderBy`
+/// term by term. An absolute IRI is judged by its last segment, the name a Policy writes, so an
+/// IRI of another context is refused rather than passed.
+fn named_members(parameter: &str, text: &str) -> Vec<(String, MetadataMember, &'static str)> {
+    let paths: Vec<Vec<String>> = match antares_ql::parse_q(text) {
+        Ok(q) if parameter == "q" => q.paths().into_iter().map(|p| p.path.clone()).collect(),
+        _ => text
+            .split(|c: char| {
+                matches!(
+                    c,
+                    ';' | '|' | '(' | ')' | '!' | '=' | '<' | '>' | '~' | ',' | '"' | '{' | '}'
+                ) || c.is_whitespace()
+            })
+            .map(|term| {
+                let local = term.rsplit(['/', '#']).next().unwrap_or(term);
+                local.split('.').map(str::to_owned).collect()
+            })
+            .collect(),
+    };
+    paths
+        .iter()
+        .filter_map(|path| {
+            let (attribute, rest) = path.split_first()?;
+            let attribute = attribute.split('[').next().unwrap_or_default();
+            let rest: Vec<&str> = rest
+                .iter()
+                .map(|s| s.split('[').next().unwrap_or_default())
+                .collect();
+            let (member, word) = member_of(&rest)?;
+            (!attribute.is_empty()).then(|| (attribute.to_owned(), member, word))
+        })
+        .collect()
+}
+
+/// The metadata member the segments after an attribute name, `None` when they name only
+/// sub-attributes or a version's own provenance members.
+fn member_of(segments: &[&str]) -> Option<(MetadataMember, &'static str)> {
+    for (at, segment) in segments.iter().enumerate() {
+        let next = segments.get(at + 1).copied();
+        let member = match (*segment, next) {
             ("observedAt", _) => (ObservedAt, "observedAt"),
             ("unitCode", _) => (UnitCode, "unitCode"),
             ("createdAt", _) => (CreatedAt, "createdAt"),
@@ -359,13 +388,14 @@ fn named_members(text: &str) -> Vec<(String, MetadataMember, &'static str)> {
             }
             ("modifiedBy", Some("actorKind")) => (ModifiedByActorKind, "modifiedBy.actorKind"),
             ("modifiedBy", _) => (ModifiedByActor, "modifiedBy.actor"),
+            ("provenance", Some(kept)) if VERSION_PROVENANCE.contains(&kept) => return None,
+            ("provenance", Some("reason")) => (Reason, "provenance.reason"),
+            ("provenance", _) => (Provenance, "provenance"),
             _ => continue,
         };
-        if !attribute.is_empty() {
-            found.push((attribute.to_owned(), member.0, member.1));
-        }
+        return Some(member);
     }
-    found
+    None
 }
 
 #[cfg(test)]
@@ -581,6 +611,41 @@ mod tests {
         assert_eq!(refused("q", "pm10.observedAt>=2026-11-01T00:00:00Z"), None);
         assert_eq!(refused("q", "pm10>40"), None);
         assert_eq!(refused("timeproperty", "observedAt"), None);
+    }
+
+    /// S-3-08: a member behind a sub-attribute, a linked-entity hop, an absolute IRI in
+    /// `orderBy` or a provenance path is refused as plainly as `attr.member`; a value that only
+    /// looks like a path, and a version's own provenance members, are not.
+    #[test]
+    fn a_stripped_member_behind_a_sub_attribute_iri_or_link_is_refused() {
+        let p = passed(
+            &[public_with("    pm10: { metadata: [observedAt] }\n")],
+            &Subject::anonymous(),
+            true,
+        )
+        .expect("narrows");
+        let refused = |name: &str, value: &str| p.refusal(&[(name.to_owned(), value.to_owned())]);
+        for (name, value) in [
+            ("q", "pm10.sensor.unitCode==\"GQ\""),
+            ("q", "(pm10.sensor.modifiedBy.actor==\"u\")|name==\"x\""),
+            ("q", "owner{pm10.unitCode}==\"GQ\""),
+            ("orderBy", "pm10.sensor.unitCode"),
+            (
+                "orderBy",
+                "https://uri.etsi.org/ngsi-ld/default-context/pm10.unitCode;desc",
+            ),
+            ("q", "pm10.provenance.actor==\"u\""),
+            ("q", "pm10.provenance.reason==\"stuck\""),
+        ] {
+            assert!(refused(name, value).is_some(), "{name}={value}");
+        }
+        for (name, value) in [
+            ("q", "name==\"pm10.unitCode\""),
+            ("q", "pm10.sensor.observedAt>2026-01-01T00:00:00Z"),
+            ("q", "pm10.provenance.writtenAt>2026-01-01T00:00:00Z"),
+        ] {
+            assert!(refused(name, value).is_none(), "{name}={value}");
+        }
     }
 
     #[test]
