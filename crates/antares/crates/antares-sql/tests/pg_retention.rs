@@ -592,6 +592,8 @@ async fn a_walk_passes_over_entities_without_history_in_one_call() {
     let t = "retain-bare";
     let tenant = TenantId::new(t).expect("tenant");
     pg::ensure_tenant(&pool, &tenant).await.expect("tenant row");
+    let id = "urn:v:z";
+    let _ = store.delete(&tenant, id).await;
     sqlx::query("DELETE FROM temporal_entities WHERE tenant_id = $1")
         .bind(t)
         .execute(&pool)
@@ -607,7 +609,6 @@ async fn a_walk_passes_over_entities_without_history_in_one_call() {
     .execute(&pool)
     .await
     .expect("bare entities");
-    let id = "urn:v:z";
     let attr = "https://example.org/speed";
     let instances: Vec<_> = [1i64, 10]
         .iter()
