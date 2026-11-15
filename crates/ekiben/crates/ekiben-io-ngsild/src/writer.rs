@@ -7,6 +7,12 @@
 //! `entityId`. A request of several messages refused whole (`drop_on`: 400, 413, 422) is sent
 //! again one message at a time, so a single bad message never costs the others their write.
 //! Values pass through untouched: no `@context` is added, nothing is rewritten.
+//!
+//! Operations (G-17): `upsert` (`options: update` or `replace`), `update` (`options: update` or
+//! `noOverwrite`, append-only), `create`, `merge` (5.6.20; `urn:ngsi-ld:null` passes through and
+//! deletes that sub-attribute), `delete` (5.6.10; a message is an id, an entity or an array of
+//! them) and `temporal_append` (5.6.12: one `POST temporal/entities/{id}/attrs` per entity, the
+//! entity without `id` and `type`, so a history backfill never touches the current value).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -45,6 +51,9 @@ pub enum Operation {
     Upsert,
     Update,
     Create,
+    Merge,
+    TemporalAppend,
+    Delete,
 }
 
 /// One member refusal as the Portal's `result_map` writes it: `{id, message}`, the id the
@@ -112,24 +121,43 @@ impl Writer {
             "upsert" => Operation::Upsert,
             "update" => Operation::Update,
             "create" => Operation::Create,
+            "merge" => Operation::Merge,
+            "temporal_append" => Operation::TemporalAppend,
+            "delete" => Operation::Delete,
             other => {
                 return Err(f.err(format!(
-                    "operation must be upsert, update or create, got {other:?}"
+                    "operation must be upsert, update, create, merge, temporal_append or delete, got {other:?}"
                 )))
             }
         };
-        let replace = match f.string_or("options", "update")?.as_str() {
-            "update" => false,
-            "replace" => true,
-            other => return Err(f.err(format!("options must be update or replace, got {other:?}"))),
-        };
+        let option = f.string_or("options", "update")?;
         // The Portal's write: `upsert?options=update`, and replace drops the query (PL-79).
-        let url = match (operation, replace) {
-            (Operation::Upsert, false) => base.join("entityOperations/upsert?options=update"),
-            (Operation::Upsert, true) => base.join("entityOperations/upsert"),
-            (Operation::Update, false) => base.join("entityOperations/update"),
-            (Operation::Create, false) => base.join("entityOperations/create"),
-            (_, true) => return Err(f.err("options: replace is only defined for operation upsert")),
+        let url = match (operation, option.as_str()) {
+            (Operation::Upsert, "update") => base.join("entityOperations/upsert?options=update"),
+            (Operation::Upsert, "replace") => base.join("entityOperations/upsert"),
+            (Operation::Upsert, "noOverwrite") => {
+                return Err(f.err(
+                    "options: noOverwrite is not defined for upsert (NGSI-LD 5.6.8 has none, and Antares reads any other option as replace); write operation: update with options: noOverwrite",
+                ))
+            }
+            (Operation::Update, "update") => base.join("entityOperations/update"),
+            (Operation::Update, "noOverwrite") => {
+                base.join("entityOperations/update?options=noOverwrite")
+            }
+            (Operation::Create, "update") => base.join("entityOperations/create"),
+            (Operation::Merge, "update") => base.join("entityOperations/merge"),
+            (Operation::TemporalAppend, "update") => base.join("temporal/entities"),
+            (Operation::Delete, "update") => base.join("entityOperations/delete"),
+            (_, "replace" | "noOverwrite") => {
+                return Err(f.err(format!(
+                    "options: {option} is not defined for this operation"
+                )))
+            }
+            (_, other) => {
+                return Err(f.err(format!(
+                    "options must be update, replace or noOverwrite, got {other:?}"
+                )))
+            }
         };
         let max_count = f.u64_or("max_batch_count", MAX_BATCH_COUNT as u64)?;
         if max_count == 0 || max_count > MAX_BATCH_COUNT as u64 {
@@ -189,7 +217,7 @@ impl Writer {
         let mut entities: Vec<Entity> = Vec::new();
         let mut local_refusals = 0u64;
         for ((msg, part), verdict) in parts.iter().enumerate().zip(verdicts.iter_mut()) {
-            match decode(part) {
+            match decode(part, self.operation) {
                 Err(why) => verdict.whole = Some(why),
                 Ok(list) => {
                     for (id, bytes) in list {
@@ -216,7 +244,12 @@ impl Writer {
             }
         }
 
-        let first = self.plan(&entities, 0..entities.len());
+        // A temporal append addresses one entity per request; the batch operations pack.
+        let first = if self.operation == Operation::TemporalAppend {
+            (0..entities.len()).map(|i| vec![i]).collect()
+        } else {
+            self.plan(&entities, 0..entities.len())
+        };
         let mut isolate: Vec<usize> = Vec::new();
         for (members, result) in self.run(env, &entities, first).await {
             let msgs = messages_of(&entities, &members);
@@ -262,8 +295,13 @@ impl Writer {
             }
         }
         if local_refusals > 0 {
-            env.metrics
-                .incr_counter(&metrics::refused_key(env.label), local_refusals);
+            metrics::incr(
+                env.metrics,
+                env.label,
+                metrics::REFUSED,
+                None,
+                local_refusals,
+            );
         }
         verdicts
     }
@@ -308,12 +346,23 @@ impl Writer {
         requests: Vec<Vec<usize>>,
     ) -> Vec<(Vec<usize>, Result<Answer, Failure>)> {
         futures::stream::iter(requests.into_iter().map(|members| {
-            let body = request_body(entities, &members);
+            let one = members.first().and_then(|i| entities.get(*i));
+            let (url, body) = match (self.operation, one) {
+                (Operation::TemporalAppend, Some(e)) => (
+                    format!(
+                        "{}/{}/attrs",
+                        self.url,
+                        crate::input::enc(e.id.as_deref().unwrap_or_default())
+                    ),
+                    Bytes::from(e.bytes.clone()),
+                ),
+                _ => (self.url.clone(), request_body(entities, &members)),
+            };
             let id = self.batch_id();
             async move {
                 let result = self
                     .client
-                    .call_as(env, Method::POST, &self.url, Some(body), Some(&id))
+                    .call_as(env, Method::POST, &url, Some(body), Some(&id))
                     .await;
                 (members, result)
             }
@@ -342,8 +391,13 @@ impl Writer {
                         v.written += 1;
                     }
                 }
-                env.metrics
-                    .incr_counter(&metrics::written_key(env.label), members.len() as u64);
+                metrics::incr(
+                    env.metrics,
+                    env.label,
+                    metrics::WRITTEN,
+                    None,
+                    members.len() as u64,
+                );
             }
             Err(Failure::Refused(answer)) => {
                 let text = problem_text(&answer);
@@ -357,8 +411,13 @@ impl Writer {
                         });
                     }
                 }
-                env.metrics
-                    .incr_counter(&metrics::refused_key(env.label), members.len() as u64);
+                metrics::incr(
+                    env.metrics,
+                    env.label,
+                    metrics::REFUSED,
+                    None,
+                    members.len() as u64,
+                );
             }
             Err(failure) => {
                 let text = failure.text();
@@ -462,10 +521,14 @@ fn apply_multi_status(
             written += 1;
         }
     }
-    env.metrics
-        .incr_counter(&metrics::written_key(env.label), written);
-    env.metrics
-        .incr_counter(&metrics::refused_key(env.label), errors.len() as u64);
+    metrics::incr(env.metrics, env.label, metrics::WRITTEN, None, written);
+    metrics::incr(
+        env.metrics,
+        env.label,
+        metrics::REFUSED,
+        None,
+        errors.len() as u64,
+    );
 }
 
 /// `{"id": e.entityId.or(""), "message": e.error.detail.or(e.error.title).or("")}`.
@@ -523,12 +586,13 @@ fn request_body(entities: &[Entity], members: &[usize]) -> Bytes {
 /// Decoded entities of one message: the entity id when it has one, and its JSON bytes.
 type Decoded = Vec<(Option<String>, Vec<u8>)>;
 
-fn decode(part: &Part) -> Result<Decoded, String> {
+fn decode(part: &Part, op: Operation) -> Result<Decoded, String> {
     let value = part
         .as_structured_ref()
         .map_err(|e| format!("the message is not JSON: {e}"))?;
     let items: Vec<Value> = match value {
         Value::Object(_) => vec![value],
+        Value::String(_) if op == Operation::Delete => vec![value],
         Value::Array(items) => items.iter().cloned().collect(),
         other => {
             return Err(format!(
@@ -540,21 +604,51 @@ fn decode(part: &Part) -> Result<Decoded, String> {
     items
         .into_iter()
         .enumerate()
-        .map(|(n, item)| match &item {
-            Value::Object(m) => {
-                let id = match m.get("id") {
-                    Some(Value::String(s)) => Some(s.clone()),
+        .map(|(n, item)| {
+            let id = match &item {
+                Value::Object(m) => match m.get("id") {
+                    Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
                     _ => None,
-                };
-                let text = item.to_go_json_with(false, None).ok_or_else(|| {
-                    format!("entity {n} holds a number JSON cannot carry (NaN or infinity)")
-                })?;
-                Ok((id, text.into_bytes()))
+                },
+                Value::String(s) if op == Operation::Delete && !s.is_empty() => Some(s.clone()),
+                _ => None,
+            };
+            match (op, &item) {
+                (Operation::Delete, Value::Object(_) | Value::String(_)) => {
+                    let id = id.ok_or_else(|| {
+                        format!("item {n} of the message names no entity id to delete")
+                    })?;
+                    let text = Value::String(id.clone()).to_go_json_unescaped();
+                    Ok((Some(id), text.into_bytes()))
+                }
+                (Operation::TemporalAppend, Value::Object(m)) => {
+                    let id = id.ok_or_else(|| {
+                        format!(
+                            "item {n} has no id: a temporal append is addressed by the entity's id"
+                        )
+                    })?;
+                    let mut fragment: BTreeMap<String, Value> = (**m).clone();
+                    for member in ["id", "type", "@context"] {
+                        fragment.remove(member);
+                    }
+                    let text = Value::Object(fragment.into())
+                        .to_go_json_with(false, None)
+                        .ok_or_else(|| {
+                            format!("entity {n} holds a number JSON cannot carry (NaN or infinity)")
+                        })?;
+                    Ok((Some(id), text.into_bytes()))
+                }
+                (_, Value::Object(_)) => {
+                    let text = item.to_go_json_with(false, None).ok_or_else(|| {
+                        format!("entity {n} holds a number JSON cannot carry (NaN or infinity)")
+                    })?;
+                    Ok((id, text.into_bytes()))
+                }
+                (_, other) => Err(format!(
+                    "item {n} of the message is a {} where an NGSI-LD entity is expected",
+                    other.type_name()
+                )),
             }
-            other => Err(format!(
-                "item {n} of the message is a {} where an NGSI-LD entity is expected",
-                other.type_name()
-            )),
         })
         .collect()
 }
@@ -639,16 +733,227 @@ mod tests {
         let part = Part::from_str(
             r#"[{"id":"urn:a","type":"T","v":{"type":"Property","value":1.50,"unitCode":"CEL","observedAt":"2026-01-01T00:00:00Z"}}]"#,
         );
-        let list = decode(&part).expect("decodes");
+        let list = decode(&part, Operation::Upsert).expect("decodes");
         assert_eq!(list.len(), 1);
         let text = String::from_utf8(list[0].1.clone()).expect("utf8");
         assert!(text.contains("1.50"), "{text}");
         assert!(text.contains("\"unitCode\":\"CEL\""), "{text}");
         assert!(!text.contains("@context"), "{text}");
         assert_eq!(list[0].0.as_deref(), Some("urn:a"));
-        assert!(decode(&Part::from_str("\"x\"")).is_err());
-        assert!(decode(&Part::from_str("[1]")).is_err());
-        assert!(decode(&Part::from_str("not json")).is_err());
-        assert!(decode(&Part::from_str("[]")).expect("empty").is_empty());
+        assert!(decode(&Part::from_str("\"x\""), Operation::Upsert).is_err());
+        assert!(decode(&Part::from_str("[1]"), Operation::Upsert).is_err());
+        assert!(decode(&Part::from_str("not json"), Operation::Upsert).is_err());
+        assert!(decode(&Part::from_str("[]"), Operation::Upsert)
+            .expect("empty")
+            .is_empty());
+    }
+
+    use ekiben_core::{OrgId, OrgQuotas, ResourceManager, StreamMetrics};
+    use serde_json::json;
+    use std::sync::Mutex;
+    use tokio::sync::watch;
+
+    type Seen = Arc<Mutex<Vec<(String, JsonValue)>>>;
+
+    /// A fake broker on a loopback port: each request recorded, answered by `answer(path)`.
+    async fn broker(answer: fn(&str) -> (u16, &'static str)) -> (String, Seen) {
+        let seen: Seen = Arc::default();
+        let rec = seen.clone();
+        let app = axum::Router::new().fallback(move |uri: axum::http::Uri, body: Bytes| {
+            let rec = rec.clone();
+            async move {
+                let at = uri
+                    .path_and_query()
+                    .map(|p| p.as_str().to_owned())
+                    .unwrap_or_default();
+                let sent = serde_json::from_slice(&body).unwrap_or(JsonValue::Null);
+                let (code, text) = answer(&at);
+                rec.lock().expect("lock").push((at, sent));
+                (
+                    axum::http::StatusCode::from_u16(code).expect("status"),
+                    text,
+                )
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{addr}/ngsi-ld/v1"), seen)
+    }
+
+    async fn write_through(
+        mut conf: JsonValue,
+        answer: fn(&str) -> (u16, &'static str),
+        parts: &[Part],
+    ) -> (Vec<Verdict>, Vec<(String, JsonValue)>) {
+        let (url, seen) = broker(answer).await;
+        conf["url"] = JsonValue::String(url);
+        conf["retries"] = JsonValue::from(0);
+        let org = OrgContext::new(
+            OrgId::new("o"),
+            OrgQuotas {
+                allow_private_ips: true,
+                ..OrgQuotas::default()
+            },
+        );
+        let writer = Writer::from_config(&conf, "ngsi_ld", &org).expect("config");
+        let resources = ResourceManager::new();
+        let metrics = StreamMetrics::new("s", "o");
+        let (_stop, shutdown) = watch::channel(false);
+        let env = CallEnv {
+            org: &org,
+            resources: &resources,
+            metrics: metrics.as_ref(),
+            label: "out",
+            shutdown: &shutdown,
+        };
+        let verdicts = writer.write(&env, parts).await;
+        let seen = seen.lock().expect("lock").clone();
+        (verdicts, seen)
+    }
+
+    #[tokio::test]
+    async fn merge_posts_the_batch_and_maps_a_207() {
+        let parts = [
+            Part::from_json(json!({"id": "urn:a", "type": "T",
+                "p": {"type": "Property", "value": {"x": "urn:ngsi-ld:null", "y": 1}}})),
+            Part::from_json(json!({"id": "urn:bad", "type": "T"})),
+        ];
+        let (verdicts, seen) = write_through(
+            json!({"operation": "merge"}),
+            |_| {
+                (
+                    207,
+                    r#"{"success":["urn:a"],"errors":[{"entityId":"urn:bad","error":{"title":"T","detail":"bad"}}]}"#,
+                )
+            },
+            &parts,
+        )
+        .await;
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, "/ngsi-ld/v1/entityOperations/merge");
+        assert_eq!(seen[0].1[0]["p"]["value"]["x"], "urn:ngsi-ld:null");
+        assert_eq!(verdicts[0].written, 1);
+        assert!(verdicts[0].refused.is_empty());
+        assert_eq!(verdicts[1].written, 0);
+        assert_eq!(verdicts[1].refused[0].message, Value::String("bad".into()));
+    }
+
+    #[tokio::test]
+    async fn update_without_overwrite_asks_for_it_and_maps_the_skip() {
+        let parts = [Part::from_json(
+            json!({"id": "urn:a", "type": "T", "p": {"type": "Property", "value": 1}}),
+        )];
+        let (verdicts, seen) = write_through(
+            json!({"operation": "update", "options": "noOverwrite"}),
+            |_| {
+                (
+                    207,
+                    r#"{"success":[],"errors":[{"entityId":"urn:a","error":{"title":"BadRequestData","detail":"some attributes already existed (noOverwrite)"}}]}"#,
+                )
+            },
+            &parts,
+        )
+        .await;
+        assert_eq!(
+            seen[0].0,
+            "/ngsi-ld/v1/entityOperations/update?options=noOverwrite"
+        );
+        assert_eq!(verdicts[0].written, 0);
+        assert_eq!(verdicts[0].refused.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn temporal_append_posts_each_entity_to_its_attrs() {
+        let parts = [
+            Part::from_json(json!({"id": "urn:a", "type": "T",
+                "p": [{"type": "Property", "value": 1, "observedAt": "2025-01-01T00:00:00Z"}]})),
+            Part::from_json(
+                json!({"id": "urn:x y", "type": "T", "p": {"type": "Property", "value": 2}}),
+            ),
+            Part::from_json(json!({"type": "T", "p": {"type": "Property", "value": 3}})),
+        ];
+        let (verdicts, mut seen) = write_through(
+            json!({"operation": "temporal_append"}),
+            |at| {
+                if at.contains("x%20y") {
+                    (400, r#"{"detail":"no"}"#)
+                } else {
+                    (204, "")
+                }
+            },
+            &parts,
+        )
+        .await;
+        seen.sort_by(|a, b| a.0.cmp(&b.0));
+        let paths: Vec<&str> = seen.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/ngsi-ld/v1/temporal/entities/urn%3Aa/attrs",
+                "/ngsi-ld/v1/temporal/entities/urn%3Ax%20y/attrs"
+            ]
+        );
+        assert!(seen[0].1.get("id").is_none() && seen[0].1.get("type").is_none());
+        assert_eq!(seen[0].1["p"][0]["value"], 1);
+        assert_eq!(verdicts[0].written, 1);
+        assert_eq!(verdicts[1].whole.as_deref(), Some("no"));
+        assert!(verdicts[2]
+            .whole
+            .as_deref()
+            .is_some_and(|w| w.contains("id")));
+    }
+
+    #[tokio::test]
+    async fn delete_posts_the_ids_and_maps_a_207() {
+        let parts = [
+            Part::from_str("\"urn:a\""),
+            Part::from_json(json!({"id": "urn:b", "type": "T"})),
+            Part::from_str("5"),
+        ];
+        let (verdicts, seen) = write_through(
+            json!({"operation": "delete"}),
+            |_| {
+                (
+                    207,
+                    r#"{"success":["urn:a"],"errors":[{"entityId":"urn:b","error":{"title":"ResourceNotFound","detail":"entity urn:b not found"}}]}"#,
+                )
+            },
+            &parts,
+        )
+        .await;
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, "/ngsi-ld/v1/entityOperations/delete");
+        assert_eq!(seen[0].1, json!(["urn:a", "urn:b"]));
+        assert_eq!(verdicts[0].written, 1);
+        assert_eq!(verdicts[1].refused.len(), 1);
+        assert!(verdicts[2].whole.is_some());
+    }
+
+    #[test]
+    fn an_option_an_operation_does_not_define_is_refused() {
+        let org = OrgContext::new(OrgId::new("o"), OrgQuotas::default());
+        let refused = |conf: JsonValue| {
+            Writer::from_config(&conf, "ngsi_ld", &org)
+                .err()
+                .map(|e| e.to_string())
+                .expect("refused")
+        };
+        for (op, opt) in [
+            ("upsert", "noOverwrite"),
+            ("merge", "replace"),
+            ("delete", "noOverwrite"),
+            ("create", "nope"),
+        ] {
+            let err =
+                refused(json!({"url": "http://gw/ngsi-ld/v1", "operation": op, "options": opt}));
+            assert!(err.contains("options"), "{op} {opt}: {err}");
+        }
+        let err = refused(json!({"url": "http://gw/ngsi-ld/v1", "operation": "burn"}));
+        assert!(err.contains("operation"), "{err}");
     }
 }

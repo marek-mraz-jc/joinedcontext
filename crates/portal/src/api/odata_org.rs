@@ -1729,15 +1729,16 @@ fn refuse_options(query: &str, metadata: bool) -> Option<Response> {
     }
 }
 
-/// The service document: the sets and singletons.
-fn service_document(state: &AppState) -> Response {
+/// The service document: the sets the caller reads ([`visible_sets`], as `$metadata`) and the
+/// singletons.
+fn service_document(state: &AppState, visible: &BTreeSet<String>) -> Response {
     let mut value = vec![json!({ "name": PROJECTS, "kind": "EntitySet", "url": PROJECTS })];
-    value
-        .extend(kinds().map(|set| json!({ "name": set.set, "kind": "EntitySet", "url": set.set })));
     value.extend(
-        org_kinds()
-            .map(|(set, ..)| set)
-            .chain([MEMBERS])
+        kinds()
+            .map(|set| set.set.clone())
+            .chain(org_kinds().map(|(set, ..)| set.to_owned()))
+            .chain([MEMBERS.to_owned()])
+            .filter(|set| visible.contains(set))
             .map(|set| json!({ "name": set, "kind": "EntitySet", "url": set })),
     );
     for singleton in [ME, ORGANIZATION] {
@@ -2090,7 +2091,8 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
         );
     }
     if rel.is_empty() {
-        return service_document(&state);
+        let projects = readable_projects(&state, &user, &org);
+        return service_document(&state, &visible_sets(&state, &user, &org, &projects));
     }
     if rel == ME || rel == ORGANIZATION {
         if option_names(&query).iter().any(|n| n != "$format") {

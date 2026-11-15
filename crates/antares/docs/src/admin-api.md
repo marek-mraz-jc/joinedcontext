@@ -497,12 +497,17 @@ under `antares-views` and reloaded with them; `/q/health` lists each Tenant's
 Every NGSI-LD write to the Tenant, on its root or through a view, and so
 every OData and OGC API Features write, is held to the schema (T-5912):
 each Attribute a class of the Entity lists keeps to that slot's NGSI-LD
-kind, range (built-in type, enum, class), `multivalued` and `unece:` unit,
-and a create or replace carries every `required` slot. A batch refuses the
+kind, range (built-in type, enum, class), `multivalued`, `unece:` unit,
+a number's inclusive `minimum_value` and `maximum_value` and a text's
+`pattern` (matched anywhere in the value, as JSON Schema and `sh:pattern`
+read it; `^` and `$` anchor it), and a create or replace carries every
+`required` slot. The check names each refusal's SHACL constraint
+component (`sh:MinInclusiveConstraintComponent`, PL-59) for the surfaces
+that report it; the 400 text is unchanged. A batch refuses the
 breaking member alone. `ANTARES_SCHEMA_WRITES` ([configuration](configuration.md))
 picks `enforce` (400 naming the attribute and the rule, never the value),
 `report` (the default: logged, written) or `off`. The subset holds no
-`pattern`, minimum, maximum or closed class, so none is checked; an
+closed class, so none is checked; an
 Attribute no class lists, an Entity of no class of the schema, a fragment
 of a history-only Entity and a batch update member without `type` pass;
 a Relationship's target type is not read.
