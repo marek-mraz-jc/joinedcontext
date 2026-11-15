@@ -254,8 +254,7 @@ async fn a_service_account_whose_project_the_endpoint_does_not_admit_is_forbidde
 #[tokio::test]
 async fn an_accounts_token_after_its_credentials_ended_is_unauthorized() {
     let fixture = fixture("ended-credentials", Audience::Organization, PROJECT).await;
-    let (status, document) =
-        access(&fixture, json!({ "azp": client_id(PROJECT, "stary") })).await;
+    let (status, document) = access(&fixture, json!({ "azp": client_id(PROJECT, "stary") })).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{document}");
     assert!(granted(&document).is_empty(), "{document}");
     let (status, document) = access(&fixture, json!({ "azp": workload() })).await;
