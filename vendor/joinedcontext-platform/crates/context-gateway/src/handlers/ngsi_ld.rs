@@ -1064,7 +1064,11 @@ pub(crate) async fn view_request(
         return Err(Box::new(refusal));
     }
     if operation.is_write() {
-        if let Some(refusal) = gateway.domain_gate.refusal(&gateway.org_domain) {
+        let domain = gateway.domain_of(&endpoint.project);
+        if let Some(refusal) = gateway
+            .domain_gate
+            .refusal_for(domain.as_deref(), &endpoint.project)
+        {
             tracing::info!(slug = %endpoint.slug, %operation, "write refused: the domain is not verified");
             return Err(Box::new(refusal.into_response()));
         }
