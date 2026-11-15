@@ -65,7 +65,14 @@
               <div class="jc-code-head"><span id="jc-mcp-url-label">{{ labels.mcp_url }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_url }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
               <p id="jc-mcp-url" class="jc-code-url" aria-labelledby="jc-mcp-url-label">{{ m.url_wbr|safe }}</p>
             </div>
-            <p class="jc-connect-guide"><a href="#assistants">{{ labels.assistants_label }}</a></p>
+            {% if !guides.is_empty() %}
+            <p class="jc-connect-guide">{{ labels.assistants_label }}</p>
+            <nav class="jc-guide-menu" aria-label="{{ labels.assistants }}">
+              <ul>
+                {% for g in guides %}<li><a href="#{{ g.id }}">{% if g.id == "claude" %}{% include "jc/card-claude.svg" %}{% else if g.id == "chatgpt" %}{% include "jc/card-chatgpt.svg" %}{% else if g.id == "grok" %}{% include "jc/card-grok.svg" %}{% endif %}<span>{{ g.name }}</span></a></li>{% endfor %}
+              </ul>
+            </nav>
+            {% endif %}
             <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
           </section>
           {% endif %}
@@ -73,14 +80,9 @@
           {% if let Some(m) = mcp %}{% if !guides.is_empty() %}
           <section class="jc-guides" id="assistants" aria-labelledby="jc-guides-title">
             <h2 id="jc-guides-title">{{ labels.assistants }}</h2>
-            <nav class="jc-guide-menu" aria-label="{{ labels.assistants }}">
-              <ul>
-                {% for g in guides %}<li><a href="#{{ g.id }}">{% if g.id == "claude" %}{% include "jc/card-claude.svg" %}{% else if g.id == "chatgpt" %}{% include "jc/card-chatgpt.svg" %}{% else if g.id == "grok" %}{% include "jc/card-grok.svg" %}{% endif %}<span>{{ g.name }}</span></a></li>{% endfor %}
-              </ul>
-            </nav>
             {% for g in guides %}
             <section class="jc-guide" id="{{ g.id }}" aria-labelledby="jc-guide-{{ g.id }}">
-              <h3 id="jc-guide-{{ g.id }}">{{ g.title }}</h3>
+              <h3 id="jc-guide-{{ g.id }}">{% if g.id == "claude" %}{% include "jc/card-claude.svg" %}{% else if g.id == "chatgpt" %}{% include "jc/card-chatgpt.svg" %}{% else if g.id == "grok" %}{% include "jc/card-grok.svg" %}{% endif %}{{ g.title }}</h3>
               <h4>{{ labels.guide_who }}</h4>
               {% for line in g.who %}<p>{{ line }}</p>{% endfor %}
               <h4>{{ labels.guide_steps }}</h4>
