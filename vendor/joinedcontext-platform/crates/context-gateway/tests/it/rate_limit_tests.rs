@@ -29,6 +29,7 @@ fn endpoint(rate_limit: Option<RateLimits>) -> Endpoint {
         title: std::collections::BTreeMap::new(),
         description: std::collections::BTreeMap::new(),
         space: "ovzdusie".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("ovzdusie").ok(),
         project: "ovzdusie".to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),
@@ -315,6 +316,7 @@ information:
         endpoint: Arc::new(Endpoint {
             roles: Default::default(),
             space: SPACE.to_owned(),
+            tenant: context_gateway::middleware::tenancy::Tenant::segment(SPACE).ok(),
             slug: SPACE.to_owned(),
             project: SPACE.to_owned(),
             base_path: format!("/cs/{SPACE}"),

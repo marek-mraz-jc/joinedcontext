@@ -54,6 +54,7 @@ fn endpoint(slug: &str, project: &str, space: &str, audience: Audience) -> Endpo
         ]
         .into(),
         space: space.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(space).ok(),
         project: project.to_owned(),
         audience,
         allowed_projects: Vec::new(),

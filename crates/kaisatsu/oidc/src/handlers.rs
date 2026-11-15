@@ -205,7 +205,8 @@ async fn openid_configuration(
         "claims_supported": [
             "iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "acr", "amr", "azp",
             "preferred_username", "name", "given_name", "family_name", "email", "email_verified",
-            "realm_access", "resource_access", "groups", "jc_org", "jc_groups"
+            "realm_access", "resource_access", "groups", "jc_org", "jc_org_id",
+            "jc_groups"
         ],
         "scopes_supported": [
             "openid", "profile", "email", "roles", "web-origins", "offline_access",

@@ -76,6 +76,7 @@ fn endpoint(slug: &str, audience: Audience, role: &str, personal: bool) -> Endpo
             .collect(),
         description: Default::default(),
         space: "mesto".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("mesto").ok(),
         project: "mesto".to_owned(),
         audience,
         allowed_projects: Vec::new(),

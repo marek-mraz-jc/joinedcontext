@@ -3,8 +3,11 @@ use axum::extract::Request;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::get;
 use axum::Router;
-use context_gateway::middleware::tenancy::{pin_tenant, strip_client_headers, FORGEABLE, TENANT};
+use context_gateway::middleware::tenancy::{pin_tenant, strip_client_headers, Tenant, FORGEABLE};
 use tower::ServiceExt;
+
+/// The tenant header as a client could send it; only the gateway's `pin_tenant` sets it.
+const TENANT: axum::http::HeaderName = axum::http::HeaderName::from_static("ngsild-tenant");
 
 /// The broker, as far as this test is concerned: it reports back exactly the headers it
 /// was handed, which is the only thing the tenancy rules are about.
@@ -29,7 +32,8 @@ fn gateway(space: &'static str) -> Router {
         .layer(axum::middleware::from_fn(
             move |mut request: Request, next: axum::middleware::Next| async move {
                 strip_client_headers(&mut request);
-                pin_tenant(&mut request, space).expect("a space name is a legal header value");
+                let tenant = Tenant::segment(space).expect("a space name");
+                pin_tenant(request.headers_mut(), &tenant);
                 next.run(request).await
             },
         ))
@@ -123,9 +127,10 @@ async fn an_illegal_space_name_pins_nothing() {
         .body(Body::empty())
         .expect("a request");
 
-    assert!(pin_tenant(&mut request, "ovzdusie\r\nx-userinfo: root").is_err());
+    assert!(Tenant::segment("ovzdusie\r\nx-userinfo: root").is_err());
     assert!(!request.headers().contains_key(TENANT));
 
-    pin_tenant(&mut request, "ovzdusie").expect("a DNS-1123 label is always legal");
+    let tenant = Tenant::segment("ovzdusie").expect("a DNS-1123 label is always legal");
+    pin_tenant(request.headers_mut(), &tenant);
     assert_eq!(request.headers().get(TENANT).expect("pinned"), "ovzdusie");
 }

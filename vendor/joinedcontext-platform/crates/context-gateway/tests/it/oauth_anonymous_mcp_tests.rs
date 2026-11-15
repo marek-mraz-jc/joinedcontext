@@ -39,6 +39,7 @@ fn endpoint(slug: &str, audience: Audience, role: &str) -> Endpoint {
         title: [("en".to_owned(), slug.to_owned())].into_iter().collect(),
         description: Default::default(),
         space: "mesto".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("mesto").ok(),
         project: "mesto".to_owned(),
         audience,
         allowed_projects: Vec::new(),

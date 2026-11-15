@@ -35,6 +35,7 @@ fn endpoint(audience: Audience, title: &[(&str, &str)]) -> Endpoint {
             .collect(),
         description: Default::default(),
         space: "ovzdusie".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("ovzdusie").ok(),
         project: "ovzdusie".to_owned(),
         audience,
         allowed_projects: Vec::new(),

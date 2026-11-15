@@ -79,10 +79,12 @@ pub(crate) async fn guarded(
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     // The relationship guards read and unlink in the Endpoint's space, as the NGSI-LD surface's
     // pinned request does; without it they ran in the broker's default tenant (T-4755).
-    let Ok(space) = HeaderValue::from_str(&endpoint.space) else {
-        return Err(refuse("this Endpoint names an unusable space"));
+    let Some(tenant) = endpoint.tenant.as_ref() else {
+        return Err(refuse(
+            "this Endpoint's space has no tenant yet: an operator names the project's Organization",
+        ));
     };
-    headers.insert(crate::middleware::tenancy::TENANT, space);
+    crate::middleware::tenancy::pin_tenant(&mut headers, tenant);
     let mut divided = None;
     if let Err(refusal) = view_payload(
         gateway,

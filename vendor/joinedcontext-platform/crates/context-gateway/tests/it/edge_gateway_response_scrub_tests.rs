@@ -15,7 +15,8 @@ use axum::routing::get;
 use axum::Router;
 use context_gateway::app::Gateway;
 use context_gateway::middleware::response::{asked_about_narrowing, scrub, RESULTS_RESTRICTED};
-use context_gateway::middleware::tenancy::TENANT;
+/// The tenant header as a client could send it; only the gateway's `pin_tenant` sets it.
+const TENANT: axum::http::HeaderName = axum::http::HeaderName::from_static("ngsild-tenant");
 use context_gateway::pdp::PolicyPdp;
 use context_gateway::proxy::Broker;
 use std::sync::Arc;

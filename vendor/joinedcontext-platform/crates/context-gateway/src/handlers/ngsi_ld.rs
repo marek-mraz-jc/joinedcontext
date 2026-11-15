@@ -1156,9 +1156,9 @@ pub(crate) async fn view_request(
         tracing::info!(slug = %endpoint.slug, %operation, "write refused: no reason given");
         return Err(Box::new(refusal));
     }
-    tenancy::pin_caller(request, &endpoint.space, subject).map_err(|problem| {
-        tracing::error!(space = %endpoint.space, %problem, "endpoint names an unusable space");
-        Box::new(ProblemDetails::internal().into_response())
+    tenancy::pin_caller(request, endpoint.tenant.as_ref(), subject).map_err(|unpinned| {
+        tracing::error!(space = %endpoint.space, %unpinned, "endpoint names an unusable space");
+        Box::new(unpinned.problem().into_response())
     })?;
     if let Some(federated) = federated {
         request.headers_mut().insert(AUTHORIZATION, federated);

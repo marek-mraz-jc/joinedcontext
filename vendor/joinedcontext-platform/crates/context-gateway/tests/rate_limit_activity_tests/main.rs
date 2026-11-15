@@ -34,6 +34,7 @@ fn endpoint() -> Endpoint {
         title: Default::default(),
         description: Default::default(),
         space: "walk-ops-walk".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("walk-ops-walk").ok(),
         project: "walk-ops".to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

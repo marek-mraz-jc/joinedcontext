@@ -207,7 +207,7 @@ pub async fn scrub(State(gateway): State<Arc<Gateway>>, request: Request, next: 
     }
     // The tenant is an internal name and a probe for which spaces exist. It is pinned on the
     // hop to the broker and it never comes back out, on either surface (SP-05).
-    while headers.remove(&super::tenancy::TENANT).is_some() {}
+    super::tenancy::drop_tenant(headers);
     if !asked {
         while headers.remove(&RESULTS_RESTRICTED).is_some() {}
     }

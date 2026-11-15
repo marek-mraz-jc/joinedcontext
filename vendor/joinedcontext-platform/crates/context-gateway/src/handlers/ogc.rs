@@ -414,9 +414,9 @@ async fn read_surface(
             target(&request, &prefix, &view, surface)
         }
     };
-    if let Err(problem) = tenancy::pin_caller(&mut request, &endpoint.space, &subject) {
-        tracing::error!(space = %endpoint.space, %problem, "endpoint names an unusable space");
-        return ProblemDetails::internal().into_response();
+    if let Err(unpinned) = tenancy::pin_caller(&mut request, endpoint.tenant.as_ref(), &subject) {
+        tracing::error!(space = %endpoint.space, %unpinned, "endpoint names an unusable space");
+        return unpinned.problem().into_response();
     }
     tracing::info!(
         slug = %endpoint.slug,

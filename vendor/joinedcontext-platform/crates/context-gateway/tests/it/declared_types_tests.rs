@@ -96,6 +96,7 @@ fn endpoint_with(declared: Option<&[&str]>, policy: PolicySpec) -> Endpoint {
         title: Default::default(),
         description: Default::default(),
         space: SPACE.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(SPACE).ok(),
         project: SPACE.to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),
