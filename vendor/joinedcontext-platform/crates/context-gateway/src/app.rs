@@ -845,13 +845,47 @@ fn project_of_path(gateway: &Gateway, path: &str) -> Option<String> {
     }
 }
 
+/// The header naming the role of the host a request came in on (`jc`'s router, T-6995): the
+/// router removes a client's copy and sets it from its host table alone.
+pub const HOST_ROLE: &str = "x-jc-host-role";
+
+/// Whether an address the open data host answers as unknown (evidence/T-6991/design.md §3): an
+/// Endpoint or space that is not open data (EP-187), and every MCP server, which that host never
+/// serves.
+fn closed_on_open_data(gateway: &Gateway, path: &str) -> bool {
+    let path = path
+        .strip_prefix("/.well-known/oauth-protected-resource")
+        .unwrap_or(path);
+    let mut segments = path.trim_start_matches('/').split('/');
+    match (segments.next(), segments.next(), segments.next()) {
+        (Some("api"), Some("endpoint"), Some(slug)) => {
+            gateway.resolver.resolve(slug).is_some_and(|e| !e.open_data)
+        }
+        (Some("cs"), Some(space), _) => gateway
+            .resolver
+            .resolve_space(space)
+            .is_some_and(|s| !s.endpoint.open_data),
+        (Some("api"), Some("mcp"), _) => true,
+        _ => false,
+    }
+}
+
 /// Answers an address of another Organization's Endpoint, space or MCP server on an
-/// Organization's host as an unknown one: nothing says it exists.
+/// Organization's host as an unknown one: nothing says it exists. So does the open data host
+/// for whatever it does not serve.
 async fn host_scope(
     axum::extract::State(gateway): axum::extract::State<Arc<Gateway>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response<Body> {
+    if request
+        .headers()
+        .get(HOST_ROLE)
+        .is_some_and(|role| role.as_bytes() == b"opendata")
+        && closed_on_open_data(&gateway, request.uri().path())
+    {
+        return ProblemDetails::not_found().into_response();
+    }
     if let Some(host) = request.extensions().get::<HostOrganization>() {
         if let Some(project) = project_of_path(&gateway, request.uri().path()) {
             if !gateway.on_host(Some(host), &project) {

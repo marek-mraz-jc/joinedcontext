@@ -860,6 +860,33 @@ async fn an_open_data_endpoint_refuses_every_write_before_the_broker() {
     );
 }
 
+/// H2c (T-7011): the refusal is the Endpoint's, not the host's. A writer's token through the
+/// API host is refused before the broker, and so it is under a host-role header a client typed
+/// (`jc`'s router removes that copy; the gateway alone would still refuse).
+#[tokio::test]
+async fn an_open_data_endpoint_refuses_a_writer_on_the_api_host() {
+    let realm = common::Realm::new();
+    let bearer = scoped_token(&realm, "openid");
+    let entity = json!({ "id": ENTITY, "type": "AirQualityObserved" });
+    for role in ["api", "opendata", "working"] {
+        let broker = common::BrokerStub::start(vec![json!([])]).await;
+        let write = request(
+            Method::POST,
+            &format!("/api/endpoint/{AIR}/ngsi-ld/v1/entities"),
+            Some(&bearer),
+            &[("jc-reason", "EP-187"), ("x-jc-host-role", role)],
+            Some(entity.clone()),
+        );
+        let (code, problem) = answer(writer_app_on(&broker.url, &realm, true), write).await;
+        assert_eq!(code, StatusCode::FORBIDDEN, "{role}: {problem}");
+        assert!(
+            problem.to_string().contains("open-data-read-only"),
+            "{role}: {problem}"
+        );
+        assert!(broker.hops().is_empty(), "{role}: {:?}", broker.hops());
+    }
+}
+
 /// S-49 (T-5955): a prompt-injected model holding a read-only connector's token forges writes
 /// below the tools. Each is refused 403 before the broker, although the person may write; the
 /// same requests with the person's ordinary token pass the gateway. Reads go on, and the hop
