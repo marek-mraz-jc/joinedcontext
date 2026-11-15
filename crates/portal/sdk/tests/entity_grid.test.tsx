@@ -522,7 +522,9 @@ describe("EntityGrid", () => {
     await screen.findByText("Kamppi");
     fireEvent.change(screen.getByLabelText("Filter: name"), { target: { value: "contains" } });
     fireEvent.change(screen.getByLabelText("Value: name"), { target: { value: "zz-no-such-station" } });
-    await screen.findByText(DEFAULT_LABELS.empty);
+    // Narrowed by the person: the empty state names the filters as the cause (T-7063).
+    await screen.findByText(DEFAULT_LABELS.filtersMatchNothing);
+    expect(screen.queryByText(DEFAULT_LABELS.empty)).toBeNull();
     await new Promise((settle) => setTimeout(settle, 50));
     // Each question is asked once for its rows and once for its count (T-6541).
     expect(asked).toEqual([undefined, undefined, 'name[*]~="zz-no-such-station"', 'name[*]~="zz-no-such-station"']);

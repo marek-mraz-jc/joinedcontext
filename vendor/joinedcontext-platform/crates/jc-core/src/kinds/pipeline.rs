@@ -1615,6 +1615,14 @@ pub(crate) fn validate_author_bloblang(field: &'static str, mapping: &str) -> Re
                      credentials (PL-16, PL-18, PL-50)",
         });
     }
+    if let Some(method) = literal_key_call(mapping) {
+        return Err(Error::Name {
+            field,
+            value: format!("{method}(…)"),
+            reason: "a signing or encryption key is a `${VAR}` naming an envVar of the \
+                     pipeline's secretRefs, never a literal in the mapping (MF-24, PL-16)",
+        });
+    }
     for (function, argument) in host_calls(mapping) {
         if function == "env" {
             match argument.as_deref() {
@@ -1685,6 +1693,60 @@ fn host_calls(mapping: &str) -> Vec<(String, Option<String>)> {
         }
     }
     calls
+}
+
+/// The Bloblang methods whose arguments carry a secret: a JWT signing key (`sign_jwt_*`, and the
+/// HMAC secret of `parse_jwt_hs*`) or an AES key. `parse_jwt_rs*` and `parse_jwt_es*` take a
+/// public key, which may be written out.
+fn takes_secret(method: &str) -> bool {
+    method.starts_with("sign_jwt_")
+        || method.starts_with("parse_jwt_hs")
+        || method == "encrypt_aes"
+        || method == "decrypt_aes"
+}
+
+/// The first call of a [`takes_secret`] method whose arguments name no `${VAR}`, so the key is
+/// written into the manifest. Like [`host_calls`] the scan reads every character and models no
+/// lexer: the arguments run to the `)` that closes the call's `(` (or to the end of the text),
+/// and a `${!` (message interpolation) is no secret.
+fn literal_key_call(mapping: &str) -> Option<&str> {
+    let bytes = mapping.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        let name = &mapping[start..i];
+        if bytes.get(i) != Some(&b'(') || !takes_secret(name) {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = bytes.len();
+        for (j, b) in bytes.iter().enumerate().skip(i) {
+            match b {
+                b'(' => depth += 1,
+                b')' if depth == 1 => {
+                    end = j;
+                    break;
+                }
+                b')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        let arguments = &mapping[i + 1..end.max(i + 1)];
+        let names_a_variable = arguments.match_indices("${").any(|(k, _)| {
+            arguments[k + 2..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        });
+        if !names_a_variable {
+            return Some(name);
+        }
+    }
+    None
 }
 
 /// The argument list after a call's `(` when it is exactly one `"NAME"` of letters, digits and
@@ -2208,5 +2270,41 @@ mod script_step_tests {
             .expect_err("refused")
             .to_string()
             .contains("spec.compute.kind"));
+    }
+}
+
+#[cfg(test)]
+mod literal_key_tests {
+    use super::validate_author_bloblang;
+
+    #[test]
+    fn a_key_written_into_the_mapping_is_refused() {
+        for mapping in [
+            r#"root = this.claims.sign_jwt_hs256("hunter2")"#,
+            r#"root = this.claims.sign_jwt_rs256(signing_secret: "a pasted private key")"#,
+            r#"root = this.token.parse_jwt_hs512("s3cret")"#,
+            r#"root = this.v.encrypt_aes("ctr", "0123456789abcdef".decode("hex"), $iv)"#,
+            r#"root = this.v.decrypt_aes("gcm", "k", "${! meta("iv") }")"#,
+            r#"root = this.claims.sign_jwt_es384($key)"#,
+            "root = this.claims.sign_jwt_hs256(",
+        ] {
+            let err = validate_author_bloblang("spec.compute.bloblang", mapping)
+                .expect_err(mapping)
+                .to_string();
+            assert!(err.contains("`${VAR}`"), "{mapping}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_key_from_a_secret_variable_or_a_public_key_passes() {
+        for mapping in [
+            r#"root = this.claims.sign_jwt_hs256("${HSL_JWT_SECRET}")"#,
+            r#"root = this.claims.sign_jwt_rs256(signing_secret: "${REGISTER_KEY}", headers: {"kid": "a"})"#,
+            r#"root = this.v.encrypt_aes("cbc", "${AES_KEY}".decode("hex"), this.iv.decode("hex"))"#,
+            r#"root = this.token.parse_jwt_rs256("-----BEGIN PUBLIC KEY-----")"#,
+            r#"root = this.claims.sign_jwt_hs256(this.a.or("b").string() + "${HSL_JWT_SECRET}")"#,
+        ] {
+            validate_author_bloblang("spec.compute.bloblang", mapping).expect(mapping);
+        }
     }
 }
