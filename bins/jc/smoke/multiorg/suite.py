@@ -52,7 +52,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "rehearsal"))
 import rehearsal as R  # noqa: E402  (Http, sign-in, person helpers of the rehearsal kit)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common import realm_of  # noqa: E402
+from common import SECOND_FACTOR, realm_of  # noqa: E402
 
 CONFIG = ("joinedcontext", "configuration")
 DENIED = (403, 404)
@@ -538,7 +538,11 @@ class Suite:
         text = page.decode(errors="replace")
         form = {"csrf_token": R._hidden(text, "csrf_token"), "session_code": R._hidden(text, "session_code"),
                 "username": p["username"], "password": p["password"]}
-        st, hdrs, _ = h.call("POST", login_url, form=form)
+        st, hdrs, body = h.call("POST", login_url, form=form)
+        try:
+            st, hdrs, _ = SECOND_FACTOR.answer(h.call, login_url, st, hdrs, body, p["username"])
+        except RuntimeError:
+            return None
         loc = hdrs.get("Location") or hdrs.get("location") or ""
         if "code=" not in loc:
             return None
@@ -1653,6 +1657,7 @@ class Suite:
                     page.fill("input[name=username]", p["username"])
                     page.fill("input[name=password]", p["password"])
                     page.locator("input[name=password]").press("Enter")
+                    SECOND_FACTOR.browser(page, p["username"])
                     page.wait_for_url(re.compile(re.escape(base) + r"/(?!id/).*"), timeout=30000)
                     for name, path in pages:
                         page.goto(base + path, wait_until="networkidle", timeout=60000)

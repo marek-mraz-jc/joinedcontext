@@ -48,7 +48,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
 import logscan as ls  # noqa: E402
-from common import PASS, FAIL, Results, as_json, loopback_only, read_token, realm_of, short  # noqa: E402
+from common import PASS, FAIL, SECOND_FACTOR, Results, as_json, loopback_only, read_token, realm_of, short  # noqa: E402
 
 PORTAL_ADMIN_CLIENT = "portal-reconciler"
 PERSON = "smoke-logs-reader"
@@ -219,6 +219,7 @@ class Person:
         st, h, raw = self.session.call("POST", login_url, form={
             "csrf_token": hidden(text, "csrf_token"), "session_code": hidden(text, "session_code"),
             "username": PERSON, "password": password})
+        st, h, raw = SECOND_FACTOR.answer(self.session.call, login_url, st, h, raw, PERSON)
         loc = h.get("location", "")
         if st not in (302, 303) or "code=" not in loc:
             raise RuntimeError(f"login form -> {st}")

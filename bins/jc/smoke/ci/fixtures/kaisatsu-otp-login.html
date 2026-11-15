@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html class="login-pf" lang="en" dir="ltr">
+<head>
+    <meta charset="utf-8">
+    <meta name="color-scheme" content="light">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in · joinedcontext</title>
+    
+    <link href="/resources/kaisatsu/81271933336ff763/login.css" rel="stylesheet">
+    <style nonce="fixture">
+:root {
+  --jc-primary: #1d4ed8;
+  --jc-primary-fg: #ffffff;
+  --jc-secondary: #0f766e;
+  --jc-accent: #f59e0b;
+  --jc-background: #ffffff;
+  --jc-text: #0f172a;
+  --jc-font-heading: system-ui, sans-serif;
+  --jc-font-body: system-ui, sans-serif;
+}
+    </style>
+</head>
+<body id="keycloak-bg" data-page-id="login-login-otp">
+<div class="pf-v5-c-login">
+  <div class="pf-v5-c-login__container">
+    <header id="kc-header" class="pf-v5-c-login__header">
+      <div id="kc-header-wrapper" class="pf-v5-c-brand">
+        
+        <span class="jc-org">joinedcontext</span>
+      </div>
+    </header>
+    <main class="pf-v5-c-login__main">
+      <div class="pf-v5-c-login__main-header">
+        <div class="jc-heading">
+          <p class="jc-context" id="jc-context">Smoke</p>
+          <h1 class="pf-v5-c-title pf-m-3xl" id="kc-page-title">Sign in</h1>
+        </div>
+        
+        <div class="pf-v5-c-login__main-header-utilities">
+          <div class="pf-v5-c-form-control">
+            <select aria-label="languages" id="login-select-toggle">
+              <option value="/realms/smoke/login-actions/authenticate?session_code=fixture&amp;client_id=fixture&amp;kc_locale=cs">Czech (Čeština)</option>
+              <option value="/realms/smoke/login-actions/authenticate?session_code=fixture&amp;client_id=fixture&amp;kc_locale=en" selected>English</option>
+              <option value="/realms/smoke/login-actions/authenticate?session_code=fixture&amp;client_id=fixture&amp;kc_locale=de">German (Deutsch)</option>
+              <option value="/realms/smoke/login-actions/authenticate?session_code=fixture&amp;client_id=fixture&amp;kc_locale=sk">Slovak (Slovenčina)</option>
+              
+            </select>
+            <span class="pf-v5-c-form-control__utilities">
+              <span class="pf-v5-c-form-control__toggle-icon">
+                <svg class="pf-v5-svg" viewBox="0 0 320 512" fill="currentColor" aria-hidden="true" role="img" width="1em" height="1em"><path d="M31.3 192h257.3c17.8 0 26.7 21.5 14.1 34.1L174.1 354.8c-7.8 7.8-20.5 7.8-28.3 0L17.2 226.1C4.6 213.5 13.5 192 31.3 192z"></path></svg>
+              </span>
+            </span>
+          </div>
+        </div>
+        
+      </div>
+      <div class="pf-v5-c-login__main-body">
+        
+        <div class="pf-v5-c-form pf-v5-u-w-100 pf-v5-u-mb-md-on-md">
+          <div class="pf-v5-c-form__group">
+            <div class="pf-v5-c-form__group-label pf-v5-u-pb-xs">
+              <label for="kc-attempted-username" class="pf-v5-c-form__label"><span class="pf-v5-c-form__label-text">Email</span></label>
+            </div>
+            <div class="pf-v5-c-input-group">
+              <div class="pf-v5-c-input-group__item pf-m-fill">
+                <span class="pf-v5-c-form-control pf-m-readonly"><input id="kc-attempted-username" value="p1" readonly></span>
+              </div>
+              <div class="pf-v5-c-input-group__item">
+                <a id="reset-login" class="pf-v5-c-button pf-m-control kc-login-tooltip" href="/realms/smoke/login-actions/restart?session_code=fixture&amp;client_id=fixture" aria-label="Restart login"><svg class="pf-v5-svg" viewBox="0 0 512 512" fill="currentColor" aria-hidden="true" width="1em" height="1em"><path d="M370.72 133.28C339.458 104.008 298.888 87.962 255.848 88c-77.458.068-144.328 53.178-162.791 126.85-1.344 5.363-6.122 9.15-11.651 9.15H24.103c-7.498 0-13.194-6.807-11.807-14.176C33.933 94.924 134.813 8 256 8c66.448 0 126.791 26.136 171.315 68.685L463.03 40.97C478.149 25.851 504 36.559 504 57.941V192c0 13.255-10.745 24-24 24H345.941c-21.382 0-32.09-25.851-16.971-40.971l41.75-41.749zM32 296h134.059c21.382 0 32.09 25.851 16.971 40.971l-41.75 41.75c31.262 29.273 71.835 45.319 114.876 45.28 77.418-.07 144.315-53.144 162.787-126.849 1.344-5.363 6.122-9.15 11.651-9.15h57.304c7.498 0 13.194 6.807 11.807 14.176C478.067 417.076 377.187 504 256 504c-66.448 0-126.791-26.136-171.315-68.685L48.97 471.03C33.851 486.149 8 475.441 8 454.059V320c0-13.255 10.745-24 24-24z"></path></svg><span class="kc-tooltip-text">Restart login</span></a>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        
+        
+        
+        
+        
+        
+        <form id="kc-otp-login-form" class="pf-v5-c-form pf-v5-u-w-100" action="/realms/smoke/login-actions/authenticate?session_code=fixture&amp;client_id=fixture" method="post" novalidate="novalidate">
+          <input type="hidden" name="csrf_token" value="fixture">
+          <input type="hidden" name="session_code" value="fixture">
+          <input type="hidden" name="step" value="login-otp">
+          
+          
+          
+          <div class="pf-v5-c-form__group">
+            <div class="pf-v5-c-form__group-label pf-v5-u-pb-xs">
+              <label for="otp" class="pf-v5-c-form__label"><span class="pf-v5-c-form__label-text">One-time code</span></label>
+            </div>
+            
+            <span class="pf-v5-c-form-control">
+              <input id="otp" name="otp" value="" type="text" autocomplete="one-time-code" autofocus inputmode="numeric">
+              
+            </span>
+            
+            
+            <div id="input-error-container-otp">
+              
+            </div>
+          </div>
+          
+          
+          <div class="pf-v5-c-form__group" id="kc-form-buttons">
+            <div class="pf-v5-c-form__actions pf-v5-u-pt-xs pf-v5-u-flex-wrap">
+              <button class="pf-v5-c-button pf-m-primary pf-m-block" name="login" id="kc-login" type="submit">Sign in</button>
+              
+              
+            </div>
+          </div>
+        </form>
+        
+        
+        
+        <div class="pf-v5-c-login__main-footer">
+          
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<script nonce="fixture" id="kc-page-script" data-show="Show password" data-hide="Hide password">
+(function () {
+    var me = document.getElementById("kc-page-script");
+    document.querySelectorAll("button[data-password-toggle]").forEach(function (b) {
+        var input = document.getElementById(b.getAttribute("aria-controls"));
+        var icons = b.querySelectorAll("svg");
+        icons[1].style.display = "none";
+        b.addEventListener("click", function () {
+            var show = input.type === "password";
+            input.type = show ? "text" : "password";
+            icons[0].style.display = show ? "none" : "";
+            icons[1].style.display = show ? "" : "none";
+            b.setAttribute("aria-label", show ? me.dataset.hide : me.dataset.show);
+        });
+    });
+    var pick = document.getElementById("login-select-toggle");
+    if (pick) {
+        pick.addEventListener("change", function () {
+            if (pick.value) { window.location.href = pick.value; }
+        });
+    }
+    var form = document.querySelector("main form");
+    if (form) {
+        form.addEventListener("submit", function () {
+            var b = form.querySelector("button[type=submit]");
+            if (b) { setTimeout(function () { b.disabled = true; }, 0); }
+        });
+    }
+})();
+</script>
+</body>
+</html>

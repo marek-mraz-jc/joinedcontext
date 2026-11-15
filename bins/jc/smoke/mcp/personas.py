@@ -25,7 +25,7 @@ from pathlib import Path
 
 import yaml
 
-from common import Http, realm_of
+from common import SECOND_FACTOR, Http, realm_of
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "rehearsal"))
 import rehearsal as R  # noqa: E402  (merge_change: the kit's one way onto a protected main)
@@ -114,6 +114,7 @@ def _login(b: Browser, page_url: str, page: bytes, username: str, password: str)
     form = {"csrf_token": _hidden(text, "csrf_token"), "session_code": _hidden(text, "session_code"),
             "username": username, "password": password}
     st, h, body = b.call("POST", page_url, form=form)
+    st, h, body = SECOND_FACTOR.answer(b.call, page_url, st, h, body, username)
     loc = h.get("location") or ""
     if st not in (302, 303) or "code=" not in loc:
         raise RuntimeError(f"login of {username}: {st} {body[:160]!r}")

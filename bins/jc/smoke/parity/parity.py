@@ -21,7 +21,9 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pages as P  # noqa: E402
+from common import SECOND_FACTOR  # noqa: E402
 
 WIDTHS = ((1440, 900), (400, 860))
 MAX_HEIGHT = 4000  # px of a full-page shot kept; ponytail: longer pages are cut, scroll shots if needed
@@ -94,6 +96,7 @@ def sign_in(page, side: str, base: str, person: tuple[str, str]):
     page.fill("#username" if side == "old" else "input[name=username]", user)
     page.fill("#password" if side == "old" else "input[name=password]", password)
     page.locator("#password" if side == "old" else "input[name=password]").press("Enter")
+    SECOND_FACTOR.browser(page, user)
     page.wait_for_url(re.compile(r".*/(projects|catalogue|home)(/.*)?$|.*/$"), timeout=45000)
 
 

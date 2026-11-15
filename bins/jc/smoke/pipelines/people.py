@@ -15,7 +15,7 @@ import urllib.request
 from http.cookies import SimpleCookie
 from pathlib import Path
 
-from common import Http, as_json, realm_of
+from common import SECOND_FACTOR, Http, as_json, realm_of
 ADMIN_CLIENT = "portal-reconciler"
 GROUP = "/platform-admins"
 CSRF_COOKIE = "__Host-jc_csrf"
@@ -141,7 +141,8 @@ class Admin:
         text = page.decode(errors="replace")
         form = {"csrf_token": _hidden(text, "csrf_token"), "session_code": _hidden(text, "session_code"),
                 "username": self.username, "password": password}
-        st, h, _ = self.browser.call("POST", login_url, form=form)
+        st, h, body = self.browser.call("POST", login_url, form=form)
+        st, h, _ = SECOND_FACTOR.answer(self.browser.call, login_url, st, h, body, self.username)
         loc = h.get("location") or ""
         if st not in (302, 303) or "code=" not in loc:
             raise RuntimeError(f"login: {st}")

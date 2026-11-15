@@ -17,6 +17,8 @@ from pathlib import Path
 
 import live
 
+from second_factor import SECOND_FACTOR  # noqa: F401  (re-exported: every suite's sign-in, T-6894)
+
 PASS, FAIL, SKIP = "pass", "fail", "skip"
 
 # jc's `[identity] realm` rule (setup::Realm::parse): a realm name goes into URL paths.
