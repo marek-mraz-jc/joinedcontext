@@ -366,6 +366,10 @@ impl Hub {
             state.index.remove(sub.filter);
         }
         state.forget_unwatched();
+        // A connection that was given no resume token is not held: an empty one would match.
+        if token.is_empty() {
+            return;
+        }
         let now = Instant::now();
         state
             .closed
@@ -429,7 +433,9 @@ impl Hub {
     pub fn take_closed(&self, name: &str, token: &str, principal: &str) -> Option<Closed> {
         let mut state = self.state();
         let held = state.closed.get(name)?;
-        if held.token != token || held.principal != principal || held.at.elapsed() >= RESUME_WINDOW
+        if !same_token(&held.token, token)
+            || held.principal != principal
+            || held.at.elapsed() >= RESUME_WINDOW
         {
             return None;
         }
@@ -1001,7 +1007,11 @@ fn without_sys_attrs(entity: &mut Value) {
 /// The NGSI-LD Notification (TS 104 175 §5.2.6.9.1) of one entity for one subscription.
 fn notification(subscription: &str, entity: Value, at: chrono::DateTime<chrono::Utc>) -> Value {
     json!({
-        "id": format!("urn:ngsi-ld:Notification:{}", random_name()),
+        // The id only has to differ per notification; it guards nothing.
+        "id": format!(
+            "urn:ngsi-ld:Notification:{}",
+            random_name().unwrap_or_else(|| at.timestamp_micros().to_string())
+        ),
         "type": "Notification",
         "subscriptionId": subscription,
         "notifiedAt": at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
@@ -1009,15 +1019,29 @@ fn notification(subscription: &str, entity: Value, at: chrono::DateTime<chrono::
     })
 }
 
-/// 128 random bits, base32 (lower case), as a connection name, a resume token or an id.
-pub fn random_name() -> String {
+/// 128 random bits, base32 (lower case), as a connection name, a resume token or an id; `None`
+/// when the system generator fails, since a fixed value would make every resume token the same.
+pub fn random_name() -> Option<String> {
     use ring::rand::SecureRandom;
     let mut bytes = [0_u8; 16];
-    // The system generator does not fail on a supported platform; zeros would still be unique
-    // per process only by luck, so a failure is logged.
     if ring::rand::SystemRandom::new().fill(&mut bytes).is_err() {
         tracing::error!("the system random generator failed");
+        return None;
     }
+    Some(base32(bytes))
+}
+
+/// Whether two resume tokens are equal, read through to the end whatever byte differs.
+fn same_token(held: &str, given: &str) -> bool {
+    held.len() == given.len()
+        && held
+            .bytes()
+            .zip(given.bytes())
+            .fold(0_u8, |differ, (a, b)| differ | (a ^ b))
+            == 0
+}
+
+fn base32(bytes: [u8; 16]) -> String {
     const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
     let mut out = String::with_capacity(26);
     let mut buffer = 0_u32;
@@ -1758,6 +1782,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_connection_without_a_resume_token_is_not_held() {
+        let hub = Hub::new("s", 100);
+        let (conn, _) = open(&hub);
+        subscribe(&hub, conn, json!({}));
+        hub.close(conn, "", "", VecDeque::new());
+        assert_eq!(hub.subscriptions(conn), 0);
+        assert!(hub.take_closed("", "", "anonymous").is_none());
+        assert!(same_token("abc", "abc"));
+        assert!(!same_token("abc", "abd") && !same_token("abc", "ab") && !same_token("", "a"));
+    }
+
     /// Reconnect churn holds no more than the caps: the oldest closed connections go first.
     #[test]
     fn closed_connections_held_for_a_resume_stay_under_the_caps() {
@@ -1794,7 +1830,10 @@ mod tests {
 
     #[test]
     fn random_names_are_26_base32_characters_and_differ() {
-        let (a, b) = (random_name(), random_name());
+        let (a, b) = (
+            random_name().expect("random"),
+            random_name().expect("random"),
+        );
         assert_eq!(a.len(), 26);
         assert!(a
             .bytes()

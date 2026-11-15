@@ -744,13 +744,17 @@ pub async fn session(
     lifetime: Duration,
 ) -> Ended {
     let (mut to_client, mut from_client) = client.split();
-    let name = hub::random_name();
-    let token = hub::random_name();
+    // Without randomness the name and token would be guessable: the session ends at once, and
+    // the empty token keeps it from being held for a resume.
+    let named = hub::random_name().zip(hub::random_name());
+    let (name, token) = named.clone().unwrap_or_default();
     let mut seq = 0_u64;
     let mut sent: VecDeque<(u64, String)> = VecDeque::new();
     let welcome =
         json!({"metadata": {"x-op": "x-welcome", "x-connection": name, "x-resume-token": token}});
-    let mut ended = if to_client
+    let mut ended = if named.is_none() {
+        Some(Ended::Closing("unavailable"))
+    } else if to_client
         .send(ws::Message::text(welcome.to_string()))
         .await
         .is_err()
