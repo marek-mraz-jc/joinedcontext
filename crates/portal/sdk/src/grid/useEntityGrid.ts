@@ -10,6 +10,7 @@ import { formulasOf, withFormulas } from "./formula";
 import { unitSymbol } from "../sdk/units";
 import { andQ, opsForKind, queryFromFilters, typeOfFilter } from "./filters";
 import type { ColumnFilter, FilterColumn, FilterKind, FilterOp } from "./filters";
+import { keptMembers } from "./apply";
 import type { AttributeChange, EntityChange } from "./apply";
 import type { EnumOption } from "../enums";
 import type { RelationEnd } from "../relations";
@@ -1116,6 +1117,7 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
           datasetId: one?.datasetId,
           languageMap: one?.languageMap,
           language: one?.language,
+          kept: keptMembers(row?.raw[attribute], one?.datasetId),
         };
       });
       return { id, changes };
