@@ -476,44 +476,15 @@ pub(crate) fn plan_flow(
     let mut lane = declared_lane(blueprint.spec.risk_class);
     let mut summary = PlanSummary::default();
     let mut files = Vec::with_capacity(rendered.len());
+    let effective = crate::permissions::for_request(state, identity, project);
     for expanded in &rendered {
         let (mut manifest, kind_info) =
             accept_rendered(&expanded.manifest, &expanded.template, project)?;
         // The realm role on the card says which blueprints a person is offered (CC-59); what
-        // they may propose in this project is the bindings of the organization repository, the
-        // same gate a hand-written manifest passes, and it is read before the forge is touched
-        // (PF-50, T-0799).
-        let body = serde_json::to_value(&manifest)
-            .map_err(|e| ApiError::Internal(format!("serialize rendered manifest: {e}")))?;
-        crate::permissions::for_request(state, identity, project).check(
-            kind_info.kind,
-            jc_core::kinds::Verb::Propose,
-            Some(&body),
-        )?;
-        // Nobody grants above their own rights, a blueprint's Role or RoleBinding included
-        // (PF-52).
-        crate::permissions::within_own_rights(state, identity, &body, None, "proposer")?;
-        // A blueprint's Pipeline reaches only what its proposer reads and writes (PL-94).
-        crate::pipeline_rights::check(
-            state,
-            identity,
-            project,
-            &body,
-            jc_core::kinds::Verb::Propose,
-        )?;
-        // A name the organization holds once is refused as at every other door (PF-84, AP-14a,
-        // AP-114, AP-115).
-        let name = &manifest.metadata.name;
-        crate::spaces::check(
-            state,
-            identity,
-            project,
-            kind_info.kind,
-            name,
-            &manifest.spec,
-        )?;
-        crate::apps::names::check(state, identity, project, kind_info.kind, name)?;
-        crate::groups::check(state, identity, kind_info.kind, &manifest.metadata)?;
+        // they may propose in this project is the bindings of the organization repository and
+        // every refusal of the import door, read before the forge is touched (PF-50, PF-52,
+        // PL-94, PF-84, S-5-08).
+        crate::api::import::authorize_manifest(state, identity, project, &effective, &manifest)?;
         let current = state
             .mirror
             .get(project, kind_info.kind, &manifest.metadata.name);

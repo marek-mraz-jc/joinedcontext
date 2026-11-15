@@ -9,6 +9,7 @@ import datetime as dt
 import hashlib
 import json
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -254,8 +255,17 @@ def transient_types(files: Path) -> set:
     return out
 
 
-def build_index(export: Path, patterns: dict) -> dict:
-    """One pass over entities.jsonl and temporal.jsonl.
+IDS_FLUSH = 200_000  # ids held in memory before build_index appends them to their files
+
+
+def ids_file(ids_dir: Path, tenant: str, st: str) -> Path:
+    """The file of every exported id of one (tenant, short type), one id a line."""
+    return ids_dir / (hashlib.sha256(f"{tenant}\n{st}".encode()).hexdigest()[:24] + ".txt")
+
+
+def build_index(export: Path, patterns: dict, ids_dir: Path | None = None) -> dict:
+    """One pass over entities.jsonl and temporal.jsonl; with `ids_dir` every exported id is
+    written there by (tenant, type) (ids_file), for the growth proof (born).
 
     tenants[tenant][short type] = {"iri", "count", "sample", "location", "expires",
                                    "patterns": {pattern: count}}
@@ -265,6 +275,19 @@ def build_index(export: Path, patterns: dict) -> dict:
     of the same (the mcp suite)."""
     compiled = {k: [(p, re.compile(p)) for p in v] for k, v in patterns.items()}
     tenants: dict = {}
+    held: dict = {}
+
+    def flush():
+        for (tenant, st), ids in held.items():
+            with ids_file(ids_dir, tenant, st).open("a", encoding="utf-8") as out:
+                out.write("".join(i + "\n" for i in ids))
+        held.clear()
+
+    if ids_dir is not None:
+        ids_dir.mkdir(parents=True, exist_ok=True)
+        for old in ids_dir.glob("*.txt"):
+            old.unlink()
+    n = 0
     with (export / "antares" / "entities.jsonl").open("rb") as fh:
         for raw in fh:
             line = raw.decode("utf-8", errors="replace")
@@ -283,6 +306,11 @@ def build_index(export: Path, patterns: dict) -> dict:
                 st, {"iri": typ, "count": 0, "sample": eid, "location": False, "expires": False,
                      "patterns": {}})
             slot["count"] += 1
+            if ids_dir is not None:
+                held.setdefault((tenant, st), []).append(eid)
+                n += 1
+                if n % IDS_FLUSH == 0:
+                    flush()
             if not slot["location"] and f'"{LOCATION}"' in line:
                 slot["location"], slot["sample"] = True, eid
             if "expiresAt" in line:
@@ -291,6 +319,8 @@ def build_index(export: Path, patterns: dict) -> dict:
                 if rx.search(eid):
                     slot["patterns"][p] = slot["patterns"].get(p, 0) + 1
                     slot.setdefault("psample", {}).setdefault(p, eid)
+    if ids_dir is not None:
+        flush()
     for tenant, st in transient_types(export / "gitea" / "files"):
         if st in tenants.get(tenant, {}):
             tenants[tenant][st]["expires"] = True
@@ -328,13 +358,15 @@ def build_index(export: Path, patterns: dict) -> dict:
 def load_index(export: Path, endpoints, cache_dir: Path, log=print) -> dict:
     manifest = json.loads((export / "manifest.json").read_text())
     patterns = patterns_needed(endpoints)
-    key = hashlib.sha256(json.dumps(["index-v5", manifest.get("exportedAt"), str(export.resolve()),
+    key = hashlib.sha256(json.dumps(["index-v6", manifest.get("exportedAt"), str(export.resolve()),
                                      sorted((list(k), v) for k, v in patterns.items())]).encode()).hexdigest()[:16]
     cache = cache_dir / f"index-{key}.json"
     if cache.exists():
         return json.loads(cache.read_text())
     log(f"indexing {export}/antares (once; cached as {cache})")
-    index = build_index(export, patterns)
+    ids_dir = cache_dir / f"ids-{key}"
+    index = build_index(export, patterns, ids_dir)
+    index["ids"] = str(ids_dir)
     index["exportedAt"] = manifest.get("exportedAt")
     index["synthetic"] = bool(manifest.get("synthetic"))
     index["cutoff"] = manifest.get("temporalCutoff") or (manifest.get("counts", {}).get("antares") or {}).get("cutoff")
@@ -352,23 +384,109 @@ def expected_types(e: Endpoint, grants, tenant_types: dict) -> tuple[dict, str]:
     narrowed = "; ".join(sorted({g.narrowed for g in grants if g.narrowed}))
     out = {}
     for st, slot in tenant_types.items():
-        if sels is None:
-            out[st] = slot["count"]
+        scope = count_scope(sels, st)
+        if scope is False:
             continue
-        mine = [s for s in sels if s.type in (st, "*")]
-        if not mine:
-            continue
-        if any(s.pattern is None for s in mine):
+        if scope is None:
             out[st] = slot["count"]
-        elif len(mine) == 1:
-            out[st] = slot["patterns"].get(mine[0].pattern, 0)
-        else:
+        elif scope is OVERLAP:
             out[st] = None  # several patterns overlap: a union the index does not hold
+        else:
+            out[st] = slot["patterns"].get(scope, 0)
         if out[st] == 0:
             del out[st]
     if narrowed:
         out = {k: None for k in out}
     return out, narrowed
+
+
+OVERLAP = object()
+
+
+def count_scope(sels: list | None, st: str):
+    """What of type `st` a set of selectors counts: None every row, an idPattern its matches,
+    OVERLAP a union of patterns, False nothing."""
+    if sels is None:
+        return None
+    mine = [s for s in sels if s.type in (st, "*")]
+    if not mine:
+        return False
+    if any(s.pattern is None for s in mine):
+        return None
+    return mine[0].pattern if len(mine) == 1 else OVERLAP
+
+
+def exported_ids(index: dict, tenant: str, st: str, pattern: str | None = None) -> set | None:
+    """The ids the export holds of (tenant, st), narrowed to `pattern`; None when the index was
+    built without them."""
+    if not index.get("ids"):
+        return None
+    f = ids_file(Path(index["ids"]), tenant, st)
+    ids = set(f.read_text(encoding="utf-8").split()) if f.exists() else set()
+    if pattern is not None:
+        rx = re.compile(pattern)
+        ids = {i for i in ids if rx.search(i)}
+    return ids
+
+
+BORN_PAGE = 1000
+
+
+def live_created(get, slug: str, st: str, token: str | None = None) -> dict | None:
+    """{id: createdAt} of every entity of `st` the caller reads through the Endpoint, paged by
+    offset to an empty page; `get(path, token)` answers (status, headers, body). None when a
+    page is refused."""
+    base = f"/api/endpoint/{slug}/ngsi-ld/v1/entities"
+    out: dict = {}
+    offset = 0
+    while True:
+        st_, _, raw = get(f"{base}?type={urllib.parse.quote(st, safe='')}&limit={BORN_PAGE}&offset={offset}"
+                          "&options=sysAttrs,keyValues&pick=id,createdAt", token)
+        try:
+            page = json.loads(raw) if st_ == 200 else None
+        except ValueError:
+            page = None
+        if not isinstance(page, list):
+            return None
+        if not page:  # a page shorter than asked may be the server's own cap: read to an empty one
+            return out
+        out.update({str(x.get("id")): x.get("createdAt") for x in page if isinstance(x, dict)})
+        offset += len(page)
+
+
+def present(get, slug: str, st: str, ids: set, token: str | None = None) -> dict:
+    """{id: createdAt} of those of `ids` the Endpoint answers by id, a hundred a query: an
+    entity a shifting offset page passed over is still found."""
+    out: dict = {}
+    todo = sorted(ids)
+    for i in range(0, len(todo), 100):
+        part = ",".join(todo[i:i + 100])
+        st_, _, raw = get(f"/api/endpoint/{slug}/ngsi-ld/v1/entities?type={urllib.parse.quote(st, safe='')}"
+                          f"&id={urllib.parse.quote(part, safe=',')}&limit=100&options=sysAttrs,keyValues"
+                          "&pick=id,createdAt", token)
+        try:
+            page = json.loads(raw) if st_ == 200 else []
+        except ValueError:
+            page = []
+        out.update({str(x.get("id")): x.get("createdAt") for x in page if isinstance(page, list) and isinstance(x, dict)})
+    return out
+
+
+def born(live: dict, exported: set, exported_at: str, expires: bool, counted: int) -> tuple[bool, str]:
+    """Whether a type that counts `counted` (> the export) grew only by entities created after
+    the export: every exported id still there (an expiring type may have lost some), and every
+    id the export lacks carries a createdAt after `exported_at`. `live` is {id: createdAt} as
+    read from the copy, never inferred from a number. Answers the verdict and its proof."""
+    at = parse_time(exported_at)
+    missing = sorted(exported - set(live))
+    extra = {i: c for i, c in live.items() if i not in exported}
+    old = sorted(i for i, c in extra.items() if not c or parse_time(str(c)) <= at)
+    why = (f"{len(live)} read, {len(exported) - len(missing)} of the {len(exported)} exported, {len(extra)} "
+           f"more, {len(old)} of them created at or before exportedAt {exported_at}"
+           + (f" (e.g. {old[0]})" if old else "")
+           + (f"; {len(missing)} exported missing (e.g. {missing[0]})" if missing else ""))
+    ok = bool(extra) and not old and (expires or not missing) and len(live) >= min(counted, len(exported) + len(extra))
+    return ok, why
 
 
 def seeded_ids(t: str) -> str:

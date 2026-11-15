@@ -579,6 +579,52 @@ async fn a_type_is_walked_in_chunks_of_entities() {
     assert_eq!(left("retain-walk").await, 36);
 }
 
+/// T-6957: on jc-dev a sweep step walked a type's Entities that hold no
+/// history at all (KeyPerformanceIndicator rows: 128 678 in one Tenant) for
+/// its whole second, so the old rows behind them waited hours. The walk
+/// passes over the Entities the bare sweep marked (migration 0030) without
+/// probing their history.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_walk_passes_over_entities_without_history_in_one_call() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let store = PgTemporalStore::new(pool.clone());
+    let t = "retain-bare";
+    let tenant = TenantId::new(t).expect("tenant");
+    pg::ensure_tenant(&pool, &tenant).await.expect("tenant row");
+    let id = "urn:v:z";
+    let _ = store.delete(&tenant, id).await;
+    sqlx::query("DELETE FROM temporal_entities WHERE tenant_id = $1")
+        .bind(t)
+        .execute(&pool)
+        .await
+        .expect("clean");
+    sqlx::query(
+        "INSERT INTO temporal_entities (tenant_id, id, types, meta, created_at, modified_at, bare)
+         SELECT $1, 'urn:v:a' || lpad(i::text, 6, '0'), ARRAY[$2], '{}'::jsonb, now(), now(), true
+         FROM generate_series(1, 100000) i",
+    )
+    .bind(t)
+    .bind(V)
+    .execute(&pool)
+    .await
+    .expect("bare entities");
+    let attr = "https://example.org/speed";
+    let instances: Vec<_> = [1i64, 10]
+        .iter()
+        .map(|m| json!({"type": "Property", "value": m, "observedAt": ago(*m), "instanceId": format!("urn:i:{id}:{m}")}))
+        .collect();
+    let doc = json!({"id": id, "type": [V], "createdAt": ago(120), "modifiedAt": ago(1), attr: instances});
+    assert!(store.create(&tenant, id, &doc).await.expect("create"));
+    assert_eq!(
+        retain_history(&pool, t, ty(V), &ago(5), 1000, false)
+            .await
+            .expect("walk"),
+        1,
+        "the old row behind 100 000 Entities without history goes in one call"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_past_partition_the_sweeps_emptied_is_dropped_and_a_held_one_stays() {
     let url = require_db!();

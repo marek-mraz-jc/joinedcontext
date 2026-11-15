@@ -146,10 +146,31 @@ class Fake:
             first = slug not in self.live_seen
             self.live_seen.add(slug)
             return 2 if first else 102
+        if self.broken.startswith("born"):
+            return 5
         if self.broken != "grown-more" or slug not in self.live_seen:
             self.live_seen.add(slug)
             return 5
         return 105
+
+    def born_rows(self, qs) -> list:
+        """A copy that kept ingesting after its export ("born*"): the 2 exported north rows and 3
+        a Pipeline created an hour after exportedAt; "born-old" dates one of those before the
+        export, "born-lost" lost the exported north-1, one page of 2 rows at a time."""
+        later = "2099-01-01T00:00:00Z"
+        rows = [{"id": "urn:ngsi-ld:AirQualityObserved:north-0", "createdAt": "2020-01-01T00:00:00Z"},
+                {"id": "urn:ngsi-ld:AirQualityObserved:north-1", "createdAt": "2020-01-01T00:00:00Z"}]
+        rows += [{"id": f"urn:ngsi-ld:AirQualityObserved:north-new-{i}", "createdAt": later} for i in range(3)]
+        if self.broken == "born-old":
+            rows[2]["createdAt"] = "2020-01-01T00:00:00Z"
+        if self.broken == "born-lost":
+            rows[1]["id"] = "urn:ngsi-ld:AirQualityObserved:north-new-3"
+            rows[1]["createdAt"] = later
+        if qs.get("id"):
+            wanted = set(qs["id"][0].split(","))
+            return [r for r in rows if r["id"] in wanted]
+        offset, limit = int((qs.get("offset") or ["0"])[0]), int(qs["limit"][0])
+        return rows[offset:offset + min(limit, 2)]
 
     def answer(self, method, path, headers):
         u = urllib.parse.urlparse(path)
@@ -188,13 +209,15 @@ class Fake:
             old = [{"type": "Property", "value": 1}] if self.broken == "old-history" else []
             return 200, {}, {"id": "x", "pm10": old}
         if rest == "ngsi-ld/v1/entities" and "count" in qs:
-            n = 3 if self.broken == "count" else 2
+            n = 3 if self.broken == "count" else 5 if self.broken.startswith("born") else 2
             if self.broken.startswith("grown"):
                 # a rehearsal Pipeline wrote 3 rows of the granted type and 4 of one the bundle lacks
                 seeded = "rehearsal-" in (qs.get("idPattern") or [""])[0]
                 n = 4 if qs.get("type") == ["WaterQualityObserved"] else \
                     (1 if self.broken == "grown-lost" else 2) if seeded else self.grown_rows(slug)
             return 200, {"NGSILD-Results-Count": str(n)}, []
+        if rest == "ngsi-ld/v1/entities" and self.broken.startswith("born") and qs.get("options") == ["sysAttrs,keyValues"]:
+            return 200, {}, self.born_rows(qs)
         if rest == "ngsi-ld/v1/entities":
             return 200, {}, {"type": "FeatureCollection", "features": []}
         if rest.startswith("ngsi-ld/v1/entities/"):
@@ -221,7 +244,7 @@ class Fake:
         if rest.endswith("/items") and qs.get("f") == ["csv"]:
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
-            rows = 3 if self.broken == "csv-rows" else self.grown_rows(slug) if self.broken.startswith("grown") else 2
+            rows = 3 if self.broken == "csv-rows" else self.grown_rows(slug) if self.broken.startswith(("grown", "born")) else 2
             # A polygon of a few thousand points is one cell past csv's default 128 KiB field.
             shape = "[0,0]," * 30_000 if self.broken == "wide-cell" else ""
             body = "id,geometry\n" + "".join(f'urn:x:{i},"{{""type"":""Point"",""c"":[{shape}0]}}"\n'
@@ -235,12 +258,12 @@ class Fake:
                 return 400, {}, {"title": "unknown parameter f"}
             return 200, {"Content-Type": "application/vnd.apache.parquet"}, b"PAR1" + b"\0" * 8 + b"PAR1"
         if rest.startswith("ogc/features/collections/"):
-            n = self.grown_rows(slug) if self.broken.startswith("grown") else 2
+            n = self.grown_rows(slug) if self.broken.startswith(("grown", "born")) else 2
             return 200, {}, {"type": "FeatureCollection", "numberMatched": n, "features": []}
         if rest == "odata/v4/$metadata":
             return 200, {"Content-Type": "application/xml"}, b'<EntitySet Name="AirQualityObserved"/>'
         if rest.startswith("odata/v4/"):
-            return 200, {}, {"@odata.count": self.grown_rows(slug) if self.broken.startswith("grown") else 2, "value": []}
+            return 200, {}, {"@odata.count": self.grown_rows(slug) if self.broken.startswith(("grown", "born")) else 2, "value": []}
         if rest.startswith("ical/v1/") and self.broken == "feed-413":
             return 413, {"Content-Type": "application/problem+json"}, {
                 "status": 413, "title": "the query selects as many events as one feed reads or more: narrow it with q"}
@@ -386,6 +409,28 @@ def test_growth_counts_only_on_a_synthetic_bundle_and_only_granted(tmp_path, ser
     code, res = run(tmp_path, serve(Fake(broken)), now_iso(), synthetic)
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
     assert code == 1 and check in red, red
+
+
+def test_a_copy_grown_by_entities_created_after_the_export_passes_with_its_proof(tmp_path, serve):
+    # T-6958: jc-dev kept ingesting six days after its export (Event 13103 exported, 14429 live,
+    # each of the 1328 more created after exportedAt); every count row read the growth as a fail.
+    code, res = run(tmp_path, serve(Fake("born")), now_iso())
+    fails = [r for r in res["checks"] if r["result"] == "fail"]
+    assert code == 0 and not fails, fails
+    by = {r["id"]: r for r in res["checks"]}
+    assert "2 of the 2 exported, 3 more, 0 of them created at or before" in by["anon.count.born"]["actual"]
+    assert by["anon.count"]["expected"] == ">= 5 (a Pipeline writes the type)"
+    assert "count=5" in by["anon.odata.query"]["actual"] and "rows=5" in by["anon.ogc.csv"]["actual"]
+
+
+@pytest.mark.parametrize("broken,why", [
+    ("born-old", "1 of them created at or before"),  # a row beyond the export that is older than it
+    ("born-lost", "1 exported missing")])            # an exported entity gone under the new rows
+def test_growth_without_proof_stays_red(tmp_path, serve, broken, why):
+    code, res = run(tmp_path, serve(Fake(broken)), now_iso())
+    red = {r["id"]: r for r in res["checks"] if r["result"] == "fail"}
+    assert code == 1 and {"anon.count.born", "anon.count", "anon.odata.query"} <= set(red), sorted(red)
+    assert why in red["anon.count.born"]["actual"]
 
 
 def test_a_zip_cut_mid_body_fails_its_row_and_the_endpoint_goes_on(tmp_path, serve):

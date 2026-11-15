@@ -442,9 +442,7 @@ describe("EntityGrid", () => {
 
   // A further page that brings only rows already loaded (rows inserted ahead of the offset moved
   // them) ends the scroll there instead of asking for the same page again and again.
-  // Quarantined (integrator 2026-11-15, flaky on jc-portal-1: T-6921, ci 43685590028; 3 of 4 local runs
-  // of this file red, alone green): offset 200 is asked twice. The fix comes back with T-6921, at most one day.
-  it.skip("stops loading more when a page brings no row it did not have", async () => {
+  it("stops loading more when a page brings no row it did not have", async () => {
     const first = Array.from({ length: 200 }, (_, i) => ({
       id: `urn:ngsi-ld:BikeHireDockingStation:hel:helsinki:${String(i).padStart(4, "0")}`,
       type: "BikeHireDockingStation",
