@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 /** The wizard on a page whose server answers `answer`; what it was asked is kept. */
-function renderWizard(answer: (path: string, body: unknown) => Response | undefined = () => undefined, secrets: string[] = []) {
+async function renderWizard(answer: (path: string, body: unknown) => Response | undefined = () => undefined, secrets: string[] = []) {
   const onUse = vi.fn();
   const onPick = vi.fn();
   const asked: Array<{ path: string; body: unknown }> = [];
@@ -34,6 +34,7 @@ function renderWizard(answer: (path: string, body: unknown) => Response | undefi
       },
     },
   );
+  await screen.findByTestId("datasource-templates");
   return { onUse, onPick, asked, view };
 }
 
@@ -141,7 +142,7 @@ describe("the template gallery", () => {
 
   it("asks a WFS template for its layer, names the source after the address, and hands over the form", async () => {
     const user = userEvent.setup();
-    const { onUse } = renderWizard();
+    const { onUse } = await renderWizard();
     const wfs = en.datasources.template.wfs;
     await user.click(screen.getByRole("button", { name: new RegExp(wfs.title) }));
     expect(screen.getByRole("button", { name: new RegExp(wfs.title) })).toHaveAttribute("aria-pressed", "true");
@@ -163,7 +164,7 @@ describe("the template gallery", () => {
 
   it("asks a JSON API for the array its records sit in, refuses a path that is not names, and hands it over (T-6572)", async () => {
     const user = userEvent.setup();
-    const { onUse } = renderWizard();
+    const { onUse } = await renderWizard();
     const json = en.datasources.template.json;
     await user.click(screen.getByRole("button", { name: (name) => name.startsWith(json.title) }));
     await user.type(screen.getByLabelText(new RegExp(json.url)), "https://gbfs.example.org/gbfs/station_information.json");
@@ -185,7 +186,7 @@ describe("the template gallery", () => {
 
   it("walks an open data API from its address to the form with no YAML: list, pick, pages, check (T-7094)", async () => {
     const user = userEvent.setup();
-    const { onUse, asked, view } = renderWizard((path) => {
+    const { onUse, asked, view } = await renderWizard((path) => {
       if (path.endsWith("/datasource-discovery")) {
         return json({
           field: "typeNames",
@@ -221,7 +222,7 @@ describe("the template gallery", () => {
 
   it("writes a JSON API's walk and records from its first answer, and a credential only as a picked secret (T-7094)", async () => {
     const user = userEvent.setup();
-    const { onUse } = renderWizard(
+    const { onUse } = await renderWizard(
       (path) =>
         path.endsWith("/datasource-paging")
           ? json({ paging: { mode: "nextUrl", next: "@odata.nextLink" }, records: "value", onPage: 20, more: true })
@@ -255,7 +256,7 @@ describe("the template gallery", () => {
 
   it("says why a guess failed, splits a CSV into rows by default, and opens another connection's own form (T-7094)", async () => {
     const user = userEvent.setup();
-    const { onUse, onPick } = renderWizard((path) =>
+    const { onUse, onPick } = await renderWizard((path) =>
       path.endsWith("/datasource-paging") ? json({ more: false, skipped: "the feed did not answer within the test's three seconds" }) : undefined,
     );
     await user.click(screen.getByRole("button", { name: (name) => name.startsWith(en.datasources.template.json.title) }));
@@ -266,7 +267,11 @@ describe("the template gallery", () => {
     await user.click(screen.getByRole("button", { name: new RegExp(en.datasources.template.csv.title) }));
     expect(screen.getByText(en.datasources.wizard.oneRead)).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: new RegExp(en.datasources.wizard.rows) })).toBeChecked();
-    await user.type(screen.getByLabelText(new RegExp(en.datasources.template.csv.url)), "https://data.example.org/trees.csv");
+    // The address typed for the last card stays when another is chosen.
+    const address = screen.getByLabelText(new RegExp(en.datasources.template.csv.url));
+    expect(address).toHaveValue("https://slow.example/x");
+    await user.clear(address);
+    await user.type(address, "https://data.example.org/trees.csv");
     await user.click(screen.getByRole("button", { name: en.datasources.template.use }));
     expect(onUse).toHaveBeenCalledWith("http", { name: "trees", http: { url: "https://data.example.org/trees.csv", verb: "GET", format: "csv" } });
 
