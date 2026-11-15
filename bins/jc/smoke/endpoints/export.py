@@ -457,10 +457,10 @@ def exported_ids(index: dict, tenant: str, st: str, pattern: str | None = None) 
 BORN_PAGE = 1000
 
 
-def live_created(get, slug: str, st: str, token: str | None = None) -> dict | None:
+def live_created(get, slug: str, st: str, token: str | None = None) -> tuple[dict | None, str]:
     """{id: createdAt} of every entity of `st` the caller reads through the Endpoint, paged by
     offset to an empty page; `get(path, token)` answers (status, headers, body). None when a
-    page is refused."""
+    page is refused, with the offset, status and body start that say why."""
     base = f"/api/endpoint/{slug}/ngsi-ld/v1/entities"
     out: dict = {}
     offset = 0
@@ -472,9 +472,10 @@ def live_created(get, slug: str, st: str, token: str | None = None) -> dict | No
         except ValueError:
             page = None
         if not isinstance(page, list):
-            return None
+            body = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+            return None, f"the page at offset {offset} answered {st_}: {' '.join(body.split())[:160]}"
         if not page:  # a page shorter than asked may be the server's own cap: read to an empty one
-            return out
+            return out, ""
         out.update({str(x.get("id")): x.get("createdAt") for x in page if isinstance(x, dict)})
         offset += len(page)
 

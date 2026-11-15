@@ -308,9 +308,9 @@ class Suite:
                 self.r.check(f"{who}.count.born", f"{e.slug} {t}", path, expect,
                              "the export index holds no ids (built before index-v6)", False)
                 continue
-            got = ex.live_created(self.get, e.slug, t, token)
+            got, refused = ex.live_created(self.get, e.slug, t, token)
             if got is None:
-                self.r.check(f"{who}.count.born", f"{e.slug} {t}", path, expect, "a page was refused", False)
+                self.r.check(f"{who}.count.born", f"{e.slug} {t}", path, expect, f"no proof: {refused}", False)
                 continue
             got.update(ex.present(self.get, e.slug, t, exported - set(got), token))
             ok, why = ex.born(got, exported, at, bool(tenant[t].get("expires")), live)
