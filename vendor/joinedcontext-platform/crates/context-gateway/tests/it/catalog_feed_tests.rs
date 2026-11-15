@@ -194,7 +194,7 @@ async fn a_record_is_read_with_the_endpoints_caller_role() {
     let realm = common::Realm::new();
     let app = router(Arc::new(
         Gateway::new(
-            Broker::new(&format!("http://{address}")),
+            Broker::new(format!("http://{address}")),
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
