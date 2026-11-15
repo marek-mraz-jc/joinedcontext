@@ -170,10 +170,11 @@ class Fake:
             return 5
         return 105
 
-    def born_rows(self, qs) -> list:
+    def born_rows(self, qs) -> list | None:
         """A copy that kept ingesting after its export ("born*"): the 2 exported north rows and 3
         a Pipeline created an hour after exportedAt; "born-old" dates one of those before the
-        export, "born-lost" lost the exported north-1, one page of 2 rows at a time."""
+        export, "born-lost" lost the exported north-1, one page of 2 rows at a time; "born-refused" turns its second page away
+        (None)."""
         later = "2099-01-01T00:00:00Z"
         rows = [{"id": "urn:ngsi-ld:AirQualityObserved:north-0", "createdAt": "2020-01-01T00:00:00Z"},
                 {"id": "urn:ngsi-ld:AirQualityObserved:north-1", "createdAt": "2020-01-01T00:00:00Z"}]
@@ -187,6 +188,8 @@ class Fake:
             wanted = set(qs["id"][0].split(","))
             return [r for r in rows if r["id"] in wanted]
         offset, limit = int((qs.get("offset") or ["0"])[0]), int(qs["limit"][0])
+        if self.broken == "born-refused" and offset:
+            return None  # jc-dev GreenAsset gtkj6zpd: a later page turned away under load
         return rows[offset:offset + min(limit, 2)]
 
     def answer(self, method, path, headers):
@@ -234,7 +237,9 @@ class Fake:
                     (1 if self.broken == "grown-lost" else 2) if seeded else self.grown_rows(slug)
             return 200, {"NGSILD-Results-Count": str(n)}, []
         if rest == "ngsi-ld/v1/entities" and self.broken.startswith("born") and qs.get("options") == ["sysAttrs,keyValues"]:
-            return 200, {}, self.born_rows(qs)
+            rows = self.born_rows(qs)
+            return (200, {}, rows) if rows is not None else \
+                (503, {}, {"type": "https://joinedcontext.com/errors/service-unavailable", "status": 503})
         if rest == "ngsi-ld/v1/entities":
             return 200, {}, {"type": "FeatureCollection", "features": []}
         if rest.startswith("ngsi-ld/v1/entities/"):
@@ -468,7 +473,8 @@ def test_a_copy_grown_by_entities_created_after_the_export_passes_with_its_proof
 
 @pytest.mark.parametrize("broken,why", [
     ("born-old", "1 of them created at or before"),  # a row beyond the export that is older than it
-    ("born-lost", "1 exported missing")])            # an exported entity gone under the new rows
+    ("born-lost", "1 exported missing"),             # an exported entity gone under the new rows
+    ("born-refused", "no proof: the page at offset 2 answered 503: ")])  # names the page, never a pass
 def test_growth_without_proof_stays_red(tmp_path, serve, broken, why):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"]: r for r in res["checks"] if r["result"] == "fail"}
