@@ -175,10 +175,9 @@ pub struct DevicePageQuery {
 async fn signed_in(
     state: &OidcState,
     realm: &RealmConfig,
-    mount: &Mount,
     headers: &HeaderMap,
 ) -> Result<Option<SsoSession>> {
-    let Some(handle) = read_sso_cookie(headers, mount) else {
+    let Some(handle) = read_sso_cookie(headers) else {
         return Ok(None);
     };
     let sso = state
@@ -362,7 +361,7 @@ pub async fn device_page(
         .filter(|c| c.len() == 8)
         .map(|c| format!("{}-{}", &c[..4], &c[4..]))
         .unwrap_or_default();
-    let Some(sso) = signed_in(&state, &realm, &mount, &headers).await? else {
+    let Some(sso) = signed_in(&state, &realm, &headers).await? else {
         let mut back = format!("{}/device", mount.realm_issuer(&realm.realm));
         if !user_code.is_empty() {
             back = format!("{back}?user_code={user_code}");
@@ -444,7 +443,7 @@ pub async fn device_submit(
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let action = page_path(&mount, &realm);
-    let Some(sso) = signed_in(&state, &realm, &mount, &headers).await? else {
+    let Some(sso) = signed_in(&state, &realm, &headers).await? else {
         return Ok((
             StatusCode::SEE_OTHER,
             [

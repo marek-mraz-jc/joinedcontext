@@ -800,9 +800,15 @@ async fn a_sign_in_cookie_planted_from_a_sibling_host_is_never_read() {
     };
 
     // The cookie a sibling host could plant: never read, so the person meets the login page.
-    let planted = authorize(Some("__Secure-wk_sso=h-planted-1")).await.unwrap();
+    let planted = authorize(Some("__Secure-wk_sso=h-planted-1"))
+        .await
+        .unwrap();
     let to = location(&planted);
-    assert!(!to.contains("code="), "a planted cookie signed in: {to}");
+    assert!(
+        to.contains("/login-actions/authenticate")
+            && !to.starts_with("https://portal.dev.example.test/cb"),
+        "a planted cookie signed in: {to}"
+    );
     let set: Vec<String> = planted
         .headers()
         .get_all("set-cookie")
@@ -813,12 +819,18 @@ async fn a_sign_in_cookie_planted_from_a_sibling_host_is_never_read() {
         .iter()
         .find(|c| c.starts_with("__Host-wk_auth="))
         .unwrap_or_else(|| panic!("a __Host- auth cookie: {set:?}"));
-    assert!(auth.contains("; Path=/;") && !auth.to_ascii_lowercase().contains("domain="), "{auth}");
+    assert!(
+        auth.contains("; Path=/;") && !auth.to_ascii_lowercase().contains("domain="),
+        "{auth}"
+    );
 
     // The same session under the `__Host-` name, which only this host can set, is read.
     let own = authorize(Some("__Host-wk_sso=h-planted-1")).await.unwrap();
     let to = location(&own);
-    assert!(to.starts_with("https://portal.dev.example.test/cb?code="), "{to}");
+    assert!(
+        to.starts_with("https://portal.dev.example.test/cb?code="),
+        "{to}"
+    );
 }
 
 #[tokio::test]

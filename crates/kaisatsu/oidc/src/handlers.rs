@@ -670,7 +670,7 @@ pub fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
         .map(|(_, v)| v.to_owned())
 }
 
-pub(crate) fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
+pub(crate) fn read_sso_cookie(headers: &HeaderMap) -> Option<String> {
     read_cookie(headers, &sign_in_cookie_name("sso"))
 }
 
@@ -869,7 +869,7 @@ async fn authorize_get(
     }
 
     // Check existing SSO session cookie unless `prompt=login` or `prompt=select_account`
-    let mut existing_sso = if let Some(raw_handle) = read_sso_cookie(&headers, &mount) {
+    let mut existing_sso = if let Some(raw_handle) = read_sso_cookie(&headers) {
         state
             .store
             .get_sso_session_by_handle(&realm.id, &sha256_hex(&raw_handle))
@@ -3898,7 +3898,7 @@ async fn handle_logout_request(
     }
 
     if session_to_end.is_none()
-        && let Some(handle) = read_sso_cookie(&headers, &mount)
+        && let Some(handle) = read_sso_cookie(&headers)
     {
         session_to_end = state
             .store

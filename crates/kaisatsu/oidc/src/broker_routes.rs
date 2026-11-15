@@ -77,16 +77,12 @@ pub fn broker_router() -> Router<OidcState> {
         )
 }
 
-fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
+fn read_auth_cookie(headers: &HeaderMap) -> Option<String> {
     crate::handlers::read_cookie(headers, &crate::handlers::sign_in_cookie_name("auth"))
 }
 
-fn verify_auth_cookie(
-    headers: &HeaderMap,
-    mount: &Mount,
-    auth_session: &AuthSession,
-) -> Result<()> {
-    let Some(raw) = read_auth_cookie(headers, mount) else {
+fn verify_auth_cookie(headers: &HeaderMap, auth_session: &AuthSession) -> Result<()> {
+    let Some(raw) = read_auth_cookie(headers) else {
         return Err(KaisatsuError::BadRequest(
             "missing auth session cookie".into(),
         ));
@@ -120,7 +116,7 @@ async fn broker_login_get(
         .get_auth_session_by_id(&realm.id, &query.session_code)
         .await?
         .ok_or_else(|| KaisatsuError::BadRequest("login session expired".into()))?;
-    verify_auth_cookie(&headers, &mount, &auth_session)?;
+    verify_auth_cookie(&headers, &auth_session)?;
 
     let idp = state
         .store
@@ -204,7 +200,7 @@ async fn broker_endpoint_get(
         .get_auth_session_by_id(&realm.id, session_id)
         .await?
         .ok_or_else(|| KaisatsuError::BadRequest("login session expired".into()))?;
-    verify_auth_cookie(&headers, &mount, &auth_session)?;
+    verify_auth_cookie(&headers, &auth_session)?;
 
     let mut pending: PendingBrokerSession = serde_json::from_str(
         auth_session
@@ -453,7 +449,7 @@ async fn broker_endpoint_confirm_post(
         .get_auth_session_by_id(&realm.id, &form.session_code)
         .await?
         .ok_or_else(|| KaisatsuError::BadRequest("login session expired".into()))?;
-    verify_auth_cookie(&headers, &mount, &auth_session)?;
+    verify_auth_cookie(&headers, &auth_session)?;
 
     if !constant_time_str_eq(&form.csrf_token, &auth_session.csrf_token) {
         return Err(KaisatsuError::Forbidden("invalid CSRF token".into()));
