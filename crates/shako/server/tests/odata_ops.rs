@@ -267,6 +267,45 @@ async fn repositories_by_alternate_key_create_conflict_import_archive_delete() {
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
 
+/// An owner name names one Organization: another Organization's member creates or imports
+/// nothing under it, and the owner keeps resolving to its own Organization.
+#[tokio::test]
+async fn an_owner_of_another_organization_is_refused_on_create_and_import() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    let (st, body, _) = call(
+        &w.app,
+        "POST",
+        "/odata/CreateRepository",
+        Some("org-b-token"),
+        Some(json!({"Owner": "bbsk", "Name": "source"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    for (op, body) in [
+        (
+            "CreateRepository",
+            json!({"Owner": "joinedcontext", "Name": "taken"}),
+        ),
+        (
+            "ImportRepository",
+            json!({"SourceOwner": "bbsk", "SourceName": "source", "RepoOwner": "joinedcontext", "RepoName": "taken"}),
+        ),
+    ] {
+        let (st, body, _) = call(
+            &w.app,
+            "POST",
+            &format!("/odata/{op}"),
+            Some("org-b-token"),
+            Some(body),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{op}: {body}");
+    }
+    let (st, repo, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
+    assert_eq!(st, StatusCode::OK, "{repo}");
+}
+
 #[tokio::test]
 async fn contents_history_tree_and_a_stale_sha_that_moves_nothing() {
     let w = world();

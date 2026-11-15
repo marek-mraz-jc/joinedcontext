@@ -580,6 +580,21 @@ impl DaiyaStore for PgStore {
         let uid = uid.to_owned();
         Box::pin(async move {
             let mut tx = self.begin_org_tx(org_id).await?;
+            // A folder's dashboards leave with their versions and public links, as one
+            // `delete_dashboard` does: a later dashboard of the same uid inherits neither.
+            for sql in [
+                "DELETE FROM cr_dashboard_version WHERE org_id = $1 AND dashboard_uid IN \
+                 (SELECT uid FROM cr_dashboard WHERE org_id = $1 AND folder_uid = $2)",
+                "DELETE FROM cr_public_dashboard WHERE org_id = $1 AND dashboard_uid IN \
+                 (SELECT uid FROM cr_dashboard WHERE org_id = $1 AND folder_uid = $2)",
+            ] {
+                sqlx::query(sql)
+                    .bind(org_id.as_uuid())
+                    .bind(&uid)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+            }
             sqlx::query("DELETE FROM cr_dashboard WHERE org_id = $1 AND folder_uid = $2")
                 .bind(org_id.as_uuid())
                 .bind(&uid)

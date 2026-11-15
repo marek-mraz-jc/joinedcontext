@@ -526,7 +526,8 @@ pub fn credential_refused(state: &DaiyaState, headers: &HeaderMap) -> bool {
 }
 
 /// Answers 401 to a request whose `Authorization` names nobody ([`credential_refused`]), as
-/// Grafana does, before any handler reads the caller as anonymous.
+/// Grafana does, before any handler reads the caller as anonymous, and 404 to one whose
+/// Organization header names no Organization.
 pub async fn refuse_unknown_credential(
     axum::extract::State(state): axum::extract::State<DaiyaState>,
     request: axum::extract::Request,
@@ -536,7 +537,40 @@ pub async fn refuse_unknown_credential(
         // The answer names no reason: which check failed would help a forger.
         return error_response(&CrError::Unauthorized("invalid credential".into()));
     }
+    // An Organization header that names no Organization never falls back to another one.
+    if requested_org(&state, request.headers()).is_err() {
+        return error_response(&CrError::NotFound("Organization not found".into()));
+    }
     next.run(request).await
+}
+
+/// The Organization `X-Daiya-Org-Id` (a UUID) or else `X-Grafana-Org-Id` (a UUID or a Grafana
+/// numeric id) chooses; `None` when neither is sent, `Err` when the one sent names no
+/// Organization this server knows.
+fn requested_org(state: &DaiyaState, headers: &HeaderMap) -> Result<Option<OrgId>, ()> {
+    let (name, value) = match (
+        headers.get("x-daiya-org-id"),
+        headers.get("x-grafana-org-id"),
+    ) {
+        (Some(v), _) => ("x-daiya-org-id", v),
+        (None, Some(v)) => ("x-grafana-org-id", v),
+        (None, None) => return Ok(None),
+    };
+    let text = value.to_str().map_err(|_| ())?.trim();
+    if let Ok(org) = text.parse::<OrgId>() {
+        return Ok(Some(org));
+    }
+    if name == "x-daiya-org-id" {
+        return Err(());
+    }
+    let num: i64 = text.parse().map_err(|_| ())?;
+    state
+        .org_registry
+        .read()
+        .by_num
+        .get(&num)
+        .map(|(_, oid)| Some(*oid))
+        .ok_or(())
 }
 
 /// Builds the [`RequestCtx`] of a request. The subject comes only from verified sources: the
@@ -565,24 +599,9 @@ pub fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> RequestCt
             }
         });
 
-    let requested_org = headers
-        .get("x-daiya-org-id")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.trim().parse::<OrgId>().ok())
-        .or_else(|| {
-            let gf_org = headers.get("x-grafana-org-id")?.to_str().ok()?.trim();
-            if let Ok(uuid_org) = gf_org.parse::<OrgId>() {
-                return Some(uuid_org);
-            }
-            let num: i64 = gf_org.parse().ok()?;
-            state
-                .org_registry
-                .read()
-                .by_num
-                .get(&num)
-                .map(|(_, oid)| *oid)
-        });
-    let active_org = requested_org
+    let active_org = requested_org(state, headers)
+        .ok()
+        .flatten()
         .or_else(|| subject.organizations.first().copied())
         .unwrap_or(state.default_org_id);
 

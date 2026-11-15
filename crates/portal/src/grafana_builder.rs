@@ -975,7 +975,7 @@ fn variable_description(variable: &BoardVariable) -> String {
     )
 }
 
-fn variable_source(description: &str) -> Option<(String, String, String)> {
+pub(crate) fn variable_source(description: &str) -> Option<(String, String, String)> {
     let rest = description.strip_prefix("Values of ")?;
     let (attribute, rest) = rest.split_once(" (")?;
     let (entity_type, rest) = rest.split_once(", endpoint ")?;

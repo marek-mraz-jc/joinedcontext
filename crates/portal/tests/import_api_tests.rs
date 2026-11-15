@@ -1083,6 +1083,44 @@ async fn an_import_by_someone_with_no_binding_is_refused_before_anything_is_plan
     );
 }
 
+/// F-POR2-005: who may propose nothing in the project is refused before the Portal reads the
+/// upload, so the refusal comes even for a body that could never be read.
+#[tokio::test]
+async fn an_import_by_someone_who_may_propose_nothing_is_refused_before_the_body_is_read() {
+    let server = forge().await;
+    let reader = role(
+        "reader",
+        json!([{ "kinds": ["ContextSpace", "Endpoint", "Pipeline"], "verbs": ["read"] }]),
+    );
+    let (state, cookie) = state_as(&server, vec![], &[], vec![reader, binding("reader")]);
+    let unreadable = futures_util::stream::once(async {
+        Err::<axum::body::Bytes, std::io::Error>(std::io::Error::other("the body was read"))
+    });
+    let response = server::app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/projects/{PROJECT}/import"))
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(CSRF_HEADER, CSRF)
+                .body(Body::from_stream(unreadable))
+                .unwrap(),
+        )
+        .await
+        .expect("the request completes");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let problem: Value = serde_json::from_slice(&bytes).expect("a problem");
+    let detail = problem["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("PF-50"), "{detail}");
+}
+
 #[tokio::test]
 async fn a_role_that_grants_propose_on_every_kind_in_the_bundle_imports_it() {
     let server = forge().await;

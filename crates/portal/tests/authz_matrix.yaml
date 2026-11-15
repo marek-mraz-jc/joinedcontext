@@ -1210,8 +1210,8 @@ routes:
     note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
   - route: POST /projects/{project}/import
     rule: "project-verb:propose:*"
-    expect: [403, 400, allow, allow, 400, allow, 400, 400]
-    note: "the route answers 400 before it asks about the caller"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    note: "who may propose nothing in the project is refused before the upload is read (F-POR2-005); the others meet the fixture's empty body, 400"
   - route: GET /projects/{project}/ops
     rule: "signed-in"
     expect: [401, allow, allow, allow, allow, allow, allow, allow]

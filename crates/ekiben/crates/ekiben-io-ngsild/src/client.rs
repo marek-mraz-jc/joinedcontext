@@ -175,15 +175,21 @@ impl NgsiClient {
             }
             let started = Instant::now();
             let sent = req.send().await;
-            env.metrics.record_timing(
-                &metrics::latency_key(env.label),
+            metrics::timing(
+                env.metrics,
+                env.label,
                 u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
             );
             let resp = match sent {
                 Ok(resp) => resp,
                 Err(e) => {
-                    env.metrics
-                        .incr_counter(&metrics::requests_key(env.label, "transport"), 1);
+                    metrics::incr(
+                        env.metrics,
+                        env.label,
+                        metrics::REQUESTS,
+                        Some("transport"),
+                        1,
+                    );
                     let text = format!(
                         "{shown}: {}",
                         redact_url_str(&outbound::error_chain(&e.without_url()))
@@ -203,8 +209,13 @@ impl NgsiClient {
             };
             let status = resp.status();
             let code = status.as_u16();
-            env.metrics
-                .incr_counter(&metrics::requests_key(env.label, &code.to_string()), 1);
+            metrics::incr(
+                env.metrics,
+                env.label,
+                metrics::REQUESTS,
+                Some(&code.to_string()),
+                1,
+            );
             let headers = resp.headers().clone();
             let body_read = outbound::read_capped(resp, self.settings.max_response_bytes).await;
             let answer_body = match body_read {

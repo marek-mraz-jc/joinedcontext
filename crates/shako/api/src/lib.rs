@@ -23,7 +23,8 @@ pub use smart_http::{smart_http_router, sync_repo_mirrors_on_commit};
 pub use state::{
     InProcessEventSubscriber, ShakoState, authenticate_request, gitea_error_response,
     odata_error_response, problem_error_response, read_body_bounded, repo_to_gitea_json,
-    resolve_and_authorize_repo, stream_bytes_in_64k_chunks, strip_dot_git,
+    resolve_and_authorize_repo, stream_bytes_in_64k_chunks, stream_file_in_64k_chunks,
+    strip_dot_git,
 };
 
 use axum::Router;

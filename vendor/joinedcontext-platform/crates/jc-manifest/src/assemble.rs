@@ -722,6 +722,16 @@ fn render_manifests(
 
 /// A name the organization holds once, claimed by two projects, is refused (CC-86, PF-44).
 fn unique_across_projects(repository: &Repository) -> Result<(), AssembleError> {
+    unique_claims(repository, true)
+}
+
+/// [`unique_across_projects`] without the space segments, which the layout 1 checks locate at
+/// each manifest themselves (PF-44).
+pub(crate) fn unique_slugs_and_identities(repository: &Repository) -> Result<(), AssembleError> {
+    unique_claims(repository, false)
+}
+
+fn unique_claims(repository: &Repository, with_segments: bool) -> Result<(), AssembleError> {
     let mut slugs: BTreeMap<String, String> = BTreeMap::new();
     let mut segments: BTreeMap<String, String> = BTreeMap::new();
     for (id, loaded) in repository.iter() {
@@ -733,7 +743,7 @@ fn unique_across_projects(repository: &Repository) -> Result<(), AssembleError> 
                 .get("slug")
                 .and_then(serde_json::Value::as_str)
                 .map(|slug| ("the Endpoint slug", &mut slugs, slug.to_owned())),
-            "ContextSpace" => Some((
+            "ContextSpace" if with_segments => Some((
                 "the space segment",
                 &mut segments,
                 repository.space_segment(&project, &id.name),

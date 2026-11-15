@@ -125,7 +125,8 @@ pub(crate) async fn mcp_answer(
         &subject,
         calls.then_some(tool.as_deref().unwrap_or_default()),
     );
-    let mut request = Request::from_parts(parts, Body::empty());
+    let mut request = Request::new(Body::empty());
+    relayed_headers(&parts.headers, request.headers_mut());
     if let Err(answer) =
         view_request(&gateway, &endpoint, &subject, "", operation, &mut request).await
     {
@@ -618,6 +619,27 @@ fn mcp_operation(
         .unwrap_or(Operation::UpsertBatch)
 }
 
+/// The client headers an MCP message takes to the broker's view (NET-03): the ones the hop's own
+/// checks read (the federation token, `JC-Record`, `JC-Reason`, the narrowing opt-in, the request
+/// id) and the transport's. A browser's `Origin`, a cookie or any other header of the client's
+/// stays at the gateway, as on a hub member's call, which starts from no header at all.
+fn relayed_headers(from: &axum::http::HeaderMap, to: &mut axum::http::HeaderMap) {
+    const RELAYED: [&str; 7] = [
+        "authorization",
+        "content-type",
+        "mcp-protocol-version",
+        "ngsild-results-restricted",
+        "jc-record",
+        "jc-reason",
+        "x-request-id",
+    ];
+    for (name, value) in from {
+        if RELAYED.contains(&name.as_str()) {
+            to.append(name.clone(), value.clone());
+        }
+    }
+}
+
 /// One `tools/call` of the hub or of a named server as the broker's view of the member answers
 /// it (T-3808): the member's slug is its view, the tenant and the verified caller are pinned, and
 /// no token travels. What fails on the way is the call's tool error, so a fan-out names the
@@ -869,6 +891,32 @@ pub(crate) fn unauthorized(gateway: &Gateway, slug: &str) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// NET-03: the hop to the broker's view carries the headers its checks and the MCP transport
+    /// read, and none of the client's other headers.
+    #[test]
+    fn an_mcp_hop_relays_only_the_headers_the_broker_reads() {
+        let mut client = axum::http::HeaderMap::new();
+        for (name, value) in [
+            ("content-type", "application/json"),
+            ("mcp-protocol-version", "2025-06-18"),
+            ("jc-reason", "repair"),
+            ("origin", "https://app.example"),
+            ("cookie", "session=1"),
+            ("user-agent", "inspector"),
+            ("x-forwarded-for", "192.0.2.1"),
+        ] {
+            client.insert(
+                axum::http::HeaderName::from_static(name),
+                HeaderValue::from_static(value),
+            );
+        }
+        let mut hop = axum::http::HeaderMap::new();
+        relayed_headers(&client, &mut hop);
+        let mut names: Vec<&str> = hop.keys().map(axum::http::HeaderName::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["content-type", "jc-reason", "mcp-protocol-version"]);
+    }
 
     /// T-5045: `initialize` names the WebSocket where a model reads first; an answer without
     /// instructions is left as it came.

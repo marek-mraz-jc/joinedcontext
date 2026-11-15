@@ -585,6 +585,9 @@ fn refine(slot: &mut Slot, usage: &Slot) {
     over(&mut slot.identifier, usage.identifier.as_ref());
     over(&mut slot.inlined, usage.inlined.as_ref());
     over(&mut slot.inverse, usage.inverse.as_ref());
+    over(&mut slot.minimum_value, usage.minimum_value.as_ref());
+    over(&mut slot.maximum_value, usage.maximum_value.as_ref());
+    over(&mut slot.pattern, usage.pattern.as_ref());
     over(&mut slot.unit, usage.unit.as_ref());
     over(&mut slot.description, usage.description.as_ref());
     over(&mut slot.rank, usage.rank.as_ref());
@@ -847,6 +850,84 @@ fn check_identifier(schema: &Schema, what: &str, slots: &[(&str, Slot)]) -> Resu
     Ok(())
 }
 
+/// `minimum_value` and `maximum_value` bound a number: the slot's range is
+/// `integer`, `float`, `double` or `decimal`, and the minimum is not above
+/// the maximum. Checked on the slot as declared and as each class folds it.
+fn check_bounds(schema: &Schema, what: &str, slot: &Slot) -> Result<(), Error> {
+    if slot.minimum_value.is_none() && slot.maximum_value.is_none() {
+        return Ok(());
+    }
+    let numeric = matches!(
+        range(schema, slot.range.as_deref()),
+        Some(Range::Type(
+            Builtin::Integer | Builtin::Float | Builtin::Double | Builtin::Decimal
+        ))
+    );
+    if !numeric {
+        return Err(Error::NotImplemented(format!(
+            "{what}: minimum_value and maximum_value bound a number; its range is no integer, float, double or decimal"
+        )));
+    }
+    let number = |n: Option<&serde_json::Number>| n.and_then(serde_json::Number::as_f64);
+    if let (Some(min), Some(max)) = (
+        number(slot.minimum_value.as_ref()),
+        number(slot.maximum_value.as_ref()),
+    ) {
+        if min > max {
+            return malformed(format!("{what}: minimum_value is above maximum_value"));
+        }
+    }
+    Ok(())
+}
+
+/// The longest `pattern` a slot states, in bytes, and the compiled size it may reach.
+const PATTERN_BYTES: usize = 1024;
+pub(crate) const PATTERN_SIZE: usize = 1 << 16;
+
+/// A `pattern`, compiled with a size bound by the `regex` crate (no backtracking, so no input
+/// makes a match slow); `None` when it is too long or no regular expression of that syntax.
+pub(crate) fn pattern(text: &str) -> Option<regex::Regex> {
+    if text.len() > PATTERN_BYTES {
+        return None;
+    }
+    regex::RegexBuilder::new(text)
+        .size_limit(PATTERN_SIZE)
+        .dfa_size_limit(PATTERN_SIZE)
+        .build()
+        .ok()
+}
+
+/// `pattern` holds a text: the slot's range is a built-in type whose values are strings, and the
+/// expression compiles within its bounds (a look-around or a back-reference does not: the
+/// `regex` crate has neither).
+fn check_pattern(schema: &Schema, what: &str, slot: &Slot) -> Result<(), Error> {
+    let Some(text) = &slot.pattern else {
+        return Ok(());
+    };
+    let textual = matches!(
+        range(schema, slot.range.as_deref()),
+        Some(Range::Type(
+            Builtin::String
+                | Builtin::Date
+                | Builtin::Datetime
+                | Builtin::Time
+                | Builtin::Uri
+                | Builtin::Uriorcurie
+        ))
+    );
+    if !textual {
+        return Err(Error::NotImplemented(format!(
+            "{what}: pattern holds a text; its range is no string, date, datetime, time or uri"
+        )));
+    }
+    if pattern(text).is_none() {
+        return malformed(format!(
+            "{what}: pattern is no regular expression of at most {PATTERN_BYTES} bytes the regex crate compiles (no look-around, no back-reference)"
+        ));
+    }
+    Ok(())
+}
+
 fn validate(schema: &Schema) -> Result<(), Error> {
     check_name("schema name", &schema.name)?;
     if !is_iri(&schema.id) {
@@ -896,6 +977,8 @@ fn validate(schema: &Schema) -> Result<(), Error> {
             slot.slot_uri.as_deref().unwrap_or(key),
         )?;
         check_slot(schema, &format!("slot {key:?}"), slot)?;
+        check_bounds(schema, &format!("slot {key:?}"), slot)?;
+        check_pattern(schema, &format!("slot {key:?}"), slot)?;
     }
     for (key, class) in &schema.classes {
         check_key("class", key, class.name.as_deref())?;
@@ -930,6 +1013,10 @@ fn validate(schema: &Schema) -> Result<(), Error> {
             check_slot(schema, &format!("{what} slot_usage {name:?}"), usage)?;
         }
         check_identifier(schema, &what, &own)?;
+        for (name, slot) in &own {
+            check_bounds(schema, &format!("{what} slot {name:?}"), slot)?;
+            check_pattern(schema, &format!("{what} slot {name:?}"), slot)?;
+        }
     }
     for (key, e) in &schema.enums {
         check_key("enum", key, e.name.as_deref())?;
