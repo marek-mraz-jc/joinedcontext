@@ -90,6 +90,61 @@ async fn the_same_stream_id_lives_separately_in_two_organizations() {
 }
 
 #[tokio::test]
+async fn with_organization_file_roots_a_stream_reads_and_writes_only_its_own_directory() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("org-a")).unwrap();
+    std::fs::write(root.path().join("org-a/notes.txt"), "a-only\n").unwrap();
+    let manager = StreamManager::new(
+        full_registry(),
+        ResourceManager::new(),
+        Some(root.path().to_path_buf()),
+        EnvAccess::AllowListed,
+    )
+    .with_org_file_roots();
+    let dir_b = manager.file_root_for(&OrgId::new("org-b")).unwrap();
+    assert_eq!(dir_b, Some(root.path().join("org-b")));
+    for org in ["..", "."] {
+        assert!(manager.file_root_for(&OrgId::new(org)).is_err(), "{org}");
+    }
+    let app = build_router(ServerState::new(manager, two_orgs()));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    // Organization b names organization a's file, relative and absolute: both resolve inside
+    // b's own directory, where no such file exists.
+    let c = reqwest::Client::new();
+    let a_file = root.path().join("org-a/notes.txt");
+    for (i, path) in [
+        "org-a/notes.txt",
+        "../org-a/notes.txt",
+        a_file.to_str().unwrap(),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let body = format!(
+            "run: once\ninput:\n  file:\n    paths: ['{path}']\n    codec: lines\noutput:\n  file:\n    path: copy{i}.txt\n    codec: lines\n"
+        );
+        let _ = c
+            .post(format!("{base}/streams/copy{i}"))
+            .bearer_auth("tok-b")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+    }
+    for dir in [root.path().to_path_buf(), root.path().join("org-b")] {
+        for i in 0..3 {
+            let copy =
+                std::fs::read_to_string(dir.join(format!("copy{i}.txt"))).unwrap_or_default();
+            assert!(!copy.contains("a-only"), "{}: {copy}", dir.display());
+        }
+    }
+}
+
+#[tokio::test]
 async fn x_jc_org_is_honoured_for_the_admin_only() {
     let base = serve(two_orgs(), ResourceManager::new()).await;
     let c = reqwest::Client::new();
