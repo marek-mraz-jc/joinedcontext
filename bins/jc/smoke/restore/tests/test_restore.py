@@ -106,7 +106,7 @@ def test_a_restored_db_is_vacuumed_and_analyzed_before_the_copy_serves(tmp_path,
 class FakeOps:
     """docker, pg_dump and up.sh stood in for: writes results the way the inner suites would."""
 
-    def __init__(self, a, home, rhome, backup, after=None, restored=None, held=(), roles=None):
+    def __init__(self, a, home, rhome, backup, after=None, restored=None, held=(), roles=None, born=()):
         self.a, self.home, self.rhome, self.backup = a, home, rhome, backup
         self.dst = SimpleNamespace(container=f"rh-pg-{rhome.name}")
         self.counts = {}
@@ -118,6 +118,7 @@ class FakeOps:
         # pid -> --role: the source (pid 1 in jc.pid) and the copy (999999) held alike by default
         self.roles = roles or {"1": HELD, "999999": HELD}
         self.started_role = None
+        self.born_types = born
 
     def check_disk(self):
         return {"databases": ["antares", "portal"], "needBytes": 1}
@@ -167,6 +168,10 @@ class FakeOps:
 
     def converge(self, timeout):
         return 2
+
+    def born(self, since):
+        self.since = since
+        return set(self.born_types)
 
     def teardown(self):
         self.torn = True
@@ -313,6 +318,51 @@ def test_a_check_id_repeated_per_target_is_compared_per_target(tmp_path):
     res = Results("restore", "http://localhost:1")
     suite.compare(res, "endpoints", before, after, "run endpoints")
     assert [r["id"] for r in res.rows if r["result"] == "fail"] == ["endpoints/a/anon.types"]
+
+
+def per_type(*rows):
+    return {"checks": [{"id": i, "target": f"ep {t}", "result": r, "actual": r} for t, i, r in rows]}
+
+
+def test_a_type_first_written_after_the_before_run_is_no_restore_fault():
+    # smoke 43666862140 (T-6953): Vehicle file rows appeared after, Pipelines wrote the type since.
+    before = suite.load_rows(per_type(("Event", "anon.ogc.csv", "pass")))
+    after = suite.load_rows(per_type(("Event", "anon.ogc.csv", "pass"), ("Vehicle", "anon.ogc.csv", "pass")))
+    res = Results("restore", "x")
+    suite.compare(res, "endpoints", before, after, "run endpoints", {"Vehicle"})
+    rows = by_id(res)
+    assert [r for r in res.rows if r["result"] == "fail"] == []
+    assert rows["endpoints/ep Vehicle/anon.ogc.csv"]["result"] == "skip"
+    assert rows["endpoints/ep Event/anon.ogc.csv"]["result"] == "pass"
+
+
+def test_a_type_held_at_dump_time_and_missing_after_stays_red():
+    # present before and absent after fails even for a born type; absent before fails without proof
+    before = suite.load_rows(per_type(("Event", "anon.ogc.csv", "pass"), ("Tree", "anon.count", "pass")))
+    after = suite.load_rows(per_type(("Vehicle", "anon.ogc.csv", "pass"), ("Tree", "anon.count", "fail")))
+    res = Results("restore", "x")
+    suite.compare(res, "endpoints", before, after, "run endpoints", {"Event", "Tree"})
+    bad = {r["id"] for r in res.rows if r["result"] == "fail"}
+    assert bad == {"endpoints/ep Event/anon.ogc.csv", "endpoints/ep Vehicle/anon.ogc.csv",
+                   "endpoints/ep Tree/anon.count"}
+
+
+def test_born_types_needs_every_iri_of_a_short_name_new():
+    text = ("https://smartdatamodels.org/dataModel.Transportation/Vehicle|new\n"
+            "https://uri.etsi.org/ngsi-ld/default-context/Event|new\n"
+            "https://example.org/ns#Event|old\n"
+            "https://smartdatamodels.org/dataModel.Environment/AirQualityObserved|old\n")
+    assert suite.born_types(text) == {"Vehicle"}
+    assert "'2026-11-15T03:00:00Z'::timestamptz" in suite.BORN_SQL.format(since="2026-11-15T03:00:00Z")
+
+
+def test_the_compare_excuses_only_the_types_the_copy_proves_born(tmp_path, monkeypatch):
+    after = {"endpoints": per_type(("Event", "one", "pass"), ("Vehicle", "one", "pass"))}
+    res, meta, ops = run_fake(tmp_path, monkeypatch, after=after, born={"Vehicle"})
+    rows = by_id(res)
+    assert rows["step.born"]["result"] == "pass" and meta["born"] == ["Vehicle"] and meta["bornSince"] == ops.since
+    assert rows["endpoints/ep Vehicle/one"]["result"] == "skip"
+    assert rows["endpoints/ep Event/one"]["result"] == "fail"  # absent before, no proof
 
 
 def test_a_copy_on_another_role_than_the_source_fails_its_control(tmp_path, monkeypatch):

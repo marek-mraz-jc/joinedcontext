@@ -17,7 +17,9 @@ copy (no export: the realms come from the restored state dir) on the source jc's
 pass; `after` reruns the suites on the copy.
 
 Pass: every check id of the compared suites has the same pass/fail/skip on the copy as before the
-dump (not an absolute pass), and the controls hold: the fresh PostgreSQL held none of the
+dump (not an absolute pass; a row absent before is no fault only when every entity of its type in
+the copy was created after the before run started, step `born`: a Pipeline wrote the type since), and
+the controls hold: the fresh PostgreSQL held none of the
 databases, each restored table has the row count of the snapshot, every compared suite passed at
 least one check before, an unknown Endpoint slug is refused on both, the copy is another jc
 process on its own port on the source's role, and the runner's files are the source's. A row
@@ -189,10 +191,14 @@ def load_checks(out: Path) -> dict | None:
     f = out / "results.json"
     if not f.exists():
         return None
+    return load_rows(json.loads(f.read_text()))
+
+
+def load_rows(doc: dict) -> dict:
     # A check id repeats per target (an Endpoint slug, a kind): the key is target/id, with #n for a
     # pair that repeats in one run.
     out: dict = {}
-    for r in json.loads(f.read_text()).get("checks", []):
+    for r in doc.get("checks", []):
         key = f"{r.get('target', '')}/{r['id']}"
         n = 1
         while (key if n == 1 else f"{key}#{n}") in out:
@@ -201,8 +207,34 @@ def load_checks(out: Path) -> dict | None:
     return out
 
 
-def compare(res: Results, suite: str, before: dict | None, after: dict | None, call: str) -> None:
-    """One row per check id: the copy must answer as the source did before the dump."""
+def row_type(target: str) -> str:
+    """The NGSI-LD type of a per-type row (target "<slug> <Type>"), else ""."""
+    return target.partition(" ")[2]
+
+
+BORN_SQL = ("SELECT t || CASE WHEN min(created_at) >= '{since}'::timestamptz THEN '|new' ELSE '|old' END"
+            " FROM entities, unnest(types) AS t GROUP BY t")
+
+
+def born_types(text: str) -> set[str]:
+    """BORN_SQL's lines (expanded type IRI|new or |old) to the short names whose every IRI is new."""
+    new, old = set(), set()
+    for line in text.splitlines():
+        iri, _, flag = line.strip().rpartition("|")
+        if iri:
+            (new if flag == "new" else old).add(re.split(r"[/#]", iri)[-1])
+    return new - old
+
+
+def compare(res: Results, suite: str, before: dict | None, after: dict | None, call: str,
+            born: set[str] = frozenset()) -> None:
+    """One row per check id: the copy must answer as the source did before the dump.
+
+    The source's Pipelines go on writing between the before run, the dump and the after run (smoke
+    43662696026, 43666862140: 3..12 rows each). A row absent before and present after is no restore
+    fault when its type had no entity yet when the before run started: `born` holds those types,
+    proved by the copy's own store (every entity of the type created at or after that time, see
+    Ops.born). A row present before and absent after, or a changed verdict, stays a fail."""
     if before is None or after is None:
         side = "before" if before is None else "after"
         res.check(f"{suite}.results", suite, call, "results.json before and after", f"none {side}", False)
@@ -214,6 +246,11 @@ def compare(res: Results, suite: str, before: dict | None, after: dict | None, c
         b, a = before.get(id), after.get(id)
         exp = f"before: {b['result']}" if b else "before: absent"
         act = f"after: {a['result']}" if a else "after: absent"
+        if a and not b and row_type(a.get("target", "")) in born:
+            res.skip(f"{suite}/{id}", suite, call, exp,
+                     f"{act}: every {row_type(a['target'])} entity of the copy was created after the before run "
+                     "started (a Pipeline wrote the type since), so the before run could not see it")
+            continue
         ok = bool(a and b and a["result"] == b["result"])
         why = "" if ok else (a or b or {}).get("actual", "")[:200]
         res.check(f"{suite}/{id}", suite, call, exp, act, ok, why)
@@ -459,6 +496,12 @@ class Ops:
         self.dst.restore(db, self.backup / f"{db}.dump")
         return self.dst.counts(db)
 
+    def born(self, since: str) -> set[str]:
+        """Short names of the types whose every entity in the copy's broker was created at or after
+        `since` (ISO 8601 UTC), across tenants: a type with one older entity anywhere is not in it.
+        ponytail: per type, not per tenant; key it by tenant if a row ever needs the narrower proof."""
+        return born_types(self.dst.psql("antares", BORN_SQL.format(since=since)))
+
     def start(self, role: str) -> int:
         """up.sh on the copy, on the source's role (a held source gives a held copy)."""
         env = {k: v for k, v in os.environ.items() if k not in COPY_ENV_DROPPED}
@@ -573,6 +616,8 @@ def pipeline(a, res: Results, ops: Ops, out: Path) -> dict:
     dbs = info["databases"]
     meta["databases"] = dbs
     try:
+        # UTC, rounded up to the next second: a type created in the run's first second is not excused
+        since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(time.time()) + 1))
         steps.run("before", f"run {','.join(suites)} on the source", before)
         steps.run("dump.roles", "pg_dumpall --roles-only", ops.dump_roles)
         for db in dbs:
@@ -633,8 +678,11 @@ def pipeline(a, res: Results, ops: Ops, out: Path) -> dict:
             for s in suites:
                 ops.suite(s, rewrite_argv(inner_argv(a, s), ports, ops.home, ops.rhome), after_dir / s)
         steps.run("after", f"run {','.join(suites)} on the copy", after)
+        born = steps.run("born", f"types first written since {since} (the copy's broker)", ops.born, since)
+        meta["bornSince"], meta["born"] = since, sorted(born)
         for s in suites:
-            compare(res, s, load_checks(before_dir / s), load_checks(after_dir / s), f"run {s} before vs after")
+            compare(res, s, load_checks(before_dir / s), load_checks(after_dir / s), f"run {s} before vs after",
+                    born)
         (s1, path), (s2, _) = unknown_slug(a.base_url), unknown_slug(rbase)
         res.check("control.unknown-slug", "restore", f"GET {path} on source and copy",
                   "the same refusal (4xx) on both", f"source {s1}, copy {s2}", s1 == s2 and 400 <= s1 < 500)
