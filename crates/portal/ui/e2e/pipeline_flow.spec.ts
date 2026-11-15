@@ -228,6 +228,31 @@ test.describe("pipeline flow canvas", () => {
     await page.getByRole("button", { name: "Test mapping" }).click();
     await expect(page.getByTestId("flow-node-compute")).toHaveAttribute("data-state", "ok");
   });
+  // T-7064 (G-17): an output's write mode offers merge and backfill, and the hint under the select
+  // says what the chosen mode does; shots of each at 1440 and 400 px for the task.
+  test("an output writes in merge or backfill mode with a hint for the chosen mode", async ({ page }) => {
+    await stubApi(page, () => ({ input: { events: 0, bytes: 0 }, mapping: [], validation: [], errors: [] }));
+    for (const width of [1440, 400]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/projects/helsinki/pipelines?lang=en");
+      await page.getByRole("button", { name: "New pipeline" }).first().click();
+      const dialog = page.getByTestId("form-page");
+      await dialog.getByText("Advanced editor").click();
+      await page.getByRole("button", { name: "+ Output" }).click();
+      const editor = page.getByTestId("flow-node-editor-output");
+      const mode = editor.getByLabel("Write mode");
+      for (const [choice, hint] of [
+        ["upsert", "Creates the entity or updates the attributes the record names"],
+        ["merge", "Deep-merges the record"],
+        ["backfill", "Adds past readings to the history only"],
+      ]) {
+        await mode.selectOption(choice);
+        await expect(editor.getByText(hint)).toBeVisible();
+        await editor.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `test-results/T-7064/output-mode-${choice}-${width}.png` });
+      }
+    }
+  });
   // T-3222: a deliberately broken step is found from the graph alone: the node turns red with the
   // error in words, its drawer shows the input that broke it, and a Debug node on the wire into it
   // lists what crossed that wire.
