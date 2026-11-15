@@ -5,7 +5,7 @@
 use kaisatsu_oidc::dummy_verify_off_runtime;
 use std::time::{Duration, Instant};
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn a_burst_of_password_hashes_leaves_the_runtime_answering() {
     let one = Instant::now();
     kaisatsu_crypto::password::dummy_verify_password("calibrate");
@@ -14,10 +14,12 @@ async fn a_burst_of_password_hashes_leaves_the_runtime_answering() {
     let burst: Vec<_> = (0..4)
         .map(|_| tokio::spawn(dummy_verify_off_runtime("wrong password")))
         .collect();
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    // A thread sleep: a tokio timer would itself wait for a blocked worker.
+    std::thread::sleep(Duration::from_millis(20));
     let ping = Instant::now();
     tokio::spawn(async {}).await.expect("ping");
     let waited = ping.elapsed();
+    println!("hash {hash:?} waited {waited:?}");
     for h in burst {
         h.await.expect("join").expect("hash");
     }
