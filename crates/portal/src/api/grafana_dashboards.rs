@@ -477,7 +477,9 @@ pub async fn get_dashboard(
             .map(str::to_owned),
         variables: variables_of(&dashboard)
             .into_iter()
-            .map(|variable| variable_view(&readable_variable(&state, &effective, &project, variable)))
+            .map(|variable| {
+                variable_view(&readable_variable(&state, &effective, &project, variable))
+            })
             .collect(),
         panels: dashboard["panels"]
             .as_array()
@@ -1601,12 +1603,26 @@ mod tests {
             custom_options(&readable_variable(&state, effective, PROJECT, variable)).len()
         };
         assert_eq!(offered(&viewer, &variable("closed")), 0);
-        assert_eq!(offered(&viewer, &variable("nobodys")), 0, "an unknown Endpoint");
-        assert!(current_of(&readable_variable(&state, &viewer, PROJECT, &variable("closed"))).is_empty());
+        assert_eq!(
+            offered(&viewer, &variable("nobodys")),
+            0,
+            "an unknown Endpoint"
+        );
+        assert!(current_of(&readable_variable(
+            &state,
+            &viewer,
+            PROJECT,
+            &variable("closed")
+        ))
+        .is_empty());
         assert_eq!(offered(&viewer, &variable("open")), 1);
         assert_eq!(offered(&approver, &variable("closed")), 1);
         let own = json!({ "name": "unit", "type": "custom", "query": "a,b" });
-        assert_eq!(offered(&viewer, &own), 2, "a variable the builder did not write");
+        assert_eq!(
+            offered(&viewer, &own),
+            2,
+            "a variable the builder did not write"
+        );
     }
 
     #[tokio::test]

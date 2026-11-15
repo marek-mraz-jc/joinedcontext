@@ -1110,7 +1110,12 @@ async fn an_import_by_someone_who_may_propose_nothing_is_refused_before_the_body
         .await
         .expect("the request completes");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    let bytes = response.into_body().collect().await.expect("body").to_bytes();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
     let problem: Value = serde_json::from_slice(&bytes).expect("a problem");
     let detail = problem["detail"].as_str().unwrap_or_default();
     assert!(detail.contains("PF-50"), "{detail}");

@@ -930,7 +930,10 @@ mod tests {
         let second = fold(Some(&read), &[("https://a.sk/1".into(), bad())], 0, now);
         assert_eq!(second.dead_count, 1);
         let shown = serde_json::to_value(&second).expect("a check serializes");
-        assert!(shown.get("failing").is_none(), "the API answer keeps failing out");
+        assert!(
+            shown.get("failing").is_none(),
+            "the API answer keeps failing out"
+        );
     }
 
     #[test]
