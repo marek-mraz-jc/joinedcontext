@@ -2016,8 +2016,10 @@ def test_up_sh_gives_dataroom_prods_publish_gate_hidden_list():
     """jc.toml carries [dataroom.hidden] beside the aliases, and the two parse as one file."""
     import tomllib
     text = (HERE / "up.sh").read_text()
-    m = re.search(r'^cat "\$here/(\S+catalogue-hidden\.toml)" >> "\$home/jc\.toml"$', text, re.M)
-    assert m, "up.sh appends no [dataroom.hidden] to jc.toml"
+    # dataroom_tail writes dataroom's sections: into jc.toml, or split.sh's dataroom.toml.
+    m = re.search(r'^dataroom_tail\(\) \{.*?^  cat "\$here/(\S+catalogue-hidden\.toml)"$', text, re.M | re.S)
+    assert m and re.search(r'^  dataroom_tail "\$home"$', text, re.M), "up.sh appends no [dataroom.hidden] to jc.toml"
+    assert 'dataroom_tail "$split"' in (HERE / "split.sh").read_text(), "split.sh's dataroom.toml has no [dataroom.hidden]"
     aliases = subprocess.run([sys.executable, "-I", str(HERE / "rehearsal.py"), "aliases"],
                              capture_output=True, text=True, check=True).stdout
     hidden = (HERE / m.group(1)).read_text()
@@ -2032,9 +2034,10 @@ def test_up_sh_gives_dataroom_prods_harvests_and_the_converted_list_beside_jc_to
     jc.toml."""
     import tomllib
     text = (HERE / "up.sh").read_text()
-    m = re.search(r'^cat "\$here/(\S+harvest-sources\.toml)" >> "\$home/jc\.toml"$', text, re.M)
+    # dataroom_tail <dir of the toml>: the harvests, and their converted files into that dir.
+    m = re.search(r'^  cat "\$here/(\S+harvest-sources\.toml)"$', text, re.M)
     assert m, "up.sh appends no [[dataroom.harvest]] to jc.toml"
-    copied = re.findall(r'^install -m 644 "\$here/(\S+)" "\$home/(\S+)"$', text, re.M)
+    copied = re.findall(r'^  install -m 644 "\$here/(\S+)" "\$1/(\S+)"$', text, re.M)
     aliases = subprocess.run([sys.executable, "-I", str(HERE / "rehearsal.py"), "aliases"],
                              capture_output=True, text=True, check=True).stdout
     hidden = (HERE / "../../bins/jc/docs/catalogue-hidden.toml").read_text()

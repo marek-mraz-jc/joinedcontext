@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Starts one rehearsal environment: PostgreSQL 17 in docker and `jc --role all` on it
 # (REHEARSAL_ROLE: another role list, e.g. one module left out for a red smoke run;
-# REHEARSAL_HOLD_PIPELINES=1: every module but ekiben, see jc_role).
+# REHEARSAL_HOLD_PIPELINES=1: every module but ekiben, see jc_role; REHEARSAL_LAYOUT=split: one jc
+# process per role group behind a front proxy, NATS in docker, split.sh).
 #
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
@@ -97,10 +98,12 @@ SQL
   printf 'migrate_url = "postgres://%s_rh_migrate@127.0.0.1:%s/%s"\nmigrate_password_file = "%s"\n' \
     "$m" "$pg_port" "$m" "$(secret "${m}-migrate-pw")"
 }
-db_config=$(for m in shako daiya dataroom ekiben; do module_db "$m"; done)
+# Each module's sections apart (part[m]): the split layout gives each to its own jc.toml.
+declare -A part
+for m in shako daiya dataroom ekiben; do part[$m]=$(module_db "$m"); done
 # Antares migrates as its own request role and takes no migrate_url; the section switches it to
 # its Postgres store (ANTARES_STORE).
-db_config+=$(printf '\n[antares.database]\nurl = "postgres://antares@127.0.0.1:%s/antares"\npassword_file = "%s"\n' \
+part[antares]=$(printf '\n[antares.database]\nurl = "postgres://antares@127.0.0.1:%s/antares"\npassword_file = "%s"\n' \
   "$pg_port" "$(secret antares-pw)")
 
 kaisatsu_bin=$(dirname "$jc_bin")/kaisatsu
@@ -180,8 +183,13 @@ else
 fi
 export ANTARES_TEMPORAL_RETENTION_DAYS=1 ANTARES_SWEEP_SECS=${REHEARSAL_SWEEP_SECS:-3600}
 export ANTARES_HISTORY_BACKFILL=on
-# jc is one process: the local notification bus cannot double-fire.
-export ANTARES_ALLOW_SHARED_LOCAL=1
+layout=${REHEARSAL_LAYOUT:-one}
+case $layout in
+  # jc is one process: the local notification bus cannot double-fire.
+  one) export ANTARES_ALLOW_SHARED_LOCAL=1 ;;
+  split) unset ANTARES_ALLOW_SHARED_LOCAL ;;  # split.sh puts the broker on NATS
+  *) echo "up.sh: REHEARSAL_LAYOUT is one or split, not '$layout'" >&2; exit 1 ;;
+esac
 export JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false JC_PORTAL_SYNC_INTERVAL=10
 # An imported realm with each Pipeline's own client <project>-pl-<pipeline> (prod's, PL-19): every
 # stream signs in as its pipeline's client by that client's secret, whose audience is the Endpoints
@@ -248,13 +256,19 @@ fi
 export JC_SHAKO_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_SHAKO_REPO=${REHEARSAL_CONFIG_REPO:-configuration}
 export JC_GITEA_OWNER=$JC_SHAKO_OWNER JC_GITEA_REPO=$JC_SHAKO_REPO
 
-# A jc of an earlier up.sh of this environment stops first (its memory stores go with it).
-if [ -s "$home/jc.pid" ]; then
-  "$here/stop-jc.sh" "$(cat "$home/jc.pid")" || exit 1
-fi
-for pid in $("$here/jcs-of.sh" "$home/jc.toml"); do
-  echo "up.sh: jc $pid of $home/jc.toml runs outside the pid file; stopping it" >&2
-  "$here/stop-jc.sh" "$pid" || exit 1
+# Every jc of an earlier up.sh of this environment stops first, of either layout (their memory
+# stores go with them).
+for pid_file in "$home/jc.pid" "$home"/split/*.pid; do
+  [ -s "$pid_file" ] || continue
+  "$here/stop-jc.sh" "$(cat "$pid_file")" || exit 1
+  [ "$pid_file" = "$home/jc.pid" ] || rm -f "$pid_file"
+done
+for toml in "$home/jc.toml" "$home"/split/*.toml; do
+  [ -f "$toml" ] || continue
+  for pid in $("$here/jcs-of.sh" "$toml"); do
+    echo "up.sh: jc $pid of $toml runs outside the pid file; stopping it" >&2
+    "$here/stop-jc.sh" "$pid" || exit 1
+  done
 done
 # The Grafana files' datasources as daiya provisioning on jc's own address (REHEARSAL_DASHBOARDS,
 # default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
@@ -270,8 +284,10 @@ fi
 # shellcheck source=deploy/rehearsal/prometheus.sh
 . "$here/prometheus.sh"  # the Prometheus the dashboards read, through its label proxy (jc-prod-metrics)
 if [ -n "$daiya_lines" ]; then
-  db_config+=$(printf '\n[daiya]\n%s' "$daiya_lines")
+  part[daiya]+=$(printf '\n[daiya]\n%s' "$daiya_lines")
 fi
+db_config=
+for m in shako daiya dataroom ekiben antares; do db_config+=${part[$m]}$'\n'; done
 # The hub's search_documents searches the sources the deployment names (base-values of the
 # context-gateway; REHEARSAL_DEPLOYMENT is a deployment clone); jc fills the assistant's address.
 # Without a deployment clone (the smoke gate's runner) the hub searches no outside source.
@@ -295,29 +311,36 @@ if [ "${REHEARSAL_APP_HOSTS:-on}" = on ]; then
   portal_mounts="[[mounts.portal]]\npath_prefix = \"\"\n\n[[mounts.portal]]\nhost = \"*.apps.localhost:$port\"\n"
 fi
 # jc refuses a jc.toml that names no profile (P-29); a rehearsal is no production install.
-printf 'profile = "development"\n\n'"$portal_mounts"'%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
-# prod's publish-gate hidden list ([dataroom.hidden]): dataroom leaves those datasets out of search
-# and DCAT as prod's catalogue does (jc-catalogue-parity).
-cat "$here/../../bins/jc/docs/catalogue-hidden.toml" >> "$home/jc.toml"
-# prod's two catalogue harvests ([[dataroom.harvest]], jc-catalogue-17): hub-bbsk and
-# nkod-banskabystrica run once at start, then on their schedules; each keeps the datasets prod
-# converted, from od-datasets.json, which the toml names relative to jc.toml.
-cat "$here/../../bins/jc/docs/harvest-sources.toml" >> "$home/jc.toml"
-install -m 644 "$here/../../bins/jc/docs/od-datasets.json" "$home/od-datasets.json"
-# prod's publisher badges and words ([dataroom.publishers], the CKAN chart's `organizations`).
-cat "$here/../../bins/jc/docs/dataroom-publishers.toml" >> "$home/jc.toml"
-# The installation's logo ([dataroom.branding], prod's global branding logo, favicon and logoSvg):
-# the footer mark and the favicon, from the deployment clone's branding/logo.svg.
-logo_svg="$deployment/.ci/example-deployments/environments/smartcity/branding/logo.svg"
-if [ -f "$logo_svg" ]; then
-  { printf '\n[dataroom.branding]\nlogo = "logo.svg"\nfavicon = "logo.svg"\nlogo_svg = \x27\x27\x27\n'
-    cat "$logo_svg"; printf '\x27\x27\x27\n'; } >> "$home/jc.toml"
-fi
-# REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
-# host-mode multiorg run (each Organization on its own *.localhost hosts).
-if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
-  cat "$REHEARSAL_JC_TOML_EXTRA" >> "$home/jc.toml"
-fi
+profile_line='profile = "development"'
+# dataroom's own sections, in the one jc.toml or the split layout's dataroom.toml (beside which
+# od-datasets.json goes: the harvest names it relative to the toml).
+dataroom_tail() { # dataroom_tail <dir of the toml>
+  printf '\n%s\n' "$alias_config"
+  # prod's publish-gate hidden list ([dataroom.hidden]): dataroom leaves those datasets out of search
+  # and DCAT as prod's catalogue does (jc-catalogue-parity).
+  cat "$here/../../bins/jc/docs/catalogue-hidden.toml"
+  # prod's two catalogue harvests ([[dataroom.harvest]], jc-catalogue-17): hub-bbsk and
+  # nkod-banskabystrica run once at start, then on their schedules; each keeps the datasets prod
+  # converted, from od-datasets.json, which the toml names relative to jc.toml.
+  cat "$here/../../bins/jc/docs/harvest-sources.toml"
+  install -m 644 "$here/../../bins/jc/docs/od-datasets.json" "$1/od-datasets.json"
+  # prod's publisher badges and words ([dataroom.publishers], the CKAN chart's `organizations`).
+  cat "$here/../../bins/jc/docs/dataroom-publishers.toml"
+  # The installation's logo ([dataroom.branding], prod's global branding logo, favicon and logoSvg):
+  # the footer mark and the favicon, from the deployment clone's branding/logo.svg.
+  local logo_svg="$deployment/.ci/example-deployments/environments/smartcity/branding/logo.svg"
+  if [ -f "$logo_svg" ]; then
+    printf '\n[dataroom.branding]\nlogo = "logo.svg"\nfavicon = "logo.svg"\nlogo_svg = \x27\x27\x27\n'
+    cat "$logo_svg"; printf '\x27\x27\x27\n'
+  fi
+}
+{
+  printf '%s\n\n'"$portal_mounts"'%s\n%s\n' "$profile_line" "$db_config" "$realm_config"
+  dataroom_tail "$home"
+  # REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
+  # host-mode multiorg run (each Organization on its own *.localhost hosts).
+  if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then cat "$REHEARSAL_JC_TOML_EXTRA"; fi
+} > "$home/jc.toml"
 # REHEARSAL_HOLD_PIPELINES=1 (import.sh passes it to both its starts; the gate keeps it through the
 # endpoints and mcp count suites): jc starts without ekiben. The Portal then has no pipeline runner
 # (bins/jc/src/siblings.rs), so its run queue never starts (crates/portal/src/state.rs
@@ -330,7 +353,10 @@ jc_role() {
   else echo all; fi
 }
 role=$(jc_role)
-[ "$role" = all ] || echo "$env_name: jc on roles $role"
+[ "$layout" = split ] || [ "$role" = all ] || echo "$env_name: jc on roles $role"
+# The split layout's realm (split.sh) is no part of a one-process start, and apps.sh takes the first
+# realm file there for the deployment's.
+rm -f "$home/state/realms/jc-split.json"
 # shellcheck source=deploy/rehearsal/apps.sh
 . "$here/apps.sh"  # the Apps: image bundles, apps cache, prod builds, roles person (jc-apps-export)
 # jc's allocator settings as its image sets them (bins/jc/Dockerfile ENV), unless the caller set the
@@ -338,19 +364,24 @@ role=$(jc_role)
 # RSS ~1.5 GiB above the live heap (jc-memory-peak, gate 2026-11-11T041800Z-gr).
 : "${_RJEM_MALLOC_CONF=$(sed -n 's/^ENV _RJEM_MALLOC_CONF=//p' "$here/../../bins/jc/Dockerfile")}"
 export _RJEM_MALLOC_CONF
-nohup "$jc_bin" --role "$role" --scheme http --log-format text --config "$home/jc.toml" \
-  --listen "$bind:$port" --base-host "${origin#http://}" --state-dir "$home/state" \
-  --kaisatsu-import-dir "$home/state/realms" \
-  --kaisatsu-import-secrets-dir "$home/secrets/realm" \
-  --ekiben-client-secrets-dir "$home/secrets/realm" \
-  --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
-  --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
-  --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \
-  --admin-listen "127.0.0.1:$((pg_port+200))" --admin-token-file "$(secret metrics-token)" \
-  > "$home/jc.log" 2>&1 &
-echo $! > "$home/jc.pid"
-"$here/wait-jc.sh" "$(cat "$home/jc.pid")" "$home/jc.log" || exit 1
-echo "$env_name: jc on $origin (log $home/jc.log)"
+if [ "$layout" = split ]; then
+  # shellcheck source=deploy/rehearsal/split.sh
+  . "$here/split.sh"
+else
+  nohup "$jc_bin" --role "$role" --scheme http --log-format text --config "$home/jc.toml" \
+    --listen "$bind:$port" --base-host "${origin#http://}" --state-dir "$home/state" \
+    --kaisatsu-import-dir "$home/state/realms" \
+    --kaisatsu-import-secrets-dir "$home/secrets/realm" \
+    --ekiben-client-secrets-dir "$home/secrets/realm" \
+    --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
+    --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
+    --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \
+    --admin-listen "127.0.0.1:$((pg_port+200))" --admin-token-file "$(secret metrics-token)" \
+    > "$home/jc.log" 2>&1 &
+  echo $! > "$home/jc.pid"
+  "$here/wait-jc.sh" "$(cat "$home/jc.pid")" "$home/jc.log" || exit 1
+  echo "$env_name: jc on $origin (log $home/jc.log)"
+fi
 
 
 # The 24 h rule, now and hourly, beside jc (rehearsal database only).
