@@ -199,7 +199,6 @@
   "processors/elasticsearch",
   "processors/file",
   "processors/gcp_bigquery_select",
-  "processors/javascript",
   "processors/mongodb",
   "processors/nats_object_store",
   "processors/nlp_classify_text",
