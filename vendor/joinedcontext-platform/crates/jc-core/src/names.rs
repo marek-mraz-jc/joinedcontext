@@ -39,8 +39,8 @@ pub fn validate_dns1123_label(name: &str) -> Result<()> {
 /// the labels the domain layout plans (`login`, `embed`, `apps`, ...). An Organization named like one
 /// would take that segment or label from the service on a host the Organizations share, so no
 /// Organization takes one. The list only grows; bins/jc fails a test when a mount, host label or
-/// Portal page root it places is missing here. `bbsk` stays out: it is jc-dev's Organization
-/// that jc-prod's landing host is named after.
+/// Portal page root it places is missing here. No live Organization's name is on it: `bbsk`
+/// (jc-prod's landing host is named after it) and `ops` (a jc-dev Organization) stay out.
 pub const RESERVED_LABELS: &[&str] = &[
     "accessibility",
     "admin",
@@ -86,7 +86,6 @@ pub const RESERVED_LABELS: &[&str] = &[
     "mqtt",
     "oauth",
     "opendata",
-    "ops",
     "organization",
     "playground",
     "portal",
@@ -381,6 +380,9 @@ mod tests {
             "slovensko",
             "ctl-a",
             "ctl-b",
+            "demo-mcp",
+            "ops",
+            "helsinki",
         ] {
             validate_not_reserved(name).expect(name);
         }

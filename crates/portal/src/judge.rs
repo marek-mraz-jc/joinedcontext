@@ -918,7 +918,7 @@ mod tests {
 
     /// T-6974: an Organization named like a platform address is refused with a 422 naming
     /// `metadata.name` at propose and at approval, and by the reconciler's load of `main`; the
-    /// ten Organization names jc-dev holds pass.
+    /// Organization names jc-dev and jc-prod hold pass.
     #[test]
     fn a_reserved_organization_name_is_refused_at_every_door() {
         let bounds = OrganizationBounds::default();
@@ -974,6 +974,9 @@ mod tests {
             "slovensko",
             "ctl-a",
             "ctl-b",
+            "demo-mcp",
+            "ops",
+            "helsinki",
         ] {
             manifest(&ground, ORG_NAMESPACE, &named(name)).expect(name);
         }
