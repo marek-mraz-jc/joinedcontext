@@ -1128,7 +1128,10 @@ mod tests {
         assert_eq!(plate["pattern"], json!("^[A-Z]{2}\\d{3}\"$"));
         let yaml = crate::yaml(&m);
         assert!(
-            yaml.contains("\n    minimum_value: 0\n    maximum_value: 5\n"),
+            yaml.contains(&format!(
+                "\n{0}minimum_value: 0\n{0}maximum_value: 5\n",
+                " ".repeat(4)
+            )),
             "{yaml}"
         );
     }

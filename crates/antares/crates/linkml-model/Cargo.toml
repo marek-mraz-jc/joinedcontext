@@ -17,7 +17,7 @@ serde_json = { version = "1", default-features = false, features = ["std"] }
 # The parsed-schema cache every surface shares, bounded by bytes (`cache`, T-4354).
 moka = { version = "0.12", default-features = false, features = ["sync"] }
 # A slot's `pattern` (PL-59 sh:pattern): no backtracking, compiled with a size limit.
-regex = { workspace = true }
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode"] }
 
 [dev-dependencies]
 proptest = { workspace = true }
