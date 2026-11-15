@@ -275,7 +275,10 @@ pub async fn temporal_maintenance(
     // itself sanctions deletion lagging expiresAt.
     match reap_expired_entities(pool).await {
         Ok(0) => {}
-        Ok(n) => done.push(format!("reaped {n} expired transient entities (4.22)")),
+        Ok(n) => {
+            tracing::info!(reaped = n, "4.22 reap: expired transient entities deleted");
+            done.push(format!("reaped {n} expired transient entities (4.22)"));
+        }
         Err(e) => done.push(format!("entity reap skipped ({e})")),
     }
     // 4.22 also names Properties/Relationships: an attribute instance whose
@@ -284,7 +287,10 @@ pub async fn temporal_maintenance(
     // a deadlock must cost only the reap (observed under ~1.2k msg/s ingest).
     match reap_expired_instances(pool).await {
         Ok(0) => {}
-        Ok(n) => done.push(format!("reaped {n} expired attribute instances (4.22)")),
+        Ok(n) => {
+            tracing::info!(reaped = n, "4.22 reap: expired attribute instances pruned");
+            done.push(format!("reaped {n} expired attribute instances (4.22)"));
+        }
         Err(e) => done.push(format!("instance reap skipped ({e})")),
     }
     // Claim-check rows the drain kept because the bus could not carry their
@@ -442,9 +448,10 @@ async fn default_partition_load(pool: &PgPool) -> Result<Option<String>, sqlx::E
 async fn reap_expired_entities(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let mut reaped = 0u64;
     for _ in 0..REAP_BATCHES {
+        // A batch holds one Tenant, so a short one says nothing of the others.
         let n = reap_expired_entity_batch(pool, REAP_BATCH).await?;
         reaped = reaped.saturating_add(n);
-        if n < REAP_BATCH.unsigned_abs() {
+        if n == 0 {
             break;
         }
     }
@@ -457,28 +464,44 @@ const REAP_BATCH: i64 = 5000;
 /// Reap transactions one maintenance tick runs at most.
 const REAP_BATCHES: usize = 50;
 
-/// One batch of `reap_expired_entities`: at most `limit` Entities and their
-/// history. How many went.
+/// One batch of `reap_expired_entities`: at most `limit` Entities of the
+/// Tenant whose Entity expired first, and their history. How many went.
+///
+/// The row lock runs under that Tenant's scope: `FOR UPDATE` applies the
+/// `tenant_update` policy, which names the Tenant in scope and no service
+/// escape (0005), so under the escape alone it matches no row and the reap
+/// deleted nothing (T-7059, jc-dev 2026-11-15).
 pub async fn reap_expired_entity_batch(pool: &PgPool, limit: i64) -> Result<u64, sqlx::Error> {
     let mut tx = pool.begin().await?;
     crate::store::pg::set_service(&mut tx).await?;
-    let gone: Vec<(String, String)> = sqlx::query_as(
-        "DELETE FROM entities WHERE (tenant_id, id) IN (
-           SELECT tenant_id, id FROM entities
-            WHERE expires_at IS NOT NULL AND expires_at < now()
-            ORDER BY expires_at LIMIT $1
-            FOR UPDATE SKIP LOCKED)
-         RETURNING tenant_id, id",
+    let tenant: Option<String> = sqlx::query_scalar(
+        "SELECT tenant_id FROM entities
+          WHERE expires_at IS NOT NULL AND expires_at < now()
+          ORDER BY expires_at LIMIT 1",
     )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(tenant) = tenant else {
+        tx.commit().await?;
+        return Ok(0);
+    };
+    sqlx::query(crate::SET_TENANT_SQL)
+        .bind(&tenant)
+        .execute(&mut *tx)
+        .await?;
+    let ids: Vec<String> = sqlx::query_scalar(
+        "DELETE FROM entities WHERE tenant_id = $1 AND (tenant_id, id) IN (
+           SELECT tenant_id, id FROM entities
+            WHERE tenant_id = $1 AND expires_at IS NOT NULL AND expires_at < now()
+            ORDER BY expires_at LIMIT $2
+            FOR UPDATE SKIP LOCKED)
+         RETURNING id",
+    )
+    .bind(&tenant)
     .bind(limit)
     .fetch_all(&mut *tx)
     .await?;
-    let mut by_tenant: std::collections::BTreeMap<&str, Vec<String>> =
-        std::collections::BTreeMap::new();
-    for (tenant, id) in &gone {
-        by_tenant.entry(tenant).or_default().push(id.clone());
-    }
-    for (tenant, ids) in by_tenant {
+    if !ids.is_empty() {
         for sql in [
             "DELETE FROM attr_instances WHERE tenant_id = $1 AND entity_id = ANY($2::text[]) \
              AND NOT coalesce(provenance @> '{\"audit\": true}', false)",
@@ -489,23 +512,19 @@ pub async fn reap_expired_entity_batch(pool: &PgPool, limit: i64) -> Result<u64,
              AND NOT coalesce(provenance @> '{\"audit\": true}', false)",
         ] {
             sqlx::query(sql)
-                .bind(tenant)
+                .bind(&tenant)
                 .bind(&ids)
                 .execute(&mut *tx)
                 .await?;
         }
-        sqlx::query(crate::SET_TENANT_SQL)
-            .bind(tenant)
-            .execute(&mut *tx)
-            .await?;
         sqlx::query("DELETE FROM temporal_entities WHERE tenant_id = $1 AND id = ANY($2::text[])")
-            .bind(tenant)
+            .bind(&tenant)
             .bind(&ids)
             .execute(&mut *tx)
             .await?;
     }
     tx.commit().await?;
-    Ok(u64::try_from(gone.len()).unwrap_or(u64::MAX))
+    Ok(u64::try_from(ids.len()).unwrap_or(u64::MAX))
 }
 
 /// Retention of current state (`/q/retention`, T-3900): at most `batch`
