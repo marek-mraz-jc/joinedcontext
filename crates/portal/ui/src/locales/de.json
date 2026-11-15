@@ -325,6 +325,7 @@
     },
     "history": {
       "filter": "Verlauf filtern",
+      "filtersToggle": "Filter",
       "kind": "Art",
       "name": "Name enthält",
       "apply": "Filtern",
@@ -7573,9 +7574,10 @@
       "type": "Entitätstyp",
       "typeHelp": "Leer lassen, um nach jedem Typ zu fragen.",
       "submit": "Gateway fragen",
-      "failed": "Das Gateway konnte nicht gefragt werden. Versuchen Sie es in einer Minute erneut; der Grund steht unten.",
+      "failed": "Das Gateway konnte nicht gefragt werden.",
       "allowed": "Erlaubt",
       "refused": "Abgelehnt",
+      "refusedNext": "Um es zu erlauben, fügen Sie dieser Person, Gruppe oder Rolle eine Berechtigung in einer Policy des Raums des Endpoints in der Liste oben hinzu und fragen Sie erneut.",
       "decidedBy": "Entschieden durch die Policy",
       "reason": {
         "policy_grant_matched": "Eine Policy erlaubt diese Aktion.",

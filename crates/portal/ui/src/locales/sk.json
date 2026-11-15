@@ -325,6 +325,7 @@
     },
     "history": {
       "filter": "Filtrovať históriu",
+      "filtersToggle": "Filtre",
       "kind": "Druh",
       "name": "Názov obsahuje",
       "apply": "Filtrovať",
@@ -7573,9 +7574,10 @@
       "type": "Typ entity",
       "typeHelp": "Nechajte prázdne pre otázku na akýkoľvek typ.",
       "submit": "Opýtať sa brány",
-      "failed": "Bránu sa nepodarilo opýtať. Skúste to znova o minútu; dôvod je nižšie.",
+      "failed": "Bránu sa nepodarilo opýtať.",
       "allowed": "Povolené",
       "refused": "Odmietnuté",
+      "refusedNext": "Ak to chcete povoliť, pridajte tejto osobe, skupine alebo role oprávnenie v zásade priestoru koncového bodu v zozname vyššie a opýtajte sa znova.",
       "decidedBy": "Rozhodla Policy",
       "reason": {
         "policy_grant_matched": "Túto akciu povoľuje Policy.",

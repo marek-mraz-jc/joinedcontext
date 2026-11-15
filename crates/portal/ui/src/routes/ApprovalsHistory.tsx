@@ -71,6 +71,7 @@ export function ApprovalsHistory({
   const [draft, setDraft] = useState<Filter>(NO_FILTER);
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
   const [opened, setOpened] = useState<string | null>(null);
+  const [filtersShown, setFiltersShown] = useState(false);
   const queryClient = useQueryClient();
   // A merged removal can be proposed again (T-3247): the new change waits for an approver.
   const restore = useMutation({
@@ -280,11 +281,23 @@ export function ApprovalsHistory({
           {refused instanceof ApiError ? (refused.problem?.detail ?? refused.message) : t("app.error.generic")}
         </Alert>
       ) : null}
+      {/* On a phone the five filters fold behind one toggle, so the history starts on the first screen. */}
+      <Button
+        type="button"
+        variant="secondary"
+        className="self-start sm:hidden"
+        aria-expanded={filtersShown}
+        aria-controls={`${id}-filters`}
+        onClick={() => setFiltersShown(!filtersShown)}
+      >
+        {t("approvals.history.filtersToggle")}
+      </Button>
       <form
+        id={`${id}-filters`}
         role="search"
         aria-label={t("approvals.history.filter")}
         onSubmit={submit}
-        className="flex flex-wrap items-end gap-4"
+        className={`${filtersShown ? "flex" : "hidden sm:flex"} flex-wrap items-end gap-4`}
       >
         <Field id={`${id}-kind`} label={t("approvals.history.kind")}>
           <Select

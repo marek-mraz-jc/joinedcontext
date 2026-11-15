@@ -33,6 +33,7 @@ const POLICY = {
   },
   status: { phase: "Live" },
 };
+const STEWARDS = { apiVersion: API, kind: "Group", metadata: { name: "stewards", namespace: "org" }, spec: { members: [] } };
 const ACCOUNT = { apiVersion: API, kind: "ServiceAccount", metadata: { name: "etl", namespace: "helsinki" }, spec: {} };
 const REACHED = {
   subject: { serviceAccount: "helsinki-etl", groups: [], roles: [] },
@@ -96,6 +97,7 @@ async function stub(page: Page, functions: Record<string, Answer>): Promise<stri
     if (path === "/api/v1/projects/helsinki/endpoints") return json(list([ENDPOINT]));
     if (path === "/api/v1/projects/helsinki/serviceaccounts") return json(list([ACCOUNT]));
     if (path === "/api/v1/projects/helsinki/policies") return json(list([POLICY]));
+    if (path === "/api/v1/projects/org/groups") return json(list([STEWARDS]));
     if (path === "/api/v1/organization/people") return json({ items: [JANA], total: 1 });
     if (path === "/api/v1/organization/datamodels") return json({ items: [MODEL] });
     return json(list([]));
@@ -132,8 +134,13 @@ for (const width of [1440, 400]) {
       await expect(verdict).toContainText("Allowed");
       await shoot(page, "try-a-person-allowed", width, verdict);
 
-      answers.jc_access_simulate = { status: 200, value: { decision: false, reason: "no_grant", subject: { groups: [], roles: [] } } };
+      // A member of the stewards, whom air-read does not name, is refused.
+      answers.jc_access_simulate = { status: 200, value: { decision: false, reason: "no_grant", subject: { groups: ["stewards"], roles: [] } } };
+      await panel.getByLabel(/^Who/).selectOption("group");
+      await panel.getByRole("combobox", { name: /A member of a group/ }).click();
+      await page.getByRole("option", { name: /stewards/ }).click();
       await ask.click();
+      await expect(verdict).toContainText("add a grant for this person, group or role");
       await expect(verdict).toContainText("Refused");
       await shoot(page, "try-a-person-refused", width, verdict);
 
@@ -141,7 +148,11 @@ for (const width of [1440, 400]) {
       await ask.click();
       const failed = panel.getByText("The gateway did not answer; try again shortly.");
       await expect(failed).toBeVisible();
-      await shoot(page, "try-a-person-error", width, failed);
+      await expect(panel.getByText(/req-6812/)).toBeVisible();
+      const retry = panel.getByRole("button", { name: "Retry" });
+      await expect(retry).toBeVisible();
+      // The whole card in view, its Retry included.
+      await shoot(page, "try-a-person-error", width, retry);
       expect(asked.filter((path) => OLD_DOORS.test(path))).toEqual([]);
       expect(await axeViolations(page)).toEqual([]);
     });
@@ -182,6 +193,15 @@ for (const width of [1440, 400]) {
       await shoot(page, "approvals-history-filled", width, reason);
 
       answers.jc_change_history = { status: 200, value: { ...list([]), next: null } };
+      // The phone folds the filters behind one toggle.
+      const toggle = page.getByRole("button", { name: "Filters", exact: true });
+      if (width < 640) {
+        await expect(page.getByLabel("Name contains")).toBeHidden();
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      } else {
+        await expect(toggle).toBeHidden();
+      }
       await page.getByLabel("Name contains").fill("nothing");
       await page.getByRole("button", { name: "Filter", exact: true }).click();
       await expect(page.getByText("Reason: Writes stay with the stewards")).toBeHidden();

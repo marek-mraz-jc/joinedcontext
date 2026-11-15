@@ -314,6 +314,8 @@ test.describe("approvals", () => {
       await page.goto("/projects/helsinki/approvals?lang=en");
       await page.getByRole("tab", { name: "History" }).click();
       await expect(page.getByText("Reason: Writes must stay with the steward group")).toBeVisible();
+      // The phone folds the filters behind one toggle.
+      if (width < 640) await page.getByRole("button", { name: "Filters", exact: true }).click();
       await page.getByLabel("Name contains").fill("air");
       await page.getByRole("button", { name: "Filter", exact: true }).click();
       await expect.poll(() => asked).toContain("history?page=1&name=air");
