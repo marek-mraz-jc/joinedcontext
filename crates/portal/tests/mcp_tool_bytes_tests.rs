@@ -70,8 +70,10 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// (T-6864, 624 bytes): a saved Dashboard widget drawn by reference, read as the caller; 85,854
 /// with `data.dashboard` (T-6867, 202 bytes): a whole Dashboard, each widget read as the caller;
 /// 85,863 once jc-core catalogued `Portal` (T-6873, 9 bytes): the kind enum of the resource tools
-/// names it, so an Organization admin's agent can propose its open data portals.
-const RATCHET: usize = 85_864;
+/// names it, so an Organization admin's agent can propose its open data portals; 85,912 once
+/// `jc_person_edit` says an e-mail change needs a Portal session (T-6966, 49 bytes): an agent's
+/// token gets 403 there, and the model reads why before it tries.
+const RATCHET: usize = 85_913;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]
