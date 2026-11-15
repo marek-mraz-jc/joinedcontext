@@ -7,7 +7,7 @@ configuration. It is the crate every other NGSI-LD crate of Antares builds on (p
 | What | CIM 009 clause |
 |---|---|
 | `EntityId`: an Entity id is a URI or IRI, with no `.`/`..` path segment | 4.5.1, 5.2.1, Table 5.2.4-1 |
-| `TenantId`: the `NGSILD-Tenant` name, `[A-Za-z0-9_-]{1,64}`, never a broker-reserved one | 4.14, 6.3.14 |
+| `TenantId`: the `NGSILD-Tenant` name, `[A-Za-z0-9_-]{1,128}`, never a broker-reserved one | 4.14, 6.3.14 |
 | `check_attr_name`: an Attribute name in a path is a term or IRI | 4.6.2 |
 | `NgsiError` and `ProblemDetails`: the error types and their HTTP status | 5.5.2, 6.3.6, Table 6.3.2-1 |
 | `OPERATION_NAMES`, `group_members`: the distributed operation names and groups | 4.20, Tables 4.20-1 and 4.20-2 |
@@ -41,6 +41,6 @@ The crate does not parse JSON-LD (`antares-jsonld`), queries (`antares-ql`) or m
 subscriptions (`antares-matcher`). Its checks are the cheap, syntax-level ones every entry point
 runs first; full IRI validation happens during JSON-LD expansion.
 
-Bounds: a `TenantId` is at most `TenantId::MAX_LEN` (64) characters. No function recurses.
+Bounds: a `TenantId` is at most `TenantId::MAX_LEN` (128) characters. No function recurses.
 
 Licensed under the EUPL-1.2, as the rest of the Antares workspace.

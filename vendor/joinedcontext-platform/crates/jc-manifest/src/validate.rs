@@ -549,6 +549,7 @@ fn check(repo_dir: &Path, repo: Repository, organization: bool) -> Report {
     for (location, message) in app_names_claimed_twice(&repo)
         .into_iter()
         .chain(space_segments_claimed_twice(&repo))
+        .chain(domains_claimed_twice(&repo))
         .chain(public_ids_claimed_twice(&repo))
     {
         report.findings.push(Finding {
@@ -983,6 +984,39 @@ fn space_segments_claimed_twice(repo: &Repository) -> Vec<(Location, String)> {
             )
         },
     )
+}
+
+/// Every `Organization` whose `spec.domain` another Organization also declares (EP-188,
+/// PF-130): the domain is the Organization id that opens every tenant of its spaces, so two
+/// Organizations of one domain would read and write each other's tenants.
+fn domains_claimed_twice(repo: &Repository) -> Vec<(Location, String)> {
+    let mut owners: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let organizations: Vec<_> = repo
+        .iter()
+        .filter(|(id, _)| id.kind == "Organization")
+        .filter_map(|(id, loaded)| {
+            let domain = loaded.manifest.spec.get("domain")?.as_str()?;
+            Some((id.name.as_str(), domain, loaded))
+        })
+        .collect();
+    for (name, domain, _) in &organizations {
+        owners.entry(domain).or_default().push(name);
+    }
+    organizations
+        .iter()
+        .filter_map(|(name, domain, loaded)| {
+            let claimants = owners.get(domain).filter(|c| c.len() > 1)?;
+            Some((
+                location_of(loaded),
+                format!(
+                    "Organization {name} declares the domain '{domain}', which Organizations {} \
+                     all declare; a domain names one Organization and opens the broker tenants \
+                     of its spaces, keep it on one and give the others their own (EP-188, PF-130)",
+                    claimants.join(" and ")
+                ),
+            ))
+        })
+        .collect()
 }
 
 /// Every `AssistantDeployment` whose `publicId` another deployment also declares, in this project

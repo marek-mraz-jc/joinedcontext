@@ -600,6 +600,12 @@ pub struct Shared {
     /// serves it as before; the platform build sets it when the deployment
     /// names subject headers.
     pub subject_required: bool,
+    /// `ANTARES_TENANT_ORGANIZATION=enforce` (EP-188, PF-130): a request
+    /// from the gateway serves a Tenant `{organization id}__{segment}` only
+    /// when the Organization the gateway vouched equals the name's
+    /// ([`crate::admin_auth::organization_admits`]). `false` (`off`, the
+    /// default) serves as before.
+    pub tenant_organization: bool,
     /// History gate 3 (T-4275): the (Tenant, expanded type) pairs whose
     /// retention rule says `history: "off"`. The views reload replaces the
     /// set; an Entity with any of these types records no attribute instance.
@@ -922,6 +928,7 @@ impl AppState {
                 profile: Profile::default(),
                 provenance_from: None,
                 subject_required: false,
+                tenant_organization: false,
                 history_off: HistoryOff::default(),
                 public_url,
                 snapshot_cap: 1024,

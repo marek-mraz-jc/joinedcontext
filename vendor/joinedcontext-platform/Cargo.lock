@@ -1935,6 +1935,7 @@ dependencies = [
  "hyper-util",
  "jsonschema",
  "jsonwebtoken",
+ "ngsild-model",
  "ngsild-ql",
  "regex",
  "reqwest",

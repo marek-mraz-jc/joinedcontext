@@ -40,6 +40,8 @@ tokio = { version = "1", optional = true, features = ["time"] }
 reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Pins TenantName to the broker's own tenant grammar (T-7035, PF-130).
+antares-model = { package = "ngsild-model", git = "https://github.com/marek-mraz-jc/ngsild", tag = "v0.3.0", version = "0.3" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
 
 [build-dependencies]

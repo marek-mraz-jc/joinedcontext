@@ -202,7 +202,7 @@ pub fn inbound_via(headers: &HeaderMap) -> Option<String> {
 /// Format `{alias}~{tenant}`, and the bare alias for the default tenant —
 /// mirroring 6.3.14, where the tenant header is omitted rather than sent as
 /// `default`. `~` is an RFC 7230 token character that cannot occur in a
-/// `TenantId` (`[A-Za-z0-9_-]{1,64}`), so the two halves never blur; the
+/// `TenantId` (`[A-Za-z0-9_-]{1,128}`), so the two halves never blur; the
 /// broker rejects a configured `ANTARES_HOST_ALIAS` containing `~` at
 /// startup, so `a~b` in the default tenant cannot collide with `a` in
 /// tenant `b`.

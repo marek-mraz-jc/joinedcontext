@@ -84,6 +84,17 @@ mod tests {
         assert_eq!(registry_subject(&tenant("a-b_1")), "registry.a-b_1");
     }
 
+    /// T-7036 (PF-130): the longest Tenant, `{organization}__{segment}` of
+    /// 128 characters, is one token of a subject well inside NATS limits.
+    #[test]
+    fn the_longest_tenant_is_one_subject_token() {
+        let name = format!("{}_b__{}", "a".repeat(61), "c".repeat(63));
+        let s = change_subject(&tenant(&name), "T", "urn:x:1");
+        assert_eq!(s.split('.').nth(1), Some(name.as_str()));
+        assert_eq!(s.split('.').count(), 4);
+        assert!(s.len() < 200, "{}", s.len());
+    }
+
     /// Hostile types and ids never reach the wire: both are hashed, so
     /// separators and wildcards cannot re-shape the subject either.
     #[test]

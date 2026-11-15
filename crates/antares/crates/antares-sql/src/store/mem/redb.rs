@@ -58,7 +58,7 @@ pub(super) fn table_for(kind: Kind) -> Table {
     }
 }
 
-/// Key = `tenant \0 id`. Unambiguous: TenantId is `[A-Za-z0-9_-]{1,64}`
+/// Key = `tenant \0 id`. Unambiguous: TenantId is `[A-Za-z0-9_-]{1,128}`
 /// by construction, so it can never contain the separator. Takes the tenant
 /// as the plain string the maps are keyed by, so a persisted removal can
 /// never be skipped for want of a re-parse.

@@ -9,7 +9,7 @@ use std::fmt;
 /// Tenant identifier from the `NGSILD-Tenant` header.
 ///
 /// Token-safe by construction (also used as a NATS subject segment):
-/// `[A-Za-z0-9_-]{1,64}`. The default tenant is `"default"`.
+/// `[A-Za-z0-9_-]{1,128}`. The default tenant is `"default"`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct TenantId(String);
@@ -19,7 +19,7 @@ impl TenantId {
     pub const DEFAULT: &'static str = "default";
 
     /// The longest tenant name, in bytes (all of them ASCII).
-    pub const MAX_LEN: usize = 64;
+    pub const MAX_LEN: usize = 128;
 
     /// Tenant names the broker mints for its own bookkeeping: the snapshot
     /// module's reverse index and one tenant per snapshot share a prefix, the
@@ -53,7 +53,7 @@ impl TenantId {
         Self::is_reserved_str(&self.0)
     }
 
-    /// Validates a CLIENT-supplied tenant name: `[A-Za-z0-9_-]{1,64}` and not
+    /// Validates a CLIENT-supplied tenant name: `[A-Za-z0-9_-]{1,128}` and not
     /// one the broker minted for itself, else BadRequestData. A request that
     /// named an internal tenant would put request-shaped documents in the
     /// keyspace the broker keeps its own state in, and read and delete
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn tenant_rejects_unsafe() {
-        for bad in ["", "a.b", "a b", "ü", &"x".repeat(65)] {
+        for bad in ["", "a.b", "a b", "ü", &"x".repeat(129)] {
             assert!(TenantId::new(bad).is_err(), "should reject {bad:?}");
         }
     }

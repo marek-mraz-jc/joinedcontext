@@ -47,7 +47,7 @@ peer's under the non-spec member name `hostAlias` and never read it back.
    (which therefore answers per `NGSILD-Tenant`).
 
 2. **Separator `~`.** It is an RFC 7230 token character, so the pseudonym
-   stays legal; it cannot occur in a `TenantId` (`[A-Za-z0-9_-]{1,64}`); and
+   stays legal; it cannot occur in a `TenantId` (`[A-Za-z0-9_-]{1,128}`); and
    it is free in the Urbivita URN conventions, which already spend `_` on the
    reverse-DNS razidlo and `-` on kebab-case local names. `ANTARES_HOST_ALIAS`
    is validated as an RFC 7230 token minus `~` at startup, so `a~b` in the
