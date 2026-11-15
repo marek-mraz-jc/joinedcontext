@@ -114,7 +114,9 @@ pub(crate) async fn ensure_person_ceiling(
         ));
     }
     // The same within an Organization: a people manager never takes over its admin (ADM-07).
-    let memberships = store.list_memberships_for_person(&ctx.realm_id, &user.id).await?;
+    let memberships = store
+        .list_memberships_for_person(&ctx.realm_id, &user.id)
+        .await?;
     if memberships.iter().any(|m| {
         m.org_roles
             .iter()
@@ -135,7 +137,8 @@ pub(crate) fn ensure_may_join_group(ctx: &RequestCtx, group: &GroupRepresentatio
     if caller.has_realm_mgmt_role("manage-users") || caller.has_realm_mgmt_role("scim") {
         return Ok(());
     }
-    let admin_client = |c: &str| matches!(c, "realm-management" | "broker") || c.ends_with("-realm");
+    let admin_client =
+        |c: &str| matches!(c, "realm-management" | "broker") || c.ends_with("-realm");
     let realm_wide = group
         .realm_roles
         .iter()

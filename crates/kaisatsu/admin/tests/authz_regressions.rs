@@ -315,8 +315,10 @@ async fn org_admin_cannot_reset_or_change_a_realm_admin_of_the_organization() {
         (
             Method::PATCH,
             "/api/v1/realms/dev/scim/v2/Users/hel-root",
-            Some(json!({ "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-                         "Operations": [{ "op": "replace", "path": "active", "value": false }] })),
+            Some(
+                json!({ "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                         "Operations": [{ "op": "replace", "path": "active", "value": false }] }),
+            ),
         ),
     ] {
         let st = f.send(method.clone(), path, &t, body).await;
@@ -798,7 +800,10 @@ async fn a_people_manager_cannot_change_an_organization_admin() {
 #[tokio::test]
 async fn joining_a_group_with_realm_wide_roles_needs_a_user_manager() {
     let f = Fixture::new().await;
-    for (id, roles) in [("g-admins", vec!["realm-admin".to_owned()]), ("g-staff", Vec::new())] {
+    for (id, roles) in [
+        ("g-admins", vec!["realm-admin".to_owned()]),
+        ("g-staff", Vec::new()),
+    ] {
         f.store
             .upsert_group(GroupRepresentation {
                 id: id.into(),

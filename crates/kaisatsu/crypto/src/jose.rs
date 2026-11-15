@@ -113,7 +113,13 @@ fn verify_jwt_signed<T: DeserializeOwned>(
         .map_err(|_| KaisatsuError::Crypto("invalid stored public JWK".into()))?;
     let jwk_val =
         serde_json::to_value(&pub_jwk).map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
-    verify_with_jwk(token, &jwk_val, expected_issuer, expected_audience, check_exp)
+    verify_with_jwk(
+        token,
+        &jwk_val,
+        expected_issuer,
+        expected_audience,
+        check_exp,
+    )
 }
 
 pub fn verify_jwt_with_public_jwk<T: DeserializeOwned>(

@@ -797,13 +797,25 @@ async fn logout_accepts_an_expired_id_token_hint_and_refuses_an_access_token() {
     let now = chrono::Utc::now().timestamp();
     claims["typ"] = json!("Bearer");
     let access = sign_jwt(&key, &kek, Some("JWT"), &claims).unwrap();
-    let (st, _, _) = get(&app, &format!("{logout}?id_token_hint={access}"), None, None).await;
+    let (st, _, _) = get(
+        &app,
+        &format!("{logout}?id_token_hint={access}"),
+        None,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
     claims["typ"] = json!("ID");
     claims["iat"] = json!(now - 7200);
     claims["exp"] = json!(now - 3600);
     let expired = sign_jwt(&key, &kek, Some("JWT"), &claims).unwrap();
-    let (st, _, _) = get(&app, &format!("{logout}?id_token_hint={expired}"), None, None).await;
+    let (st, _, _) = get(
+        &app,
+        &format!("{logout}?id_token_hint={expired}"),
+        None,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert!(store.get_sso_session("dev", &sid).await.unwrap().is_none());
 }

@@ -3961,11 +3961,10 @@ async fn handle_logout_request(
     if let Some(hint) = id_token_hint {
         let keys = state.store.list_signing_keys(&realm.id).await?;
         let issuer = mount.realm_issuer(&realm.realm);
-        let (_, claims): (_, Value) =
-            verify_jwt_allowing_expired(hint, &keys, Some(&issuer))
-                .ok()
-                .filter(|(_, c): &(_, Value)| c.get("typ").and_then(Value::as_str) == Some("ID"))
-                .ok_or_else(|| KaisatsuError::BadRequest("invalid id_token_hint".into()))?;
+        let (_, claims): (_, Value) = verify_jwt_allowing_expired(hint, &keys, Some(&issuer))
+            .ok()
+            .filter(|(_, c): &(_, Value)| c.get("typ").and_then(Value::as_str) == Some("ID"))
+            .ok_or_else(|| KaisatsuError::BadRequest("invalid id_token_hint".into()))?;
         hint_client_id = claims.get("azp").and_then(Value::as_str).map(str::to_owned);
         if let (Some(cid), Some(azp)) = (client_id_param, hint_client_id.as_ref())
             && cid != azp
@@ -4122,7 +4121,10 @@ mod replay_marker_tests {
         let in_a_day = now.timestamp() + 86_400;
         let until = replay_marker_until(&json!({ "exp": in_a_day }), Duration::minutes(10));
         assert!(until.timestamp() >= in_a_day);
-        let soon = replay_marker_until(&json!({ "exp": now.timestamp() + 5 }), Duration::minutes(10));
+        let soon = replay_marker_until(
+            &json!({ "exp": now.timestamp() + 5 }),
+            Duration::minutes(10),
+        );
         assert!(soon >= now + Duration::minutes(10) - Duration::seconds(1));
         let without = replay_marker_until(&json!({}), Duration::hours(1));
         assert!(without >= now + Duration::hours(1) - Duration::seconds(1));
