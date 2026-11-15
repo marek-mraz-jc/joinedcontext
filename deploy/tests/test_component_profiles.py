@@ -10,7 +10,7 @@ import subprocess
 
 import pytest
 import yaml
-from conftest import PROJECT_ROOT
+from conftest import PROJECT_ROOT, need_environment
 
 requires_helmfile = pytest.mark.skipif(shutil.which("helmfile") is None, reason="helmfile not installed")
 
@@ -40,8 +40,7 @@ def release_components(cwd, env):
 @requires_helmfile
 @pytest.mark.parametrize("profile", sorted(PROFILES))
 def test_a_profile_deploys_its_list_and_nothing_else(profile):
-    if not (PROJECT_ROOT / f"deployment/environments/{profile}").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment(profile)
     deployed = release_components(PROJECT_ROOT, profile)
     assert deployed <= PROFILES[profile], deployed - PROFILES[profile]
     assert {"context-broker", "postgres", "networkpolicies"} <= deployed

@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import need_environment
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,8 +26,7 @@ requires_helmfile = pytest.mark.skipif(shutil.which("helmfile") is None, reason=
 
 @pytest.fixture(scope="module")
 def assembled():
-    if not (ROOT / "deployment/environments/dev").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment("dev")
 
 
 @pytest.fixture(scope="module")
@@ -530,56 +530,6 @@ def test_a_portal_commit_that_built_no_builder_keeps_the_pinned_builders(tmp_pat
     assert "no builder image" not in script.stderr and "no portal image" not in script.stderr
     pulls = [line for line in log.read_text().splitlines() if line.startswith("pull")]
     assert pulls == [f"pull -q ghcr.io/marek-mraz-jc/joinedcontext-app-builder@{kept}"], log.read_text()
-
-
-def test_the_pin_bot_checks_the_docs_pin_before_it_commits():
-    # T-4931: the bot's push starts no ci run, and it pinned platform 8f28b80 over docs that did
-    # not list the gateway's new variables; deployment main went red on its next commit.
-    step = (ROOT / ".github/workflows/pin-images.yml").read_text()
-    assert step.index("scripts/check-docs-pin.sh") < step.index('git commit -q -m "$message"')
-
-
-def _pin_step(tmp_path, docs_ok: bool):
-    """pin-images.yml's pin step with every tool stubbed: every source changes, the render passes."""
-    workflow = yaml.safe_load((ROOT / ".github/workflows/pin-images.yml").read_text())
-    step = next(s for s in workflow["jobs"]["pin"]["steps"] if s.get("name") == "pin, render, check the docs, commit")
-    bin_dir, scripts = tmp_path / "bin", tmp_path / "scripts"
-    bin_dir.mkdir()
-    scripts.mkdir()
-    log = tmp_path / "log"
-    stubs = {
-        bin_dir / "python3": 'echo "pin $2"',
-        bin_dir / "git": f'echo "git $*" >> {log}; [ "$1" != diff ]',
-        bin_dir / "just": "true",
-        bin_dir / "helmfile": "true",
-        scripts / "render.sh": "true",
-        scripts / "check-docs-pin.sh": "true" if docs_ok else "false",
-    }
-    for path, body in stubs.items():
-        path.write_text(f"#!/bin/sh\n{body}\n")
-        path.chmod(0o755)
-    summary = tmp_path / "summary"
-    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", GITHUB_STEP_SUMMARY=str(summary))
-    result = subprocess.run(["bash", "-c", step["run"]], cwd=tmp_path, env=env, capture_output=True, text=True)
-    return result, log.read_text(), summary.read_text() if summary.exists() else ""
-
-
-def test_a_pin_skipped_on_the_docs_check_fails_the_run_after_every_source(tmp_path):
-    """T-5686: 10-23..10-25 every run skipped both sources on check-docs-pin.sh and ended green."""
-    result, log, summary = _pin_step(tmp_path, docs_ok=False)
-    assert result.returncode == 1, result.stdout
-    assert "not pinned: platform portal antares" in result.stdout
-    assert "git commit" not in log
-    assert "platform: pin platform: the pinned docs do not hold" in summary
-    assert "portal: pin portal: the pinned docs do not hold" in summary
-    assert "antares: pin antares: the pinned docs do not hold" in summary
-
-
-def test_a_pin_step_that_pins_every_source_passes(tmp_path):
-    # platform, portal and (T-6330) Antares
-    result, log, summary = _pin_step(tmp_path, docs_ok=True)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert log.count("git push") == 3 and summary == ""
 
 
 def _portal_ui_pin(tmp_path, published, compare, newer: dict | None = None, binary=False):

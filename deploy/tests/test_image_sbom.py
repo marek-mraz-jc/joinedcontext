@@ -7,9 +7,9 @@ bill of materials. Line-based, like that checker, because the rule is decidable 
 """
 
 import re
-from pathlib import Path
+from conftest import DEPLOY_WORKFLOWS
 
-WORKFLOWS = Path(__file__).resolve().parent.parent / ".github/workflows"
+WORKFLOWS = DEPLOY_WORKFLOWS
 EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
 
 
@@ -32,7 +32,7 @@ def unattested(text):
 
 def test_every_image_signed_by_digest_carries_an_attested_cyclonedx_sbom():
     """OPS-41: checked on every workflow; at least one of them builds an image."""
-    signing = [p for p in sorted(WORKFLOWS.glob("*.yml")) if "outputs.digest" in p.read_text() and "cosign sign " in p.read_text()]
+    signing = [p for p in WORKFLOWS if "outputs.digest" in p.read_text() and "cosign sign " in p.read_text()]
     assert signing, "no workflow here builds and signs an image; the check would prove nothing"
     problems = [f"{p.name}:{n}: {image}" for p in signing for n, image in unattested(p.read_text())]
     assert not problems, f"signed without a CycloneDX SBOM attested to the digest (OPS-41): {problems}"

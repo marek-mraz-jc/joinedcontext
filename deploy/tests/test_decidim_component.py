@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import REPO_ROOT
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 COMPONENT = PROJECT_ROOT / "components/decidim"
@@ -203,7 +204,7 @@ def test_the_image_widens_only_the_rubyzip_line_and_ships_no_key():
     for gem in ("decidim-core", "doc2text", "graphql", "rubyzip"):
         assert f" {gem} " in dockerfile.split("bundle lock --update", 1)[1].split("bundle config", 1)[0]
     assert "rm -rf /usr/local/bundle/gems/*/spec /usr/local/bundle/gems/hexapdf-*/data/hexapdf/cert" in dockerfile
-    workflow = (PROJECT_ROOT / ".github/workflows/image-decidim.yml").read_text()
+    workflow = (REPO_ROOT / ".github/workflows/image-decidim.yml").read_text()
     assert 'exit-code: "1"' in workflow and 'severity: "HIGH,CRITICAL"' in workflow
 
 

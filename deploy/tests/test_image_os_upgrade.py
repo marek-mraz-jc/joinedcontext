@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import DEPLOY_WORKFLOWS, REPO_ROOT
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCKERFILES = sorted((ROOT / "images").glob("*/Dockerfile"))
@@ -38,14 +39,14 @@ def problems(text):
 
 def built_contexts():
     contexts = set()
-    for workflow in (ROOT / ".github/workflows").glob("image-*.yml"):
+    for workflow in DEPLOY_WORKFLOWS:
         document = yaml.safe_load(workflow.read_text())
         for job in document["jobs"].values():
             include = job.get("strategy", {}).get("matrix", {}).get("include", [])
             for step in job.get("steps", []):
                 context = (step.get("with") or {}).get("context", "")
                 if "${{ matrix.context }}" in context:
-                    contexts.update(f"images/{entry['context']}" for entry in include)
+                    contexts.update(f"deploy/images/{entry['context']}" for entry in include)
                 elif context:
                     contexts.add(context)
     return contexts
@@ -58,7 +59,7 @@ def test_every_image_upgrades_its_os_packages_and_drops_root(dockerfile):
 
 @pytest.mark.parametrize("dockerfile", DOCKERFILES, ids=lambda p: p.parent.name)
 def test_every_image_is_built_by_a_workflow(dockerfile):
-    assert str(dockerfile.parent.relative_to(ROOT)) in built_contexts()
+    assert str(dockerfile.parent.relative_to(REPO_ROOT)) in built_contexts()
 
 
 def test_a_final_stage_without_an_upgrade_is_named():

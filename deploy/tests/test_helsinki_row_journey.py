@@ -79,28 +79,3 @@ def _seeded_policies():
         doc = yaml.safe_load(text)
         if doc.get("kind") == "Policy":
             yield key, doc
-
-
-def test_the_steward_reads_versions_of_their_space_and_the_viewer_never_does():
-    """T-6348 (ADR-N-054 2.4, DM-114): the steward approves changes, so they read who changed a value
-    and why (`versions=all`); the viewer and the public do not. `steward` never reaches a token, so
-    the grant names the person; a role, group or DID assignee would grant it to nobody or to more."""
-    spec = yaml.safe_load((HELSINKI / "helsinki-policy-steward-versions.yaml").read_text())["spec"]
-    index = yaml.safe_load((HELSINKI / "index.yaml").read_text())
-    assert index["helsinki-policy-steward-versions.yaml"] == "projects/helsinki/spaces/helsinki/policies/steward-versions.yaml"
-    assert spec["contextSpaceRef"] == {"kind": "ContextSpace", "name": "helsinki"}
-    assert spec["assignee"] == {"kind": "user", "id": demo_id("demo.steward")}
-    assert spec["actions"] == ["readVersions"]
-    assert set(spec["operations"]) == {"queryTemporal", "retrieveTemporal"}
-    stewards = {demo_id("demo.steward"), PREVIEW_STEWARD}
-    granted = {}
-    for name, policy in _seeded_policies():
-        if "readVersions" in policy["spec"].get("actions", []):
-            granted[name] = policy["spec"]
-    preview = {s["contextSpaceRef"]["name"] for n, s in granted.items() if n.startswith("projects__")}
-    assert preview == {"helsinki", "banskabystrica-mesto", "praha-mesto"}, sorted(granted)
-    for name, granted_spec in granted.items():
-        assert granted_spec["assignee"]["kind"] == "user", name
-        assert granted_spec["assignee"]["id"] in stewards, name
-        assert granted_spec["assignee"]["id"] != demo_id("demo.viewer"), name
-        assert granted_spec.get("effect", "permission") == "permission", name

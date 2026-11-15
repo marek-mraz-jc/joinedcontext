@@ -529,17 +529,6 @@ def test_the_websocket_guide_and_the_assistant_guide_keep_their_own_words(theme)
     assert theme.jc_t("guide_open") == "Útmutató" and theme.jc_t("tagline").startswith("Böngéssze")
 
 
-def test_hungarian_is_offered_where_bbsk_s_catalogue_runs():
-    """T-5115: southern BBSK reads Hungarian; CKAN 2.11 ships `hu`, so offering it cannot stop CKAN."""
-    values = yaml.safe_load((PROJECT_ROOT / "charts/ckan/values.yaml").read_text())
-    assert "hu" in values["ckan"]["locales"]["offered"]
-    for env in ("dev", "smartcity"):
-        text = (PROJECT_ROOT / f"ci/example-deployments/environments/{env}/ckan.yaml.gotmpl").read_text()
-        assert "offered: [sk, en, cs, fi, hu]" in text and "hu: Nyílt adatok" in text, env
-    demo = (PROJECT_ROOT / "demos/bbsk/values/ckan.yaml.gotmpl").read_text()
-    assert demo.count("offered: [sk, hu, en]") == 2
-
-
 def test_the_search_filters_are_named_in_plain_words(theme):
     facets = {"organization": "Organizations", "groups": "Groups", "tags": "Tags", "res_format": "Formats", "license_id": "Licenses"}
     renamed = theme.JcThemePlugin().dataset_facets(dict(facets), "dataset")
@@ -1081,7 +1070,6 @@ def test_the_frame_takes_the_height_its_view_says_from_the_same_origin_only():
     assert "url_for_static('/jc-frame.js') }}\" defer></script>" in view
     for page in ("templates__package__read.html", "templates__package__resource_read.html"):
         assert "url_for_static('/jc-frame.js')" in (THEME / page).read_text(), page
-
 
 
 # --- T-3058, AG-114: the catalogue offers its knowledge assistant ----------------------------
@@ -2070,7 +2058,6 @@ def test_the_corner_offers_the_assistants_page_beside_the_chat_in_one_row():
     # T-4613: the logo pill fits beside the launcher, so a phone keeps one row and the desktop's room.
     assert ".jc-corner { align-items: center; }" in phone and "flex-direction: column" not in phone.split(".jc-assistant[open]")[0]
     assert "padding-block-end: 8.5rem" not in phone
-
 
 
 def desktop_css():

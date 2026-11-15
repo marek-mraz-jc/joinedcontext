@@ -128,19 +128,3 @@ def test_dev_destroy_deletes_only_the_platform_namespaces():
         assert pattern.search(ns), ns
     for ns in ("devops", "developer", "jc-operators-old", "kube-system", "pv-dev"):
         assert not pattern.search(ns), ns
-
-
-@requires_just
-def test_the_retired_old_dev_environment_is_never_applied_again():
-    """The old dev namespace is off (owner 2026-11-10): both recipes that apply environment dev
-    stop on the RETIRED marker before rendering anything; the jc instance applies never read it."""
-    marker = PROJECT_ROOT / "ci/example-deployments/environments/dev/RETIRED"
-    assert marker.is_file()
-    result = subprocess.run(["just", "_dev-retired"], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
-    assert result.returncode != 0 and "retired" in result.stderr
-    text = (PROJECT_ROOT / "justfile").read_text()
-    for recipe in ("dev-apply full=", "dev-apply-pins base="):
-        body = text[text.index(recipe):].split("\n\n", 1)[0]
-        assert body.index("just _dev-retired") < body.index("just _dev-assemble"), recipe
-    guard = text[text.index("_dev-guard:"):].split("\n\n", 1)[0]
-    assert "_dev-retired" not in guard  # apply-instance (jc-dev, jc-prod) runs _dev-guard

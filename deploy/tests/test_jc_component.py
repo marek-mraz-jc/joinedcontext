@@ -16,7 +16,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from conftest import TREE_IGNORE
+from conftest import TREE_IGNORE, need_environment
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENVIRONMENTS = PROJECT_ROOT / "ci/example-deployments/environments"
@@ -351,8 +351,7 @@ def test_jc_prod_opts_no_pod_out_of_the_mesh_without_a_reason(rendered_variant):
 
 
 def render_addons_with(tmp_path, proxies_yaml: str) -> subprocess.CompletedProcess:
-    if not (PROJECT_ROOT / "deployment/environments/addons").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment("addons")
     tree = tmp_path / "repo"
     shutil.copytree(PROJECT_ROOT, tree, ignore=TREE_IGNORE)
     values = tree / "deployment/environments/addons/jc.yaml.gotmpl"

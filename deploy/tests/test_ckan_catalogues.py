@@ -13,7 +13,7 @@ import subprocess
 import pytest
 import yaml
 
-from conftest import PROJECT_ROOT, TREE_IGNORE, load_yaml_all, set_global
+from conftest import PROJECT_ROOT, TREE_IGNORE, load_yaml_all, set_global, need_environment
 
 EXAMPLE = [{"name": "example-city", "subDomain": "mesto"}]
 DEFAULT, OTHER = "ckan-catalogue", "ckan-example-city"
@@ -22,8 +22,7 @@ DEFAULT, OTHER = "ckan-catalogue", "ckan-example-city"
 def render(tmp_path_factory, catalogues, env="dev") -> subprocess.CompletedProcess:
     if shutil.which("helmfile") is None:
         pytest.skip("helmfile not installed")
-    if not (PROJECT_ROOT / f"deployment/environments/{env}").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment(env)
     tree = tmp_path_factory.mktemp("catalogues") / "repo"
     shutil.copytree(PROJECT_ROOT, tree, ignore=TREE_IGNORE)
     set_global(tree, "catalogues", catalogues)

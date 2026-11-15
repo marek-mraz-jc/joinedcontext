@@ -59,16 +59,6 @@ def named_layers(env: Path) -> list[str]:
     return re.findall(r"  - (\S+)", block[1]) if block else []
 
 
-def test_the_hosted_clusters_name_the_hosted_layer_and_every_named_layer_exists():
-    assert named_layers(ENVIRONMENTS / "dev") == ["hosted"]
-    assert named_layers(ENVIRONMENTS / "smartcity") == ["hosted"]
-    for env in ENVIRONMENTS.iterdir():
-        # secrets/ holds the sops files environments seed (encryptedSeedFiles, T-6982), no environment.
-        if env.is_dir() and env not in (LAYERS, ENVIRONMENTS / "secrets"):
-            for layer in named_layers(env):
-                assert list((LAYERS / layer).glob("*.yaml.gotmpl")), f"{env.name} names layer {layer!r}, which holds no file"
-
-
 def test_no_environment_file_repeats_a_layer_file():
     # A copy of a layer file in an environment is the drift this layer exists to stop.
     for layer_file in LAYERS.glob("*/*.yaml.gotmpl"):

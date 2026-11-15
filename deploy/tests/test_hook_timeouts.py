@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import load_yaml_all
+from conftest import load_yaml_all, need_environment
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,8 +18,7 @@ SLOW_HOOKS = {"gitea-bootstrap": 900, "keycloak-admin-permissions": 900}
 
 @pytest.mark.skipif(shutil.which("helmfile") is None, reason="helmfile not installed")
 def test_slow_hook_releases_wait_for_their_job():
-    if not (PROJECT_ROOT / "deployment/environments/dev").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment("dev")
     built = subprocess.run(
         ["helmfile", "-f", "deployment/helmfile.yaml", "-e", "dev", "build"],
         cwd=PROJECT_ROOT, capture_output=True, text=True,

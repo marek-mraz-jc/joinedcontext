@@ -1,6 +1,5 @@
 """T-6444: one kube-hetzner module, one tfvars per cluster, state outside Git, guarded recipes."""
 
-import ipaddress
 import os
 import re
 import stat
@@ -13,7 +12,6 @@ ROOT = Path(__file__).resolve().parent.parent
 HETZNER = ROOT / "cluster/hetzner"
 MODULE = HETZNER / "module"
 SCRIPT = HETZNER / "cluster.sh"
-TFVARS = sorted((HETZNER / "clusters").glob("*.tfvars"))
 TOKEN = "t" * 64
 
 # Stands in for terraform: logs its arguments and environment, saves a plan, answers `show -json`.
@@ -31,43 +29,6 @@ case " $* " in *" output "*) echo fake-kubeconfig ;; esac
 NO_LOSS = '{"resource_changes": [{"type": "hcloud_server", "address": "a.b", "change": {"actions": ["update"]}}]}'
 LOSS = ('{"resource_changes": [{"type": "hcloud_server", "address": "module.kube-hetzner.x",'
         ' "change": {"actions": ["delete", "create"]}}]}')
-
-
-def test_three_clusters_are_declared():
-    assert [p.stem for p in TFVARS] == ["dev", "smartcity", "stage"]
-
-
-@pytest.mark.parametrize("path", TFVARS, ids=lambda p: p.stem)
-def test_tfvars_names_only_declared_variables(path):
-    declared = set(re.findall(r'^variable "(\w+)"', (MODULE / "variables.tf").read_text(), re.M))
-    used = set(re.findall(r"^(\w+)\s*=", path.read_text(), re.M))
-    assert used and used <= declared, used - declared
-
-
-def test_every_variable_without_a_default_is_set_or_set_by_the_script():
-    text = (MODULE / "variables.tf").read_text()
-    required = {name for name, body in re.findall(r'^variable "(\w+)" \{\n(.*?)^\}', text, re.M | re.S)
-                if "default" not in body}
-    for path in TFVARS:
-        used = set(re.findall(r"^(\w+)\s*=", path.read_text(), re.M))
-        assert required - used == {"hcloud_token", "ssh_key_dir"}, path.stem
-
-
-@pytest.mark.parametrize("path", TFVARS, ids=lambda p: p.stem)
-def test_tfvars_holds_no_token_like_string(path):
-    text = path.read_text()
-    assert not re.search(r"\b[A-Za-z0-9_+/-]{40,}\b", text)
-    names = set(re.findall(r"^(\w+)\s*=", text, re.M)) - {"enable_secrets_encryption"}
-    assert not [n for n in names if re.search(r"(?i)token|secret|password", n)]
-
-
-@pytest.mark.parametrize("path", TFVARS, ids=lambda p: p.stem)
-def test_admin_cidrs_are_never_open(path):
-    line = re.search(r"^firewall_allowed_ips\s*=\s*\[(.*?)\]", path.read_text(), re.M).group(1)
-    cidrs = re.findall(r'"([^"]+)"', line)
-    # One host each (the agents' server; its address is private, the private environments/tests, T-6984);
-    # a person's address goes in private.tfvars.
-    assert cidrs and all(ipaddress.ip_network(c).prefixlen == 32 for c in cidrs), cidrs
 
 
 def test_module_refuses_an_open_cidr():
@@ -102,13 +63,6 @@ def test_lock_file_is_not_ignored():
                           cwd=ROOT).returncode == 1
 
 
-def test_a_single_node_cluster_keeps_the_controller_manager_flag_with_leader_election_off():
-    for name in ("dev", "stage"):
-        text = (HETZNER / f"clusters/{name}.tfvars").read_text()
-        assert "flex-volume-plugin-dir=/var/lib/kubelet/volumeplugins" in text
-        assert text.count('"leader-elect=false"') == 3
-
-
 def test_mqtt_ports_render_only_when_the_cluster_opens_them():
     text = (MODULE / "extra-manifests/40-traefik-linkerd.yaml.tpl").read_text()
     assert text.count('%{ if mqtt_ports_open == "true"') == 2
@@ -127,10 +81,17 @@ def run(tmp_path):
     for project in ("stage", "prod", "dev"):
         (secrets / f"hcloud-token-{project}").write_text(TOKEN)
     (tmp_path / "plan.json").write_text(NO_LOSS)
+    # The clusters' tfvars are private (JC_ENVIRONMENTS/clusters, docs/Deployment/01-repository-layout.md):
+    # each run gets its own, written here, never a file of the repository.
+    clusters = tmp_path / "environments/clusters"
+    clusters.mkdir(parents=True)
+    for name in ("dev", "smartcity", "stage"):
+        (clusters / f"{name}.tfvars").write_text(f'cluster_name = "{name}"\nssh_key_name = "ssh-{name}"\n')
 
     def call(action, name, stdin="", **env):
         full = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_DIR": str(tmp_path),
-                "CLUSTER_STATE_DIR": str(tmp_path / "state"), "SECRETS_DIR": str(secrets), **env}
+                "CLUSTER_STATE_DIR": str(tmp_path / "state"), "SECRETS_DIR": str(secrets),
+                "JC_ENVIRONMENTS": str(tmp_path / "environments"), **env}
         full.pop("ALLOW_REPLACE", None) if "ALLOW_REPLACE" not in env else None
         if "AGENT_NAME" not in env:
             full.pop("AGENT_NAME", None)
@@ -138,6 +99,12 @@ def run(tmp_path):
 
     call.dir = tmp_path
     return call
+
+
+def test_the_script_refuses_without_the_private_environments(run):
+    done = run("plan", "stage", JC_ENVIRONMENTS="")
+    assert done.returncode == 1 and "set JC_ENVIRONMENTS" in done.stderr, done.stderr
+    assert argv(run) == ""
 
 
 def argv(run):

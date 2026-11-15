@@ -21,9 +21,10 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import DEPLOY_TOOLS_ACTION, DEPLOY_WORKFLOWS
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOWS = ROOT / ".github/workflows"
+WORKFLOWS = DEPLOY_WORKFLOWS
 SHARED = ROOT / "ci/shared"
 
 # The four shapes the platform's own rules exist for, none of them real. Assembled at run
@@ -36,41 +37,6 @@ LEAKS = {
     "jwt": ".".join(["eyJ" + "hbGciOiJSUzI1NiJ9", "eyJ" + "hdWQiOiJqYy1nYXRld2F5In0", "c2lnbmF0dXJlLXBsYWNlaG9sZGVy"]),
     "client_secret": 'client_secret: "' + "S3cr3tVal" + "ue0123456789abcdef" + '"',
 }
-
-
-def written_by(workflow: str, step_name: str, filename: str) -> str:
-    """Run the step that writes the embedded configuration and return what it wrote."""
-    document = yaml.safe_load((WORKFLOWS / workflow).read_text())
-    job = next(iter(document["jobs"].values()))
-    step = next(s for s in job["steps"] if step_name in s.get("name", ""))
-    with tempfile.TemporaryDirectory() as work:
-        subprocess.run(["bash", "-c", step["run"]], cwd=work, check=True, capture_output=True)
-        return (Path(work) / filename).read_text()
-
-
-@pytest.mark.parametrize(
-    "workflow,step,filename,source",
-    [
-        ("reusable-rust-security.yml", "baseline configuration", "deny.toml", "deny.toml"),
-        ("reusable-gitleaks.yml", "platform ruleset", ".gitleaks.toml", "gitleaks.toml"),
-    ],
-)
-def test_the_embedded_configuration_is_the_shared_one(workflow, step, filename, source):
-    assert written_by(workflow, step, filename) == (SHARED / source).read_text()
-
-
-def test_a_repository_with_its_own_configuration_keeps_it():
-    document = yaml.safe_load((WORKFLOWS / "reusable-rust-security.yml").read_text())
-    step = next(
-        s
-        for s in document["jobs"]["supply-chain"]["steps"]
-        if "baseline configuration" in s.get("name", "")
-    )
-    with tempfile.TemporaryDirectory() as work:
-        own = Path(work, "deny.toml")
-        own.write_text("# this repository has a reason of its own\n")
-        subprocess.run(["bash", "-c", step["run"]], cwd=work, check=True, capture_output=True)
-        assert own.read_text() == "# this repository has a reason of its own\n"
 
 
 @pytest.fixture(scope="module")
@@ -112,7 +78,7 @@ def test_every_action_is_pinned_by_commit():
     whoever can move a tag those lanes name signs an image and shapes what the cluster applies.
     """
     unpinned = []
-    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+    for workflow in WORKFLOWS:
         document = yaml.safe_load(workflow.read_text())
         for name, job in document["jobs"].items():
             # A job either calls a workflow or runs steps; a local `./…` call is this
@@ -290,7 +256,6 @@ def test_a_workload_that_declares_all_four_passes(conftest_binary):
     assert policy_check(conftest_binary, FIXTURES / "compliant.yaml").returncode == 0
 
 
-
 def test_a_container_saying_root_is_refused_under_a_pod_saying_non_root(conftest_binary, tmp_path):
     """Kubernetes takes the container's runAsNonRoot over the pod's: pod true and container false runs
     as root, and the gate read the pod's value alone (F-DEP2-008)."""
@@ -399,29 +364,6 @@ def test_a_broker_caller_counts_only_in_its_components_namespace(conftest_binary
         assert result.returncode == 1 and f"not {ns}" in result.stdout, (ns, result.stdout)
 
 
-def test_kyverno_apply_on_the_rendered_manifests_runs_before_every_release():
-    """OPS-40: `kyverno apply` against rendered Helmfile manifests runs in ci.yml's full set, which
-    the weekly sweep and the release gate run (T-6152: off the push path, never off the release)."""
-    ci = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())
-    triggers = ci.get("on", ci.get(True))
-    assert "pull_request" in triggers, "ci.yml is the pull-request lane"
-    assert triggers["workflow_call"]["inputs"]["full"]["type"] == "boolean"
-    steps = [step for job in ci["jobs"].values() for step in job.get("steps", [])]
-    apply = [s for s in steps if "ci/policies/verify-kyverno-policies.sh" in s.get("run", "")]
-    assert apply and all("inputs.full" in s.get("if", "") for s in apply), "kyverno apply belongs to the full set"
-    assert any(s.get("run") == "kyverno test ci/policies" and s.get("if") == "matrix.shard == 1" for s in steps)
-    sweep = yaml.safe_load((WORKFLOWS / "sweep.yml").read_text())
-    assert sweep["jobs"]["ci"]["uses"] == "./.github/workflows/ci.yml" and sweep["jobs"]["ci"]["with"]["full"] is True
-    assert sweep["jobs"]["pinned-images"]["uses"] == "./.github/workflows/pinned-images.yml"
-    gate = yaml.safe_load((WORKFLOWS / "release-gate.yml").read_text())
-    assert gate["jobs"]["sweep"]["uses"] == "./.github/workflows/sweep.yml"
-    assert "sweep" in gate["jobs"]["approve"]["needs"], "a release is approved only after a green sweep"
-    script = (ROOT / "ci/policies/verify-kyverno-policies.sh").read_text()
-    for env in ("local", "production"):
-        assert f"scripts/render.sh {env}" in script, env
-    assert script.count("kyverno apply") >= 2
-
-
 PINS = "scripts/open-data/sdm/pins.json"
 
 
@@ -441,9 +383,10 @@ def test_no_workflow_or_recipe_runs_an_install_script_or_an_unpinned_package():
     """A script piped from a branch or an unpinned pip install runs whatever its host serves today,
     in jobs that hold contents: write (F-DEP1-005, F-DEP1-006, F-DEP2-012): every tool comes as a
     release asset checked against its sha256, every package by hash."""
-    texts = {p: p.read_text() for p in [*sorted((ROOT / ".github").rglob("*.yml")), ROOT / "justfile"]}
+    texts = {p: p.read_text() for p in [*DEPLOY_WORKFLOWS, DEPLOY_TOOLS_ACTION, ROOT / "justfile"]}
     for path, text in texts.items():
-        assert not re.search(r"\|\s*(ba)?sh\b", text), path
+        # one line: a YAML block scalar (`run: |`) followed by a `sh` command is no pipe
+        assert not re.search(r"\|[ \t]*(ba)?sh\b", text), path
         for line in re.findall(r"pip install[^\n]*", text):
             # The one exception installs the Model Tools checkout of ci/model-tools.lock (a commit),
             # whose own dependencies are not hash-locked yet (chyby.md, T-6218).

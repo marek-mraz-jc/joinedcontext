@@ -12,10 +12,8 @@ import os
 import shutil
 import subprocess
 import textwrap
-from pathlib import Path
 
 import pytest
-import yaml
 from conftest import PROJECT_ROOT, load_yaml_all, set_global
 from test_dev_recipes import write_nodes
 
@@ -197,16 +195,6 @@ def test_no_production_render_opens_a_path_to_previews(rendered, env):
     assert not [d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-from-branch-previews")]
 
 
-def test_the_production_guard_refuses_branch_previews(own_tree):
-    guard = (own_tree / "defaults/environment/production-guard.yaml.gotmpl").read_text()
-    assert "global.branchPreviews.enabled is true" in guard
-    env = own_tree / "deployment/environments/smartcity/global.yaml.gotmpl"
-    env.write_text(env.read_text().replace("  serviceMesh:\n", "  branchPreviews:\n    enabled: true\n  serviceMesh:\n", 1))
-    result = subprocess.run([str(own_tree / "scripts/render.sh"), "smartcity", str(own_tree / "out.yaml")],
-                            cwd=str(own_tree), capture_output=True, text=True, check=False)
-    assert result.returncode != 0 and "branch previews run only on the dev cluster" in result.stdout + result.stderr
-
-
 # ---- the recipe's guards ----------------------------------------------------------------------
 
 STUB = textwrap.dedent("""\
@@ -289,4 +277,3 @@ def test_just_dev_preview_refuses_any_context_but_dev(stub_env, tmp_path):
     result = subprocess.run(["just", "dev-preview", "x"], env=stub_env, capture_output=True, text=True,
                             check=False, cwd=str(PROJECT_ROOT))
     assert result.returncode != 0 and "not the dev cluster" in result.stderr, result.stderr
-

@@ -38,10 +38,3 @@ def test_stage_names_nothing_of_another_instance():
         text = path.read_text()
         assert "smartcity.joinedcontext.com" not in text, path
         assert not [word for word in OTHER_INSTANCES if word in text], path
-
-
-def test_the_walker_person_is_stages_alone():
-    """T-6449: only stage names a person an agent signs in as; prod keeps the owner alone."""
-    assert "walkerUserId" in (ENVIRONMENT / "global.yaml.gotmpl").read_text()
-    smartcity = ENVIRONMENT.parent / "smartcity"
-    assert not [p for p in smartcity.glob("*.gotmpl") if "walkerUserId" in p.read_text()]

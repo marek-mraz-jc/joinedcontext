@@ -167,28 +167,6 @@ def test_the_store_keeps_an_apps_bucket_whose_retired_exports_expire_after_ninet
     assert '"Prefix":"apps/retired/"' in script and '"Days":90' in script
 
 
-def test_every_environment_syncs_the_shards_after_the_portal_that_writes_what_they_mount():
-    """T-3429: a shard mounts the placement ConfigMap and store-key Secret the Portal writes, and
-    helmfile waits for its Deployment; components sync in list order and `needs` does not cross
-    them, so a shard listed before the Portal waits out a fresh cluster's apply."""
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parent.parent / "ci/example-deployments/environments"
-    checked = []
-    for file in sorted(root.glob("*/global.yaml.gotmpl")):
-        listed = [line.strip()[2:] for line in file.read_text().splitlines() if line.startswith("  - ")]
-        if "wasm-host" not in listed:
-            continue
-        # The Portal is its own component or runs inside jc (jc-prod, jc-dev).
-        feeders = [c for c in ("portal", "jc") if c in listed]
-        assert feeders, f"{file.parent.name}: wasm-host without the Portal that feeds it"
-        for portal in feeders:
-            assert listed.index(portal) < listed.index("wasm-host"), f"{file.parent.name}: wasm-host before the Portal"
-            assert listed.index("apps-db") < listed.index(portal), f"{file.parent.name}: the Portal before its database"
-        checked.append(file.parent.name)
-    assert "dev" in checked
-
-
 @pytest.mark.parametrize("shard", SHARDS)
 def test_each_shard_asks_the_portal_in_the_cluster_for_a_caller_and_the_services(docs, shard):
     """T-3622, API/06 §5: the Portal's Service on its own port, never the public host."""

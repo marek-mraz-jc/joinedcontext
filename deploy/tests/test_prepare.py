@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import TREE_IGNORE, load_yaml_all, set_global
+from conftest import TREE_IGNORE, load_yaml_all, set_global, need_environment
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,8 +20,7 @@ requires_helmfile = pytest.mark.skipif(shutil.which("helmfile") is None, reason=
 
 def build(root=PROJECT_ROOT):
     """`helmfile build` of dev in `root`, the repository or an edited copy of it."""
-    if not (PROJECT_ROOT / "deployment/environments/dev").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment("dev")
     return subprocess.run(
         ["helmfile", "-f", "deployment/helmfile.yaml", "-e", "dev", "build"],
         cwd=root, capture_output=True, text=True,
@@ -30,8 +29,7 @@ def build(root=PROJECT_ROOT):
 
 def edited(tmp_path, **values):
     """A copy of the tree with `global.*` defaults edited (`--state-values-set` reaches no component)."""
-    if not (PROJECT_ROOT / "deployment/environments/dev").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment("dev")
     tree = tmp_path / "repo"
     shutil.copytree(PROJECT_ROOT, tree, ignore=TREE_IGNORE)
     for dotted, value in values.items():

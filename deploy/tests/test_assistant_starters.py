@@ -32,22 +32,6 @@ def cards():
     return found
 
 
-def test_every_starter_has_one_eval_row_and_no_row_is_stale():
-    # A row with "card": false evaluates an owner's question that is no card yet: it becomes one
-    # after 3 of 3 on prod (T-4810).
-    rows = [(r["assistant"], r["lang"], r["q"]) for r in STARTERS if r.get("card", True)]
-    assert len(rows) == len(set(rows)), "one row per card and language"
-    assert len({r["id"] for r in STARTERS}) == len(STARTERS), "ids are unique"
-    offered = cards()
-    assert offered - set(rows) == set(), "a card without an eval row"
-    assert set(rows) - offered == set(), "an eval row for a card no seed offers"
-
-
-def test_both_catalogue_environments_offer_the_same_cards():
-    seeds = [yaml.safe_load(v.read_text())["ckan"]["catalogue"]["assistantSeed"]["suggestions"] for v in CATALOGUE]
-    assert seeds[0] == seeds[1]
-
-
 def test_each_row_names_what_the_answer_must_hold_and_a_page_a_person_can_open():
     for row in STARTERS:
         assert KEYS <= set(row) <= KEYS | {"live", "card"}, row["id"]

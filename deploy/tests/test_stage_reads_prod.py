@@ -75,17 +75,6 @@ def test_one_registration_per_space_and_type():
                 seen[key] = path
 
 
-def test_only_stage_lists_the_folder():
-    environments = PROJECT_ROOT / "ci/example-deployments/environments"
-    listing = {
-        env.name
-        for env in environments.iterdir()
-        for values in env.glob("*.yaml.gotmpl")
-        if any(line.strip() == "- context-gateway/seed/stage-reads-prod" for line in values.read_text().splitlines())
-    }
-    assert listing == {"stage"}, listing
-
-
 def test_the_stage_seed_carries_the_registrations_and_prod_and_dev_do_not(rendered):
     paths = {path.replace("/", "__") for path in registrations()}
     stage = set(seed_configmap(rendered("stage"))["data"])
@@ -110,4 +99,3 @@ def test_the_folder_holds_no_file_the_index_leaves_out():
     index = yaml.safe_load((FOLDER / "index.yaml").read_text())
     files = {p.name for p in FOLDER.glob("*.yaml")} - {"index.yaml"}
     assert files == set(index), files ^ set(index)
-

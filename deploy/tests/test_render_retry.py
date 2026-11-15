@@ -34,7 +34,7 @@ def render(tmp_path, failures: list[str]):
     out = tmp_path / "out.yaml"
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
     result = subprocess.run(
-        [str(ROOT / "scripts/render.sh"), "dev", str(out)],
+        [str(ROOT / "scripts/render.sh"), "production", str(out)],
         check=False, cwd=str(ROOT), env=env, capture_output=True, text=True,
     )
     calls = len((tmp_path / "calls").read_text().splitlines())

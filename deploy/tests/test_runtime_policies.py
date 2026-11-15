@@ -554,7 +554,6 @@ def test_a_production_subject_on_any_branch_but_main_refuses_to_render(tmp_path)
     assert result.returncode != 0 and "subjectRegExp" in result.stderr, result.stderr
 
 
-
 @pytest.fixture(scope="module")
 def production_tier(tmp_path_factory):
     """The chart with the production tier switched on, as the first labelled environment will."""
@@ -697,45 +696,6 @@ def plural(kind: str) -> str:
     if kind.endswith("y"):
         return kind[:-1] + "ies"
     return kind + ("es" if kind.endswith("s") else "s")
-
-
-@requires_helm
-def test_the_drift_reader_reads_each_rendered_kind_and_nothing_beyond_objects():
-    # T-4956 review: resources '*' also grants nodes/proxy (kubelet exec over GET), services/proxy
-    # and pods/log. The role names each kind the environments render, get and list only.
-    rendered = subprocess.run(
-        ["helm", "template", "runtime-policies", str(CHART), "--namespace", "dev",
-         "--set", "driftReader.secretNamespaces={dev,dev-portal}"],
-        capture_output=True, text=True, check=True,
-    ).stdout
-    docs = [d for d in yaml.safe_load_all(rendered) if d]
-    role = next(d for d in docs if d["kind"] == "ClusterRole" and d["metadata"]["name"] == "jc-drift-reader")
-    # T-5702 (F-DEP2-001): Secrets only in the release namespaces, never cluster-wide.
-    secret_roles = {d["metadata"]["namespace"]: d for d in docs
-                    if d["kind"] == "Role" and d["metadata"]["name"] == "jc-drift-reader-secrets"}
-    assert set(secret_roles) == {"dev", "dev-portal"}
-    for ns, secret_role in secret_roles.items():
-        assert secret_role["rules"] == [{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list"]}]
-        binding = next(d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["namespace"] == ns)
-        assert binding["roleRef"]["kind"] == "Role" and binding["subjects"][0]["name"] == "jc-drift-reader"
-    granted = {("", "secrets")}
-    for rule in role["rules"]:
-        assert rule["verbs"] == ["get", "list"], rule
-        assert "*" not in rule["apiGroups"] and "*" not in rule["resources"], rule
-        assert "resourceNames" not in rule and "nonResourceURLs" not in rule, rule
-        for resource in rule["resources"]:
-            assert resource != "secrets", "cluster-wide Secrets read every credential of every namespace"
-            assert "/" not in resource, f"subresource {resource} (proxy, exec, attach, portforward, log)"
-            granted |= {(group, resource) for group in rule["apiGroups"]}
-    rendered_kinds = set()
-    for golden in (PROJECT_ROOT / "ci/golden").glob("*.txt"):
-        for line in golden.read_text().splitlines():
-            api_version, _, kind = line.split()[0].rpartition("/")
-            group = api_version.rpartition("/")[0] if "/" in api_version else ""
-            rendered_kinds.add((group, plural(kind)))
-    assert rendered_kinds, "no golden render to compare with"
-    assert rendered_kinds - granted == set(), "kinds helm diff must read"
-    assert granted - rendered_kinds == set(), "grants no environment renders"
 
 
 @requires_kyverno

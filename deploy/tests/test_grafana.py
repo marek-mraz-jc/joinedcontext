@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import REPO_ROOT
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 COMPONENT = PROJECT_ROOT / "components/grafana"
@@ -308,10 +309,10 @@ def test_the_component_refuses_to_render_without_a_prometheus(tmp_path):
     assert "no prometheusUrl is set" in result.stdout + result.stderr
 
 
-# Project dashboards (T-6504). `addons` renders one project; dev's list is read as a file, so these
-# hold before the component joins dev's `components:`.
+# Project dashboards (T-6504). `addons` renders one project; dev's list is read from its fixture copy
+# (dev's values are private), so these hold before the component joins an environment's `components:`.
 DEV_PROJECTS = yaml.safe_load(
-    (PROJECT_ROOT / "ci/example-deployments/environments/dev/grafana.yaml.gotmpl").read_text()
+    (PROJECT_ROOT / "tests/fixtures/grafana/projects.yaml").read_text()
 )["grafana"]["grafana"]["projects"]
 DASHBOARD_DIR = COMPONENT / "charts/dashboards/projects"
 PROVISION = COMPONENT / "charts/dashboards/provision.sh"
@@ -362,7 +363,7 @@ def test_the_one_unsigned_plugin_is_the_pinned_one(addons):
 def test_the_image_gate_reads_the_expiring_excuses_and_prints_the_digest_first():
     """The binary is upstream's, so its reviewed rows hold here too, with their expiry; a digest
     printed after a red gate would leave nothing to pin or to read a new finding on."""
-    workflow = (PROJECT_ROOT / ".github/workflows/image-grafana.yml").read_text()
+    workflow = (REPO_ROOT / ".github/workflows/image-grafana.yml").read_text()
     assert 'row["expires"] >= today' in workflow and "trivyignores: .trivyignore" in workflow
     assert workflow.index("pin this in components/grafana") < workflow.index('exit-code: "1"')
 

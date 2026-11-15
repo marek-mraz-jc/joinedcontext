@@ -10,6 +10,7 @@ import functools
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,9 +22,35 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RENDER_SH = PROJECT_ROOT / "scripts/render.sh"
 TREE_IGNORE = shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules")
 SEED = PROJECT_ROOT / "components/context-gateway/seed"
+# The deployment code lives in deploy/ of jc (T-6985); its workflows are jc's: the image lanes and the
+# pinned-image scan it brought, and ci.yml, whose deploy-* jobs gate it.
+REPO_ROOT = PROJECT_ROOT.parent
+DEPLOY_WORKFLOWS = sorted(p for p in (REPO_ROOT / ".github/workflows").glob("*.yml")
+                          if p.name in ("ci.yml", "deploy-pinned-images.yml")
+                          or re.fullmatch(r"image-(ckan|decidim|gitops|grafana|patched|viz)\.yml", p.name))
+DEPLOY_TOOLS_ACTION = REPO_ROOT / ".github/actions/deploy-tools/action.yml"
 # libyaml's loader resolves the same YAML 1.1 tags as SafeLoader (bare on/no stay bool) and
 # parses the seed ten times faster: 0.7 s instead of 7.6 s for its 2,500 files (T-5550).
 _LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+# The public example environments; dev, stage, smartcity and jc-prod live in the private
+# environments/ checkout (T-6984), which `just _dev-assemble` overlays when JC_ENVIRONMENTS names it.
+PUBLIC_ENVS = frozenset(p.name for p in (PROJECT_ROOT / "ci/example-deployments/environments").iterdir()
+                        if p.is_dir() and not p.name.startswith("_"))
+
+
+def need_environment(env: str = "") -> None:
+    """Skip a test of a private environment when this checkout has none; fail for any other gap.
+
+    `deployment/` is gitignored and assembled from the committed defaults plus the example
+    environments; rendering a half-built tree would test the wrong thing. jc's ci holds only the
+    public examples, so a private environment's test runs where its values are: the host replay
+    of tasks/autocheck, which assembles with JC_ENVIRONMENTS set.
+    """
+    if (PROJECT_ROOT / "deployment/environments" / env).is_dir():
+        return
+    if env and env not in PUBLIC_ENVS and not os.environ.get("JC_ENVIRONMENTS"):
+        pytest.skip(f"environment {env} is private: set JC_ENVIRONMENTS to the environments/ checkout")
+    pytest.fail(f"deployment/environments/{env} is missing: run `just _dev-assemble` first")
 
 
 def load_yaml(text: str):
@@ -62,10 +89,7 @@ def rendered(tmp_path_factory, worker_id):
         if env not in cache:
             if shutil.which("helmfile") is None:
                 pytest.skip("helmfile not installed")
-            # `deployment/` is gitignored and assembled from the committed defaults plus the
-            # example environments; rendering a half-built tree would test the wrong thing.
-            if not (PROJECT_ROOT / f"deployment/environments/{env}").is_dir():
-                pytest.skip("run `just _dev-assemble` first")
+            need_environment(env)
             out = out_dir / f"{env}.yaml"
             with open(out_dir / f"{env}.lock", "w") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX)
@@ -98,8 +122,7 @@ def own_tree(tmp_path_factory):
     queued for four and a half minutes of the fast lane (T-2895). The copy is 13 MB and takes a
     fifth of a second, so each module (on each worker) writes its own and they run side by side.
     """
-    if not (PROJECT_ROOT / "deployment/environments").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment()
     tree = tmp_path_factory.mktemp("tree") / "repo"
     shutil.copytree(PROJECT_ROOT, tree, ignore=TREE_IGNORE)
     return tree
@@ -121,8 +144,7 @@ def rendered_variant(tmp_path_factory):
         nonlocal count
         if shutil.which("helmfile") is None:
             pytest.skip("helmfile not installed")
-        if not (PROJECT_ROOT / f"deployment/environments/{env}").is_dir():
-            pytest.skip("run `just _dev-assemble` first")
+        need_environment(env)
         count += 1
         tree = made / f"tree-{count}"
         shutil.copytree(PROJECT_ROOT, tree, ignore=TREE_IGNORE)

@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import need_environment
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -36,8 +37,7 @@ def _session(tmp_path, shared: Path | None):
 
 @pytest.fixture
 def assembled():
-    if not (ROOT / "deployment/environments/local").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment("local")
 
 
 def test_a_handed_over_render_is_read_instead_of_rendered(tmp_path, assembled):

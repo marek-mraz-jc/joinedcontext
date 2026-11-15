@@ -87,11 +87,6 @@ def test_changelog_from_fixtures_newest_first_with_tasks_and_own_images(tmp_path
     assert "- portal: not pinned" in text and "r/other" not in text
 
 
-def test_the_committed_changelog_is_the_render_of_the_notes():
-    assert (ROOT / "CHANGELOG.md").read_text() == release.changelog(ROOT / "releases"), \
-        "run scripts/release.py changelog"
-
-
 def test_cut_writes_notes_changelog_and_an_annotated_tag_and_pushes_without_force(repo):
     commit(repo, "T-0102: first change")
     assert release.cut("minor", push=True, cwd=repo, today="2026-10-21") == "v0.1.0"

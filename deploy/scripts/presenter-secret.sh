@@ -15,7 +15,7 @@
 # TOTP. Nobody reads or types the plain password. `capture` reads the password credential row of
 # the named dev account from Keycloak's database (secret_data holds the salted hash, credential_data
 # the algorithm and iterations) and encrypts both with sops to the recipients of .sops.yaml straight
-# from memory into components/keycloak/presenter.enc.yaml; commit that file. `load` decrypts it and
+# from memory into $JC_ENVIRONMENTS/secrets/keycloak/presenter.enc.yaml; commit that file in the private repository. `load` decrypts it and
 # writes the credential into the presenter (components/keycloak/presenter.yaml) through the realm's
 # partial import, the one admin call that takes a stored hash, then applies keycloak-config, which
 # puts the person's groups back and never touches a password it was not given.
@@ -24,9 +24,10 @@
 set -uo pipefail
 
 username="presenter@hel.fi"
-sops_file="components/keycloak/presenter.enc.yaml"
+# Both live in the private environments/ checkout JC_ENVIRONMENTS names (docs/Deployment/01-repository-layout.md).
+sops_file=""
 helmfile_file="deployment/helmfile.yaml"
-id_file_for() { printf 'ci/example-deployments/environments/%s/global.yaml.gotmpl' "$1"; }
+id_file_for() { printf '%s/%s/global.yaml.gotmpl' "$JC_ENVIRONMENTS" "$1"; }
 
 die() { printf 'presenter-secret: %s\n' "$1" >&2; exit 2; }
 say() { printf 'presenter-secret: %s\n' "$1"; }
@@ -49,11 +50,17 @@ done
 case "$command" in capture | load) ;; *) die "usage: presenter-secret.sh capture|load ... (see the header of this script)" ;; esac
 [ -n "$realm" ] || die "--realm is required (the instance's global.instanceSlug)"
 case "$realm" in *[!a-z0-9-]*) die "--realm takes lowercase letters, digits and dashes" ;; esac
-[ -f .sops.yaml ] || die "run from the deployment repository root"
+private() {
+	if [ -z "${JC_ENVIRONMENTS:-}" ] || [ ! -f "$JC_ENVIRONMENTS/.sops.yaml" ]; then
+		die "set JC_ENVIRONMENTS to the private environments/ checkout: its .sops.yaml names the recipients, its secrets/ holds the credential"
+	fi
+	sops_file="$JC_ENVIRONMENTS/secrets/keycloak/presenter.enc.yaml"
+}
 
 capture() {
 	[ -n "$from" ] || die "--from is required: the owner's dev admin username"
 	case "$from" in *[!A-Za-z0-9@._+-]*) die "--from takes a Keycloak username" ;; esac
+	private
 	local pod row algorithm
 	pod=$(kubectl get pod -A -l cnpg.io/cluster=postgres-cluster,cnpg.io/instanceRole=primary \
 		-o 'jsonpath={.items[0].metadata.namespace}/{.items[0].metadata.name}') || die "cannot list the database pods"
@@ -73,11 +80,12 @@ capture() {
 		say "would encrypt it into $sops_file"
 		return
 	fi
+	mkdir -p "$(dirname "$sops_file")"
 	printf '%s' "$row" | python3 -c '
 import json, sys, yaml
 row = json.loads(sys.stdin.read())
 yaml.safe_dump({"from": sys.argv[1], "secretData": row["secretData"], "credentialData": row["credentialData"]}, sys.stdout)
-' "$from" | sops --encrypt --input-type yaml --output-type yaml --filename-override "$sops_file" /dev/stdin >"$sops_file.new" \
+' "$from" | sops --config "$JC_ENVIRONMENTS/.sops.yaml" --encrypt --input-type yaml --output-type yaml --filename-override secrets/keycloak/presenter.enc.yaml /dev/stdin >"$sops_file.new" \
 		|| { rm -f "$sops_file.new"; die "sops could not encrypt the credential"; }
 	mv "$sops_file.new" "$sops_file"
 	say "wrote $sops_file: commit it, then run \`load\` on each instance"
@@ -85,6 +93,7 @@ yaml.safe_dump({"from": sys.argv[1], "secretData": row["secretData"], "credentia
 
 load() {
 	[ -n "$instance" ] || die "--instance is required"
+	private
 	[ -n "${SOPS_AGE_KEY_FILE:-}${SOPS_AGE_KEY:-}" ] || die "set SOPS_AGE_KEY_FILE to this instance's age key"
 	[ -f "$sops_file" ] || die "$sops_file is missing: run \`capture\` on dev first"
 	local id body pod

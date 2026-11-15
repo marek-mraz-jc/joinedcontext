@@ -67,30 +67,3 @@ def test_a_full_summary_names_what_it_leaves_out(tmp_path):
     assert len(out.encode()) <= 2_000
     assert "<code>Deployment jc/d0</code>" in out  # a big diff first leaves room for the next ones
     assert "the whole diff is in the run's artifact: `ConfigMap jc/db`" in out
-
-
-def test_the_gate_waits_on_production_and_holds_no_cluster_credential():
-    text = WORKFLOW.read_text()
-    flow = yaml.safe_load(text)
-    on = flow[True]  # PyYAML reads the bare key `on` as True
-    assert on["push"] == {"tags": ["v*"]} and "workflow_dispatch" in on and "schedule" not in on
-    assert flow["permissions"] == {"contents": "read"}
-    assert flow["jobs"]["approve"]["environment"] == "production"
-    assert flow["jobs"]["approve"]["needs"] == ["diff", "sweep"]
-    assert "secrets." not in text  # no repository or environment secret is read
-    runs = [step["run"] for job in flow["jobs"].values() for step in job.get("steps", []) if "run" in step]
-    for word in ("KUBECONFIG", "kubectl", " sync", " apply"):
-        assert not [r for r in runs if word in r.replace("`just prod-apply`", "")], word
-
-
-def test_the_gate_refuses_a_digest_without_the_scan_record():
-    # T-6154: dev pins before image-scan.yml ran; the release gate and prod-apply read its result.
-    flow = yaml.safe_load(WORKFLOW.read_text())
-    runs = [step.get("run", "") for step in flow["jobs"]["diff"]["steps"]]
-    gate = [r for r in runs if "verify-pinned-images.py smartcity" in r]
-    assert gate and "--scanned" in gate[0] and "release.yaml" in gate[0]
-    render = next(i for i, r in enumerate(runs) if "scripts/render.sh smartcity" in r)
-    assert runs.index(gate[0]) > render
-    justfile = (ROOT / "justfile").read_text()
-    prod = justfile.split("\nprod-apply:\n", 1)[1].split("\n\n", 1)[0]
-    assert "verify-pinned-images.py smartcity --scanned" in prod

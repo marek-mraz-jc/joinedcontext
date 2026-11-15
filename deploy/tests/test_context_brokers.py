@@ -15,7 +15,7 @@ import subprocess
 import pytest
 import yaml
 
-from conftest import PROJECT_ROOT, TREE_IGNORE, load_yaml_all, set_global
+from conftest import PROJECT_ROOT, TREE_IGNORE, load_yaml_all, set_global, need_environment
 
 # archive takes every default: size small, the environment's storage class.
 BROKERS = [{"name": "archive"},
@@ -26,8 +26,7 @@ OTHER = {"archive": "sensors", "sensors": "archive"}
 def render(tmp_path_factory, brokers, env="dev") -> subprocess.CompletedProcess:
     if shutil.which("helmfile") is None:
         pytest.skip("helmfile not installed")
-    if not (PROJECT_ROOT / f"deployment/environments/{env}").is_dir():
-        pytest.skip("run `just _dev-assemble` first")
+    need_environment(env)
     tree = tmp_path_factory.mktemp("brokers") / "repo"
     shutil.copytree(PROJECT_ROOT, tree, ignore=TREE_IGNORE)
     set_global(tree, "contextBrokers", brokers)

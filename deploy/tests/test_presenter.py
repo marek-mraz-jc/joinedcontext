@@ -11,7 +11,6 @@ import json
 import os
 import re
 import subprocess
-import uuid
 from pathlib import Path
 
 import pytest
@@ -30,15 +29,6 @@ def presenter_id(env: str) -> str | None:
     path = ENVIRONMENTS / env / "global.yaml.gotmpl"
     found = re.findall(r"(?m)^  presenterUserId: (\S+)", path.read_text()) if path.is_file() else []
     return found[0] if found else None
-
-
-def test_the_three_instances_name_one_presenter_and_no_other_does():
-    ids = {env: presenter_id(env) for env in INSTANCES}
-    assert len(set(ids.values())) == 1, ids
-    [one] = set(ids.values())
-    assert uuid.UUID(one).version == 4 and not one.startswith("de300000-"), "a demo id is refused on production"
-    others = [p.name for p in ENVIRONMENTS.iterdir() if p.is_dir() and p.name not in INSTANCES and presenter_id(p.name)]
-    assert not others, others
 
 
 def test_the_presenter_reads_what_the_administrators_read_with_no_realm_role():
@@ -69,6 +59,8 @@ def test_the_copied_credential_is_only_in_the_sops_file():
     (["capture", "--realm", "dev", "--from", "a b"], "takes a Keycloak username"),
     (["load", "--realm", "Dev;x"], "lowercase letters"),
     (["load", "--realm", "stage"], "--instance is required"),
+    (["capture", "--realm", "dev", "--from", "owner"], "set JC_ENVIRONMENTS"),
+    (["load", "--realm", "stage", "--instance", "stage"], "set JC_ENVIRONMENTS"),
 ])
 def test_the_script_refuses_before_it_reaches_a_cluster(args, refusal):
     result = subprocess.run(

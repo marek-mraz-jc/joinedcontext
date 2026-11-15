@@ -128,7 +128,7 @@ def pins(rev: str, cwd: Path = ROOT) -> dict[str, str]:
     for path in git("ls-tree", "-r", "--name-only", rev, "components", cwd=cwd).splitlines():
         found = re.fullmatch(r"components/([^/]+)/images\.yaml", path)
         if found:
-            out[found.group(1)] = git("show", f"{rev}:{path}", cwd=cwd)
+            out[found.group(1)] = git("show", f"{rev}:./{path}", cwd=cwd)
     return out
 
 
@@ -150,7 +150,7 @@ def candidate(rev: str, cwd: Path = ROOT) -> dict:
 
 def broker_commit(rev: str, cwd: Path = ROOT) -> tuple[str, str]:
     """(tag, Antares commit) of the broker `rev` pins: the tag, and the `Antares dev <sha> (<tag>` note above it."""
-    text = git("show", f"{rev}:{BROKER_IMAGES}", cwd=cwd)
+    text = git("show", f"{rev}:./{BROKER_IMAGES}", cwd=cwd)
     tags = re.findall(r"^\s+tag:\s*'?([\w.-]+)'?\s*$", text, re.MULTILINE)
     if not tags:
         raise Refused(f"{BROKER_IMAGES} at {rev} pins no broker tag")

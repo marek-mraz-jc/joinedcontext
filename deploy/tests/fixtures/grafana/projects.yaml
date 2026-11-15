@@ -1,0 +1,18 @@
+# The project dashboards dev listed (T-6504), kept here because the environments' own values are private
+# (docs/Deployment/01-repository-layout.md); every slug is a public Endpoint of the seeds.
+grafana:
+  grafana:
+    # Project dashboards over the dev Endpoints (T-6504): components/grafana/README.md.
+    projects:
+      - name: helsinki
+        title: Helsinki
+        groups: [/helsinki]
+        endpoints:
+          - { name: helsinki-cycle-counts, slug: kvhnixtbe5dex2wt2kx3i37dzw6yzsxt }
+          - { name: helsinki-air-quality, slug: jtjnhkaau64zmzz5csmcwem52icvufy2 }
+          - { name: helsinki-bikes-ops, slug: ydp6nddchg4sewmylsiclg4377mlldrj }
+      - name: bbsk
+        title: Banskobystrický kraj
+        groups: [/bbsk]
+        endpoints:
+          - { name: bbsk-kpi, slug: qfhhh5no5wz4lk3rfjisdtx3chiyfig3 }

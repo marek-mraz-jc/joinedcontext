@@ -8,7 +8,6 @@ documented ones. scripts/keycloak-login-journey.py walks the same rules in a bro
 
 import base64
 import json
-import subprocess
 import uuid
 
 import pytest
@@ -73,14 +72,6 @@ def test_only_dev_lets_approvers_sign_in_without_a_one_time_code(env_docs, realm
     env, _ = env_docs
     approver = next(r for r in realm["roles"]["realm"] if r["name"] == "portal-approver")
     assert ("mfa-required" in json.dumps(approver.get("composites"))) is (env != "dev"), env
-
-
-def test_the_production_guard_refuses_approvers_without_mfa(own_tree):
-    env = own_tree / "deployment/environments/smartcity/global.yaml.gotmpl"
-    env.write_text(env.read_text().replace("  serviceMesh:\n", "  approverMfa: false\n  serviceMesh:\n", 1))
-    result = subprocess.run([str(own_tree / "scripts/render.sh"), "smartcity", str(own_tree / "out.yaml")],
-                            cwd=str(own_tree), capture_output=True, text=True, check=False)
-    assert result.returncode != 0 and "global.approverMfa is false" in result.stdout + result.stderr
 
 
 def test_the_browser_flow_demands_totp_of_mfa_required_and_offers_2fa_to_the_rest(realm):

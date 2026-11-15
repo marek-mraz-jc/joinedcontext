@@ -8,14 +8,12 @@ MCP with read-only tools, and its limits are T-4149's with a daily budget per bo
 No other body's site, organization or Endpoint is reachable from it.
 """
 
-import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
 import yaml
 from conftest import (
-    PROJECT_ROOT,
     dev_catalogue,
     render_catalogue_assistant,
     seed_documents,
@@ -194,11 +192,6 @@ def test_it_is_placed_on_the_host_the_demo_page_and_the_catalogue_with_its_own_b
     assert spec["model"]["answer"] and spec["model"]["router"]
 
 
-def test_the_public_budgets_stay_inside_the_keys_five_dollars():
-    total = sum(deployment(p)["spec"]["budget"]["costPerDayUsd"] for p in BODIES)
-    assert total + general()["spec"]["budget"]["costPerDayUsd"] <= 5
-
-
 def test_a_conversation_holds_100000_tokens_and_costs_at_most_15_cents():
     # T-4761 (owner 2026-10-19 20:1xZ): bbsk-demo's 40,000 refused the owner's second question
     # ("Tento rozhovor je už dlhý"); one data answer alone can spend that. Owner: ten questions
@@ -279,177 +272,13 @@ def general() -> dict:
     return yaml.safe_load(render_catalogue_assistant(dev_catalogue(), "dev.joinedcontext.com"))
 
 
-def test_the_catalogue_frames_the_general_assistant_on_every_page():
-    # T-4342 (owner 2026-10-16): data.dev offers one general assistant, never a city's; the
-    # template's per-organization map stays for other installations and is empty here.
-    values = Path(__file__).resolve().parent.parent / "ci/example-deployments/environments/dev/ckan.yaml.gotmpl"
-    catalogue = yaml.safe_load(values.read_text())["ckan"]["catalogue"]
-    assert catalogue["assistant"] == "data" and "assistantByOrganization" not in catalogue
-    assert general()["spec"]["publicId"] == "data"
-    assert general()["spec"]["allowedOrigins"] == ["https://opendata.dev.joinedcontext.com"]
-
-
 # The CKAN organization each body publishes under, and the project its Endpoints live in.
 PUBLISHED = {"bbsk": "bbsk", "banskabystrica": "banskabystrica", "zilina": "zilina", "praha": "praha", "hel-fi": "helsinki", "slovensko": "slovensko", "barcelona": "barcelona"}
-
-
-def test_the_general_assistant_reads_every_publishers_public_endpoints():
-    spec = general()["spec"]
-    assert spec["channel"] == "public" and spec.get("enabled", True) is True
-    # And the national open data (T-4340).
-    assert spec["scope"]["projects"] == ["banskabystrica", "zilina", "praha", "helsinki", "slovensko", "barcelona"]
-    reached = set()
-    for connector in spec["connectors"]:
-        project, _, name = connector["endpoint"].rpartition("/")
-        project = project or "bbsk"
-        assert project == "bbsk" or project in spec["scope"]["projects"], connector
-        endpoint = manifests("Endpoint", project)[name]["spec"]
-        assert endpoint["audience"] == "public", connector["endpoint"]
-        assert "mcp" in endpoint["enabledRepresentations"], connector["endpoint"]
-        assert set(connector["tools"]) <= READ_ONLY, connector
-        assert name != "public-air", "test entities are written through it"
-        reached.add(project)
-    assert reached == set(PUBLISHED.values()), "an Endpoint of every published organization"
-
-
-def test_the_general_assistant_reads_every_national_public_endpoint():
-    # T-4680: each ŠÚ SR topic is its own Endpoint of one type, KeyPerformanceIndicator; the
-    # router tells them apart by their titles, so every one joins and none is left unreachable.
-    # The catalogue's own records (`catalog`) are read through the search sources instead.
-    endpoints = manifests("Endpoint", "slovensko")
-    national = {f"slovensko/{name}" for name, e in endpoints.items() if name != "catalog"
-                and e["spec"]["audience"] == "public" and "mcp" in e["spec"]["enabledRepresentations"]}
-    assert len([n for n in national if n.startswith("slovensko/susr-")]) == 45
-    connected = {c["endpoint"] for c in general()["spec"]["connectors"]}
-    assert national <= connected, sorted(national - connected)
-    for name in national:
-        title = endpoints[name.split("/")[1]]["metadata"]["title"]
-        assert title.get("en") and len(title["en"]) <= 80, name
-
-
-def test_the_general_assistant_reads_barcelonas_surface_parking():
-    # T-6566 (owner 2026-11-03): asked where to park near Barcelona's centre, the catalogue's
-    # assistant answered that the published data holds no parking for Barcelona and sent the
-    # person to Žilina and Helsinki, while barcelona-parking (OnStreetParking, totalSpotNumber) is
-    # public. Every public Endpoint of the city is a connector, and the prompt names the city.
-    spec = general()["spec"]
-    connected = {c["endpoint"] for c in spec["connectors"]}
-    endpoints = manifests("Endpoint", "barcelona")
-    city = {f"barcelona/{name}" for name, e in endpoints.items() if name != "barcelona"
-            and e["spec"]["audience"] == "public" and "mcp" in e["spec"]["enabledRepresentations"]}
-    assert "barcelona/barcelona-parking" in city
-    assert city <= connected, sorted(city - connected)
-    assert "barcelona" in spec["scope"]["projects"]
-    assert "Barcelona = barcelona" in spec["systemPrompt"]
 
 
 # jc-core reach::MAX_RESOLVED (AG-122): jc-assistant serves the first this many Endpoints by slug
 # and drops the rest without a word, so a connector past it is never read.
 MAX_RESOLVED = 100
-
-
-@pytest.mark.parametrize("env", ["dev", "smartcity"])
-def test_the_general_assistant_resolves_every_connector_with_the_air_of_banska_bystrica(env):
-    # T-5786: 67 connectors under a bound of 50 dropped the 17 with the highest slugs, among them
-    # banskabystrica-verejne and ovzdusie-sk, the two that hold station SK0263A, and prod answered
-    # that Banská Bystrica publishes no air quality.
-    values = PROJECT_ROOT / f"ci/example-deployments/environments/{env}/ckan.yaml.gotmpl"
-    connectors = yaml.safe_load(values.read_text())["ckan"]["catalogue"]["assistantSeed"]["connectors"]
-    assert len(connectors) == len(set(connectors)), "a connector named twice"
-    assert len(connectors) <= MAX_RESOLVED, f"{len(connectors)} connectors, past AG-122's {MAX_RESOLVED}"
-    assert {"banskabystrica/banskabystrica-verejne", "slovensko/ovzdusie-sk"} <= set(connectors)
-    pipelines = manifests("Pipeline", "banskabystrica")
-    assert any("AirQualityObserved" in json.dumps(p) and "banskabystrica-verejne" in json.dumps(p)
-               for p in pipelines.values()), "a pipeline writes AirQualityObserved into banskabystrica-verejne"
-
-
-def test_the_general_assistant_knows_the_whole_catalogue_and_each_publishers_own_site():
-    # Its knowledge is the catalogue's records (every organization of data.dev, refreshed after
-    # the nightly harvest), each body's Endpoint descriptions and, since T-4680 (the owner sent
-    # bbsk.sk: its map portal and cycle pages answer what the catalogue cannot), each
-    # publisher's own website, the weekly crawl its body's assistant reads. No other site.
-    spec = general()["spec"]
-    assert spec.get("answer", {}).get("routes", "both") == "both"
-    webs = set()
-    for name in spec["sources"]:
-        project, _, source = name.rpartition("/")
-        project = project or "bbsk"
-        assert project == "bbsk" or project in spec["scope"]["projects"], name
-        doc = manifests("KnowledgeSource", project)[source]["spec"]
-        assert doc["visibility"] == "public", name
-        assert doc["source"] in ("ckan", "catalogue", "website"), name
-        if doc["source"] == "website":
-            webs.add(project)
-            # The body's own site, the one its own assistant crawls (T-4167).
-            own = {"bbsk": "www.bbsk.sk", "banskabystrica": "www.banskabystrica.sk", "zilina": "www.zilina.sk",
-                   "praha": "www.praha.eu", "helsinki": "www.hel.fi"}[project]
-            assert {urlsplit(url).hostname for url in doc["startUrls"]} == {own}, name
-    assert webs == {"bbsk", "banskabystrica", "zilina", "praha", "helsinki"}
-    portal = manifests("KnowledgeSource", "bbsk")["portal"]["spec"]
-    assert portal["source"] == "ckan" and "organizations" not in portal
-    instance = manifests("CkanInstance", "bbsk")[portal["ckanInstanceRef"]]["spec"]
-    assert instance["url"] == "https://opendata.dev.joinedcontext.com"
-    assert portal["schedule"] == "50 3 * * *"  # after charts/ckan's harvest at 03:23
-    # Barcelona keeps no source of its own (T-6566): its datasets come through `portal`, its
-    # numbers through its connectors.
-    indexed = [p for p in spec["scope"]["projects"] if p != "barcelona"]
-    assert {f"{p}/catalogue" for p in indexed} | {"portal", "catalogue"} | \
-        {"web"} | {f"{p}/web" for p in indexed if p != "slovensko"} == set(spec["sources"])
-
-
-def test_the_general_assistant_names_no_city_and_carries_the_portal_guide():
-    spec = general()["spec"]
-    greeting = spec["theme"]["greeting"]
-    assert set(greeting) == {"sk", "en", "fi"}, "a greeting per language (T-4365)"
-    title = spec["theme"]["title"]
-    assert title == {"sk": "Otvorené dáta", "en": "Open data", "fi": "Avoin data"}, "no host name in the header (T-4635)"
-    shown = (" ".join(title.values()) + " " + " ".join(greeting.values())).lower()
-    for words in NAMES.values():
-        assert not any(word in shown for word in words), shown
-    assert "helsin" not in shown
-    assert "data.dev" not in shown
-    assert spec["languages"] == ["sk", "en", "fi"]
-    assert set(spec["suggestions"]) == set(spec["disclaimer"]) == {"sk", "en", "fi"}
-    # Judge round 3 (T-4342): one chip set in every language, each chip on one line of the 400px panel.
-    chips = spec["suggestions"]
-    assert len({len(c) for c in chips.values()}) == 1, chips
-    assert all(len(c) <= 50 for cs in chips.values() for c in cs), chips
-    prompt = spec["systemPrompt"]
-    assert len(prompt) <= 6000, "the guide stays in about 1,500 tokens of the cached prefix"
-    for fact in ("https://api.dev.joinedcontext.com/api/mcp", "ngsi-ld/v1/entities", "bbox=", "Smart Data Model",
-                 "300 otázok", "vydavateľa"):
-        assert fact in prompt, fact
-    for word in ("secretref", "apikey", "api_key", "token:", "password"):
-        assert word not in yaml.safe_dump(general()).lower(), word
-
-
-def test_a_conversation_of_the_general_assistant_holds_a_question_over_five_publishers():
-    # T-4342: one data question measured 33,744 tokens on dev; the cities' 40,000 refused the
-    # next one. The cost cap stays the guard and the per-visitor limits stay the cities'.
-    spec = general()["spec"]
-    assert spec["budget"]["tokensPerConversation"] >= 2 * 33_744
-    # T-4660: the owner's fourth question was refused at 117,171 tokens; a conversation holds five
-    # questions at the platform's 60,000 per question.
-    assert spec["budget"]["tokensPerConversation"] >= 5 * 60_000
-    # T-4737: 300,000 refused the owner's second data question on prod; a conversation holds ten
-    # data answers at the measured p90 (296,985 tokens, dev turns 2026-10-19).
-    assert spec["budget"]["tokensPerConversation"] >= 10 * 296_985
-    assert spec["budget"]["costPerDayUsd"] == 1
-    # T-4761 (owner 2026-10-19): ten questions in a row, about 15 cents at most.
-    assert spec["budget"]["costPerConversationUsd"] == 0.15
-    assert spec["rateLimit"] == deployment("bbsk")["spec"]["rateLimit"]
-
-
-def test_the_general_assistant_is_seeded_at_its_kinds_paths():
-    # T-4636: the deployment renders from the instance block into its project, gitea's
-    # catalogueAssistants writes it at projects/<project>/assistant/deployments/<publicId>.yaml, and
-    # no fixed copy in the seed folder competes with it.
-    index = yaml.safe_load((SEED / "bbsk" / "index.yaml").read_text())
-    catalogue = dev_catalogue()
-    assert (catalogue["assistantSeed"]["project"], catalogue["assistant"]) == ("bbsk", "data")
-    assert general()["metadata"] == {"name": "data", "namespace": "bbsk"}
-    assert "projects/bbsk/assistant/deployments/data.yaml" not in index.values()
-    assert index["bbsk-knowledge-portal.yaml"] == "projects/bbsk/assistant/sources/portal.yaml"
 
 
 # What 2026-10-16 measured on dev (T-4286): banskabystrica's 56 requests spent 263,512 tokens
@@ -479,34 +308,6 @@ def test_no_anonymous_deployment_runs_out_of_tokens_before_its_cost_cap():
         )
         checked += 1
     assert checked >= 3, "the public, catalogue and eval deployments are checked"
-
-
-def test_the_open_data_eval_copies_are_data_with_another_model():
-    # T-4359: a comparison of models on data.dev's assistant; each copy is `data` but for its
-    # name, publicId and the model it runs, router and answer alike, and spends its own day.
-    deployments = manifests("AssistantDeployment", "bbsk")
-    base = general()["spec"]
-    # T-4656 (owner): Haiku, GPT-6 Luna, GLM 5.3 on its EU providers alone, Argon as the ceiling;
-    # no DeepSeek and no Mistral model.
-    def same(model, **more):
-        return {"router": model, "answer": model, **more}
-    models = {"data-eval-gemini": same("google/gemini-3.8-flash"), "data-eval-haiku": same("anthropic/claude-haiku-5.5"),
-              "data-eval-haiku-medium": same("anthropic/claude-haiku-5.5", reasoning={"answer": "medium"}),
-              "data-eval-luna": same("openai/gpt-6-luna"), "data-eval-argon": same("google/gemini-4-argon"),
-              "data-eval-glm": same("z-ai/glm-5.3", provider={"order": ["mistral", "nebius"], "allowFallbacks": False})}
-    assert sorted(n for n in deployments if n.startswith("data-eval-")) == sorted(models)
-    for name, model in models.items():
-        spec = deployments[name]["spec"]
-        assert spec["publicId"] == name and "eval" in name.split("-")
-        assert spec["model"] == model, name
-        assert {k: v for k, v in spec.items() if k not in ("publicId", "model", "budget")} == \
-            {k: v for k, v in base.items() if k not in ("publicId", "model", "budget")}, name
-        # T-4729: only the day's cost may differ, and only upward to the run's own $4 (its tokensPerDay buys about $4.32).
-        day = spec["budget"]["costPerDayUsd"]
-        # The visitors' 15-cent conversation cap (T-4761) is not a measurement's: a copy is measured whole.
-        assert {**spec["budget"], "costPerDayUsd": base["budget"]["costPerDayUsd"],
-                "costPerConversationUsd": base["budget"]["costPerConversationUsd"]} == base["budget"], name
-        assert base["budget"]["costPerDayUsd"] <= day <= 4, name
 
 
 # The EU data themes in their table's order (platform jc-core DataTheme::ALL).
