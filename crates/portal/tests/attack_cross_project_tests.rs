@@ -40,7 +40,7 @@ const BRANCH: &str = "portal/update-pipeline-aq-1682aaaa";
 fn pipeline_yaml(project: &str, name: &str) -> String {
     format!(
         "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: {name}\n  \
-         namespace: {project}\nspec:\n  class: resident\n"
+         namespace: {project}\nspec:\n  class: resident\n  targetEndpoint: urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air\n"
     )
 }
 
@@ -110,6 +110,14 @@ fn state_with(shako: &MockServer) -> AppState {
             "role": "pipelines-of-ovzdusie",
             "scope": { "project": MINE },
         }),
+    ));
+    // The Endpoint the Pipeline writes through (PL-111).
+    state.mirror.upsert(common::envelope(
+        "Endpoint",
+        "air",
+        MINE,
+        json!({ "contextSpaceRef": "ovzdusie", "slug": "mluyob4nz52lok3ssk7pgn5vwt",
+                "audience": "organization", "enabledRepresentations": ["ngsi-ld"] }),
     ));
     state
 }

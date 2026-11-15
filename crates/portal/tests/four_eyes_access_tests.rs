@@ -64,10 +64,10 @@ fn manifest(kind: &str) -> (String, String) {
             "role": "admin-role",
             "scope": { "organization": "bb" }
         }),
-        "Group" => json!({ "members": [{ "user": PROPOSER }] }),
+        "Group" => json!({ "members": [{ "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" }] }),
         "DataModel" => json!({ "version": "1.1.0", "linkml": "models/air.linkml.yaml" }),
         _ => json!({
-            "owner": { "user": PROPOSER },
+            "owner": { "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" },
             "purpose": "the air-quality adapter",
             "roles": [],
             "credentials": []

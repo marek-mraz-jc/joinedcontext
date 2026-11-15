@@ -877,10 +877,7 @@ mod tests {
             );
         };
         said(&reason(
-            &manifest(&ground, "ovzdusie", &feed).expect_err("propose refuses it"),
-        ));
-        said(&reason(
-            &manifest_at_approval(&ground, "ovzdusie", &feed).expect_err("approval refuses it"),
+            &manifest(&ground, "ovzdusie", &feed).expect_err("propose and approval refuse it"),
         ));
         let refused = replay(&Mirror::new(), (&bounds, None, None), vec![feed]);
         assert_eq!(refused.len(), 1, "load refuses it: {refused:?}");
