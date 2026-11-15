@@ -118,7 +118,7 @@ struct OrganizationClaims {
 /// signature the login checked. A cookie never carries that token: the Portal keeps it beside
 /// the session ([`AppState::session_id_token`], T-6549), and without it (a restart, another
 /// replica) the person is named with no Organization standing, as a token without the claim.
-fn subject_of(state: &AppState, session: &Session, headers: &HeaderMap) -> Value {
+pub(crate) fn subject_of(state: &AppState, session: &Session, headers: &HeaderMap) -> Value {
     let kept;
     let token = match Front::of(headers, state.config.trust_edge_token) {
         Front::Bearer => headers

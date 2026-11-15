@@ -590,11 +590,18 @@ async fn standing(
             "it comes from a fork; push the branch to the project repository itself".into(),
         ));
     }
-    let writer = pr.author_email.as_deref().is_some_and(|email| {
-        crate::permissions::project_members(&state.mirror, project, chrono::Utc::now())
-            .writers
-            .contains(&email.trim().to_ascii_lowercase())
-    });
+    // A binding names a person by e-mail, or by their Keycloak id since ADR-N-061.
+    let writers =
+        crate::permissions::project_members(&state.mirror, project, chrono::Utc::now()).writers;
+    let writer = match pr.author_email.as_deref().map(str::trim) {
+        Some(email) if !email.is_empty() => {
+            writers.contains(&email.to_ascii_lowercase())
+                || crate::people::realm_id_of(state.people.as_deref(), email)
+                    .await
+                    .is_some_and(|id| writers.contains(&id.to_ascii_lowercase()))
+        }
+        _ => false,
+    };
     if !writer {
         return Ok(Standing::Outside(format!(
             "its author is not a writer of the project '{project}'; a binding granting propose \
