@@ -1323,6 +1323,12 @@ pub fn validate_processor_reading(
         )));
     }
     validate_cache_names(field, processor)?;
+    if let Some(step) = literal_dsn(processor) {
+        return Err(refused(format!(
+            "the `dsn` of `{step}` is written into the step; give it as `${{NAME}}` from a \
+             secretRef the pipeline declares, so the password never sits in Git (PL-52)"
+        )));
+    }
     // A `mapping` body and a `${! … }` interpolation are Bloblang too, and a step that reads
     // the runner is the same escape wherever it is written.
     let mut texts = Vec::new();
@@ -1433,6 +1439,39 @@ fn nested_refused(value: &serde_json::Value) -> Option<&'static str> {
                 .filter(|_| inner.is_object() || inner.is_null())
                 .copied()
                 .or_else(|| nested_refused(inner))
+        }),
+        _ => None,
+    }
+}
+
+/// The sql processors, whose `dsn` holds the database password.
+const DSN_PROCESSORS: &[&str] = &["sql_insert", "sql_raw", "sql_select"];
+
+/// The first sql processor, however deeply nested, whose `dsn` is anything but one `${NAME}`.
+fn literal_dsn(value: &serde_json::Value) -> Option<&'static str> {
+    let is_var = |dsn: &str| {
+        dsn.strip_prefix("${")
+            .and_then(|rest| rest.strip_suffix('}'))
+            .is_some_and(|name| {
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            })
+    };
+    match value {
+        serde_json::Value::Array(items) => items.iter().find_map(literal_dsn),
+        serde_json::Value::Object(fields) => fields.iter().find_map(|(key, inner)| {
+            DSN_PROCESSORS
+                .iter()
+                .find(|name| **name == key.as_str())
+                .filter(|_| {
+                    inner
+                        .get("dsn")
+                        .is_some_and(|dsn| !dsn.as_str().is_some_and(is_var))
+                })
+                .copied()
+                .or_else(|| literal_dsn(inner))
         }),
         _ => None,
     }
@@ -2038,6 +2077,43 @@ mod runner_registry_tests {
         );
         super::validate_processor("spec.steps", &json!({ "mapping": "root = this" }))
             .expect("mapping is built by the runner");
+    }
+
+    #[test]
+    fn an_sql_step_takes_its_dsn_from_a_declared_secret_only() {
+        let step = |dsn: &str| {
+            json!({ "branch": { "processors": [ { "sql_select": {
+                "driver": "postgres", "dsn": dsn, "table": "stations", "columns": ["name"]
+            } } ] } })
+        };
+        let err = super::validate_processor("spec.steps", &step("postgres://u:pw@db/x"))
+            .expect_err("a literal dsn is refused")
+            .to_string();
+        assert!(err.contains("`dsn` of `sql_select`"), "{err}");
+        assert!(super::validate_processor("spec.steps", &step("${DB}x")).is_err());
+        super::validate_processor_reading("spec.steps", &step("${STATIONS_DB}"), &["STATIONS_DB"])
+            .expect("a declared secret variable is the dsn");
+    }
+
+    /// G-24/G-25 (T-7061): `javascript` stays refused as a raw author step, top level or nested;
+    /// it may only reach the runner through a reconciler-rendered Script reference.
+    #[test]
+    fn javascript_is_refused_as_a_raw_step_top_level_and_nested() {
+        let top = super::validate_processor(
+            "spec.steps",
+            &json!({ "javascript": { "code": "(() => { return this; })()" } }),
+        )
+        .expect_err("raw javascript is refused")
+        .to_string();
+        assert!(top.contains("processor `javascript`"), "{top}");
+
+        let nested = super::validate_processor(
+            "spec.steps",
+            &json!({ "try": [ { "javascript": { "code": "1" } } ] }),
+        )
+        .expect_err("javascript nested in try is refused")
+        .to_string();
+        assert!(nested.contains("`javascript` inside `try`"), "{nested}");
     }
 }
 

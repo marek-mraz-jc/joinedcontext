@@ -1,13 +1,16 @@
 #![forbid(unsafe_code)]
-//! `ekiben-io-sql`: the sql inputs and outputs of Bento 1.22.0 (`internal/impl/sql/*.go`), one
-//! module per Go file, over sqlx for the postgres, mysql and sqlite drivers.
+//! `ekiben-io-sql`: the sql inputs, outputs and processors of Bento 1.22.0
+//! (`internal/impl/sql/*.go`), one module per Go file, over sqlx for the postgres, mysql and
+//! sqlite drivers; and the `sql` cache (an ekiben extension).
 
+pub mod cache_sql;
 pub mod conn_fields;
 pub mod input_sql_raw;
 pub mod input_sql_select;
 pub mod output_sql_deprecated;
 pub mod output_sql_insert;
 pub mod output_sql_raw;
+pub mod processor_sql;
 pub mod sqlite;
 pub mod util;
 
@@ -35,4 +38,6 @@ pub fn register_all(registry: &Registry) {
     output_sql_insert::register(registry);
     output_sql_raw::register(registry);
     output_sql_deprecated::register(registry);
+    processor_sql::register(registry);
+    cache_sql::register(registry);
 }

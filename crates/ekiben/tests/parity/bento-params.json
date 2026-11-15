@@ -1,0 +1,1815 @@
+{
+ "functions": {
+  "batch_index": {
+   "params": [],
+   "variadic": false
+  },
+  "batch_size": {
+   "params": [],
+   "variadic": false
+  },
+  "cache_add": {
+   "params": [
+    {
+     "name": "resource",
+     "optional": false
+    },
+    {
+     "name": "key",
+     "optional": false
+    },
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "cache_delete": {
+   "params": [
+    {
+     "name": "resource",
+     "optional": false
+    },
+    {
+     "name": "key",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "cache_get": {
+   "params": [
+    {
+     "name": "resource",
+     "optional": false
+    },
+    {
+     "name": "key",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "cache_set": {
+   "params": [
+    {
+     "name": "resource",
+     "optional": false
+    },
+    {
+     "name": "key",
+     "optional": false
+    },
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "content": {
+   "params": [],
+   "variadic": false
+  },
+  "cosine_similarity": {
+   "params": [
+    {
+     "name": "a",
+     "optional": false
+    },
+    {
+     "name": "b",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "count": {
+   "params": [
+    {
+     "name": "name",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "counter": {
+   "params": [
+    {
+     "default": 1,
+     "name": "min",
+     "optional": false
+    },
+    {
+     "default": 9223372036854775807,
+     "name": "max",
+     "optional": false
+    },
+    {
+     "name": "set",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "deleted": {
+   "params": [],
+   "variadic": false
+  },
+  "env": {
+   "params": [
+    {
+     "name": "name",
+     "optional": false
+    },
+    {
+     "default": false,
+     "name": "no_cache",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "error": {
+   "params": [],
+   "variadic": false
+  },
+  "error_source_label": {
+   "params": [],
+   "variadic": false
+  },
+  "error_source_path": {
+   "params": [],
+   "variadic": false
+  },
+  "error_source_type": {
+   "params": [],
+   "variadic": false
+  },
+  "errored": {
+   "params": [],
+   "variadic": false
+  },
+  "fake": {
+   "params": [
+    {
+     "default": "",
+     "name": "function",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "file": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    },
+    {
+     "default": false,
+     "name": "no_cache",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "file_rel": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    },
+    {
+     "default": false,
+     "name": "no_cache",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "file_rel_json": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "flow_id": {
+   "params": [],
+   "variadic": false
+  },
+  "hostname": {
+   "params": [],
+   "variadic": false
+  },
+  "json": {
+   "params": [
+    {
+     "default": "",
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ksuid": {
+   "params": [],
+   "variadic": false
+  },
+  "meta": {
+   "params": [
+    {
+     "default": "",
+     "name": "key",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "metadata": {
+   "params": [
+    {
+     "default": "",
+     "name": "key",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "nanoid": {
+   "params": [
+    {
+     "name": "length",
+     "optional": true
+    },
+    {
+     "name": "alphabet",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "nothing": {
+   "params": [],
+   "variadic": false
+  },
+  "now": {
+   "params": [],
+   "variadic": false
+  },
+  "pi": {
+   "params": [],
+   "variadic": false
+  },
+  "random_int": {
+   "params": [
+    {
+     "default": {
+      "Value": 0
+     },
+     "name": "seed",
+     "optional": false
+    },
+    {
+     "default": 0,
+     "name": "min",
+     "optional": false
+    },
+    {
+     "default": 9223372036854775806,
+     "name": "max",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "range": {
+   "params": [
+    {
+     "name": "start",
+     "optional": false
+    },
+    {
+     "name": "stop",
+     "optional": false
+    },
+    {
+     "default": 1,
+     "name": "step",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "root_meta": {
+   "params": [
+    {
+     "default": "",
+     "name": "key",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "snowflake_id": {
+   "params": [
+    {
+     "default": 1,
+     "name": "node_id",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "throw": {
+   "params": [
+    {
+     "name": "why",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "timestamp_unix": {
+   "params": [],
+   "variadic": false
+  },
+  "timestamp_unix_micro": {
+   "params": [],
+   "variadic": false
+  },
+  "timestamp_unix_milli": {
+   "params": [],
+   "variadic": false
+  },
+  "timestamp_unix_nano": {
+   "params": [],
+   "variadic": false
+  },
+  "tracing_id": {
+   "params": [],
+   "variadic": false
+  },
+  "tracing_span": {
+   "params": [],
+   "variadic": false
+  },
+  "ulid": {
+   "params": [
+    {
+     "default": "crockford",
+     "name": "encoding",
+     "optional": false
+    },
+    {
+     "default": "secure_random",
+     "name": "random_source",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "uuid_v4": {
+   "params": [],
+   "variadic": false
+  },
+  "var": {
+   "params": [
+    {
+     "name": "name",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  }
+ },
+ "methods": {
+  "abs": {
+   "params": [],
+   "variadic": false
+  },
+  "all": {
+   "params": [
+    {
+     "name": "test",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "any": {
+   "params": [
+    {
+     "name": "test",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "append": {
+   "params": [],
+   "variadic": true
+  },
+  "apply": {
+   "params": [
+    {
+     "name": "mapping",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "array": {
+   "params": [],
+   "variadic": false
+  },
+  "assign": {
+   "params": [
+    {
+     "name": "with",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "bloblang": {
+   "params": [
+    {
+     "name": "mapping",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "bool": {
+   "params": [
+    {
+     "name": "default",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "bytes": {
+   "params": [],
+   "variadic": false
+  },
+  "capitalize": {
+   "params": [],
+   "variadic": false
+  },
+  "catch": {
+   "params": [
+    {
+     "name": "fallback",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ceil": {
+   "params": [],
+   "variadic": false
+  },
+  "collapse": {
+   "params": [
+    {
+     "default": false,
+     "name": "include_empty",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "compare_argon2": {
+   "params": [
+    {
+     "name": "hashed_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "compare_bcrypt": {
+   "params": [
+    {
+     "name": "hashed_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "compress": {
+   "params": [
+    {
+     "name": "algorithm",
+     "optional": false
+    },
+    {
+     "default": -1,
+     "name": "level",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "concat": {
+   "params": [],
+   "variadic": true
+  },
+  "contains": {
+   "params": [
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "cos": {
+   "params": [],
+   "variadic": false
+  },
+  "decode": {
+   "params": [
+    {
+     "name": "scheme",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "decompress": {
+   "params": [
+    {
+     "name": "algorithm",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "decrypt_aes": {
+   "params": [
+    {
+     "name": "scheme",
+     "optional": false
+    },
+    {
+     "name": "key",
+     "optional": false
+    },
+    {
+     "name": "iv",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "diff": {
+   "params": [
+    {
+     "name": "other",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "encode": {
+   "params": [
+    {
+     "name": "scheme",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "encrypt_aes": {
+   "params": [
+    {
+     "name": "scheme",
+     "optional": false
+    },
+    {
+     "name": "key",
+     "optional": false
+    },
+    {
+     "name": "iv",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "enumerated": {
+   "params": [],
+   "variadic": false
+  },
+  "escape_html": {
+   "params": [],
+   "variadic": false
+  },
+  "escape_url_query": {
+   "params": [],
+   "variadic": false
+  },
+  "exists": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "explode": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "filepath_join": {
+   "params": [],
+   "variadic": false
+  },
+  "filepath_split": {
+   "params": [],
+   "variadic": false
+  },
+  "filter": {
+   "params": [
+    {
+     "name": "test",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "find": {
+   "params": [
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "find_all": {
+   "params": [
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "find_all_by": {
+   "params": [
+    {
+     "name": "query",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "find_by": {
+   "params": [
+    {
+     "name": "query",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "flatten": {
+   "params": [],
+   "variadic": false
+  },
+  "float32": {
+   "params": [],
+   "variadic": false
+  },
+  "float64": {
+   "params": [],
+   "variadic": false
+  },
+  "floor": {
+   "params": [],
+   "variadic": false
+  },
+  "fold": {
+   "params": [
+    {
+     "name": "initial",
+     "optional": false
+    },
+    {
+     "name": "query",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "format": {
+   "params": [],
+   "variadic": true
+  },
+  "format_json": {
+   "params": [
+    {
+     "default": "    ",
+     "name": "indent",
+     "optional": false
+    },
+    {
+     "default": false,
+     "name": "no_indent",
+     "optional": false
+    },
+    {
+     "default": true,
+     "name": "escape_html",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "format_msgpack": {
+   "params": [],
+   "variadic": false
+  },
+  "format_timestamp": {
+   "params": [
+    {
+     "default": "2006-01-02T15:04:05.999999999Z07:00",
+     "name": "format",
+     "optional": false
+    },
+    {
+     "name": "tz",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "format_timestamp_strftime": {
+   "params": [
+    {
+     "name": "format",
+     "optional": false
+    },
+    {
+     "name": "tz",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "format_timestamp_unix": {
+   "params": [],
+   "variadic": false
+  },
+  "format_timestamp_unix_micro": {
+   "params": [],
+   "variadic": false
+  },
+  "format_timestamp_unix_milli": {
+   "params": [],
+   "variadic": false
+  },
+  "format_timestamp_unix_nano": {
+   "params": [],
+   "variadic": false
+  },
+  "format_xml": {
+   "params": [
+    {
+     "default": "    ",
+     "name": "indent",
+     "optional": false
+    },
+    {
+     "default": false,
+     "name": "no_indent",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "format_yaml": {
+   "params": [],
+   "variadic": false
+  },
+  "from": {
+   "params": [
+    {
+     "name": "index",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "from_all": {
+   "params": [],
+   "variadic": false
+  },
+  "geoip_anonymous_ip": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "geoip_asn": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "geoip_city": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "geoip_connection_type": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "geoip_country": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "geoip_domain": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "geoip_enterprise": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "geoip_isp": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "get": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "has_prefix": {
+   "params": [
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "has_suffix": {
+   "params": [
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "hash": {
+   "params": [
+    {
+     "name": "algorithm",
+     "optional": false
+    },
+    {
+     "name": "key",
+     "optional": true
+    },
+    {
+     "default": "IEEE",
+     "name": "polynomial",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "index": {
+   "params": [
+    {
+     "name": "index",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "index_of": {
+   "params": [
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "int16": {
+   "params": [],
+   "variadic": false
+  },
+  "int32": {
+   "params": [],
+   "variadic": false
+  },
+  "int64": {
+   "params": [],
+   "variadic": false
+  },
+  "int8": {
+   "params": [],
+   "variadic": false
+  },
+  "join": {
+   "params": [
+    {
+     "name": "delimiter",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "json_path": {
+   "params": [
+    {
+     "name": "expression",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "json_schema": {
+   "params": [
+    {
+     "name": "schema",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "key_values": {
+   "params": [],
+   "variadic": false
+  },
+  "keys": {
+   "params": [],
+   "variadic": false
+  },
+  "length": {
+   "params": [],
+   "variadic": false
+  },
+  "log": {
+   "params": [],
+   "variadic": false
+  },
+  "log10": {
+   "params": [],
+   "variadic": false
+  },
+  "lowercase": {
+   "params": [],
+   "variadic": false
+  },
+  "map": {
+   "params": [
+    {
+     "name": "query",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "map_each": {
+   "params": [
+    {
+     "name": "query",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "map_each_key": {
+   "params": [
+    {
+     "name": "query",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "max": {
+   "params": [],
+   "variadic": false
+  },
+  "merge": {
+   "params": [
+    {
+     "name": "with",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "min": {
+   "params": [],
+   "variadic": false
+  },
+  "not": {
+   "params": [],
+   "variadic": false
+  },
+  "not_empty": {
+   "params": [],
+   "variadic": false
+  },
+  "not_null": {
+   "params": [],
+   "variadic": false
+  },
+  "number": {
+   "params": [
+    {
+     "name": "default",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "or": {
+   "params": [
+    {
+     "name": "fallback",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_big_decimal": {
+   "params": [
+    {
+     "name": "scale",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_bytes": {
+   "params": [],
+   "variadic": false
+  },
+  "parse_csv": {
+   "params": [
+    {
+     "default": true,
+     "name": "parse_header_row",
+     "optional": false
+    },
+    {
+     "default": ",",
+     "name": "delimiter",
+     "optional": false
+    },
+    {
+     "default": false,
+     "name": "lazy_quotes",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_duration": {
+   "params": [],
+   "variadic": false
+  },
+  "parse_duration_iso8601": {
+   "params": [],
+   "variadic": false
+  },
+  "parse_form_url_encoded": {
+   "params": [],
+   "variadic": false
+  },
+  "parse_json": {
+   "params": [
+    {
+     "name": "use_number",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "parse_jwt_es256": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_jwt_es384": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_jwt_es512": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_jwt_hs256": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_jwt_hs384": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_jwt_hs512": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_jwt_rs256": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_jwt_rs384": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_jwt_rs512": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_msgpack": {
+   "params": [],
+   "variadic": false
+  },
+  "parse_parquet": {
+   "params": [
+    {
+     "default": false,
+     "name": "byte_array_as_string",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_timestamp": {
+   "params": [
+    {
+     "name": "format",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_timestamp_strptime": {
+   "params": [
+    {
+     "name": "format",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "parse_url": {
+   "params": [],
+   "variadic": false
+  },
+  "parse_xml": {
+   "params": [
+    {
+     "default": false,
+     "name": "cast",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "parse_yaml": {
+   "params": [],
+   "variadic": false
+  },
+  "patch": {
+   "params": [
+    {
+     "name": "changelog",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "pow": {
+   "params": [
+    {
+     "name": "exponent",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "quote": {
+   "params": [],
+   "variadic": false
+  },
+  "re_find_all": {
+   "params": [
+    {
+     "name": "pattern",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "re_find_all_object": {
+   "params": [
+    {
+     "name": "pattern",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "re_find_all_submatch": {
+   "params": [
+    {
+     "name": "pattern",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "re_find_object": {
+   "params": [
+    {
+     "name": "pattern",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "re_match": {
+   "params": [
+    {
+     "name": "pattern",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "re_replace": {
+   "params": [
+    {
+     "name": "pattern",
+     "optional": false
+    },
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "re_replace_all": {
+   "params": [
+    {
+     "name": "pattern",
+     "optional": false
+    },
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "repeat": {
+   "params": [
+    {
+     "name": "count",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "replace": {
+   "params": [
+    {
+     "name": "old",
+     "optional": false
+    },
+    {
+     "name": "new",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "replace_all": {
+   "params": [
+    {
+     "name": "old",
+     "optional": false
+    },
+    {
+     "name": "new",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "replace_all_many": {
+   "params": [
+    {
+     "name": "values",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "replace_many": {
+   "params": [
+    {
+     "name": "values",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "reverse": {
+   "params": [],
+   "variadic": false
+  },
+  "round": {
+   "params": [],
+   "variadic": false
+  },
+  "set": {
+   "params": [
+    {
+     "name": "path",
+     "optional": false
+    },
+    {
+     "name": "value",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sign_jwt_es256": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sign_jwt_es384": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sign_jwt_es512": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sign_jwt_hs256": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sign_jwt_hs384": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sign_jwt_hs512": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sign_jwt_rs256": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sign_jwt_rs384": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sign_jwt_rs512": {
+   "params": [
+    {
+     "name": "signing_secret",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "sin": {
+   "params": [],
+   "variadic": false
+  },
+  "slice": {
+   "params": [
+    {
+     "name": "low",
+     "optional": false
+    },
+    {
+     "name": "high",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "slug": {
+   "params": [
+    {
+     "default": "en",
+     "name": "lang",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "sort": {
+   "params": [
+    {
+     "name": "compare",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "sort_by": {
+   "params": [
+    {
+     "name": "query",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "split": {
+   "params": [
+    {
+     "name": "delimiter",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "split_by": {
+   "params": [
+    {
+     "name": "predicate",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "squash": {
+   "params": [],
+   "variadic": false
+  },
+  "string": {
+   "params": [],
+   "variadic": false
+  },
+  "strip_html": {
+   "params": [
+    {
+     "name": "preserve",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "sum": {
+   "params": [],
+   "variadic": false
+  },
+  "tan": {
+   "params": [],
+   "variadic": false
+  },
+  "trim": {
+   "params": [
+    {
+     "name": "cutset",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "trim_prefix": {
+   "params": [
+    {
+     "name": "prefix",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "trim_suffix": {
+   "params": [
+    {
+     "name": "suffix",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ts_add_iso8601": {
+   "params": [
+    {
+     "name": "duration",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ts_format": {
+   "params": [
+    {
+     "default": "2006-01-02T15:04:05.999999999Z07:00",
+     "name": "format",
+     "optional": false
+    },
+    {
+     "name": "tz",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "ts_parse": {
+   "params": [
+    {
+     "name": "format",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ts_round": {
+   "params": [
+    {
+     "name": "duration",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ts_strftime": {
+   "params": [
+    {
+     "name": "format",
+     "optional": false
+    },
+    {
+     "name": "tz",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "ts_strptime": {
+   "params": [
+    {
+     "name": "format",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ts_sub": {
+   "params": [
+    {
+     "name": "t2",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ts_sub_iso8601": {
+   "params": [
+    {
+     "name": "duration",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ts_tz": {
+   "params": [
+    {
+     "name": "tz",
+     "optional": false
+    }
+   ],
+   "variadic": false
+  },
+  "ts_unix": {
+   "params": [],
+   "variadic": false
+  },
+  "ts_unix_micro": {
+   "params": [],
+   "variadic": false
+  },
+  "ts_unix_milli": {
+   "params": [],
+   "variadic": false
+  },
+  "ts_unix_nano": {
+   "params": [],
+   "variadic": false
+  },
+  "type": {
+   "params": [],
+   "variadic": false
+  },
+  "uint16": {
+   "params": [],
+   "variadic": false
+  },
+  "uint32": {
+   "params": [],
+   "variadic": false
+  },
+  "uint64": {
+   "params": [],
+   "variadic": false
+  },
+  "uint8": {
+   "params": [],
+   "variadic": false
+  },
+  "unescape_html": {
+   "params": [],
+   "variadic": false
+  },
+  "unescape_url_query": {
+   "params": [],
+   "variadic": false
+  },
+  "unique": {
+   "params": [
+    {
+     "name": "emit",
+     "optional": true
+    }
+   ],
+   "variadic": false
+  },
+  "unquote": {
+   "params": [],
+   "variadic": false
+  },
+  "uppercase": {
+   "params": [],
+   "variadic": false
+  },
+  "values": {
+   "params": [],
+   "variadic": false
+  },
+  "with": {
+   "params": [],
+   "variadic": true
+  },
+  "without": {
+   "params": [],
+   "variadic": true
+  },
+  "zip": {
+   "params": [],
+   "variadic": true
+  }
+ },
+ "version": "Version: 1.22.0"
+}

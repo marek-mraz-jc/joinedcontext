@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use ekiben_bloblang::{Executor, FieldExpression};
 use ekiben_core::config::parse_duration_str;
+use ekiben_core::prometheus::MetricVec;
 use ekiben_core::{
     Batch, ComponentConfig, CoreError, Part, PartMetaAdapter, PartsView, ProcContext, Processor,
     Registry,
@@ -724,9 +725,27 @@ impl Processor for SelectPartsProcessor {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MetricKind {
+    Counter,
+    CounterBy,
+    Gauge,
+    Timing,
+    /// No `type`: ekiben's earlier meaning, a counter by `value` (1 when it is unset or not a
+    /// number), kept so live pipelines written before `type` was read count as they did.
+    Unset,
+}
+
+/// Implements `metric` (`internal/impl/pure/processor_metric.go`): `counter`, `counter_by`,
+/// `gauge` and `timing` series named `name` with interpolated `labels`, on the stream's exporter.
+/// A value that is not an integer (or negative for `counter_by` and `timing`) is logged and the
+/// message goes on, as in Bento.
 pub struct MetricProcessor {
     name: String,
+    kind: MetricKind,
     value: Option<FieldExpression>,
+    label_values: Vec<FieldExpression>,
+    series: Option<MetricVec>,
 }
 
 impl MetricProcessor {
@@ -737,11 +756,78 @@ impl MetricProcessor {
             .and_then(JsonValue::as_str)
             .unwrap_or("custom_metric")
             .to_string();
+        let kind = match conf.config.get("type").and_then(JsonValue::as_str) {
+            None => MetricKind::Unset,
+            Some("counter") => MetricKind::Counter,
+            Some("counter_by") => MetricKind::CounterBy,
+            Some("gauge") => MetricKind::Gauge,
+            Some("timing") => MetricKind::Timing,
+            Some(other) => {
+                return Err(CoreError::config(format!(
+                    "metric type '{other}' is not one of counter, counter_by, gauge, timing"
+                )))
+            }
+        };
         let value = match conf.config.get("value").and_then(JsonValue::as_str) {
             Some(s) if !s.is_empty() => Some(ctx.blobl_env.compile_field(s)?),
             _ => None,
         };
-        Ok(Self { name, value })
+        if value.is_none()
+            && matches!(
+                kind,
+                MetricKind::CounterBy | MetricKind::Gauge | MetricKind::Timing
+            )
+        {
+            return Err(CoreError::config(format!(
+                "metric type {kind:?} requires a value"
+            )));
+        }
+        let mut labels: Vec<(&String, &JsonValue)> = conf
+            .config
+            .get("labels")
+            .and_then(JsonValue::as_object)
+            .map(|m| m.iter().collect())
+            .unwrap_or_default();
+        labels.sort_by(|a, b| a.0.cmp(b.0));
+        let mut names = Vec::with_capacity(labels.len());
+        let mut label_values = Vec::with_capacity(labels.len());
+        for (k, v) in labels {
+            let text = v
+                .as_str()
+                .ok_or_else(|| CoreError::config(format!("metric label {k} must be a string")))?;
+            names.push(k.as_str());
+            label_values.push(ctx.blobl_env.compile_field(text)?);
+        }
+        let series = ctx.metrics.namespace().map(|ns| match kind {
+            MetricKind::Gauge => ns.gauge_vec(&name, &names),
+            MetricKind::Timing => ns.timer_vec(&name, &names),
+            _ => ns.counter_vec(&name, &names),
+        });
+        Ok(Self {
+            name,
+            kind,
+            value,
+            label_values,
+            series,
+        })
+    }
+
+    fn count(&self, ctx: &ProcContext, labels: &[&str], n: u64) {
+        ctx.metrics.incr_counter(&self.name, n);
+        if let Some(s) = &self.series {
+            s.counter(labels).incr(n);
+        }
+    }
+
+    fn reject(&self, ctx: &ProcContext, value: Option<&str>) {
+        tracing::warn!(
+            org = %ctx.org_id(),
+            stream = %ctx.stream_id,
+            metric = %self.name,
+            value = ?value,
+            "metric value is not a valid integer for type {:?}",
+            self.kind
+        );
     }
 }
 
@@ -758,15 +844,56 @@ impl Processor for MetricProcessor {
     ) -> Result<Vec<Batch>, CoreError> {
         let view = PartsView(&batch);
         for i in 0..batch.len() {
-            let delta = match &self.value {
-                Some(v) => v
-                    .resolve_string(i, &view)
-                    .ok()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(1),
-                None => 1,
+            let labels: Result<Vec<String>, _> = self
+                .label_values
+                .iter()
+                .map(|l| l.resolve_string(i, &view))
+                .collect();
+            let labels = match labels {
+                Ok(l) => l,
+                Err(e) => {
+                    tracing::warn!(
+                        stream = %ctx.stream_id,
+                        metric = %self.name,
+                        "metric label interpolation failed: {e}"
+                    );
+                    continue;
+                }
             };
-            ctx.metrics.incr_counter(&self.name, delta);
+            let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+            let value = self
+                .value
+                .as_ref()
+                .and_then(|v| v.resolve_string(i, &view).ok());
+            let parsed = value.as_deref().map(str::parse::<i64>);
+            match self.kind {
+                MetricKind::Counter => self.count(ctx, &refs, 1),
+                MetricKind::Unset => {
+                    let n = value.and_then(|s| s.parse::<u64>().ok()).unwrap_or(1);
+                    self.count(ctx, &refs, n);
+                }
+                MetricKind::CounterBy => match parsed {
+                    Some(Ok(n)) if n >= 0 => self.count(ctx, &refs, n as u64),
+                    _ => self.reject(ctx, value.as_deref()),
+                },
+                MetricKind::Gauge => match parsed {
+                    Some(Ok(n)) => {
+                        if let Some(s) = &self.series {
+                            s.gauge(&refs).set(n);
+                        }
+                    }
+                    _ => self.reject(ctx, value.as_deref()),
+                },
+                MetricKind::Timing => match parsed {
+                    Some(Ok(n)) if n >= 0 => {
+                        ctx.metrics.record_timing(&self.name, n as u64);
+                        if let Some(s) = &self.series {
+                            s.timer(&refs).timing(n as u64);
+                        }
+                    }
+                    _ => self.reject(ctx, value.as_deref()),
+                },
+            }
         }
         Ok(vec![batch])
     }
@@ -791,5 +918,95 @@ impl Processor for SyncResponseProcessor {
             }
         }
         Ok(vec![batch])
+    }
+}
+
+#[cfg(test)]
+mod metric_tests {
+    use super::*;
+    use ekiben_core::{
+        MetricsRegistry, OrgContext, OrgId, OrgQuotas, ResourceManager, StreamMetrics,
+    };
+
+    fn proc_ctx(metrics: Arc<StreamMetrics>) -> ProcContext {
+        ProcContext {
+            stream_id: "s".into(),
+            org: OrgContext::new(OrgId::default(), OrgQuotas::default()),
+            resources: ResourceManager::new(),
+            registry: Arc::new(Registry::new()),
+            blobl_env: ekiben_bloblang::Environment::new(),
+            metrics,
+            label: String::new(),
+            component_type: "metric".into(),
+            path: "pipeline.processors.0".into(),
+            file_root: None,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+        }
+    }
+
+    fn conf(config: JsonValue) -> ComponentConfig {
+        ComponentConfig {
+            label: String::new(),
+            component_type: "metric".into(),
+            config,
+            processors: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn counter_by_and_gauge_reach_the_exporter_with_labels() {
+        let reg = MetricsRegistry::new();
+        let metrics = StreamMetrics::new("s", "default");
+        reg.register_stream(metrics.clone());
+        let ctx = proc_ctx(metrics);
+        for (ty, name) in [("counter_by", "bytes_total"), ("gauge", "queue_depth")] {
+            let p = MetricProcessor::from_config(
+                &conf(serde_json::json!({
+                    "type": ty, "name": name, "value": "${! json(\"n\") }", "labels": {"kind": "a"}
+                })),
+                &ctx,
+            )
+            .unwrap();
+            let batch = vec![Part::from_str(r#"{"n":5}"#), Part::from_str(r#"{"n":"x"}"#)];
+            assert_eq!(p.process_batch(&ctx, batch).await.unwrap()[0].len(), 2);
+        }
+        let text = reg.render_prometheus();
+        assert!(
+            text.contains("bytes_total{kind=\"a\",stream=\"s\"} 5"),
+            "{text}"
+        );
+        assert!(
+            text.contains("queue_depth{kind=\"a\",stream=\"s\"} 5"),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_untyped_metric_counts_by_value_as_before() {
+        let metrics = StreamMetrics::new("s", "default");
+        let ctx = proc_ctx(metrics.clone());
+        let p = MetricProcessor::from_config(
+            &conf(serde_json::json!({"name": "n", "value": "3"})),
+            &ctx,
+        )
+        .unwrap();
+        p.process_batch(&ctx, vec![Part::from_str("{}")])
+            .await
+            .unwrap();
+        assert_eq!(metrics.get_counter("n"), 3);
+    }
+
+    #[test]
+    fn a_bad_type_or_a_missing_value_is_refused() {
+        let ctx = proc_ctx(StreamMetrics::new("s", "default"));
+        assert!(MetricProcessor::from_config(
+            &conf(serde_json::json!({"type": "histogram"})),
+            &ctx
+        )
+        .is_err());
+        assert!(
+            MetricProcessor::from_config(&conf(serde_json::json!({"type": "gauge"})), &ctx)
+                .is_err()
+        );
     }
 }

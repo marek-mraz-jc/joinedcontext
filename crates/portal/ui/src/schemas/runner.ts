@@ -19,5 +19,23 @@ export const REFUSED_INPUTS: ReadonlySet<string> = new Set([
   "subprocess",
 ]);
 
+/** The processors the platform refuses as an author step (jc-core `REFUSED_PROCESSORS`, PL-52):
+ * the runner may build one (`javascript` runs only from a reviewed Script), a step never names it.
+ * tests/runner_lists.test.ts keeps it equal. */
+export const REFUSED_PROCESSORS: ReadonlySet<string> = new Set([
+  "awk",
+  "command",
+  "file",
+  "javascript",
+  "python",
+  "subprocess",
+  "template",
+  "wasm",
+]);
+
+/** Whether a pipeline step may name this processor: the runner builds it and it is not refused. */
+export const offeredProcessor = (name: string): boolean =>
+  RUNNER_PROCESSORS.has(name) && !REFUSED_PROCESSORS.has(name);
+
 /** Whether a DataSource may name this runner input: the runner builds it and it is not refused. */
 export const offeredInput = (name: string): boolean => RUNNER_INPUTS.has(name) && !REFUSED_INPUTS.has(name);
