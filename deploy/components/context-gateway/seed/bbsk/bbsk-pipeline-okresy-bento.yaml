@@ -1,0 +1,20 @@
+# The mapping of the okresy pipeline (PL-03): one AdministrativeArea per district (okres) of the
+# region, 13 of them, its outline and its LAU 1 code. The id's localId is that code, the same one
+# the ŠÚ SR cubes in `bbsk-kraj` carry in `refArea`, so a figure finds its district without a
+# lookup table.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.features.or([]).filter(f -> f.properties.LAU1_CODE.or("").string().re_match("^SK032[1-9A-D]$") && f.geometry.or(null) != null).map_each(f -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("AdministrativeArea", "bbsk.sk", env("JC_SPACE"), f.properties.LAU1_CODE),
+          "type": "AdministrativeArea",
+          "isPartOf": { "type": "Property", "value": "https://opendata.dev.joinedcontext.com/dataset/bbsk-okresy-bbk-hranice-17725f" },
+          "name": { "type": "Property", "value": "Okres " + f.properties.NM3.string() },
+          "areaCode": { "type": "Property", "value": f.properties.LAU1_CODE },
+          "divisionLevel": { "type": "Property", "value": "district" },
+          "surfaceArea": if f.properties.VYMERA.type() == "number" { { "type": "Property", "value": f.properties.VYMERA, "unitCode": "MTK" } } else { null },
+          "location": { "type": "GeoProperty", "value": f.geometry },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj, opendata.bbsk.sk (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata.bbsk.sk/" }
+        }.filter(entry -> entry.value != null))

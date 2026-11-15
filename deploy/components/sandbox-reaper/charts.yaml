@@ -1,0 +1,4 @@
+---
+sandbox-reaper:
+  reaper:
+    chart: charts/reaper

@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: ovzdusie-sk
+  namespace: slovensko
+  title:
+    sk: Kvalita ovzdušia — Slovensko
+    en: Air quality, Slovakia
+spec:
+  contextSpaceRef: ovzdusie-sk
+  linkml: ./ovzdusie-sk.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [AirQualityObserved]
+  # A published model commits all four artifacts (DM-02); the gateway serves schema/v1 from them
+  # (DM-22, EP-49). Regenerate as ../zilina/README.md shows.
+  artifacts:
+    jsonSchema: ./ovzdusie-sk.v1.schema.json
+    context: ./ovzdusie-sk.v1.context.jsonld
+    docs: ./ovzdusie-sk.v1.md
+    example: ./ovzdusie-sk.v1.example.jsonld

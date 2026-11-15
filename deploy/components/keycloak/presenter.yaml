@@ -1,0 +1,18 @@
+---
+# The presenter (T-6542, owner 2026-11-03): one person the owner presents as on dev, stage and the
+# production instance. Seeded on an instance whose global.presenterUserId is set; the id is the
+# same on all three. The forge seeds bind the person beside the demo steward and each other
+# Organization's administrator (components/gitea/values/*/base-values.yaml.gotmpl rewrites), and
+# the groups are theirs: what the owner's dev admin reads, and no more.
+#
+# No realm role (owner 04:52Z, no TOTP anywhere): `portal-approver` carries `mfa-required` on stage
+# and prod, which would make the realm ask for a one-time code. The password is the owner's own dev
+# admin password (owner 04:48Z), copied as Keycloak stores it (hashed) into
+# components/keycloak/presenter.enc.yaml by `scripts/presenter-secret.sh capture` and written into
+# each realm by `scripts/presenter-secret.sh load`. The realm import therefore carries no credential
+# for this person (`credential: copied`), and until `load` runs nobody can sign in as them.
+firstName: Presenter
+lastName: Administrator
+realmRoles: []
+groups: [banskabystrica, bbsk, helsinki, helsinki-mobility, praha, slovensko, zilina, barcelona, bratislava]
+credential: copied

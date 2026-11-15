@@ -1,0 +1,175 @@
+---
+# Fixable findings no release has a fix for yet, each with its reason, its task and an expiry of
+# at most 30 days (scripts/scan-pinned-images.py `judge`). An expired or incomplete entry
+# excuses nothing and turns the scan red. Re-scan and remove an entry once the image is rebuilt.
+# ghcr.io/marek-mraz-jc/joinedcontext-ckan-solr (docker.io/ckan/ckan-solr rebuilt, T-6114), re-scanned 2026-11-09 (T-6696): no CKAN Solr tag carries the fixed jars yet.
+- cve: CVE-2024-47561
+  image: ghcr.io/marek-mraz-jc/joinedcontext-ckan-solr
+  reason: "docker.io/ckan/ckan-solr 2.11-solr9 (last rebuilt 2026-05-13) is the newest 2.11 tag and 2.12-solr9 ships the same Solr jars (trivy 0.75.0, 2026-11-09); our image only upgrades the OS packages. Solr is reachable only from CKAN inside its namespace."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2025-12383
+  image: ghcr.io/marek-mraz-jc/joinedcontext-ckan-solr
+  reason: "docker.io/ckan/ckan-solr 2.11-solr9 (last rebuilt 2026-05-13) is the newest 2.11 tag and 2.12-solr9 ships the same Solr jars (trivy 0.75.0, 2026-11-09); our image only upgrades the OS packages. Solr is reachable only from CKAN inside its namespace."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2025-54988
+  image: ghcr.io/marek-mraz-jc/joinedcontext-ckan-solr
+  reason: "docker.io/ckan/ckan-solr 2.11-solr9 (last rebuilt 2026-05-13) is the newest 2.11 tag and 2.12-solr9 ships the same Solr jars (trivy 0.75.0, 2026-11-09); our image only upgrades the OS packages. Solr is reachable only from CKAN inside its namespace."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2025-66516
+  image: ghcr.io/marek-mraz-jc/joinedcontext-ckan-solr
+  reason: "docker.io/ckan/ckan-solr 2.11-solr9 (last rebuilt 2026-05-13) is the newest 2.11 tag and 2.12-solr9 ships the same Solr jars (trivy 0.75.0, 2026-11-09); our image only upgrades the OS packages. Solr is reachable only from CKAN inside its namespace."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2026-40682
+  image: ghcr.io/marek-mraz-jc/joinedcontext-ckan-solr
+  reason: "docker.io/ckan/ckan-solr 2.11-solr9 (last rebuilt 2026-05-13) is the newest 2.11 tag and 2.12-solr9 ships the same Solr jars (trivy 0.75.0, 2026-11-09); our image only upgrades the OS packages. Solr is reachable only from CKAN inside its namespace."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2026-42027
+  image: ghcr.io/marek-mraz-jc/joinedcontext-ckan-solr
+  reason: "docker.io/ckan/ckan-solr 2.11-solr9 (last rebuilt 2026-05-13) is the newest 2.11 tag and 2.12-solr9 ships the same Solr jars (trivy 0.75.0, 2026-11-09); our image only upgrades the OS packages. Solr is reachable only from CKAN inside its namespace."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2026-75595
+  image: ghcr.io/marek-mraz-jc/joinedcontext-ckan-solr
+  reason: "docker.io/ckan/ckan-solr 2.11-solr9 (last rebuilt 2026-05-13) is the newest 2.11 tag and 2.12-solr9 ships the same Solr jars (trivy 0.75.0, 2026-11-09); our image only upgrades the OS packages. Solr is reachable only from CKAN inside its namespace."
+  task: T-6696
+  expires: 2026-12-09
+# ghcr.io/warpstreamlabs/bento, re-scanned 2026-11-09 (T-6696): 1.22.0 is still the newest release and bundles amqp091-go 1.9.0.
+- cve: CVE-2026-77405
+  image: ghcr.io/warpstreamlabs/bento
+  reason: "1.22.0 (2026-10-09) is still the newest Bento release and bundles amqp091-go 1.9.0 (trivy 0.75.0, 2026-11-09); no pipeline of this platform uses an AMQP input or output."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2026-77408
+  image: ghcr.io/warpstreamlabs/bento
+  reason: "1.22.0 (2026-10-09) is still the newest Bento release and bundles amqp091-go 1.9.0 (trivy 0.75.0, 2026-11-09); no pipeline of this platform uses an AMQP input or output."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2026-77411
+  image: ghcr.io/warpstreamlabs/bento
+  reason: "1.22.0 (2026-10-09) is still the newest Bento release and bundles amqp091-go 1.9.0 (trivy 0.75.0, 2026-11-09); no pipeline of this platform uses an AMQP input or output."
+  task: T-6696
+  expires: 2026-12-09
+# docker.gitea.com/gitea, re-scanned 2026-11-09 (T-6696): 1.27.3 is the newest 1.27 patch; 28.3.0 scans clean and is a major upgrade of its own.
+- cve: CVE-2026-60002
+  image: docker.gitea.com/gitea
+  reason: "1.27.3 is the newest 1.27 patch and still ships openssh-keygen 10.3_p1-r0 and runner 1.0.8 (trivy 0.75.0, 2026-11-09); 28.3.0 (2026-11-01) scans clean but is a new major line with forward-only database migrations, so the forge moves to it as its own change. The forge exposes no SSH and runs no bundled runner here."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2026-73802
+  image: docker.gitea.com/gitea
+  reason: "1.27.3 is the newest 1.27 patch and still ships openssh-keygen 10.3_p1-r0 and runner 1.0.8 (trivy 0.75.0, 2026-11-09); 28.3.0 (2026-11-01) scans clean but is a new major line with forward-only database migrations, so the forge moves to it as its own change. The forge exposes no SSH and runs no bundled runner here."
+  task: T-6696
+  expires: 2026-12-09
+# alpine/kubectl, re-scanned 2026-11-09 (T-6696): no 1.33 or 1.34 build carries the fixed OpenSSL and Go; 1.35 is outside the client skew of the k3s v1.33 cluster.
+- cve: CVE-2025-68121
+  image: alpine/kubectl
+  reason: "1.33.4 is the newest 1.33 build and 1.34.2, the newest 1.34, still ships OpenSSL 3.5.4 and Go 1.24.9 (trivy 0.75.0, 2026-11-09); 1.35 is outside the supported client skew of the k3s v1.33.13 cluster. The reaper and the restore drill run inside the cluster with no inbound traffic."
+  task: T-6696
+  expires: 2026-12-09
+- cve: CVE-2026-31789
+  image: alpine/kubectl
+  reason: "1.33.4 is the newest 1.33 build and 1.34.2, the newest 1.34, still ships OpenSSL 3.5.4 and Go 1.24.9 (trivy 0.75.0, 2026-11-09); 1.35 is outside the supported client skew of the k3s v1.33.13 cluster. The reaper and the restore drill run inside the cluster with no inbound traffic."
+  task: T-6696
+  expires: 2026-12-09
+# CVE-2026-111497 (brotli, HIGH, CISA KEV since 2026-10-27), re-scanned 2026-11-09 (T-6698): the newest images of these two still ship the affected library (trivy 0.75.0).
+- cve: CVE-2026-111497
+  image: registry.k8s.io/git-sync/git-sync
+  reason: "v4.8.0, the newest git-sync (2026-10-24), is the pinned digest and still ships libbrotli1 1.1.0-2+b7, fixed in 1.1.0-2+deb13u1 (trivy 0.75.0, 2026-11-09). git-sync runs inside the cluster, reads the configuration repository over HTTPS and serves nothing."
+  task: T-6698
+  expires: 2026-12-09
+- cve: CVE-2026-111497
+  image: docker.gitea.com/gitea
+  reason: "1.27.3-rootless, the newest 1.27 patch, keeps its pinned digest upstream and still ships brotli-libs 1.2.0-r1, fixed in 1.2.1-r0 (trivy 0.75.0, 2026-11-09); 28.x is a major upgrade with forward-only migrations (T-6696). Re-pin once a Gitea 1.27 image carries brotli-libs 1.2.1-r0."
+  task: T-6698
+  expires: 2026-12-09
+# CVE-2026-56857 (Go stdlib, GO-2026-6604, CRITICAL in trivy 0.75.0 since 2026-10-28): Windows-only (os.Root.Mkdir and siblings, goos windows in the Go advisory); every pinned image is linux/amd64, so none carries the affected code path. Re-pin each image as its upstream ships a Go 1.26.9+/1.27.2+ build.
+- cve: CVE-2026-56857
+  image: alpine/kubectl
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: docker.io/hetzner/cert-manager-webhook-hetzner
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: docker.io/library/nats
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: ghcr.io/cloudnative-pg/cloudnative-pg
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: ghcr.io/marek-mraz-jc/joinedcontext-argocd
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: ghcr.io/marek-mraz-jc/joinedcontext-gitops-helmfile
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: ghcr.io/warpstreamlabs/bento
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: otel/opentelemetry-collector-contrib
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: quay.io/prometheus-operator/prometheus-config-reloader
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: quay.io/prometheus-operator/prometheus-operator
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: quay.io/prometheus/alertmanager
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: quay.io/prometheus/node-exporter
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: docker.gitea.com/gitea
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: quay.io/prometheus/prometheus
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: registry.k8s.io/git-sync/git-sync
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: registry.k8s.io/kube-state-metrics/kube-state-metrics
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28
+- cve: CVE-2026-56857
+  image: ghcr.io/marek-mraz-jc/joinedcontext-keycloak-config-cli
+  reason: "GO-2026-6604 (Go os.Root following a junction out of the root) affects only GOOS=windows; this image runs linux binaries, which do not contain the affected code. Re-pin when a release built with Go 1.26.9 or 1.27.2 or later ships."
+  task: T-6003
+  expires: 2026-11-28

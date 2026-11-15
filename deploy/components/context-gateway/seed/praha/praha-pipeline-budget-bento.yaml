@@ -1,0 +1,33 @@
+# The mapping of the budget pipeline (PL-03): one BudgetLine per line of the approved budget of
+# the City of Prague (Magistrát hl. m. Prahy) for 2026, 1612 lines. The file starts with a UTF-8
+# byte order mark, which a JSON parser refuses, so the document is read as text first. The codes
+# are zero-padded strings ("09", "003122") and stay strings: as numbers they lose the padding
+# the national classification is written in. The key is the line's five codes, which the file
+# holds once each.
+#
+# ponytail: the file name carries the year; the DataSource's URL is changed each January when
+# the city publishes the next budget.
+
+pipeline:
+  processors:
+    - mapping: |
+        map named {
+          root = if this.code.or("").trim() == "" { null } else { (this.code.trim() + " " + this.name.or("").trim()).trim() }
+        }
+        root = content().string().trim_prefix("﻿").parse_json().data.row.or([]).filter(r -> r.rok.or("").re_match("^[0-9]{4}$") && r.odpa.or("").re_match("^[0-9]{6}$") && r.pol.or("").re_match("^[0-9]{4}$") && r.uz.or("").re_match("^[0-9]{9}$") && r.rozpocet_schvaleny.or("").re_match("^-?[0-9]+(\\.[0-9]+)?$") && r.rozpocet_upraveny.or("").re_match("^-?[0-9]+(\\.[0-9]+)?$")).map_each(r -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:mhmp-%v-%v-%v-%v-%v".format("BudgetLine", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.rok, if r.oblast.trim() == "" { "00" } else { r.oblast.trim() }, r.odpa, r.pol, r.uz),
+          "type": "BudgetLine",
+          # What the money is for: the function and the item, as the budget names them (T-4745).
+          "name": if [r.nazev_odpa.or("").trim(), r.nazev_pol.or("").trim()].filter(t -> t != "").length() == 0 { null } else {
+            { "type": "LanguageProperty", "languageMap": { "cs": [r.nazev_odpa.or("").trim(), r.nazev_pol.or("").trim()].filter(t -> t != "").join(": ") } } },
+          "identifier": { "type": "Property", "value": "mhmp-%v-%v-%v-%v-%v".format(r.rok, if r.oblast.trim() == "" { "00" } else { r.oblast.trim() }, r.odpa, r.pol, r.uz) },
+          "fiscalYear": { "type": "Property", "value": r.rok.number().int64() },
+          "budgetArea": if { "code": r.oblast, "name": r.nazev_oblast }.apply("named") == null { null } else { { "type": "Property", "value": { "code": r.oblast, "name": r.nazev_oblast }.apply("named") } },
+          "budgetFunction": { "type": "Property", "value": { "code": r.odpa, "name": r.nazev_odpa }.apply("named") },
+          "budgetItem": { "type": "Property", "value": { "code": r.pol, "name": r.nazev_pol }.apply("named") },
+          "budgetPurpose": { "type": "Property", "value": { "code": r.uz, "name": r.nazev_uz }.apply("named") },
+          "approvedAmount": { "type": "Property", "value": r.rozpocet_schvaleny.number() },
+          "adjustedAmount": { "type": "Property", "value": r.rozpocet_upraveny.number() },
+          "dataProvider": { "type": "Property", "value": "Magistrát hl. m. Prahy (open data, no rights reserved)" },
+          "source": { "type": "Property", "value": "https://opendata-storage.praha.eu/ROZ_rozpocet_finance/rozpocet/Zdroje/2026/Rozpocet_MHMP_2026.json" }
+        }.filter(entry -> entry.value != null))

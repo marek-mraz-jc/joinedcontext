@@ -1,0 +1,17 @@
+# One GtfsAccessPoint per entrance of the IPR layer Pražská integrovaná doprava - vstupy do metra (T-5423).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: pid-metro-entrances
+  namespace: praha
+  title: { en: Metro entrances, cs: Vstupy do metra }
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '30 4 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-pid-metro-entrances }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: GtfsAccessPoint, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 100 }

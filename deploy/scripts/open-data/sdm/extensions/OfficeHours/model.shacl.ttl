@@ -1,0 +1,112 @@
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix ns1: <https://w3id.org/linkml/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sdm: <https://smartdatamodels.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://joinedcontext.com/models/sdm/extensions/OfficeHours> ns1:generator_version "linkml-1.11.1" .
+
+jc:OfficeHours a sh:NodeShape ;
+    rdfs:comment "One office's opening hours on one weekday." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 14 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Názov_kontaktného_miesta`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 7 ;
+            sh:path sdm:name ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `IČO_samosprávy`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 4 ;
+            sh:path jc:iCOSamospravy ],
+        [ sh:description "The service the row was read from." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:order 1 ;
+            sh:path sdm:source ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Otvorené_do`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 9 ;
+            sh:path jc:otvoreneDo ],
+        [ sh:description "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:order 2 ;
+            sh:path jc:isPartOf ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Otvorené_od`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 10 ;
+            sh:path jc:otvoreneOd ],
+        [ sh:datatype xsd:string ;
+            sh:description "Who published the row, with the credit its licence asks for." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 0 ;
+            sh:path sdm:dataProvider ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Kód_dňa_v_týždni`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 6 ;
+            sh:path jc:kodDnaVTyzdni ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Názov_samosprávy`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 8 ;
+            sh:path jc:nazovSamospravy ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Deň_v_týždni`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path jc:denVTyzdni ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 13 ;
+            sh:path geojson:geometry ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Identifikátor_kontaktného_miest`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 5 ;
+            sh:path jc:identifikatorKontaktnehoMiest ] ;
+    sh:targetClass jc:OfficeHours .
+
+ngsi-ld:Entity a sh:NodeShape ;
+    rdfs:comment "The root every NGSI-LD entity class specialises." ;
+    sh:closed true ;
+    sh:ignoredProperties ( sdm:dataProvider jc:denVTyzdni sdm:name jc:iCOSamospravy jc:kodDnaVTyzdni sdm:source rdf:type jc:identifikatorKontaktnehoMiest jc:otvoreneOd jc:nazovSamospravy jc:isPartOf jc:otvoreneDo ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass ngsi-ld:Entity .
+

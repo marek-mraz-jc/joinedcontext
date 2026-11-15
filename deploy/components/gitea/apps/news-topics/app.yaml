@@ -1,0 +1,61 @@
+# Helsinki news topics: the topics of the city's news, their weekly share and the articles
+# behind each topic, clustered in WASM (T-3334). Hand written, so no generated-by annotation (AP-35).
+#
+# A frontend on the App SDK: React with a client-side Rust/WASM clustering engine, read-only, and a
+# server component on the shared WASM host (T-3352, AP-148) that keeps every ISO week's topics in
+# the App's own schema and the week's articles as a file under its own storage prefix.
+# Its source is its own repository on the forge, which the build lane builds at `ref` (AP-75, AP-80);
+# this folder of the portal repository is where CI tests the same tree before it is pushed there (T-2599).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: news-topics
+  namespace: helsinki
+  title:
+    en: "Helsinki news topics"
+    fi: "Helsingin uutisaiheet"
+  description:
+    en: "What the City of Helsinki's news talks about: the topics, how their share changes week by week, and the articles behind each topic."
+    fi: "Mistä Helsingin kaupungin uutisissa puhutaan: aiheet, niiden osuuksien viikoittainen kehitys ja kunkin aiheen artikkelit."
+spec:
+  kind: wasm
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_news-topics.git
+      ref: main
+  # The interface on Node, the topic clustering in wasm/ compiled to WebAssembly (AP-142).
+  build:
+    node: "22"
+    rust: "1.90"
+  # Its own schema, migrated from migrations/ at publish, and its own prefix for the corpus files.
+  storage:
+    sql:
+      migrations: migrations
+      quotaMiB: 50
+    blob:
+      quotaMiB: 512
+  # The news endpoint of Helsinki is public (GW22): an anonymous reader gets what the public
+  # role is granted and nothing more.
+  visibility: public
+  # Who edits what (T-3828): the App's own tables only, never the context data.
+  roles:
+    - name: viewer
+      title: { en: "Viewer", fi: "Katselija" }
+      description: "Follows topics of their own, each by its top keyword, and stops following them; reads every topic name."
+    - name: steward
+      title: { en: "Steward", fi: "Ylläpitäjä" }
+      description: "What a viewer does, and names a topic, renames it or merges topics by giving them one name, which everyone reads. Reads the whole history."
+  access:
+    - role: viewer
+      subjects: [{ group: news-topics-viewer }]
+    - role: steward
+      subjects: [{ group: news-topics-steward }]
+  lifecycle: published
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Article]
+      attrs: [name, description, url, datePublished, source]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

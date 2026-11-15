@@ -1,0 +1,175 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "Kaupunginosajako.111462",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       24.85113506,
+       60.02417518
+      ],
+      [
+       24.94229984,
+       59.92249326
+      ],
+      [
+       25.15855749,
+       59.94245087
+      ],
+      [
+       25.16032299,
+       59.957089
+      ],
+      [
+       25.16875008,
+       60.02703598
+      ],
+      [
+       25.17611927,
+       60.08758707
+      ],
+      [
+       25.13281348,
+       60.09078771
+      ],
+      [
+       24.8920033,
+       60.03563174
+      ],
+      [
+       24.85113506,
+       60.02417518
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 111462,
+    "aluejako": "KAUPUNGINOSA",
+    "kunta": "091",
+    "tunnus": "Aluemeri",
+    "nimi_fi": "ALUEMERI",
+    "nimi_se": "TERRITORIALHAVET",
+    "yhtluontipvm": "2009-12-30",
+    "yhtmuokkauspvm": "2024-06-12",
+    "yhtdatanomistaja": "Helsinki/Kami",
+    "paivitetty_tietopalveluun": "2026-09-24"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Kaupunginosajako.111616",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       25.09179123,
+       60.15277718
+      ],
+      [
+       25.09819107,
+       60.15272606
+      ],
+      [
+       25.10499154,
+       60.1516892
+      ],
+      [
+       25.1070732,
+       60.15136916
+      ],
+      [
+       25.10988813,
+       60.15101472
+      ],
+      [
+       25.11440736,
+       60.1506131
+      ],
+      [
+       25.12395919,
+       60.15104224
+      ],
+      [
+       25.14208085,
+       60.15190802
+      ],
+      [
+       25.14818506,
+       60.15219958
+      ],
+      [
+       25.16085994,
+       60.15420761
+      ],
+      [
+       25.15754964,
+       60.16557798
+      ],
+      [
+       25.14617395,
+       60.16513071
+      ],
+      [
+       25.12336172,
+       60.16509446
+      ],
+      [
+       25.10619361,
+       60.16763443
+      ],
+      [
+       25.09780173,
+       60.16027714
+      ],
+      [
+       25.09666754,
+       60.15932367
+      ],
+      [
+       25.09612854,
+       60.1588819
+      ],
+      [
+       25.09181304,
+       60.1569713
+      ],
+      [
+       25.09179123,
+       60.15277718
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 111616,
+    "aluejako": "KAUPUNGINOSA",
+    "kunta": "091",
+    "tunnus": "50",
+    "nimi_fi": "VILLINKI",
+    "nimi_se": "VILLINGE",
+    "yhtluontipvm": "2009-12-30",
+    "yhtmuokkauspvm": "2021-01-29",
+    "yhtdatanomistaja": "Helsinki/Kami",
+    "paivitetty_tietopalveluun": "2026-09-24"
+   }
+  }
+ ],
+ "totalFeatures": 60,
+ "numberMatched": 60,
+ "numberReturned": 2,
+ "timeStamp": "2026-09-25T05:12:19.913Z",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:EPSG::4326"
+  }
+ }
+}

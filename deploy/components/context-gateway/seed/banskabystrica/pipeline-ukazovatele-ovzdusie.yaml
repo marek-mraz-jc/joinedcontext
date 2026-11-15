@@ -1,0 +1,70 @@
+# The city's air indicators (PL-45, PF-54, PF-55): the 24-hour mean PM10 and the
+# calendar-year mean PM2.5, both judged against the limit values of Directive 2008/50/EC by
+# whoever shows them, never on the entity (Development/11 §2).
+#
+# It reads `public-air`, the space's public endpoint. A public endpoint is where the gateway
+# synthesises the `public` role (EP-16, GW22), so the existing public-read grant is what lets
+# this pipeline read, and no new grant into `ovzdusie` is opened for it.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: ukazovatele-ovzdusie
+  namespace: banskabystrica
+  title: { sk: Ukazovatele ovzdušia, en: Air quality indicators }
+spec:
+  class: scheduled
+  schedule: '7 * * * *'
+  # Read through the space's own Endpoint and not the store, so the Policy applies to this
+  # pipeline exactly as it applies to anybody else (PL-18, PF-39, PL-45).
+  source:
+    endpointRef: { kind: Endpoint, name: public-air }
+    query:
+      type: AirQualityObserved
+      attrs: [dateObserved, pm10, pm25]
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-kpi:banskabystrica-kpi
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  compute:
+    kind: bloblang
+    bloblang: |
+      let domain = "banskabystrica.sk"
+      let space = env("JC_SPACE")
+      let source_space = env("JC_SOURCE_SPACE")
+      let ran = now().ts_format("2006-01-02T15:04:05Z07:00", "UTC")
+      let source_endpoint = "urn:ngsi-ld:Endpoint:%v:%v:public-air".format($domain, $source_space)
+      let pipeline = "urn:ngsi-ld:Pipeline:%v:%v:ukazovatele-ovzdusie".format($domain, $space)
+
+      # The window ends at the newest reading in the space, not at the wall clock. A 24-hour mean
+      # "ending now" over a source that stopped reporting is a window with nothing in it; ending it at
+      # the newest reading gives the most recent 24 hours the stations actually reported, and the gap
+      # between `calculationPeriod.end` and `updatedAt` is what shows a reader the source is static.
+      let readings = this.filter(r -> r.dateObserved.value.type() == "string")
+      let newest = $readings.map_each(r -> r.dateObserved.value).sort().index(-1).catch(null)
+
+      let day_start = if $newest == null { null } else { $newest.ts_parse("2006-01-02T15:04:05Z07:00").ts_sub_iso8601("PT24H").ts_format("2006-01-02T15:04:05Z07:00", "UTC") }
+      let year_start = if $newest == null { null } else { "%v-01-01T00:00:00Z".format($newest.slice(0, 4)) }
+
+      let day_pm10 = if $newest == null { [] } else { $readings.filter(r -> r.dateObserved.value >= $day_start && r.pm10.or({}).value.or(null).type() == "number").map_each(r -> r.pm10.value) }
+      let year_pm25 = if $newest == null { [] } else { $readings.filter(r -> r.dateObserved.value >= $year_start && r.pm25.or({}).value.or(null).type() == "number").map_each(r -> r.pm25.value) }
+
+      root = [
+        { "n": "pm10-24h-mesto", "title": { "sk": "Priemerná 24-hodinová koncentrácia PM10", "en": "Mean 24-hour PM10 concentration" }, "s": $day_pm10, "start": $day_start, "attr": "pm10", "window": "PT24H ending at the newest reading" },
+        { "n": "pm25-rok-mesto", "title": { "sk": "Priemerná ročná koncentrácia PM2,5", "en": "Mean calendar-year PM2.5 concentration" }, "s": $year_pm25, "start": $year_start, "attr": "pm25", "window": "the calendar year to the newest reading" }
+      ].map_each(k -> {
+        "id": "urn:ngsi-ld:KeyPerformanceIndicator:%v:%v:%v".format($domain, $space, k.n),
+        "type": "KeyPerformanceIndicator",
+        "name": { "type": "Property", "value": k.n },
+        "title": { "type": "LanguageProperty", "languageMap": k.title },
+        # No readings in the window writes the state and not a zero: a zero is a measurement and a
+        # dashboard cannot tell it apart from a real one (Development/10 §5).
+        "currentValue": if k.s.length() == 0 { { "type": "Property", "value": "not measured" } } else {
+          { "type": "Property", "value": (k.s.sum() / k.s.length()), "unitCode": "GQ", "observedAt": $newest }
+        },
+        "calculationPeriod": { "type": "Property", "value": {
+          "start": if k.start == null { $ran } else { k.start },
+          "end": if $newest == null { $ran } else { $newest }
+        } },
+        "calculationFormula": { "type": "Property", "value": "avg(%v) over AirQualityObserved, %v".format(k.attr, k.window) },
+        "derivedFrom": { "type": "Property", "value": $source_endpoint },
+        "computedBy": { "type": "Property", "value": $pipeline },
+        "updatedAt": { "type": "Property", "value": { "@type": "DateTime", "@value": $ran } }
+      })

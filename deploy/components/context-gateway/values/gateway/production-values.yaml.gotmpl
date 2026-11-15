@@ -1,0 +1,38 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage -> stateless gateway
+# - [x] 2+ Replicas or HorizontalPodAutoscaler
+# - [x] Rolling updates maxUnavailable: 0, maxSurge: 1 -> default in workload chart
+# - [x] PodDisruptionBudget (at least minAvailable: 1)
+
+# T-0022 specifies 2 replicas and HPA: replicaCount is set to 2 as the baseline,
+# though workload/deployment.yaml omits spec.replicas when autoscaling is enabled
+# so HPA actively manages the running replica count.
+replicaCount: 2
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: '2'
+    memory: 2Gi
+
+# The fan-out's entity table per Endpoint (ADR-N-049 2.2, T-4352): every Endpoint keeps up to
+# this many full entities for its WebSocket subscribers, so the 50,000 default times a dozen
+# Endpoints is most of a replica's memory. Production holds dev's value; an evicted entity that
+# changes again only counts as new, nothing is lost.
+env:
+  JC_GATEWAY_WS_ENTITIES: "10000"

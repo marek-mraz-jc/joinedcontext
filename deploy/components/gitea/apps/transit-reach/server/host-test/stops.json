@@ -1,0 +1,41 @@
+[
+ {
+  "id": "urn:ngsi-ld:GtfsStop:HSL:1",
+  "type": "GtfsStop",
+  "name": "Rautatientori",
+  "stopCode": "H2001",
+  "location": {
+   "type": "Point",
+   "coordinates": [
+    24.9414,
+    60.171
+   ]
+  }
+ },
+ {
+  "id": "urn:ngsi-ld:GtfsStop:HSL:2",
+  "type": "GtfsStop",
+  "name": "Kaisaniemi",
+  "stopCode": "H2002",
+  "location": {
+   "type": "Point",
+   "coordinates": [
+    24.9469,
+    60.1752
+   ]
+  }
+ },
+ {
+  "id": "urn:ngsi-ld:GtfsStop:HSL:3",
+  "type": "GtfsStop",
+  "name": "Sörnäinen",
+  "stopCode": "H2003",
+  "location": {
+   "type": "Point",
+   "coordinates": [
+    24.9625,
+    60.1872
+   ]
+  }
+ }
+]

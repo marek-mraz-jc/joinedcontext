@@ -1,0 +1,21 @@
+# Open Data BCN `itineraris` (T-5262): the travel time of each of the city's 78 traffic routes now
+# and as usual, rewritten every five minutes as one small text file (78 lines, 2.7 kB on
+# 2026-10-23), one line per route: id#available#time#now#usual#future#factor#trend. The dataset's
+# download link answers 302 to this file on www.bcn.cat, the city's traffic site the package
+# names as its source; the pipeline reads it there. No key. CC BY 4.0, Ajuntament de Barcelona.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-traffic-routes
+  namespace: barcelona
+  title:
+    ca: Temps de recorregut per itineraris (Open Data BCN)
+    es: Tiempo de recorrido por itinerarios (Open Data BCN)
+    en: Travel time by route (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://www.bcn.cat/transit/dades/dadesitineraris.dat
+    verb: GET
+    headers: { Accept: text/plain }
+    timeout: 20s

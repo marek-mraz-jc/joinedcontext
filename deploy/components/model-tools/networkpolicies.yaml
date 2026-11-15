@@ -1,0 +1,38 @@
+---
+# Only the Portal talks to Model Tools, and Model Tools talks to nothing inside the platform:
+# its one outward path is HTTPS to the Smart Data Models organisation for an import (DM-10).
+model-tools:
+  podSelector:
+    app.kubernetes.io/name: model-tools-tools
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        # The public internet only: no pod, node, service, API server or metadata address
+        # behind 443, whatever URL an import was handed (T-2559).
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443

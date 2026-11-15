@@ -1,0 +1,278 @@
+{{- /* Every ContextBroker beside `main` (ADR-N-046 §2.5, T-3989; global.contextBrokers) as an
+       island: its pod answers the gateway, the Portal and Prometheus alone and calls its own
+       database and, for a notification, a public address alone; its database answers its own broker, its own instances
+       and the operator alone, so no broker reaches another's database (policies/brokers.rego).
+       `main` keeps networkpolicies.yaml. With the mesh on, each rule also opens the Linkerd
+       proxy ports and the control plane, which networkpolicies-linkerd.yaml does for `main`. */}}
+{{- $mesh := and ($.Values.global.serviceMesh.enable | default false) (eq ($.Values.global.serviceMesh.type | default "") "linkerd") }}
+{{- range $b := $.Values.global.contextBrokers | default list }}
+{{- $broker := printf "context-broker-%s" $b.name }}
+{{- $db := printf "%s-db" $broker }}
+broker-{{ $b.name }}:
+  podSelector:
+    app.kubernetes.io/name: {{ $broker }}
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $db }}
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 5432
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+    # Delivering a notification straight to its subscriber, as `main` does
+    # (networkpolicies.yaml, plan 5.5, T-3653): a public address on 80 or 443, never one inside
+    # the cluster (F-R2DEP2-017).
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+    {{- if $mesh }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    {{- end }}
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 9090
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        - protocol: TCP
+          port: 4190
+        - protocol: TCP
+          port: 4191
+        {{- end }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        # The metrics port alone: 9090 is the API (T-5095).
+        - protocol: TCP
+          port: 9464
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+
+broker-{{ $b.name }}-db:
+  podSelector:
+    cnpg.io/cluster: {{ $db }}
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $db }}
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 5432
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+    # The kube-apiserver (6443 on k3s) and WAL archiving (443), as apps-db.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+    {{- if $mesh }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    {{- end }}
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+          componentNamespace: postgres.operator
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/jobRole: join
+          componentNamespace: context-broker
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $db }}
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+    # Its own broker, and no other.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $broker }}
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 5432
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+
+# The operator polls every instance's manager; postgres-operator-egress names only the
+# platform's cluster.
+broker-{{ $b.name }}-db-operator:
+  deployLayer: operators
+  componentNamespace: postgres.operator
+  podSelector:
+    app.kubernetes.io/name: cloudnative-pg
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $db }}
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 5432
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+
+{{- if has "context-gateway" $.Values.components }}
+# The gateway's half: it forwards to this broker and takes its notifications.
+broker-{{ $b.name }}-gateway:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $broker }}
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 9090
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $broker }}
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 8080
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+
+{{- end }}
+{{- if has "portal" $.Values.components }}
+# The Portal's half: view writer, usage counter and registrations on this broker.
+broker-{{ $b.name }}-portal:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $broker }}
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 9090
+        {{- if $mesh }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+{{- end }}
+{{ end }}

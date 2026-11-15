@@ -42,7 +42,8 @@ and their projects and objects, and every read row runs on them.
 Inside one Organization with two projects P1, P2 (live: ctl-a and ctl-b only), persona `mo-O-project`
 (role viewer, scope project P1) reads nothing of P2 (`crossproject` rows, the admin's 200 on P2 as
 control). `names` rows: an Organization's admin opening a project named like another
-Organization's gets 409 "not available" naming nothing of it (PF-67). The member of P1 also reads
+Organization's gets 409 "not available" naming nothing of it (PF-67); the installation's admin gets
+the 403 "holds no projects" naming nothing of it (PF-121). The member of P1 also reads
 no P2 entity through P2's Endpoints, gets no P2 object from MCP, and a connector scoped to P1
 answers nothing of P2.
 
@@ -889,6 +890,13 @@ class Suite:
                     continue
                 others = {b, *self.exp[b]["projects"]} - {project}
                 named = sorted(m for m in others if re.search(rf"(?<![\w-]){re.escape(m)}(?![\w-])", text))
+                if a == self.installation:  # PF-121: it holds no projects, so the 403 is the answer measured
+                    self.row(f"names.{a}-admin.project-of-{b}", f"{a}->{b}",
+                             f"POST /api/v1/projects {{name: {project}}} as mo-{a}-admin",
+                             f"403 '{a}' is the installation's and holds no projects, naming nothing of {b}",
+                             f"{st} {text[:160]}" + (f", names {named[:3]}" if named else ""),
+                             st == 403 and not named and "holds no projects" in text)
+                    continue
                 self.row(f"names.{a}-admin.project-of-{b}", f"{a}->{b}",
                          f"POST /api/v1/projects {{name: {project}}} as mo-{a}-admin",
                          f"409 project name '{project}' is not available (PF-67), naming nothing of {b}",

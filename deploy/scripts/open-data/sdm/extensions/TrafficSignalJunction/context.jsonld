@@ -1,0 +1,55 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "TrafficSignalJunction": {
+      "@id": "jc:TrafficSignalJunction"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dateModified": {
+      "@id": "sdm:dateModified",
+      "@type": "xsd:dateTime"
+    },
+    "description": {
+      "@id": "http://purl.org/dc/terms/description"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "jc": "https://joinedcontext.com/models/",
+    "junctionNumber": {
+      "@id": "jc:junctionNumber"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "signalKind": {
+      "@id": "jc:signalKind"
+    },
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "status": {
+      "@id": "jc:status"
+    },
+    "type": "@type",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.12.0"
+}

@@ -1,0 +1,24 @@
+# One PublicInvestment per row of "Register investícií - bodová vrstva" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-register-investicii-bodova-vrstva
+  namespace: bbsk
+  title:
+    sk: Register investícií - bodová vrstva
+    en: Register investícií - bodová vrstva
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 35 3 * * 2
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-register-investicii-bodova-vrstva
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: PublicInvestment
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

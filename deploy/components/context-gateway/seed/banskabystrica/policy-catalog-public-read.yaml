@@ -1,0 +1,29 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: catalog-public-read
+  namespace: banskabystrica
+  title: { sk: Katalóg číta každý, en: Anyone reads the catalogue }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: catalog }
+  assigner: did:web:banskabystrica.sk
+  assignee: { kind: role, id: public }
+  # Read only: records of public Endpoints as the anonymous caller already reads them (EP-84), and
+  # the subscriptions of its WebSocket surface, as any published dataset's reader holds them.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Dataset
+        - type: DataService
+        - type: Organization

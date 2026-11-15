@@ -1,0 +1,56 @@
+# Barcelona's licensed tourist flats in the city's CKAN organisation: TouristRental at building
+# level as NGSI-LD, CSV, GeoJSON by OGC API Features, OData and MCP, refreshed weekly (T-5417).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: tourist-flats
+  namespace: barcelona
+  title:
+    ca: Habitatges d'ús turístic de Barcelona
+    es: Viviendas de uso turístico de Barcelona
+    en: Barcelona licensed tourist flats
+  description:
+    ca: Els habitatges d'ús turístic amb llicència a Barcelona, amb les places, el número del Registre de Turisme de Catalunya i l'edifici on són (carrer, número, districte i barri), sense pis ni porta.
+    es: Las viviendas de uso turístico con licencia en Barcelona, con sus plazas, el número del Registro de Turismo de Cataluña y el edificio donde están (calle, número, distrito y barrio), sin piso ni puerta.
+    en: The licensed tourist flats in Barcelona with their places, their Catalan tourism register number and the building they are in (street, number, district and barri), without floor or door.
+spec:
+  contextSpaceRef: barcelona
+  slug: 7mzocysrtkfg4ncungcvui6hrvgj7usm
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-tourist-flats
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [ECON]
+    keywords:
+      ca: [habitatges d'ús turístic, turisme, habitatge]
+      es: [viviendas de uso turístico, turismo, vivienda]
+      en: [tourist flats, tourism, housing]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: WEEKLY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/habitatges-us-turistic
+        title:
+          ca: Habitatges d'ús turístic a la ciutat de Barcelona (Open Data BCN)
+          en: Tourist housing in the city of Barcelona (Open Data BCN)
+        description:
+          ca: Llicències d'habitatge d'ús turístic amb places, registre i adreça, CC BY 4.0.
+          en: Tourist flat licences with places, register number and address, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: tourist-flats }

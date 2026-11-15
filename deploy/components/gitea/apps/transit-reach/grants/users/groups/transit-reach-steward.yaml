@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: transit-reach-steward
+  namespace: org
+  annotations:
+    joinedcontext.com/app: helsinki/transit-reach
+spec:
+  description: The stewards of transit-reach, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000001 # demo.steward

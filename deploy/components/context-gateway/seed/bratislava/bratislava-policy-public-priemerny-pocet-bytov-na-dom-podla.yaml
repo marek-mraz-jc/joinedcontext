@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-priemerny-pocet-bytov-na-dom-podla
+  namespace: bratislava
+  title:
+    sk: 'Verejné čítanie: Priemerný počet bytov na dom podľa mestských častí Bratislavy v rokoch 1980 - 2051'
+    en: 'Public read: Average number of dwellings per house by city district, 1980-2051'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  # Read only, the rows of this one hub dataset (CC BY 4.0, nothing about a person); discovery
+  # beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:priemerny-pocet-bytov-na-dom-podla[.][a-z0-9.-]+$

@@ -1,0 +1,43 @@
+{
+  "celkovaDlzkaPodjazdu": 0,
+  "cisloPK": "cisloPK",
+  "dataProvider": "dataProvider",
+  "druhKonstrukcie": "druhKonstrukcie",
+  "druhZabezpecenia": "druhZabezpecenia",
+  "id": "urn:ngsi-ld:RoadStructure:joinedcontext.com:example:1",
+  "isPartOf": "https://example.org/isPartOf",
+  "jICZSR": "jICZSR",
+  "kraj": "kraj",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "material": "material",
+  "materialPriepustu": "materialPriepustu",
+  "minVyskaPodjazdu": 0.0,
+  "najblizsiKM": 0.0,
+  "name": "name",
+  "normanaZatazitelnostT": 0,
+  "observedAt": "2026-01-01T00:00:00Z",
+  "okres": "okres",
+  "pocetKolaji": 0,
+  "predmetPremostenia": "predmetPremostenia",
+  "rokStavby": 0,
+  "source": "https://example.org/source",
+  "spravca": "spravca",
+  "spravcaMostu": "spravcaMostu",
+  "spravcaUseku": "spravcaUseku",
+  "stavebnoTechnickyStav": "stavebnoTechnickyStav",
+  "triedaPK": "triedaPK",
+  "typPodjazdu": "typPodjazdu",
+  "typSpravcu": "typSpravcu",
+  "type": "RoadStructure",
+  "vlastnik": "vlastnik",
+  "vlastnikMostu": "vlastnikMostu",
+  "vlastnikUseku": "vlastnikUseku",
+  "vyhradnaZatazitelnostT": "vyhradnaZatazitelnostT",
+  "vynimocnaZatazitelnostT": "vynimocnaZatazitelnostT"
+}

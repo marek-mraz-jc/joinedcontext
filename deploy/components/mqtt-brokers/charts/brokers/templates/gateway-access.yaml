@@ -1,0 +1,55 @@
+{{- if and .Values.serviceMesh.enabled .Values.gateway.namespace }}
+{{- /*
+  The other end of every broker's CONNECT and publish check: the gateway's internal listener
+  (8082), which decides on the caller's `l5d-client-id` (context-gateway `mqtt.rs`). Linkerd sets
+  that header from the caller's mTLS identity, so this Server refuses every caller that is not a
+  meshed pod of the brokers' namespace, whatever the NetworkPolicy lets through (T-5566, GW25).
+  Rendered with no broker listed too: the Portal stamps brokers into this namespace at runtime.
+*/}}
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: context-gateway-internal
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "brokers.labels" (dict "root" . "managedBy" .Release.Service) | nindent 4 }}
+    app.kubernetes.io/component: gateway-access
+spec:
+  podSelector:
+    matchLabels:
+      {{- required "gateway.podLabels" .Values.gateway.podLabels | toYaml | nindent 6 }}
+  port: 8082
+  proxyProtocol: HTTP/1
+  accessPolicy: deny
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: context-gateway-internal
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "brokers.labels" (dict "root" . "managedBy" .Release.Service) | nindent 4 }}
+    app.kubernetes.io/component: gateway-access
+spec:
+  identityRefs:
+    - kind: Namespace
+      name: {{ .Release.Namespace }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: context-gateway-internal
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "brokers.labels" (dict "root" . "managedBy" .Release.Service) | nindent 4 }}
+    app.kubernetes.io/component: gateway-access
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: context-gateway-internal
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: context-gateway-internal
+{{- end }}

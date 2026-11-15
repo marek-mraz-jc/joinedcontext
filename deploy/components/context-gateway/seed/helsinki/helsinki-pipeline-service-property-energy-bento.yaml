@@ -1,0 +1,113 @@
+# The mapping of the service-property-energy pipeline (PL-03, T-5278): the monthly electricity, heat
+# and water use of each of the City of Helsinki's service properties in Nuuka, as Smart Data Models
+# KeyPerformanceIndicator, one per location and utility, the last complete month as kpiValue and
+# every earlier month in its history. Smart Data Models has no building consumption model
+# (dataModel.Energy holds AC measurements, inverters and solar plants), so an indicator per
+# location and utility is the closest fit. District cooling is left out: few locations report it.
+#
+# Nuuka answers one location and one utility per call: the list is reduced to distinct, enabled
+# locations, each asked three times, ten calls a second. A location with no data for a utility
+# answers 404 and writes nothing. The list carries no coordinates: the location's name and property
+# code are in `name` and `dimensionKey`.
+#
+# A location listed under two spellings ("4337 Hoplaxskolan (Solnantie 18-20)" and ".../Solnantie
+# 18-20") is asked under both: Nuuka holds the readings under one of them only. Their ids then carry
+# a short hash of the exact name, so neither overwrites the other.
+#
+# Plausibility (owner 2026-10-22): the list drops, and counts in the run's log, a location with no
+# name, one marked "(disabled)" and a repeated row. A month is
+# dropped, logged with its reason, when its value is not a number, below 0 or above 50 GWh (or
+# 5 million m3 of water) in a month, its unit is not kWh or m3 (Nuuka writes M3 and m3), or its
+# month is not the one asked. Nuuka stamps a month with the last day it has data for: a month that
+# ends before its last day is incomplete (60 of 1,110 on 2026-10-22) and is dropped, since a
+# partial sum would read as low use.
+# An empty list fails the run, so a broken download never reads as a city without properties.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let first = now().ts_format("2006-01", "UTC") + "-01"
+            let to = ($first.ts_parse("2006-01-02").ts_unix() - 86400).ts_format("2006-01-02", "UTC")
+            let rows = this.or([]).map_each(p -> {
+              "location": p.locationName.or("").string().trim(), "code": p.propertyCode.or("").string().trim()
+            }).map_each(p -> p.assign({
+              "key": p.location.lowercase().replace_all("ä", "a").replace_all("ö", "o").replace_all("å", "a").re_replace_all("[^a-z0-9]+", "-").trim("-"),
+              "reason": if p.location.length() < 2 || p.location.length() > 200 { "no name" } else if p.location.contains("(disabled)") { "disabled in the source" } else { "" }
+            }))
+            let named = $rows.filter(p -> p.reason == "")
+            let distinct = $named.unique(p -> p.location)
+            let shared = $distinct.map_each(p -> p.key).fold({}, acc -> acc.tally.assign({ acc.value: acc.tally.get(acc.value).or(0) + 1 }))
+            let unique = $distinct.map_each(p -> p.assign({
+              "key": if $shared.get(p.key) > 1 { p.key + "-" + p.location.hash("sha256").encode("hex").slice(0, 8) } else { p.key }
+            }))
+            let reasons = $rows.filter(p -> p.reason != "").map_each(p -> p.reason)
+            let dropped = $reasons.unique().map_each(x -> { x: $reasons.filter(y -> y == x).length() }).squash()
+            let dropped = if $named.length() > $distinct.length() { $dropped.merge({ "repeated row": $named.length() - $distinct.length() }) } else { $dropped }
+            meta locations = $unique.length()
+            meta dropped = $dropped.format_json(no_indent: true)
+            root = if $unique.length() == 0 { throw("Nuuka's property list holds no location") } else { $unique.map_each(p -> ["Electricity", "Heat", "Water"].map_each(g -> {
+              "location": p.location, "key": p.key, "code": p.code, "group": g, "from": $to.slice(0, 8) + "01", "to": $to
+            })).flatten() }
+        - log:
+            level: INFO
+            message: 'service property energy: ${! @locations } locations asked for ${! this.index(0).from }..${! this.index(0).to }; dropped ${! @dropped }'
+        - unarchive: { format: json_array }
+        - branch:
+            request_map: |
+              meta nuuka_query = "Record=LocationName&SearchString=%v&ReportingGroup=%v&StartTime=%v&EndTime=%v".format(this.location.escape_url_query(), this.group, this.from, this.to)
+              root = ""
+            processors:
+              - http:
+                  url: https://helsinki-openapi.nuuka.cloud/api/v1.0/EnergyData/Monthly/ListByProperty?${! @nuuka_query }
+                  verb: GET
+                  headers:
+                    Accept: application/json
+                    User-Agent: joinedcontext-helsinki/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+                  rate_limit: hel_nuuka
+                  # No data for that location and utility: an answer, not a failure.
+                  successful_on: [404]
+              - mapping: |
+                  root = if content().length() > 1048576 { throw("Nuuka answered %v bytes for one month of one location".format(content().length())) } else { this }
+            result_map: root.answer = this
+        - mapping: |
+            let units = { "kwh": { "code": "KWH", "max": 50000000 }, "m3": { "code": "MTQ", "max": 5000000 } }
+            let names = { "Electricity": { "fi": "sähkö", "en": "electricity" }, "Heat": { "fi": "lämpö", "en": "heat" }, "Water": { "fi": "vesi", "en": "water" } }
+            let rows = if this.answer.type() == "array" { this.answer.filter(r -> r.locationName.or("").string().trim() == this.location && r.reportingGroup.or("") == this.group) } else { [] }
+            let row = if $rows.length() == 0 { null } else { $rows.index(-1) }
+            let unit = if $row == null { null } else { $units.get($row.unit.or("").string().lowercase()) }
+            let month = if $row == null { "" } else { $row.timestamp.or("").string().slice(0, 10).catch("") }
+            meta drop = if $row == null { "" }
+              else if $row.value.type() != "number" { "not a number" }
+              else if $unit == null { "unit %v is not kWh or m3".format($row.unit.or("none")) }
+              else if $row.value < 0 || $row.value > $unit.max { "%v %v is outside 0..%v".format($row.value, $row.unit, $unit.max) }
+              else if $month.slice(0, 7).catch("") == this.to.slice(0, 7) && $month < this.to { "incomplete month: data ends %v".format($month) }
+              else if $month != this.to { "the month %v is not the one asked".format($month) }
+              else { "" }
+            let query = "Record=LocationName&SearchString=%v&ReportingGroup=%v&StartTime=%v&EndTime=%v".format(this.location.escape_url_query(), this.group, this.from, this.to)
+            root = if $row == null { deleted() } else if @drop != "" { this } else { {
+              "id": "urn:ngsi-ld:%v:%v:%v:energy-%v-%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.group.lowercase(), this.key),
+              "type": "KeyPerformanceIndicator",
+              "name": { "type": "LanguageProperty", "languageMap": {
+                "fi": "%v: %v, kuukausikulutus".format(this.location, $names.get(this.group).fi),
+                "en": "%v: %v, monthly use".format(this.location, $names.get(this.group).en)
+              } },
+              "kpiValue": { "type": "Property", "value": $row.value, "unitCode": $unit.code, "observedAt": "%vT00:00:00Z".format(this.to) },
+              "calculationPeriod": { "type": "Property", "value": { "from": this.from, "to": this.to } },
+              "calculationFrequency": { "type": "Property", "value": "monthly" },
+              "calculatedBy": { "type": "Property", "value": "City of Helsinki (Nuuka energy management)" },
+              "organization": { "type": "Property", "value": "City of Helsinki" },
+              "process": { "type": "Property", "value": "Nuuka energy data, monthly %v".format(this.group) },
+              "dimensionKey": { "type": "Property", "value": if this.code == "" { "locationName=%v;reportingGroup=%v".format(this.location, this.group) } else { "locationName=%v;propertyCode=%v;reportingGroup=%v".format(this.location, this.code, this.group) } },
+              "dataProvider": { "type": "Property", "value": "City of Helsinki, service property energy data (Nuuka), CC BY 4.0" },
+              "source": { "type": "Property", "value": "https://helsinki-openapi.nuuka.cloud/api/v1.0/EnergyData/Monthly/ListByProperty?" + $query }
+            } }
+        - switch:
+            - check: '@drop.or("") != ""'
+              processors:
+                - log:
+                    level: WARN
+                    message: 'service property energy: ${! this.location } ${! this.group } dropped: ${! @drop }'
+                - mapping: root = deleted()

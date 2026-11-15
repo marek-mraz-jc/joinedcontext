@@ -1,0 +1,18 @@
+{% ckan_extends %}
+
+{# A search result names what a reader gets and who publishes it (T-3009): the formats it serves
+   as plain chips (T-5649: the Format filter's names, without the data model's documents), then
+   the publisher and the last update. #}
+{% block resources %}
+  <div class="jc-item-meta">
+    {% if not hide_resources %}
+      {% for format in h.jc_format_chips(package) %}<span class="jc-chip">{{ format }}</span>{% endfor %}
+    {% endif %}
+    <span class="jc-item-facts">
+      {%- if package.organization %}{{ package.organization.title or package.organization.name }}{% endif -%}
+      {%- set updated = h.jc_updated(package) -%}
+      {%- if package.organization and updated %} · {% endif -%}
+      {%- if updated %}{{ h.jc_t('updated') }} {{ h.render_datetime(updated) }}{% endif -%}
+    </span>
+  </div>
+{% endblock %}

@@ -1,0 +1,19 @@
+{{- if .Values.seed }}
+{{- range $group := include "bootstrap.seedGroups" . | fromJsonArray }}
+{{- $data := dict }}
+{{- range $key, $text := $.Values.seed }}
+{{- range $.Values.rewrites }}{{ $text = regexReplaceAll .from $text .to }}{{ end }}
+{{- if eq (include "bootstrap.seedGroup" $key) $group }}{{ $_ := set $data $key $text }}{{ end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bootstrap.fullname" $ }}-seed{{ if $group }}-{{ $group }}{{ end }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "bootstrap.labels" $ | nindent 4 }}
+data:
+  {{- toYaml $data | nindent 2 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,219 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "BudgetProject": {
+      "@id": "jc:BudgetProject"
+    },
+    "Debate": {
+      "@id": "jc:Debate"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "Meeting": {
+      "@id": "jc:Meeting"
+    },
+    "ParticipatoryProcess": {
+      "@id": "jc:ParticipatoryProcess"
+    },
+    "PostalAddress": {
+      "@id": "schema:PostalAddress"
+    },
+    "ProcessStep": {
+      "@id": "jc:ProcessStep"
+    },
+    "Proposal": {
+      "@id": "jc:Proposal"
+    },
+    "ProposalStatistic": {
+      "@id": "jc:ProposalStatistic"
+    },
+    "Result": {
+      "@id": "jc:Result"
+    },
+    "Survey": {
+      "@id": "jc:Survey"
+    },
+    "active": {
+      "@id": "jc:active",
+      "@type": "xsd:boolean"
+    },
+    "activeStep": {
+      "@id": "jc:activeStep"
+    },
+    "address": {
+      "@id": "schema:address"
+    },
+    "addressCountry": {
+      "@id": "schema:addressCountry"
+    },
+    "addressLocality": {
+      "@id": "schema:addressLocality"
+    },
+    "attendeesCount": {
+      "@id": "jc:attendeesCount",
+      "@type": "xsd:integer"
+    },
+    "budgetAmount": {
+      "@id": "jc:budgetAmount",
+      "@type": "xsd:integer"
+    },
+    "budgetName": {
+      "@id": "jc:budgetName"
+    },
+    "budgetTotal": {
+      "@id": "jc:budgetTotal",
+      "@type": "xsd:integer"
+    },
+    "category": {
+      "@id": "jc:category"
+    },
+    "closed": {
+      "@id": "jc:closed",
+      "@type": "xsd:boolean"
+    },
+    "closingReport": {
+      "@id": "jc:closingReport"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dateCreated": {
+      "@id": "sdm:dateCreated",
+      "@type": "xsd:dateTime"
+    },
+    "dateModified": {
+      "@id": "sdm:dateModified",
+      "@type": "xsd:dateTime"
+    },
+    "description": {
+      "@id": "schema:description"
+    },
+    "endDate": {
+      "@id": "schema:endDate"
+    },
+    "endorsementsCount": {
+      "@id": "jc:endorsementsCount",
+      "@type": "xsd:integer"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "meetingType": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:meetingType"
+    },
+    "name": {
+      "@id": "schema:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "official": {
+      "@id": "jc:official",
+      "@type": "xsd:boolean"
+    },
+    "onlineUrl": {
+      "@id": "jc:onlineUrl",
+      "@type": "xsd:anyURI"
+    },
+    "processName": {
+      "@id": "jc:processName"
+    },
+    "processType": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:processType"
+    },
+    "progress": {
+      "@id": "jc:progress",
+      "@type": "xsd:float"
+    },
+    "proposalAnswer": {
+      "@id": "jc:proposalAnswer"
+    },
+    "proposalCount": {
+      "@id": "jc:proposalCount",
+      "@type": "xsd:integer"
+    },
+    "proposalState": {
+      "@id": "jc:proposalState"
+    },
+    "refParent": {
+      "@id": "jc:refParent",
+      "@type": "@id"
+    },
+    "refParticipatoryProcess": {
+      "@id": "jc:refParticipatoryProcess",
+      "@type": "@id"
+    },
+    "reference": {
+      "@id": "jc:reference"
+    },
+    "resultStatus": {
+      "@id": "jc:resultStatus"
+    },
+    "schema": "https://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "selected": {
+      "@id": "jc:selected",
+      "@type": "xsd:boolean"
+    },
+    "shex": "http://www.w3.org/ns/shex#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "sourceId": {
+      "@id": "jc:sourceId"
+    },
+    "startDate": {
+      "@id": "schema:startDate"
+    },
+    "stateLabel": {
+      "@id": "jc:stateLabel"
+    },
+    "status": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:status"
+    },
+    "steps": {
+      "@id": "jc:steps"
+    },
+    "streetAddress": {
+      "@id": "schema:streetAddress"
+    },
+    "title": {
+      "@id": "schema:name"
+    },
+    "type": "@type",
+    "url": {
+      "@id": "schema:url",
+      "@type": "xsd:anyURI"
+    },
+    "voteCount": {
+      "@id": "jc:voteCount",
+      "@type": "xsd:integer"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.12.0"
+}

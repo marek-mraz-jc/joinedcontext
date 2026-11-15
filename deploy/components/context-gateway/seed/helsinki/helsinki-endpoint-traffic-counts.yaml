@@ -1,0 +1,56 @@
+# The motor vehicles the city's induction loop (LAM) stations count, and their mean speed, one
+# TrafficFlowObserved per station, direction and day (T-5253), read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-traffic-counts
+  namespace: helsinki
+  title: { fi: Liikennemäärät — Helsinki, en: Traffic counts — Helsinki }
+  description:
+    fi: >-
+      Moottoriajoneuvot ja niiden keskinopeus, jotka kaupungin LAM-pisteet (induktiosilmukat) mittasivat edellisenä
+      päivänä, pisteittäin ja suunnittain; jokaisen päivän luku jää entiteetin historiaan. Smart Data Models -tyyppi
+      TrafficFlowObserved (intensity, averageVehicleSpeed km/h); oma ominaisuus trafficDirection kertoo kulkusuunnan.
+      Keskinopeus puuttuu pisteiltä, jotka eivät mittaa nopeutta. Lähde: Helsingin kaupunki, CC BY 4.0.
+    en: >-
+      The motor vehicles and their mean speed the city's LAM (induction loop) stations measured the day before, per
+      station and direction; each day's figure stays in the entity's history. Smart Data Models type
+      TrafficFlowObserved (intensity, averageVehicleSpeed in km/h); the custom property trafficDirection names the
+      direction of travel. Stations that measure no speed carry no mean speed. Source: City of Helsinki, CC BY 4.0.
+spec:
+  contextSpaceRef: helsinki
+  slug: l4zysz2peezgtp7uycaqvyxwx2ad2nep
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-traffic-counts
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata, sta]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, CC BY 4.0'
+      en: 'Source: City of Helsinki, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      fi: [liikennemäärät, liikennelaskenta, keskinopeus]
+      sv: [trafikmängder, trafikräkning, medelhastighet]
+      en: [traffic volumes, traffic counting, mean speed]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: DAILY
+    source:
+      - url: https://lidotiku.api.hel.fi/api/counters/?source=HEL%20LAM
+        title:
+          fi: Helsingin liikennemittausten tilastorajapinta
+          en: Statistical API for traffic measurement data
+        description:
+          fi: Kaupungin LAM-pisteet ja niiden havainnot, CC BY 4.0.
+          en: The city's LAM stations and their observations, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: traffic-counters }

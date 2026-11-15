@@ -1,0 +1,31 @@
+# Public read of the education statistics (T-5258): the indicators whose id carries the theme
+# `education`, current and history: all ten years the space keeps, one row per published period.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-statistics-education
+  namespace: helsinki
+  title: { en: 'Public read: education statistics' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  temporalQ: timerel=after;timeAt=P-3650D
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:helsinki:stat-education-[A-Za-z0-9._-]+$

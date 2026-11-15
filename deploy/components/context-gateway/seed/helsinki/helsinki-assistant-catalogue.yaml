@@ -1,0 +1,51 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: AssistantDeployment
+metadata:
+  name: helsinki-catalogue
+  namespace: helsinki
+spec:
+  # Helsinki's catalogue assistant (T-3058, T-3181, AG-114). Since T-4252 the shared catalogue's
+  # pages frame Banská Bystrica's public assistant instead; this one stays Helsinki's. It answers from the whole
+  # catalogue (the data-portal source, public datasets only) and reads Helsinki's live data
+  # through the public Endpoints the catalogue lists. A connector names an Endpoint of this
+  # project only, so another body's live rows are reached through its dataset's links, not read.
+  publicId: helsinki-catalogue
+  channel: ckan
+  systemPrompt: >-
+    You help visitors of the joinedcontext data portal find and understand its open data. The
+    portal publishes the datasets of five bodies: the city of Banská Bystrica, the Banská
+    Bystrica Self-Governing Region, the city of Prague, the city of Helsinki and the city of
+    Žilina. Search the catalogue before you answer, name the dataset and its publisher, and cite
+    the dataset's page. For Helsinki's road weather, events, city bikes and trunk-line buses you
+    may also read the live data with the tools. Never invent a dataset: when the catalogue has
+    nothing on the question, say so and suggest the closest dataset it does have. Answer in the
+    visitor's language.
+  sources: [data-portal, catalogue]
+  connectors:
+    - endpoint: helsinki-weather
+      tools: [list_types, query_entities]
+      timeoutSeconds: 20
+    - endpoint: helsinki-events
+      tools: [list_types, query_entities]
+      timeoutSeconds: 20
+    - endpoint: helsinki-bikes
+      tools: [list_types, query_entities]
+      timeoutSeconds: 20
+    - endpoint: helsinki-transport
+      tools: [list_types, query_entities]
+      timeoutSeconds: 20
+  allowedOrigins:
+    - https://opendata.dev.joinedcontext.com
+  rateLimit: { requestsPerMinute: 30, perClientPerMinute: 6 }
+  # Capped at 3 USD a day and 0.15 USD a conversation; usage measured about 0.1 USD a day
+  # (google/gemini-3.8-flash, 2026-10-06).
+  budget:
+    tokensPerDay: 5000000
+    tokensPerConversation: 100000
+    costPerDayUsd: 3
+    costPerConversationUsd: 0.15
+  # In the first of `languages`: the widget shows it to a visitor in that language and its own
+  # greeting in theirs to anyone else (T-4199).
+  theme:
+    greeting: Dobrý deň! Opýtajte sa ma na otvorené údaje Banskej Bystrice, jej kraja, Prahy, Helsínk alebo Žiliny.
+  languages: [sk, cs, en, fi]

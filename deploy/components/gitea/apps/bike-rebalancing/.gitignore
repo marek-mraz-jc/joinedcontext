@@ -1,0 +1,9 @@
+# The WebAssembly build: the lane (or `pnpm wasm`) writes wasm/pkg from wasm/.
+wasm/pkg/
+wasm/target/
+node_modules/
+dist/
+test-results/
+*.tsbuildinfo
+playwright-report/
+pnpm-lock.yaml

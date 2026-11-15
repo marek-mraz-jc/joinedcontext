@@ -1,0 +1,46 @@
+{
+  "id": "urn:ngsi-ld:NoiseZone:joinedcontext.com:example:1",
+  "type": "NoiseZone",
+  "assessmentPeriod": {
+    "type": "Property",
+    "value": "assessmentPeriod"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "noiseLevelHigh": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "noiseLevelLow": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/NoiseZone/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

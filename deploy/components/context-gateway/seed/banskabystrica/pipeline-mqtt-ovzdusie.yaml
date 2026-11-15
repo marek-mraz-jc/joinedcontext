@@ -1,0 +1,21 @@
+# The demo air sensors into their own space, senzory (T-4857, PL-76); the mapping is in
+# pipeline-mqtt-ovzdusie-bento.yaml beside it. The name says it is a demo, and a sensor leaves
+# every read an hour after its last message.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: mqtt-ovzdusie
+  namespace: banskabystrica
+  title:
+    sk: Senzory ovzdušia cez MQTT do priestoru senzory
+    en: Air sensors over MQTT into the demo sensors space
+spec:
+  class: auto
+  source:
+    dataSourceRef: { kind: DataSource, name: mqtt-ovzdusie }
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:senzory:senzory
+  output: { type: AirQualityObserved, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }
+  lifetime:
+    - type: AirQualityObserved
+      entity: { rolling: PT1H }

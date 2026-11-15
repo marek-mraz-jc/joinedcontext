@@ -1,0 +1,44 @@
+# Migrants in Bratislava by education: moved out within Slovakia: one public dataset of the hub (T-5274), item 18ed658d6fde4698b47a935e4322935b, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-struktura-migrantov-podla-vnutorne-vystahovani
+  namespace: bratislava
+  title:
+    sk: Štruktúra migrantov v Bratislave podľa vzdelania - vnútorne vysťahovaní
+    en: 'Migrants in Bratislava by education: moved out within Slovakia'
+  description:
+    sk: 'Ukazovatele tabuľky „Štruktúra migrantov v Bratislave podľa vzdelania - vnútorne vysťahovaní“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Migrants in Bratislava by education: moved out within Slovakia”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 2tc5yxez3dqaljjhjpn2dfvp5resxasn
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-struktura-migrantov-podla-vnutorne-vystahovani
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/18ed658d6fde4698b47a935e4322935b
+        title:
+          sk: Štruktúra migrantov v Bratislave podľa vzdelania - vnútorne vysťahovaní
+          en: 'Migrants in Bratislava by education: moved out within Slovakia'
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Štruktúra migrantov v Bratislave podľa vzdelania - vnútorne vysťahovaní. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Migrants in Bratislava by education: moved out within Slovakia. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

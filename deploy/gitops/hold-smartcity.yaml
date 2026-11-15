@@ -1,0 +1,5 @@
+# smartcity's own hold (the root reads it after gitops/hold.yaml). On while prod's Argo CD adopts
+# the releases `just prod-apply` installed: every Application must show an empty diff before
+# automatic sync owns prod (T-4678). A manual sync stays open to the deployer.
+hold: true
+reason: "adoption of prod by Argo CD: an empty diff for every Application first (T-4678)"

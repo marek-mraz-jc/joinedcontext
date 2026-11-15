@@ -1,0 +1,18 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: mesto-pipelines-write
+  namespace: banskabystrica
+  title:
+    sk: Kanály zapisujú zdrojový priestor mesta
+    en: The ingestion pipelines write the city's raw space
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: banskabystrica-mesto }
+  assigner: did:web:banskabystrica.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # `queryEntity` is `GET /entities`, and that is how the indicator pipeline reads the rows it
+  # computes from: `queryBatch` is only the `POST /entityOperations/query` form, so without this
+  # the read was refused `403 Access Denied by Policy`, the stream's `errored()` guard dropped
+  # the whole tick, and the indicator space stayed empty in silence (T-2445). Granted by name
+  # and not as the `retrieveOps` group: one operation is what this account does.
+  operations: [upsertBatch, createBatch, queryBatch, queryEntity]

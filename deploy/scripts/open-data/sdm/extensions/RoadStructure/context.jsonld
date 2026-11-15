@@ -1,0 +1,130 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "RoadStructure": {
+      "@id": "jc:RoadStructure"
+    },
+    "celkovaDlzkaPodjazdu": {
+      "@id": "jc:celkovaDlzkaPodjazdu",
+      "@type": "xsd:integer"
+    },
+    "cisloPK": {
+      "@id": "jc:cisloPK"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "druhKonstrukcie": {
+      "@id": "jc:druhKonstrukcie"
+    },
+    "druhZabezpecenia": {
+      "@id": "jc:druhZabezpecenia"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jICZSR": {
+      "@id": "jc:jICZSR"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "kraj": {
+      "@id": "jc:kraj"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "material": {
+      "@id": "jc:material"
+    },
+    "materialPriepustu": {
+      "@id": "jc:materialPriepustu"
+    },
+    "minVyskaPodjazdu": {
+      "@id": "jc:minVyskaPodjazdu",
+      "@type": "xsd:float"
+    },
+    "najblizsiKM": {
+      "@id": "jc:najblizsiKM",
+      "@type": "xsd:float"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "normanaZatazitelnostT": {
+      "@id": "jc:normanaZatazitelnostT",
+      "@type": "xsd:integer"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "okres": {
+      "@id": "jc:okres"
+    },
+    "pocetKolaji": {
+      "@id": "jc:pocetKolaji",
+      "@type": "xsd:integer"
+    },
+    "predmetPremostenia": {
+      "@id": "jc:predmetPremostenia"
+    },
+    "rokStavby": {
+      "@id": "jc:rokStavby",
+      "@type": "xsd:integer"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "spravca": {
+      "@id": "jc:spravca"
+    },
+    "spravcaMostu": {
+      "@id": "jc:spravcaMostu"
+    },
+    "spravcaUseku": {
+      "@id": "jc:spravcaUseku"
+    },
+    "stavebnoTechnickyStav": {
+      "@id": "jc:stavebnoTechnickyStav"
+    },
+    "triedaPK": {
+      "@id": "jc:triedaPK"
+    },
+    "typPodjazdu": {
+      "@id": "jc:typPodjazdu"
+    },
+    "typSpravcu": {
+      "@id": "jc:typSpravcu"
+    },
+    "type": "@type",
+    "vlastnik": {
+      "@id": "jc:vlastnik"
+    },
+    "vlastnikMostu": {
+      "@id": "jc:vlastnikMostu"
+    },
+    "vlastnikUseku": {
+      "@id": "jc:vlastnikUseku"
+    },
+    "vyhradnaZatazitelnostT": {
+      "@id": "jc:vyhradnaZatazitelnostT"
+    },
+    "vynimocnaZatazitelnostT": {
+      "@id": "jc:vynimocnaZatazitelnostT"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

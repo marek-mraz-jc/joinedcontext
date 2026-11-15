@@ -1,0 +1,33 @@
+---
+# The reaper talks to one thing: the Kubernetes API. The API server is not a pod, so it is
+# named by address the way the forge bootstrap Job names it — `ipBlock` with the whole range
+# and the two control-plane ports is the only portable way to say "the control plane" in a
+# NetworkPolicy — and the ClusterRole is what actually bounds what it may do there. It
+# listens on nothing, so it has no ingress rule at all.
+sandbox-reaper:
+  podSelector:
+    app.kubernetes.io/name: reaper
+    app.kubernetes.io/instance: sandbox-reaper-reaper
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443

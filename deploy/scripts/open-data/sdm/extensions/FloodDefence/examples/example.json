@@ -1,0 +1,18 @@
+{
+  "dataProvider": "dataProvider",
+  "defenceType": "defenceType",
+  "designFlood": "designFlood",
+  "id": "urn:ngsi-ld:FloodDefence:joinedcontext.com:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": "name",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "protectedBy": "protectedBy",
+  "source": "https://example.org/source",
+  "type": "FloodDefence"
+}

@@ -1,0 +1,11 @@
+# PF-56: the person who builds applications proposes App manifests; the Endpoint and Policy an
+# app needs are rendered by the reconciler from its dataNeeds, never by this role (AP-11).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: app-editor
+  namespace: org
+spec:
+  rules:
+    - kinds: [App]
+      verbs: [propose]

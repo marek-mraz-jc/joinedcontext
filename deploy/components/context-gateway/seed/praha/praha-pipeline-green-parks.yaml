@@ -1,0 +1,17 @@
+# One Garden per record of the IPR layer Parky (ÚAP) into the city space (T-5425).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: green-parks
+  namespace: praha
+  title: { en: Parks (planning analysis), cs: Parky (ÚAP) }
+spec:
+  class: auto
+  # IPR republishes the green register every few weeks; one read a week keeps up.
+  period: 168h
+  schedule: '40 3 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-green-parks }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: Garden, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

@@ -1,0 +1,18 @@
+# One FloodZone per record of the IPR layer Záplavové území (Q20) into the city space (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-flood-q20
+  namespace: praha
+  title: { en: Flood area of the 20-year flood (Q20), cs: Záplavové území (Q20) }
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '10 2 * * 4'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-flood-q20 }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: FloodZone, mode: upsert }
+  # 3393194 bytes on 2026-10-24.
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

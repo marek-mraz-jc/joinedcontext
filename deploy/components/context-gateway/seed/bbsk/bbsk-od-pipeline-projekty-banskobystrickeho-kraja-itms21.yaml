@@ -1,0 +1,24 @@
+# One PublicInvestment per row of "Projekty Banskobystrického kraja ITMS21" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-projekty-banskobystrickeho-kraja-itms21
+  namespace: bbsk
+  title:
+    sk: Projekty Banskobystrického kraja ITMS21
+    en: Projekty Banskobystrického kraja ITMS21
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 21 3 * * 0
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-projekty-banskobystrickeho-kraja-itms21
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: PublicInvestment
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

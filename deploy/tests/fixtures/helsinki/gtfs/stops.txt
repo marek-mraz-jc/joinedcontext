@@ -1,0 +1,17 @@
+stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,location_type,parent_station,wheelchair_boarding,platform_code,vehicle_type,digistop_id
+1000001, ,"Kamppi (lähiliikenneterminaali)", ,60.169008,24.931662,A,http://aikataulut.reittiopas.fi/pysakit/fi/1000001.html,1, ,0, ,3, 
+1040271,H1241,"Kamppi","Sisäterminaali E",60.169119,24.932058,A,http://aikataulut.hsl.fi/pysakit/fi/1040271.html,0,1000001,0,41,3,229999
+1040272,H1242,"Kamppi","Sisäterminaali E",60.169092,24.931967,A,http://aikataulut.hsl.fi/pysakit/fi/1040272.html,0,1000001,0,42,3,182054
+1000015, ,"Kamppi (kaukoliikenneterminaali)", ,60.169586,24.933375,A,http://aikataulut.reittiopas.fi/pysakit/fi/1000015.html,1, ,0, ,3, 
+1010107,H2014,"Meritullinkatu","Liisankatu",60.174167,24.956946,A,http://aikataulut.hsl.fi/pysakit/fi/1010107.html,0, ,2, ,3,165086
+1010108,H2013,"Meritullinkatu","Liisankatu",60.174230,24.956804,A,http://aikataulut.hsl.fi/pysakit/fi/1010108.html,0, ,2, ,3,165087
+1010419,H0450,"Hallituskatu","Snellmaninkatu",60.170140,24.953501,A,http://aikataulut.hsl.fi/pysakit/fi/1010419.html,0, ,1, ,0,165099
+4610505,V0615,"Tikkurila/VR","Ratatie 11",60.292019,25.044482,C,http://aikataulut.hsl.fi/pysakit/fi/4610505.html,0, ,1, ,109, 
+1030701,H0099,"Kauppatori","Kauppatori",60.167248,24.955786,A,http://aikataulut.hsl.fi/pysakit/fi/1030701.html,0, ,0, ,4,232468
+1000103, ,"Rautatientorin metroasema", ,60.170384,24.939846,A,http://aikataulut.reittiopas.fi/pysakit/fi/1000103.html,1, ,0, ,1, 
+1020601,H0019,"Rautatientori","Asema-aukio",60.170379,24.939846,A,http://aikataulut.hsl.fi/pysakit/fi/1020601.html,0,1000103,1, ,1,164972
+5010505,Hy0105,"Hyvinkää","Rautatienkatu 9",60.631327,24.857754,Ei HSL,http://aikataulut.hsl.fi/pysakit/fi/5010505.html,0, ,1,4,109, 
+1040273,H1243,Kamppi,Sisäterminaali E,60.169066,24.931895,A,http://aikataulut.hsl.fi/pysakit/fi/1040273.html,2,1000001,0,43,3,240671
+1010109,H2016,Liisanpuistikko,Liisankatu, ,24.960710,A,http://aikataulut.hsl.fi/pysakit/fi/1010109.html,0, ,2, ,3,165088
+1010110,H2015,Liisanpuistikko,Liisankatu 1,60.174330,24.960230,A,http://aikataulut.hsl.fi/pysakit/fi/1010110.html,0,1010107,2, ,3,165089
+bad id/1,H2527,Pohjoisranta 25,Siltavuorenranta,60.176109,24.961050,A,http://aikataulut.hsl.fi/pysakit/fi/1010111.html,0, ,0, ,3,165090

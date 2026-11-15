@@ -1,0 +1,132 @@
+---
+# jc's Postgres stores on the shared postgres-cluster, one per module (bins/jc/STATUS.md stage 8b):
+# without its database a module keeps memory, and a restart loses its repositories, dashboards,
+# datasets and streams.
+jc_portal:
+  name: 'jc_portal'
+  embedded: true
+  user: 'jc_portal'
+  secret:
+    name: 'db-jc-portal'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+jc_antares:
+  name: 'jc_antares'
+  embedded: true
+  user: 'jc_antares'
+  secret:
+    name: 'db-jc-antares'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  # Antares' first migration needs both, neither of which PostgreSQL trusts (components/context-broker).
+  extensions:
+    - name: 'postgis'
+      ensure: present
+    - name: 'btree_gin'
+      ensure: present
+# kaisatsu's migrations grant to the role named kaisatsu_app (crates/kaisatsu/store-pg/migrations),
+# so the names are fixed. kaisatsu_app gets CONNECT here; its table rights come from the migrations.
+jc_kaisatsu:
+  name: 'jc_kaisatsu'
+  embedded: true
+  user: 'kaisatsu_migrate'
+  secret:
+    name: 'db-jc-kaisatsu'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  additionalRoles:
+    - name: 'kaisatsu_app'
+      type: 'readonly'
+      credentialsSecret:
+        name: 'db-jc-kaisatsu-app'
+        passwordKey: 'password'
+# shako, daiya, dataroom and ekiben: the same split as kaisatsu. The owner <m>_migrate runs the
+# migrations, which create and grant the request role <m>_app (shako, daiya by name; dataroom and
+# ekiben grant the role jc's url names at each start). `login` keeps the role job from revoking
+# those grants at every upgrade (daiya's tables sit in schema public).
+jc_shako:
+  name: 'jc_shako'
+  embedded: true
+  user: 'shako_migrate'
+  secret:
+    name: 'db-jc-shako'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  additionalRoles:
+    - name: 'shako_app'
+      type: 'login'
+      credentialsSecret:
+        name: 'db-jc-shako-app'
+        passwordKey: 'password'
+jc_daiya:
+  name: 'jc_daiya'
+  embedded: true
+  user: 'daiya_migrate'
+  secret:
+    name: 'db-jc-daiya'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  additionalRoles:
+    - name: 'daiya_app'
+      type: 'login'
+      credentialsSecret:
+        name: 'db-jc-daiya-app'
+        passwordKey: 'password'
+jc_dataroom:
+  name: 'jc_dataroom'
+  embedded: true
+  user: 'dataroom_migrate'
+  secret:
+    name: 'db-jc-dataroom'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  additionalRoles:
+    - name: 'dataroom_app'
+      type: 'login'
+      credentialsSecret:
+        name: 'db-jc-dataroom-app'
+        passwordKey: 'password'
+jc_ekiben:
+  name: 'jc_ekiben'
+  embedded: true
+  user: 'ekiben_migrate'
+  secret:
+    name: 'db-jc-ekiben'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  additionalRoles:
+    - name: 'ekiben_app'
+      type: 'login'
+      credentialsSecret:
+        name: 'db-jc-ekiben-app'
+        passwordKey: 'password'
+# The assistant's own store (pages, chunks with embeddings, crawl queue, usage): it migrates itself as
+# jc_assistant under forced RLS (bins/jc/src/config.rs AssistantSection). `vector` is not trusted, so
+# the role job creates it (components/assistant/databases.yaml).
+jc_assistant:
+  name: 'jc_assistant'
+  embedded: true
+  user: 'jc_assistant'
+  secret:
+    name: 'db-jc-assistant'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  extensions:
+    - name: vector
+      ensure: present

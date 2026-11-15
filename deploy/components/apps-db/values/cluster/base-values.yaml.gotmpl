@@ -1,0 +1,158 @@
+---
+{{- $this := index .Values "apps-db" "cluster" -}}
+{{- $global := .Values.global }}
+{{- $images := index .Values.images "apps-db" "cluster" }}
+
+# values: https://github.com/cloudnative-pg/charts/blob/main/charts/cluster/values.yaml
+# The database of the server WASM Apps (ADR-N-044, AP-149). What isolates one App from another
+# is in Postgres itself: an App's run-time role has rights on its own schema alone, and a shard's
+# login is a member only of the run-time roles of its own shard's Apps (AP-144).
+
+# The Cluster, its Services (`apps-db-rw`) and its pods' `cnpg.io/cluster` label are named
+# `apps-db`, which the NetworkPolicies and the Portal's connection string name.
+fullnameOverride: {{ $this.name | quote }}
+
+type: postgresql
+
+version:
+  postgresql: "16"
+
+cluster:
+  imageName: "{{ $images.repository }}:{{ $images.tag }}@{{ $images.digest }}"
+  # As the platform's cluster (components/postgres): the probe port is unmeshed, and the instance
+  # manager watches its own Cluster resource.
+  annotations:
+    config.linkerd.io/skip-inbound-ports: "8000"
+    security.joinedcontext.com/api-access-reason: >-
+      CloudNativePG instance manager: watches its own Cluster resource and reports
+      instance status back to the operator.
+  storage:
+    size: "8Gi"
+    storageClass: "{{ $global.storage.storageClass.rwo | default "" }}"
+
+  # Chart 0.7.0 reads cluster.monitoring.enabled, never enablePodMonitor: it renders the chart's
+  # PrometheusRule, whose CNPGClusterHighConnectionsWarning fires at 80 % of max_connections for
+  # 5 min (T-5125). The PodMonitor comes from components/monitoring, at the platform's interval.
+  monitoring:
+    enabled: {{ $global.metrics.enabled }}
+    podMonitor:
+      enabled: false
+
+  # The database `apps`, owned by the Portal's login, which makes every App's schema and roles
+  # through jc_apps (portal apps_db/migrations): CREATEROLE and nothing more.
+  initdb:
+    database: apps
+    owner: jc_apps_admin
+    secret:
+      name: db-apps-admin
+    # As the superuser, in `apps`, once (T-3362, AP-144): a shard's login may switch into every
+    # App role of its shard, so no App role may run a function that switches again or runs SQL
+    # text it is handed. `set_config` is executable by `jc_set_config` alone (the shards' and the
+    # Portal's logins), the query-running functions by nobody. The same statements are the
+    # Portal's apps_db/superuser.sql, which its tests run; keep the two equal.
+    postInitApplicationSQL:
+      - CREATE ROLE jc_set_config NOLOGIN
+      - REVOKE EXECUTE ON FUNCTION pg_catalog.set_config(text, text, boolean) FROM PUBLIC
+      - GRANT EXECUTE ON FUNCTION pg_catalog.set_config(text, text, boolean) TO jc_set_config
+      - REVOKE EXECUTE ON FUNCTION pg_catalog.query_to_xml(text, boolean, boolean, text) FROM PUBLIC
+      - REVOKE EXECUTE ON FUNCTION pg_catalog.query_to_xmlschema(text, boolean, boolean, text) FROM PUBLIC
+      - REVOKE EXECUTE ON FUNCTION pg_catalog.query_to_xml_and_xmlschema(text, boolean, boolean, text) FROM PUBLIC
+      - REVOKE EXECUTE ON FUNCTION pg_catalog.cursor_to_xml(refcursor, integer, boolean, boolean, text) FROM PUBLIC
+      - REVOKE EXECUTE ON FUNCTION pg_catalog.cursor_to_xmlschema(refcursor, boolean, boolean, text) FROM PUBLIC
+      - REVOKE EXECUTE ON FUNCTION pg_catalog.ts_stat(text) FROM PUBLIC
+      - REVOKE EXECUTE ON FUNCTION pg_catalog.ts_stat(text, text) FROM PUBLIC
+      - REVOKE EXECUTE ON FUNCTION pg_catalog.ts_rewrite(tsquery, text) FROM PUBLIC
+
+  roles:
+    - name: jc_apps_admin
+      ensure: present
+      login: true
+      superuser: false
+      createrole: true
+      createdb: false
+      inRoles:
+        - jc_set_config
+      passwordSecret:
+        name: db-apps-admin
+    {{- range $shard := until (int $this.shards) }}
+    # Shard {{ $shard }} of jc-wasm-host: owns nothing; the Portal grants it each App role of its
+    # shard WITH INHERIT FALSE (the switch, none of the App's privileges), and it inherits only
+    # `jc_set_config`, to make the switch (T-3362).
+    - name: wasm_host_{{ $shard }}
+      ensure: present
+      login: true
+      superuser: false
+      inherit: true
+      inRoles:
+        - jc_set_config
+      createrole: false
+      createdb: false
+      passwordSecret:
+        name: apps-host-{{ $shard }}-db
+    {{- end }}
+
+  postgresql:
+    parameters:
+      # max_connections is set per profile, from the shards' pools and the memory limit
+      # (tests/test_postgres_connection_budget.py, T-5553).
+      # The host sets 2 s per statement itself (AP-146); this bounds anything else.
+      statement_timeout: "30s"
+      idle_in_transaction_session_timeout: "60s"
+    pg_hba:
+      # TLS or nothing (as components/postgres), and only the three kinds of login this
+      # database has: the Portal, the shards and an App's owner while it migrates (AP-149).
+      # The last line refuses everyone else before CloudNativePG's own catch-all is reached.
+      - hostnossl all all all reject
+      - hostssl apps jc_apps_admin all scram-sha-256
+      - hostssl apps /^wasm_host_[0-9]+$ all scram-sha-256
+      - hostssl apps /^app_[0-9a-f]{16}_owner$ all scram-sha-256
+      {{- $backup := index .Values "apps-db" "backup" }}
+      {{- if and $backup.enabled $backup.localBackup.enabled }}
+      # The nightly dump (the backup part) runs pg_dumpall as the superuser over TLS; its
+      # NetworkPolicy admits that Job alone (prod apply v0.1.1 failed on this reject, T-4678).
+      - hostssl all postgres all scram-sha-256
+      {{- end }}
+      - host all all all reject
+
+{{- $backups := deepCopy ($this.backups | default dict) }}
+{{- /* `target: artifact-store` archives to the platform's own store as components/postgres does
+(T-5662), under the prefix apps-db/ with a key the store's bucket Job limits to that prefix,
+and with no SSE (the store has no KMS). */}}
+{{- if eq ($backups.target | default "") "artifact-store" }}
+{{- if not (has "artifact-store" .Values.components) }}
+{{- fail "apps-db.cluster.backups.target is 'artifact-store' but the environment does not deploy the artifact-store component: add it to components, or set target '' and name an external store" }}
+{{- end }}
+{{- $store := index .Values "artifact-store" "store" }}
+{{- $_ := set $backups "endpointURL" (printf "http://artifact-store.%s.svc.cluster.local:9000" $store.namespace) }}
+{{- $_ := set $backups "destinationPath" (printf "s3://%s/" ($store.backupBucket | default dict).name) }}
+{{- $_ := set $backups "existingSecret" "apps-db-backup-artifact-store" }}
+{{- $_ := set $backups "encryption" "" }}
+{{- end }}
+backups:
+  enabled: {{ $backups.enabled | default false }}
+{{- if $backups.enabled }}
+  provider: {{ $backups.provider | default "s3" | quote }}
+  endpointURL: {{ $backups.endpointURL | default "" | quote }}
+  destinationPath: {{ $backups.destinationPath | default "" | quote }}
+  retentionPolicy: {{ $backups.retentionPolicy | default "30d" | quote }}
+  s3:
+    region: {{ $backups.region | default "" | quote }}
+    bucket: {{ $backups.bucket | default "" | quote }}
+    path: {{ $backups.path | default "/" | quote }}
+  secret:
+    create: false
+    name: {{ $backups.existingSecret | default "apps-db-backup-s3" | quote }}
+  {{- /* Server-side encryption the store applies; '' sends none (a store without KMS refuses SSE-S3). */}}
+  {{- $sse := ternary $backups.encryption "AES256" (hasKey $backups "encryption") }}
+  wal:
+    compression: gzip
+    encryption: {{ $sse | quote }}
+  data:
+    compression: gzip
+    encryption: {{ $sse | quote }}
+  scheduledBackups:
+    - name: daily-backup
+      schedule: {{ $backups.schedule | default "0 30 3 * * *" | quote }}
+      backupOwnerReference: self
+      method: barmanObjectStore
+{{- end }}

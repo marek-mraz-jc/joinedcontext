@@ -1,0 +1,44 @@
+# Fertility rates of women in Bratislava and Slovakia in 2000 and 2021: one public dataset of the hub (T-5274), item db301fb4448d4f4a867e4f71f6f96cc9, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-miery-plodnosti-zien-a-na-slovensku-v
+  namespace: bratislava
+  title:
+    sk: Miery plodnosti žien v Bratislave a na Slovensku v rokoch 2000 a 2021
+    en: Fertility rates of women in Bratislava and Slovakia in 2000 and 2021
+  description:
+    sk: 'Ukazovatele tabuľky „Miery plodnosti žien v Bratislave a na Slovensku v rokoch 2000 a 2021“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Fertility rates of women in Bratislava and Slovakia in 2000 and 2021”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: dao4xai4dugx6wqszm5dtxp6lqnenggw
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-miery-plodnosti-zien-a-na-slovensku-v
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/db301fb4448d4f4a867e4f71f6f96cc9
+        title:
+          sk: Miery plodnosti žien v Bratislave a na Slovensku v rokoch 2000 a 2021
+          en: Fertility rates of women in Bratislava and Slovakia in 2000 and 2021
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Miery plodnosti žien v Bratislave a na Slovensku v rokoch 2000 a 2021. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Fertility rates of women in Bratislava and Slovakia in 2000 and 2021. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

@@ -1,0 +1,349 @@
+{
+ "4667": [
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": 9950
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 9967
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": 10119
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 10081
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": 9223
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 9331
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": 8563
+  },
+  {
+   "period": "day",
+   "counterId": 4667,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 8649
+  }
+ ],
+ "4668": [
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": 9477
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 9658
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": 9291
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 9484
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": 8834
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 8909
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": 8023
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 7385
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Ylös",
+   "unit": "n",
+   "aggregatedValue": 10
+  },
+  {
+   "period": "day",
+   "counterId": 4668,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": -3
+  }
+ ],
+ "5595": [
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "n",
+   "aggregatedValue": 247
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "n",
+   "aggregatedValue": 272
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "n",
+   "aggregatedValue": 285
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "n",
+   "aggregatedValue": 235
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-17T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "n",
+   "aggregatedValue": 219
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-16T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "n",
+   "aggregatedValue": 269
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-15T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "n",
+   "aggregatedValue": 280
+  },
+  {
+   "period": "day",
+   "counterId": 5595,
+   "startTime": "2026-10-14T00:00:00+03:00",
+   "direction": "Pyörämittaus",
+   "unit": "n",
+   "aggregatedValue": 223
+  }
+ ],
+ "4705": [
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-29T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 2081
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-28T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 5601
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-27T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 5351
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-26T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 5592
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-25T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 6230
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-24T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 6045
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-23T00:00:00+03:00",
+   "direction": "Pohjoiseen",
+   "unit": "n",
+   "aggregatedValue": 5842
+  },
+  {
+   "period": "day",
+   "counterId": 4705,
+   "startTime": "2026-09-22T00:00:00+03:00",
+   "direction": "Etelään",
+   "unit": "n",
+   "aggregatedValue": 3538
+  }
+ ],
+ "4702": [],
+ "4703": [
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Itään",
+   "unit": "n",
+   "aggregatedValue": 14007
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-21T00:00:00+03:00",
+   "direction": "Länteen",
+   "unit": "n",
+   "aggregatedValue": 13140
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Itään",
+   "unit": "n",
+   "aggregatedValue": 13319
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-20T00:00:00+03:00",
+   "direction": "Länteen",
+   "unit": "n",
+   "aggregatedValue": 12747
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Itään",
+   "unit": "n",
+   "aggregatedValue": 12503
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-19T00:00:00+03:00",
+   "direction": "Länteen",
+   "unit": "n",
+   "aggregatedValue": 12067
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Itään",
+   "unit": "n",
+   "aggregatedValue": 9584
+  },
+  {
+   "period": "day",
+   "counterId": 4703,
+   "startTime": "2026-10-18T00:00:00+03:00",
+   "direction": "Länteen",
+   "unit": "n",
+   "aggregatedValue": 8982
+  }
+ ]
+}

@@ -1,0 +1,51 @@
+{
+  "@context": [
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld",
+    "key-performance-indicator.v1.context.jsonld"
+  ],
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:banskabystrica.sk:banskabystrica-kpi:spotreba-vody-obyvatel-mesto",
+  "type": "KeyPerformanceIndicator",
+  "name": {
+    "type": "Property",
+    "value": "spotreba-vody-obyvatel-mesto"
+  },
+  "title": {
+    "type": "LanguageProperty",
+    "languageMap": {
+      "sk": "Fakturovaná spotreba pitnej vody na obyvateľa za deň",
+      "en": "Invoiced drinking water per inhabitant per day"
+    }
+  },
+  "currentValue": {
+    "type": "Property",
+    "value": 154,
+    "unitCode": "LTR",
+    "observedAt": "2026-09-07T00:00:00Z"
+  },
+  "calculationPeriod": {
+    "type": "Property",
+    "value": {
+      "start": "2025-01-01T00:00:00Z",
+      "end": "2025-12-31T23:59:59Z"
+    }
+  },
+  "calculationFormula": {
+    "type": "Property",
+    "value": "the newest year of vh5003rr/U03084 for the city, in thousands of m3 of billed water, divided by the city's registered inhabitants and by the days in that year"
+  },
+  "derivedFrom": {
+    "type": "Property",
+    "value": "urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-mesto:banskabystrica-mesto"
+  },
+  "computedBy": {
+    "type": "Property",
+    "value": "urn:ngsi-ld:Pipeline:banskabystrica.sk:banskabystrica-kpi:ukazovatele-mesto"
+  },
+  "updatedAt": {
+    "type": "Property",
+    "value": {
+      "@type": "DateTime",
+      "@value": "2026-09-20T20:16:01Z"
+    }
+  }
+}

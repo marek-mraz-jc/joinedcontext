@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item 98a6eba14f8646e1a6b7e3cd805f484b (Protipovodňová ochrana (pytle s pískem)), 18 lines on 2026-10-24, served by its ArcGIS Hub
+# download as GeoJSON in WGS 84. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-flood-sandbags
+  namespace: praha
+  title:
+    en: Flood defences (sandbag lines) (IPR Praha)
+    cs: Protipovodňová ochrana (pytle s pískem) (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/98a6eba14f8646e1a6b7e3cd805f484b_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

@@ -1,0 +1,44 @@
+# Contributions to the change of male life expectancy at birth in Bratislava's okresy (%): one public dataset of the hub (T-5672), item f447cf33877548488049a0a685cb3fec, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-prispevky-dlzka-zivota-muzi-percenta
+  namespace: bratislava
+  title:
+    sk: Príspevky k zmene strednej dĺžky života pri narodení mužov v okresoch BA (%)
+    en: Contributions to the change of male life expectancy at birth in Bratislava's okresy (%)
+  description:
+    sk: 'Ukazovatele tabuľky „Príspevky k zmene strednej dĺžky života pri narodení mužov v okresoch BA (%)“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Contributions to the change of male life expectancy at birth in Bratislava's okresy (%)” (2000-2004 to 2015-2019), one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: hibdjwuvmumkfxirh5ehv646jgc5ht3w
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-prispevky-dlzka-zivota-muzi-percenta
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [HEAL]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/f447cf33877548488049a0a685cb3fec
+        title:
+          sk: Príspevky k zmene strednej dĺžky života pri narodení mužov v okresoch BA (%)
+          en: Contributions to the change of male life expectancy at birth in Bratislava's okresy (%)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Príspevky k zmene strednej dĺžky života pri narodení mužov v okresoch BA (%). Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Contributions to the change of male life expectancy at birth in Bratislava's okresy (%). Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

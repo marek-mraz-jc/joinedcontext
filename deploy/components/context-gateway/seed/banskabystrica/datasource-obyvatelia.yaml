@@ -1,0 +1,16 @@
+# The city's own register of inhabitants by year of age, 105 rows. No key. CC-BY-4.0, read from the national catalogue's legislation:termsOfUse node: the record carries no dct:license and a reader who looks only there concludes, wrongly, that it is unlicensed.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mesto-obyvatelia-vek
+  namespace: banskabystrica
+  title:
+    sk: Počet občanov podľa veku (Mesto Banská Bystrica)
+    en: Citizens by age (City of Banská Bystrica)
+spec:
+  type: http
+  http:
+    url: https://egov.banskabystrica.sk/Default.aspx?NavigationState=920:0::plac1140:_144053_5_8
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

@@ -1,0 +1,114 @@
+{{- $root := . }}
+{{- range $name, $pipeline := .Values.pipelines }}
+{{- $cadence := include "pipelineCronjob.cadence" (dict "name" $name "pipeline" $pipeline) | fromYaml }}
+{{- $config := $pipeline.config | default dict }}
+{{- if hasKey $config "input" }}
+{{- fail (printf "pipeline %q: the chart renders `input.generate` as the trigger of the run, so the configuration must not carry an input of its own; the fetch belongs in `pipeline.processors` (PL-27)" $name) }}
+{{- end }}
+{{- $objectName := printf "%s-%s" (include "pipelineCronjob.fullname" $root) $name | trunc 63 | trimSuffix "-" }}
+{{- $trigger := dict "count" $cadence.count "mapping" "root = {}" }}
+{{- if $cadence.interval }}
+{{- $_ := set $trigger "interval" $cadence.interval }}
+{{- end }}
+{{- $bento := merge (dict "input" (dict "generate" $trigger)) $config }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $objectName }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "pipelineCronjob.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+data:
+  # The trigger is rendered, the rest is the author's own Bento. `count` messages leave the
+  # generator and the stream ends, so the process exits and the Job completes (PL-10).
+  bento.yaml: |
+    {{- $bento | toYaml | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $objectName }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "pipelineCronjob.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  schedule: {{ $cadence.schedule | quote }}
+  # A run never overlaps its predecessor, and a run that could not start within half a minute
+  # is skipped rather than queued behind a controller outage (PL-27).
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 30
+  successfulJobsHistoryLimit: {{ $root.Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $root.Values.failedJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "pipelineCronjob.labels" $root | nindent 8 }}
+        app.kubernetes.io/component: {{ $name }}
+    spec:
+      backoffLimit: {{ $root.Values.backoffLimit }}
+      activeDeadlineSeconds: {{ $pipeline.activeDeadlineSeconds | default $root.Values.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "pipelineCronjob.labels" $root | nindent 12 }}
+            app.kubernetes.io/component: {{ $name }}
+          {{- if $root.Values.serviceMesh.enabled }}
+          annotations:
+            linkerd.io/inject: enabled
+            # Without this the pod never finishes: the injected proxy is an ordinary container
+            # that keeps running after Bento exits, and the Job stays Active until its
+            # deadline. As a native sidecar (an init container with restartPolicy: Always,
+            # Kubernetes 1.29+) the proxy is terminated with the last main container.
+            config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "pipelineCronjob.serviceAccountName" $root }}
+          automountServiceAccountToken: {{ $root.Values.serviceAccount.automountServiceAccountToken }}
+          enableServiceLinks: false
+          securityContext:
+            {{- toYaml $root.Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: bento
+              image: {{ include "pipelineCronjob.image" $root | quote }}
+              imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+              # The image's entrypoint is `/bento` and the root directory is not on PATH, so a
+              # bare `bento` is "executable file not found in $PATH".
+              command:
+                - /bento
+              args:
+                - -c
+                - /config/bento.yaml
+              securityContext:
+                {{- toYaml $root.Values.securityContext | nindent 16 }}
+              {{- if or $root.Values.env $root.Values.envSecret }}
+              env:
+                {{- range $key, $secret := $root.Values.envSecret }}
+                - name: {{ $key }}
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $secret.secret | quote }}
+                      key: {{ $secret.key | quote }}
+                {{- end }}
+                {{- range $key, $value := $root.Values.env }}
+                - name: {{ $key }}
+                  value: {{ $value | quote }}
+                {{- end }}
+              {{- end }}
+              resources:
+                {{- toYaml $root.Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: config
+              configMap:
+                name: {{ $objectName }}
+            - name: tmp
+              emptyDir: {}
+{{- end }}

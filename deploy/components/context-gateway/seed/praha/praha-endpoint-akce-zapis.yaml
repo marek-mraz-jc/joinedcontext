@@ -1,0 +1,21 @@
+# The write door of praha-akce (T-5666, the T-5033 shape): the akce pipelines upsert through it. Each Pipeline
+# writes as its own derived account pl-{pipeline} under a derived Policy (PL-19, PL-20), and an Endpoint binds those
+# only without a policyRef; the public Endpoint keeps its read policyRef. The audience keeps out anyone outside the
+# organization.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-akce-zapis
+  namespace: praha
+  title: { cs: 'Akce v Praze: zápis kanálů', en: 'Events in Prague: pipeline writes' }
+  description:
+    cs: Interní vstup, kterým sběrné kanály zapisují akce; čtou se přes veřejný Endpoint praha-akce.
+    en: The internal door the ingestion pipelines write the events through; people read them through the public Endpoint praha-akce.
+spec:
+  contextSpaceRef: praha-akce
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:praha.eu:praha-akce:akce-read
+  slug: qbeo3lkbe7j4dtpoblcemudp3l6ulsfn
+  audience: organization
+  enabledRepresentations: [ngsi-ld, websocket, ogc-features, mcp]

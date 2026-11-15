@@ -1,0 +1,62 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-linkerd-sidecar
+  annotations:
+    # Evaluate the live Pod only.
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Require Linkerd Sidecar in Meshed Namespaces
+    policies.kyverno.io/category: Linkerd
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Every Pod scheduled into a namespace marked for Linkerd injection
+      (annotation linkerd.io/inject=enabled) must carry the linkerd-proxy
+      sidecar. A missing proxy means the workload runs unmeshed and cannot
+      participate in mTLS, silently bypassing the namespace inbound policy.
+      Workloads may opt out explicitly with linkerd.io/inject=disabled
+      (see justify-linkerd-inject-opt-out). Both the classic sidecar
+      (spec.containers) and the native sidecar (spec.initContainers, k8s 1.28+)
+      are accepted.
+spec:
+  background: true
+  rules:
+    - name: meshed-namespace-requires-proxy
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE, UPDATE]
+      context:
+        # namespaceSelector matches namespace LABELS, not annotations, so read
+        # the injection annotation of the namespace via an API call.
+        - name: nsInject
+          apiCall:
+            urlPath: '/api/v1/namespaces/{{ request.namespace }}'
+            jmesPath: 'metadata.annotations."linkerd.io/inject" || ''unset'''
+      preconditions:
+        all:
+          # only enforce in namespaces opted into injection
+          - key: '{{ nsInject }}'
+            operator: Equals
+            value: enabled
+          # honour a per-workload opt-out
+          - key: '{{ request.object.metadata.annotations."linkerd.io/inject" || ''enabled'' }}'
+            operator: NotEquals
+            value: disabled
+      validate:
+        failureAction: KYVERNO_FAILURE_ACTION
+        message: >-
+          Pod in a Linkerd-injected namespace is missing the linkerd-proxy
+          sidecar (mesh injection did not run). Set linkerd.io/inject=disabled
+          to intentionally exclude this workload.
+        deny:
+          conditions:
+            all:
+              - key: 'linkerd-proxy'
+                operator: NotIn
+                value: '{{ request.object.spec.containers[].name || `[]` }}'
+              - key: 'linkerd-proxy'
+                operator: NotIn
+                value: '{{ request.object.spec.initContainers[].name || `[]` }}'

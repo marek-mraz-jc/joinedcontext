@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of admin-permissions (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "image": {
+      "type": "string"
+    },
+    "keycloakUrl": {
+      "type": "string"
+    },
+    "realm": {
+      "type": "string"
+    },
+    "principal": {
+      "type": "string"
+    },
+    "schedule": {
+      "type": "string",
+      "minLength": 9
+    },
+    "serviceAccount": {
+      "type": "string"
+    },
+    "admin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "existingSecretKey": {
+          "type": "string"
+        }
+      }
+    },
+    "securityDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "podSecurityContext": {
+          "type": "object"
+        },
+        "securityContext": {
+          "type": "object"
+        }
+      }
+    },
+    "global": {
+      "type": "object"
+    }
+  }
+}

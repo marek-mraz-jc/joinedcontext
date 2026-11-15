@@ -1,0 +1,44 @@
+# Change of transport demand by the city transport master plan and the forecast: one public dataset of the hub (T-5435), item fa81444a16434daabdc3646ae888e9c4, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-zmena-dopravneho-dopytu
+  namespace: bratislava
+  title:
+    sk: Zmena dopravného dopytu podľa ÚGD hl. mesta Bratislava a Prognózy (v %)
+    en: Change of transport demand by the city transport master plan and the forecast
+  description:
+    sk: 'Ukazovatele tabuľky „Zmena dopravného dopytu podľa ÚGD hl. mesta Bratislava a Prognózy (v %)“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Change of transport demand by the city transport master plan and the forecast”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: mtfjecuarcyi3jmltoodlolskdrnbhnq
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-zmena-dopravneho-dopytu
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [TRAN]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/fa81444a16434daabdc3646ae888e9c4
+        title:
+          sk: Zmena dopravného dopytu podľa ÚGD hl. mesta Bratislava a Prognózy (v %)
+          en: Change of transport demand by the city transport master plan and the forecast
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Zmena dopravného dopytu podľa ÚGD hl. mesta Bratislava a Prognózy (v %). Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Change of transport demand by the city transport master plan and the forecast. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

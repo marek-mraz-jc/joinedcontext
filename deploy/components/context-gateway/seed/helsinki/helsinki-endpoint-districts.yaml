@@ -1,0 +1,79 @@
+# One Smart Data Model type per catalogue dataset (T-4344): AdministrativeArea of the space
+# helsinki, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-districts
+  namespace: helsinki
+  title:
+    fi: Kaupunginosat, korttelit, äänestys- ja esiopetusalueet ja HSL-vyöhykkeet — Helsinki
+    en: City districts, quarters, voting and preschool areas and HSL fare zones — Helsinki
+  description:
+    fi: 'Kaupunginosat, osa-alueet, korttelit, äänestysalueet ja esiopetusalueet rajoineen sekä HSL:n taksavyöhykkeet A–D. Mallin ulkopuoliset ominaisuudet: divisionLevel (district, subDistrict, quarter, votingDistrict, preschoolAdmissionArea tai fareZone), districtCode (kaupungin oma tunnus: kaupunginosan numero, osa-alueen tai korttelin kymmennumeroinen tunnus, äänestysalueen tunnus kuten 049A) fareZone (vyöhykkeen kirjain) sekä esiopetusalueella validFrom ja validTo (lukuvuosi), serviceUnits (esiopetusta antavat Palvelukartan toimipisteet) ja description (opetuskieli ja lukuvuosi). Lähteet: Helsingin kaupunki ja HSL, CC BY 4.0.'
+    en: "The city districts, sub-districts, quarters, voting districts and preschool admission areas with their boundaries, and HSL's fare zones A to D. Properties beyond the model: divisionLevel (district, subDistrict, quarter, votingDistrict, preschoolAdmissionArea or fareZone), districtCode (the city's own code: the district number, the ten-digit code of a sub-district or quarter, a voting district's code such as 049A) fareZone (the zone letter), and for a preschool admission area validFrom and validTo (its school year), serviceUnits (the Service Map units giving its preschool education) and description (the language and the school year). Sources: City of Helsinki and HSL, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: s3luopgog5nkxcpykwxdvhw22iis5n7e
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-districts
+  # The contact lines stay in the space, as on helsinki-all (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähteet: Helsingin kaupunki ja Helsingin seudun liikenne (HSL), CC BY 4.0'
+      sv: 'Källor: Helsingfors stad och Helsingforsregionens trafik (HRT), CC BY 4.0'
+      en: 'Sources: City of Helsinki and Helsinki Region Transport (HSL), CC BY 4.0'
+    themes: [REGI, TRAN]
+    keywords:
+      fi: [kaupunginosat, osa-alueet, korttelit, äänestysalueet, esiopetusalueet, taksavyöhykkeet]
+      sv: [stadsdelar, delområden, kvarter, röstningsområden, förskoleområden, taxezoner]
+      en: [districts, sub-districts, quarters, voting districts, preschool areas, fare zones]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: ANNUAL
+    source:
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Kaupunginosajako
+        title: { fi: Kaupunginosajako, en: City districts }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON.
+          en: A WFS layer of the city's map service, as GeoJSON.
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Piirijako_osaalue
+        title:
+          fi: Piirijako, osa-alueet
+          en: City sub-districts
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON.
+          en: A WFS layer of the city's map service, as GeoJSON.
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Helsingin_korttelit
+        title: { fi: Helsingin korttelit, en: City quarters }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON. Luetaan viikoittain (putki quarters).
+          en: A WFS layer of the city's map service, as GeoJSON. Read weekly (pipeline quarters).
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Halke_aanestysalue
+        title: { fi: Äänestysaluejako, en: Voting districts }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON. Luetaan viikoittain (putki voting-districts).
+          en: A WFS layer of the city's map service, as GeoJSON. Read weekly (pipeline voting-districts).
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Esiopetusalue_suomi_tuleva
+        title: { fi: Esiopetusalueet, en: Preschool admission areas }
+        description:
+          fi: Helsingin karttapalvelun WFS-tasot (suomen- ja ruotsinkieliset, kuluva ja tuleva lukuvuosi), GeoJSON. Luetaan viikoittain (putki preschool-areas).
+          en: WFS layers of the city's map service (Finnish- and Swedish-language, the running and the coming school year), as GeoJSON. Read weekly (pipeline preschool-areas).
+      - url: https://hri.fi/data/en_GB/dataset/hsl-n-taksavyohykkeet
+        title:
+          fi: HSL:n taksavyöhykkeet
+          en: HSL fare zones
+        description:
+          fi: HSL:n avoimen datan palvelun taso, GeoJSON (WGS84), CC BY 4.0. Luetaan päivittäin (putki fare-zones).
+          en: A layer of HSL's open data hub, as GeoJSON (WGS84), CC BY 4.0. Read daily (pipeline fare-zones).

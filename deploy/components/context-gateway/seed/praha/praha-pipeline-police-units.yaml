@@ -1,0 +1,18 @@
+# One KeyPerformanceIndicator per record of `mp-utvary`, written into the city space (T-5428).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: police-units
+  namespace: praha
+  title: { en: Police activity reports by unit, cs: Činnost městské policie podle útvarů }
+spec:
+  class: auto
+  # The police publish a month's report some weeks after it ends; one read a week keeps up.
+  period: 168h
+  schedule: '45 3 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: mp-utvary }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  # 9,152 figures from a 460 KB file; 256 MiB leaves room for the tree walk.
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

@@ -1,0 +1,187 @@
+---
+{{- $this := index .Values "audit-logging" "collector" }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Runs as non-root with `readOnlyRootFilesystem` -> the data dir is the writable path
+# - [x] Health probes -> Vector's own API, enabled below
+# - [x] Standard labels -> the chart's
+# - [x] ServiceAccount with least privilege -> read pods and namespaces, for pod metadata
+# - [ ] Ingress with TLS -> not applicable, it accepts nothing
+
+{{- if $this.enabled }}
+{{- if not $this.bucket }}
+{{- fail "audit-logging: the component is enabled but no bucket is named. OPS-42 wants the audit trail in append-only storage, and a collector with nowhere to write is a trail that silently does not exist." }}
+{{- end }}
+{{- $retention := $this.retentionDays | default 0 | int }}
+{{- if lt $retention 90 }}
+{{- fail (printf "audit-logging: retentionDays is %d, and OPS-42 requires a minimum retention period of 90 calendar days for platform audit logs." $retention) }}
+{{- end }}
+{{- if ne ($this.objectLockMode | default "") "COMPLIANCE" }}
+{{- fail (printf "audit-logging: objectLockMode is %q. Governance mode lets a sufficiently privileged account shorten a lock, and an audit trail an administrator can shorten does not meet OPS-42." ($this.objectLockMode | default "")) }}
+{{- end }}
+{{- end }}
+
+# One collector per node, reading that node's container logs. An aggregator would be a second
+# hop and a second thing to lose the trail in.
+role: Agent
+
+# The chart's own defaults add /proc, /sys and the whole of /var/lib as well, because its default
+# configuration has a `host_metrics` source and it caters for the Docker runtime, which keeps the
+# log bodies under /var/lib/docker/containers. This collector has one source, `kubernetes_logs`,
+# and the clusters it runs on (k3s, kind) run containerd, whose kubelet writes the bodies under
+# /var/log/pods; /var/log/containers links there. So /var/log is the one host path it reads, and
+# read-only. The node's /var/lib holds every container's root filesystem and the kubelet's pod
+# volumes, Secrets among them, and is not mounted (T-4775). The chart's data directory
+# (/var/lib/vector, the checkpoint store) is a volume of its own. policy-exceptions.yaml records
+# this rather than hides it.
+defaultVolumes:
+  - name: var-log
+    hostPath:
+      path: "/var/log/"
+
+defaultVolumeMounts:
+  - name: var-log
+    mountPath: "/var/log/"
+    readOnly: true
+
+image:
+  repository: {{ index .Values.images "audit-logging" "collector" "repository" | quote }}
+  tag: {{ index .Values.images "audit-logging" "collector" "tag" | quote }}
+  sha: {{ index .Values.images "audit-logging" "collector" "digest" | quote }}
+
+# The write credential, by reference. Both keys are read from the Secret the operator
+# supplies; neither value passes through Git, a values file or a rendered manifest (CC-06).
+envFrom:
+  - secretRef:
+      name: {{ $this.existingSecret | quote }}
+
+podLabels:
+  app.kubernetes.io/part-of: joinedcontext
+
+# The checklist above promises health probes on Vector's own API, and the chart templates none
+# of its own once `customConfig` is used. Readiness gates nothing here (the DaemonSet has no
+# Service), so the one that matters is liveness: it restarts a collector whose pipeline has
+# stopped, which is the failure that would otherwise cost a gap in the audit trail.
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8686
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8686
+  # Vector rebuilds its topology on start; failing it during that is a restart loop.
+  initialDelaySeconds: 15
+  periodSeconds: 30
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+{{- if $this.enabled }}
+customConfig:
+  data_dir: /vector-data-dir
+  api:
+    enabled: true
+    # The pod IP rather than loopback, because a kubelet probe connects to the pod and a
+    # collector nothing probes is a collector that can wedge and keep the trail silent while
+    # its pod still reads Ready (OPS-42). Nothing else reaches it: networkpolicies.yaml
+    # declares Ingress with no rule, which denies every pod, and a kubelet probe comes from
+    # the node and is not subject to that policy.
+    address: 0.0.0.0:8686
+  sources:
+    audit:
+      type: kubernetes_logs
+      # A record joins the audit stream because of the pod it came from, never because of
+      # what it says, so no component can drop itself out of the trail by changing what it
+      # logs. The selector is evaluated by the Kubernetes API, so a pod that does not match
+      # is never read at all.
+      extra_label_selector: 'app.kubernetes.io/name in ({{ join "," $this.audited }})'
+  transforms:
+    audit_record:
+      type: remap
+      inputs: [audit]
+      source: |
+        # The instant the collector read the line, kept before the record's own members are
+        # merged over the top of it. It is the fallback below, and after the merge it is
+        # gone.
+        ingested = .timestamp
+
+        # The component's own JSON, lifted out of the container log line. A line that is not
+        # JSON is kept as it stands: dropping it would let a component escape the trail by
+        # writing something unparseable.
+        structured, parse_error = parse_json(string!(.message))
+        if parse_error == null && is_object(structured) {
+          . = merge(., object!(structured))
+          .jc_structured = true
+        } else {
+          .jc_structured = false
+        }
+
+        # RFC 3339 in, RFC 3339 out, in UTC. A record whose own timestamp does not parse
+        # keeps its ingest time and says so, because a malformed audit record is still
+        # evidence and a dropped one is not.
+        written = to_string(.timestamp) ?? ""
+        instant, time_error = parse_timestamp(written, "%+")
+        if time_error == null {
+          .timestamp = instant
+          .jc_timestamp_source = "record"
+        } else {
+          .timestamp = ingested
+          .jc_timestamp_source = "ingest"
+        }
+
+        # Where it came from, in flat members, so the trail can be read without the
+        # collector's own schema.
+        .jc_component = to_string(.kubernetes.pod_labels."app.kubernetes.io/name") ?? "unknown"
+        .jc_pod = to_string(.kubernetes.pod_name) ?? ""
+        .jc_namespace = to_string(.kubernetes.pod_namespace) ?? ""
+        .jc_node = to_string(.kubernetes.pod_node_name) ?? ""
+        .jc_container = to_string(.kubernetes.container_name) ?? ""
+  sinks:
+    audit_store:
+      type: aws_s3
+      inputs: [audit_record]
+      bucket: {{ $this.bucket | quote }}
+      region: {{ $this.region | quote }}
+      {{- if $this.endpointURL }}
+      endpoint: {{ $this.endpointURL | quote }}
+      {{- end }}
+      # One prefix per component per day, so a retention window and an audit request are both
+      # a prefix listing.
+      # The chart runs `tpl` over customConfig, so Vector's own field interpolation has to
+      # survive a Helm pass first. The escaped form below renders to the double-brace
+      # reference to jc_component that Vector then reads.
+      key_prefix: {{ (printf "audit/%s/%%F/" `{{ "{{ jc_component }}" }}`) | quote }}
+      compression: gzip
+      encoding:
+        codec: json
+      # Newline-delimited JSON inside the object: the whole point is that a reader with
+      # nothing but the bucket can still read it.
+      framing:
+        method: newline_delimited
+      auth:
+        access_key_id: ${ACCESS_KEY_ID}
+        secret_access_key: ${SECRET_ACCESS_KEY}
+      batch:
+        timeout_secs: 300
+      # The bucket refuses a delete and an overwrite; the collector must not be the thing
+      # that discovers this at 3am, so a failed write is retried rather than dropped.
+      request:
+        retry_attempts: 10
+      buffer:
+        type: disk
+        max_size: 536870912
+        # Back the buffer up rather than lose evidence: a long sink outage stops the
+        # collector reading, it does not quietly discard the records it already holds.
+        when_full: block
+{{- end }}

@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-parkovaci-automaty
+  namespace: praha
+  title: { cs: 'Veřejné čtení: parkovací automaty z geoportálu IPR' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-parkovaci-automaty: the
+  # TSK street parking layers of the IPR geoportal (T-5424), each type only by its geo- ids.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: FareCollectionSystem
+          idPattern: ^urn:ngsi-ld:FareCollectionSystem:[a-z0-9.-]+:praha-mesto:geo-machines-[0-9]{6,9}$

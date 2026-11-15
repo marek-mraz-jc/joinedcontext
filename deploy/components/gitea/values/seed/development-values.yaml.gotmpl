@@ -1,0 +1,70 @@
+---
+# The files values/bootstrap/development-values.yaml.gotmpl names, read from the same indexes:
+# here the ones under projects/<project>/, there the organization's. Each release gitea-seed ..
+# gitea-seed-16 holds the parts values/seed-layout.tpl packs into it by size (T-4431), so each
+# stays well inside its Secret.
+# JSON strings ending in exactly one newline, which is what the bootstrap's block scalars made of
+# them, so no blob already on the forge changes.
+{{- $seed := dict }}
+{{- $sources := list "context-gateway/seed/helsinki" "context-gateway/seed/banskabystrica" "context-gateway/seed/bbsk" "context-gateway/seed/praha" "context-gateway/seed/zilina" "context-gateway/seed/barcelona" "context-gateway/seed/bratislava" "context-gateway/seed/slovensko" }}
+{{- if has "agent-runner" .Values.components }}{{ $sources = append $sources "agent-runner/seed" }}{{ end }}
+{{- /* The platform's own Decidim, its harvester and its assistant (T-6449). */}}
+{{- if has "decidim" .Values.components }}{{ $sources = append $sources "decidim/seed" }}{{ end }}
+{{- /* The App sharing matrix's test project and people (T-4911): development profile only. */}}
+{{- if eq .Values.global.profile "development" }}{{ $sources = append $sources "context-gateway/seed/sharing" }}{{ end }}
+{{- /* Seed folders one environment adds under components/ (extraSeeds; T-6545: stage registers prod). */}}
+{{- range $dir := index .Values "extraSeeds" | default list }}{{ $sources = append $sources $dir }}{{ end }}
+{{- /* The test objects of the seeds, which a production instance reading these values never holds
+       (T-4678): the eval copies of assistants, the eval-uploads source and the conformance
+       suite's account, policy and space (F-BNT1-002). */}}
+{{- $tests := "/(deployments|sources)/[^/]*eval[^/]*\\.yaml$|/serviceaccounts/conformance\\.yaml$|/policies/conformance-[^/]*\\.yaml$|/spaces/conformance/" }}
+{{- $production := eq .Values.global.profile "production" }}
+{{- range $dir := $sources }}
+{{- range $file, $path := readFile (printf "../../../%s/index.yaml" $dir) | fromYaml }}
+{{- if not (and $production (regexMatch $tests $path)) }}
+{{- $_ := set $seed $path (readFile (printf "../../../%s/%s" $dir $file)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if has "demo-feeds" .Values.components }}
+{{- $demoNs := index .Values "demo-feeds" "nats" "namespace" }}
+{{- range $file, $path := readFile "../../../context-gateway/seed/helsinki-demo-feeds/index.yaml" | fromYaml }}
+{{- $_ := set $seed $path (readFile (printf "../../../context-gateway/seed/helsinki-demo-feeds/%s" $file) | replace "DEMO_FEEDS_NAMESPACE" $demoNs) }}
+{{- end }}
+{{- end }}
+{{- /* Each catalogue instance's assistant, rendered from its values block (T-4636). */}}
+{{- $assistants := tpl (printf "%s{{ include \"gitea.catalogueAssistants\" . }}" (readFile "../seed-layout.tpl")) (dict "values" .Values) | fromJson }}
+{{- /* Encrypted files a private environment adds (encryptedSeedFiles: repository path -> text,
+       T-6982): a sops file never lives in a public seed folder. They are laid out and seeded as
+       the files an index names. */}}
+{{- range $path, $text := index .Values "encryptedSeedFiles" | default dict }}{{ $_ := set $assistants $path $text }}{{ end }}
+{{- range $path, $text := $assistants }}{{ $_ := set $seed $path $text }}{{ end }}
+{{- /* Which part of which project each release holds: values/seed-layout.tpl (T-4431). */}}
+{{- $layout := tpl (printf "%s{{ include \"gitea.seedLayout\" . }}" (readFile "../seed-layout.tpl")) (dict "sources" $sources "extra" $assistants) | fromJson }}
+{{- $shard := .Release.Name | trimPrefix "gitea-seed" | trimPrefix "-" | default "1" | atoi }}
+{{- $projects := dict }}
+{{- range $path, $text := $seed }}
+{{- $parts := splitList "/" $path }}
+{{- if and (eq (index $parts 0) "projects") (gt (len $parts) 2) }}
+{{- $project := index $parts 1 }}
+{{- /* The layout places each file it sized; a file it did not (demo feeds) goes by its path hash. */}}
+{{- $placed := index $layout.files $path | default 0 | int }}
+{{- $i := ternary (sub $placed 1) (mod (atoi (adler32sum $path)) (index $layout.count $project | default 1)) (gt $placed 0) }}
+{{- $part := ternary $project (printf "%s--%d" $project (add1 $i)) (eq $i 0) }}
+{{- if eq $shard (index $layout.parts $part | default 1 | int) }}
+{{- $name := printf "s%d-%s" $shard $part }}
+{{- $files := index $projects $name | default dict }}
+{{- $_ := set $files ($path | replace "/" "__") (regexReplaceAll "\n*\\z" $text "\n") }}
+{{- $_ := set $projects $name $files }}
+{{- end }}
+{{- end }}
+{{- end }}
+apps:
+{{- range $project, $files := $projects }}
+  {{ $project }}:
+{{- range $key, $text := $files }}
+    {{ $key | quote }}: {{ $text | toJson }}
+{{- end }}
+{{- end }}
+{{- if not $projects }} {}
+{{- end }}

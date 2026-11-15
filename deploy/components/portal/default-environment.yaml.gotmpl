@@ -1,0 +1,64 @@
+---
+portal:
+  portal:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}
+    # Where an App's Deployment, Service, Secret and NetworkPolicy are applied (AP-15, AP-18).
+    # The Portal's own namespace by default: it is the one namespace the Portal is granted
+    # anything in, and an installation that wants apps apart from the platform sets this and
+    # creates that namespace itself.
+    appsNamespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}
+    # The Secret holding the age identity the reconciler decrypts a Pipeline's `secretRef`
+    # with (CC-06, ADR-N-012), mounted read-only at /etc/jc/age/keys.txt. Empty means this
+    # installation has no secret backend and refuses every reference, with the reason. The
+    # identity is operator-supplied: generated once, kept out of Git, and its public recipient
+    # is what encrypts the `*.enc.yaml` files of the configuration repository. See the
+    # component README.
+    sopsAgeSecret: ''
+    # A GitHub copy of every generated application's repository (AP-79, T-2475): the forge keeps
+    # it current with a push mirror. An empty owner means no copy. The token is operator-supplied,
+    # never generated: a Secret of this name with key `token` in the Portal's namespace, declared in
+    # the environment's managedSecrets as a ref+sops value (components/secrets/README.md section 2).
+    # It needs to create repositories under the owner and push to them, and nothing else.
+    appMirror:
+      githubOwner: ''
+      secret: github-app-mirror
+    # The operator's bounds on what an Organization may set, keyed by catalog path (PF-97,
+    # ADR-N-035 §3.7), e.g. `spec.projects.quota.contextSpaces: { max: 20 }`. An entry left out
+    # keeps the catalog's built-in bound; a security setting's bound may only tighten it. The
+    # Portal refuses to start on a path the catalog lacks or a loosened security bound, so a
+    # typo shows at the apply rather than as a limit nobody set.
+    organizationBounds:
+      # The public Endpoints' data APIs at 600 requests a minute per address and bearer, 10 a
+      # second (T-4717). The bound holds the catalog's default of 5000 too, which the Portal
+      # writes over the chart's count of every chain labelled publicEndpoint.
+      spec.limits.edge.requestsPerMinute.publicEndpoint: { max: 600 }
+    # The price table of Administration → Costs (T-5126): what the cloud bills a month, without
+    # VAT, which the Portal splits per project. Empty, the page says no table is set. Fill it per
+    # environment from the invoice and check it with the Portal's scripts/cost-reconcile.mjs, e.g.
+    #   currency: EUR
+    #   perUsd: 0.86          # EUR for one US dollar, for the assistants' model spend
+    #   nodes: [{ name: cpx42 nbg1, monthly: 30.00 }]
+    #   volumes: [{ name: postgres, gigabytes: 300, monthlyPerGigabyte: 0.044 }]
+    #   fixed: [{ name: primary IPv4, monthly: 0.50 }]
+    costPrices: {}
+  # The `portal-ui` bundle (T-2485, T-5297): the Portal reads every page and asset from it through
+  # JC_PORTAL_UI_URL. Off means the Portal serves the copy its binary embeds, as long as it has one.
+  ui:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}
+  # Mailpit, where App mail lands on an installation whose relay is not named yet (T-3583): the
+  # Portal sends to it in the clear inside the namespace, it keeps the messages in memory and
+  # reaches nothing. Off here; an environment turns it on, or names a relay instead in the Secret
+  # `portal-mail-relay` (key `url`, e.g. `smtps://user:password@relay.example:465`, a ref+sops
+  # value, components/secrets/README.md section 2).
+  mail-catcher:
+    enabled: false
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}
+  # Each project's own namespace for its pod-backed Apps, `{instanceSlug}-{project}-apps`
+  # (AP-116): the cluster-wide rights the Portal creates them with and the admission policy that
+  # keeps those rights to such namespaces (AP-117). Off means no pod-backed App runs: the Portal
+  # gets no release name and says so on every App that needs a pod.
+  namespaces:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}

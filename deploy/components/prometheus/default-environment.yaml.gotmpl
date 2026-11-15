@@ -1,0 +1,13 @@
+---
+prometheus:
+  stack:
+    # A Prometheus only where metrics are on (OPS-16): the monitoring component's monitors and
+    # rules are what it evaluates, and they render under the same switch.
+    enabled: {{ .Values.global.metrics.enabled }}
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "prometheus") }}
+    # 31 days of samples: the SLO windows of T-5104 reach 30 days back. retentionSize stops the
+    # oldest blocks before the volume fills, so a cardinality surprise loses history, never the
+    # Prometheus (it refuses to write on a full volume).
+    retention: 31d
+    retentionSize: 8GB
+    storageSize: 10Gi

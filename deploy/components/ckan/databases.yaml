@@ -1,0 +1,30 @@
+---
+# Two databases, because CKAN keeps its catalogue and its DataStore apart and refuses to
+# start when they are the same (EP-65). The read role exists for the same reason:
+# `datastore_search_sql` runs caller-supplied SQL on the read connection, so that
+# connection holds SELECT and nothing else.
+ckan:
+  name: 'ckan'
+  embedded: true
+  user: 'ckan'
+  secret:
+    name: 'db-ckan'
+    key: 'password'
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+
+ckan_datastore:
+  name: 'ckan_datastore'
+  embedded: true
+  user: 'ckan'
+  secret:
+    name: 'db-ckan'
+    key: 'password'
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  additionalRoles:
+    - name: 'ckan_datastore_read'
+      type: 'readonly'
+      credentialsSecret:
+        name: 'db-ckan-datastore-read'
+        passwordKey: 'password'

@@ -1,0 +1,24 @@
+# HSL's GTFS shapes (shapes.txt of hsl.zip): 456 964 points of 1 192 shapes on 2026-10-12, read as
+# the one member of the daily feed by its byte range (PL-72). No key. CC-BY-4.0 (HSL open data).
+# T-3890.
+#
+# shapes.txt is 4.2 MB packed, 22 MB inflated. The runner inflates a member bounded on its output
+# (T-3953): a member past maxBytes is refused, so the 32 MiB below reads it whole.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-gtfs-shapes
+  namespace: helsinki
+  title:
+    en: HSL GTFS route shapes
+    fi: HSL:n GTFS-reittien muodot
+spec:
+  type: http
+  http:
+    url: https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip
+    verb: GET
+    timeout: 60s
+    archive:
+      format: zip
+      members: [shapes.txt]
+      maxBytes: 33554432

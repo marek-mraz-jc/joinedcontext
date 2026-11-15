@@ -1,0 +1,21 @@
+# The car parks of the city with their occupancy now, from the city's own open data portal
+# (opendata.zilina.sk, Incinity's Invipo platform), dataset 57 "Zoznam parkovísk s aktuálnou
+# obsadenosťou". POST without a body answers the whole list; no key. ODbL; the terms
+# (opendata.zilina.sk/sk/page/detail/3) ask the source be named "Mesto Žilina" (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: zilina-opendata-parkoviska
+  namespace: zilina
+  title:
+    sk: Parkoviská a obsadenosť (opendata.zilina.sk)
+    en: Car parks and occupancy (opendata.zilina.sk)
+spec:
+  type: http
+  http:
+    url: https://opendata.zilina.sk/api/datasets/v1/city-dashboard/parking/list
+    verb: POST
+    headers:
+      Accept: application/json
+      User-Agent: joinedcontext-zilina/1.0 (+https://dev.joinedcontext.com)
+    timeout: 30s

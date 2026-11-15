@@ -1,0 +1,69 @@
+# The mapping of the street-cleaning-air pipeline (PL-03): one AirQualityObserved per reading of
+# Forum Virium Helsinki's street cleaning pilot (Swarco sensors on a street washer, a brush machine
+# and a fixed point in Rastila, spring 2023). The file is an array of devices, each with its
+# `data_points`. A reading is an observation, as Smart Data Models' AirQualityObserved is: its
+# place, its time, PM10 and PM2.5 in µg/m³ (GQ). The pilot's other readings (pm1, temperature,
+# humidity, pressure, rain, light, sound, speed, vehicleStatus) have no slot in the space's model
+# and are left out; the catalogue entry says so.
+#
+# Plausibility (owner 2026-10-22): a reading is dropped, and counted by its reason in the run's
+# log, when it has no position (the vehicles report null or 0,0 while their GPS has no fix), lies
+# outside Helsinki and 1 km around it, has a PM value outside 0..1000 µg/m³ or PM2.5 above PM10,
+# has no valid time or one more than a day ahead, or repeats a reading of the same device. A file
+# with no reading fails the run, so a broken download never reads as a pilot without data.
+
+pipeline:
+  processors:
+    - decompress: { algorithm: gzip }
+
+    # Each reading reduced to what the entity needs, so the 16-member points of the file are freed
+    # before the readings are judged: the whole file then runs in 224 MiB, and failed in 200 (T-5255).
+    - mapping: |
+        root = this.or([]).map_each(d -> d.data_points.or([]).map_each(p -> {
+          "device": d.id.or("").string(), "deviceName": d.name.or("").string().trim(), "id": p.id.or(null),
+          "lat": p.latitude.or(null), "lon": p.longitude.or(null), "pm10": p.pm10.or(null), "pm25": p.pm25.or(null),
+          "time": p.timestamp.or("").string()
+        })).flatten()
+
+    - mapping: |
+        # Helsinki's land and sea area (the city's AdministrativeArea) and 1 km around it.
+        let box = { "west": 24.80, "south": 59.91, "east": 25.28, "north": 60.31 }
+        let horizon = now().ts_unix() + 86400
+        let readings = this
+        root = if $readings.length() == 0 { throw("the pilot file holds no reading") } else { this }
+        let judged = $readings.map_each(r -> r.assign({
+          "time": r.time.ts_parse("2006-01-02T15:04:05Z07:00").catch(null)
+        })).map_each(r -> r.assign({
+          "reason": if r.lat == null || r.lon == null || r.lat.type() != "number" || r.lon.type() != "number" || (r.lat == 0 && r.lon == 0) { "no position" }
+            else if r.lon < $box.west || r.lon > $box.east || r.lat < $box.south || r.lat > $box.north { "outside Helsinki" }
+            else if [r.pm10, r.pm25].any(v -> v == null || v.type() != "number" || v < 0 || v > 1000) || r.pm25 > r.pm10 { "PM out of range" }
+            else if r.time == null || r.time.ts_unix() > $horizon || r.device == "" || r.id == null { "no valid time or id" }
+            else { "" }
+        }))
+        let kept = $judged.filter(r -> r.reason == "")
+        let unique = $kept.unique(r -> r.device + "-" + r.id.string())
+        let reasons = $judged.filter(r -> r.reason != "").fold({}, acc -> acc.tally.assign({ acc.value.reason: acc.tally.get(acc.value.reason).or(0) + 1 }))
+        let dropped = $reasons.assign({ "duplicate": $kept.length() - $unique.length() }).filter(e -> e.value > 0).key_values().sort_by(e -> e.key).map_each(e -> "%v %v".format(e.value, e.key)).join(", ")
+        meta dropped = if $dropped == "" { "none" } else { $dropped }
+        meta kept = $unique.length()
+        meta read = $readings.length()
+        root = $unique.map_each(r -> r.without("reason").assign({ "time": r.time.ts_format("2006-01-02T15:04:05Z07:00", "UTC") }))
+
+    - log:
+        level: INFO
+        message: 'street cleaning air: ${! @read } readings, ${! @kept } written; dropped: ${! @dropped }'
+
+    # One message per reading: the runner batches them, and no run holds 13,700 entities at once.
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:swarco-%v-%v".format("AirQualityObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.device, this.id.string()),
+          "type": "AirQualityObserved",
+          "name": if this.deviceName == "" { null } else { { "type": "LanguageProperty", "languageMap": { "fi": this.deviceName } } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [this.lon, this.lat] } },
+          "dateObserved": { "type": "Property", "value": this.time },
+          "pm10": { "type": "Property", "value": this.pm10, "unitCode": "GQ", "observedAt": this.time },
+          "pm25": { "type": "Property", "value": this.pm25, "unitCode": "GQ", "observedAt": this.time },
+          "source": { "type": "Property", "value": "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz" }
+        }.filter(entry -> entry.value != null)

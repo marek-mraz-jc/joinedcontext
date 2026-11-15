@@ -1,0 +1,16 @@
+# Up-to-date (E2a) hourly NO2 of sampling point SPO-SK0263A_00008_100, as for PM10 (T-4153). No key. CC BY 4.0, copyright holder EEA (the same SDI record).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: eea-sk0263a-no2
+  namespace: banskabystrica
+  title:
+    sk: NO2, SK0263A (EEA)
+    en: NO2, SK0263A (EEA)
+spec:
+  type: http
+  http:
+    url: https://eeadmz1batchservice02.blob.core.windows.net/airquality-p/SK/SPO-SK0263A_00008_100.parquet
+    verb: GET
+    headers: { Accept: application/octet-stream }
+    timeout: 60s

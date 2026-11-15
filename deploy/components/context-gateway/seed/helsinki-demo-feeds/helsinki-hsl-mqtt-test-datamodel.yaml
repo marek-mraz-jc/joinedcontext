@@ -1,0 +1,14 @@
+# The one model of the MQTT test space (DM-61): the Vehicle the pipeline mqtt-hsl-bridge writes,
+# a draft beside the published models of the space helsinki (T-5883).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: hsl-mqtt-test
+  namespace: helsinki
+  title: { en: HSL trams through our MQTT broker (test) }
+spec:
+  contextSpaceRef: hsl-mqtt-test
+  linkml: ./hsl-mqtt-test.linkml.yaml
+  version: 0.1.0
+  lifecycle: draft
+  classes: [Vehicle]

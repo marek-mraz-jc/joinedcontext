@@ -1,0 +1,13 @@
+---
+# Re-pin the digest of the multi-arch index with:
+#   T=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:rmqtt/rmqtt:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $T" \
+#     -H 'Accept: application/vnd.oci.image.index.v1+json' \
+#     https://registry-1.docker.io/v2/rmqtt/rmqtt/manifests/<tag> | grep -i docker-content-digest
+mqtt-brokers:
+  brokers:
+    # RMQTT as published, unmodified (ADR-N-048): MIT, one static binary, auth through the
+    # rmqtt-auth-http plugin to the gateway.
+    repository: 'rmqtt/rmqtt'
+    tag: '0.24.0'
+    digest: 'sha256:9d9496cfbe4c853d1246a4a151bab652898130b0a819ff69fbae9a786865a637'

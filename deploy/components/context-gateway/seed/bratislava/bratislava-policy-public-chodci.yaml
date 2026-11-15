@@ -1,0 +1,30 @@
+# Public read of the Endpoint bratislava-chodci (T-5273): this type only; the space's other types stay with their own datasets.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-chodci
+  namespace: bratislava
+  title: { sk: 'Verejné čítanie: chodci podľa sčítačov', en: 'Public read: pedestrian counts' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # Its entities keep history: anyone reads it, as far back as the space keeps it (T-4372).
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: CrowdFlowObserved

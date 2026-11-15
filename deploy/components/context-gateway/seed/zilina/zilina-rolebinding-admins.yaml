@@ -1,0 +1,13 @@
+# Žilina's organization administrator (ADR-N-058 2.4, PF-123): org-admin on Mesto Žilina's
+# settings and its projects, and nothing in Helsinki's. The person is demo.zilina
+# (components/keycloak/demo-users.yaml); Helsinki's admins.yaml holds no right here.
+apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: zilina-admins
+  namespace: org
+spec:
+  subjects:
+    - user: de300000-0000-4000-8000-000000000005 # demo.zilina
+  role: org-admin
+  scope: { organization: zilina }

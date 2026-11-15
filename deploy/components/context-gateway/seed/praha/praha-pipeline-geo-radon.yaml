@@ -1,0 +1,20 @@
+# One RadonRiskArea per record of the IPR layer Kategorie radonového rizika into the city space (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-radon
+  namespace: praha
+  title: { en: Radon risk categories, cs: Kategorie radonového rizika }
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  # Thursday 02:00-02:45, five minutes apart: the ten IPR hazard layers (256 MiB each for radon and
+  # the Q areas) never run beside each other or beside the Wednesday green layers (T-5425).
+  schedule: '0 2 * * 4'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-radon }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: RadonRiskArea, mode: upsert }
+  # 8421773 bytes on 2026-10-24.
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

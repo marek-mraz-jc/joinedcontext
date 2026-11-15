@@ -1,0 +1,16 @@
+# Registered jobseekers at year end, the kraj and its 13 okresy, every year the cube carries (1996 on). The cube also reaches every municipality, but a URL naming 516 codes is refused (403) and `*` would read all of Slovakia, so the municipalities wait for a filter the API does not have. No key, CC-BY-4.0 (NKOD record of ŠÚ SR, legislation:termsOfUse).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-pr5001rr
+  namespace: bbsk
+  title:
+    sk: Evidovaní uchádzači o zamestnanie (ŠÚ SR, pr5001rr)
+    en: Registered jobseekers (ŠÚ SR, pr5001rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/pr5001rr/SK032,SK0321,SK0322,SK0323,SK0324,SK0325,SK0326,SK0327,SK0328,SK0329,SK032A,SK032B,SK032C,SK032D/*/*?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

@@ -1,0 +1,32 @@
+# Anyone reads the participation data (T-5065); nobody but the decidim-* pipelines writes it.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: participacia-read
+  namespace: slovensko
+  title: { sk: 'Verejné čítanie: participácia občanov', en: 'Public read: citizen participation' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: slovensko-participacia }
+  assigner: did:web:joinedcontext.com
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: ParticipatoryProcess
+        - type: Proposal
+        - type: BudgetProject
+        - type: Result
+        - type: Meeting
+        - type: Debate
+        - type: Survey

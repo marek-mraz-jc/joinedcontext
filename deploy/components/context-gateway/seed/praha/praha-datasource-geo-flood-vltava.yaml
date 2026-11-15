@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item 7a4bf2d99de44645ac5768f65d8a9692 (Záplavové území (Vltava, Berounka)), 231 areas on 2026-10-24, served by its ArcGIS Hub
+# download as GeoJSON in WGS 84. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-flood-vltava
+  namespace: praha
+  title:
+    en: Flood area of the Vltava and Berounka (IPR Praha)
+    cs: Záplavové území (Vltava, Berounka) (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/7a4bf2d99de44645ac5768f65d8a9692_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

@@ -1,0 +1,18 @@
+# The city's Eco-Counter bicycle and pedestrian counting stations from its traffic measurement API
+# (lidotiku.api.hel.fi), 40 stations on 2026-10-22 in one page. No key. CC BY 4.0, read from the
+# HRI catalogue (packages helsingin-pyorailijamaarat and helsingin-liikennemittausten-tilastorajapinta).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: lidotiku-cycle-counters
+  namespace: helsinki
+  title:
+    en: Cycle counters (City of Helsinki traffic measurement API)
+    fi: Pyöräilijälaskimet (Helsingin liikennemittausten tilastorajapinta)
+spec:
+  type: http
+  http:
+    url: https://lidotiku.api.hel.fi/api/counters/?source=EcoCounter&page_size=1000
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

@@ -1,0 +1,19 @@
+# One TrafficFlowObserved per counting point, direction and year of `hel-traffic-volumes`: the motor
+# vehicles counted on that year's autumn weekday (T-5669). The city rewrites the file once a year
+# on no fixed day; a run on the 15th of each month finds the new year within a month, and an
+# unchanged file rewrites the same values.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: traffic-volumes
+  namespace: helsinki
+  title: { en: Autumn weekday traffic volumes per counting point }
+spec:
+  class: auto
+  schedule: '20 4 15 * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-traffic-volumes }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: TrafficFlowObserved, mode: upsert }
+  # The 5 MB file and 1695 entities ran in 128 MiB (docker run --memory 128m, 2026-10-25).
+  quotas: { maxMemoryMb: 192, cpuMillicores: 200 }

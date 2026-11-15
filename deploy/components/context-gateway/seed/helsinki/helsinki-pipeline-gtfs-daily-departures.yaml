@@ -1,0 +1,19 @@
+# One GtfsDailyDepartures per transport mode of `hsl-gtfs-daily-departures`, today's scheduled
+# departures, written into the city space (T-6467).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: gtfs-daily-departures
+  namespace: helsinki
+  title:
+    en: HSL scheduled departures per day, by transport mode
+spec:
+  class: auto
+  # After the morning's feed; the service date is Helsinki's, so 04:35 UTC is always today there.
+  period: 24h
+  schedule: '35 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hsl-gtfs-daily-departures }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: GtfsDailyDepartures, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 200 }

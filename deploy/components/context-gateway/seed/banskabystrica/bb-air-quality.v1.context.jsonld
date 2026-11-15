@@ -1,0 +1,55 @@
+{
+  "@context": {
+    "@vocab": "https://smartdatamodels.org/",
+    "AirQualityObserved": {
+      "@id": "sdm:AirQualityObserved"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "dateObserved": {
+      "@id": "sdm:dateObserved",
+      "@type": "xsd:dateTime"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@container": "@language",
+      "@id": "schema:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "pm10": {
+      "@id": "sdm:pm10",
+      "@type": "xsd:float"
+    },
+    "pm25": {
+      "@id": "sdm:pm25",
+      "@type": "xsd:float"
+    },
+    "qudt-quantkind": "http://qudt.org/vocab/quantitykind/",
+    "qudt-unit": "http://qudt.org/vocab/unit/",
+    "refDevice": {
+      "@id": "sdm:refDevice",
+      "@type": "@id"
+    },
+    "reliability": {
+      "@id": "sdm:reliability",
+      "@type": "xsd:float"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "type": "@type",
+    "ucefact": "https://vocabulary.uncefact.org/UnitMeasureCode#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

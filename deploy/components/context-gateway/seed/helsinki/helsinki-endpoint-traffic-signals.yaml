@@ -1,0 +1,56 @@
+# One Smart Data Model type per catalogue dataset (T-4344): TrafficSignalJunction of the space
+# helsinki, read through its own Policy, which narrows the space's public read to this type (T-5286).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-traffic-signals
+  namespace: helsinki
+  title:
+    fi: Liikenne- ja varoitusvaloliittymät — Helsinki
+    en: Junctions with traffic lights and warning lights — Helsinki
+  description:
+    fi: 'Helsingin liikennevaloliittymät (signalKind trafficLights) ja varoitusvaloliittymät (signalKind warningLights): sijainti, risteävät kadut, laitteen numero ja onko valo käytössä vai rakenteilla (status). Lähde: Helsingin kaupunki, CC BY 4.0.'
+    en: "Helsinki's junctions with traffic lights (signalKind trafficLights) and crossings with warning lights (signalKind warningLights): where each is, the streets that meet there, its installation number and whether its signals are in service or still being built (status). Source: City of Helsinki, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: wylttuwlfud5yxnwsersbiom4xuhd7jm
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-traffic-signals
+  # The contact lines stay in the space, as on helsinki-all (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, CC BY 4.0'
+      en: 'Source: City of Helsinki, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      fi: [liikennevalot, varoitusvalot, liittymät, risteykset, liikenne]
+      sv: [trafikljus, varningsljus, korsningar, trafik]
+      en: [traffic lights, warning lights, junctions, crossings, traffic]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: WEEKLY
+    source:
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Liikennevalot_piste
+        title: { fi: Liikennevaloliittymät, en: Junctions with traffic lights }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON. Luetaan viikoittain (putki traffic-lights).
+          en: A WFS layer of the city's map service, as GeoJSON. Read weekly (pipeline traffic-lights).
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Varoitusvalot_piste
+        title: { fi: Varoitusvaloliittymät, en: Crossings with warning lights }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON. Luetaan viikoittain (putki warning-lights).
+          en: A WFS layer of the city's map service, as GeoJSON. Read weekly (pipeline warning-lights).
+    pipelineRef: { kind: Pipeline, name: traffic-lights }

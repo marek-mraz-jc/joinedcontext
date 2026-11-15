@@ -1,0 +1,44 @@
+# Residents by sex in the basic settlement units (ZSJ), 2021 census, anonymised: one public dataset of the hub (T-5675), item 7a0fda4ad7a04a4ea353faf1d5a679ea, written by the statistics-zsj-obyvatelia pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-obyvatelia-zsj-pohlavie
+  namespace: bratislava
+  title:
+    sk: Počet obyvateľov podľa pohlavia v základných sídelných jednotkách - anonymizované
+    en: Residents by sex in the basic settlement units (ZSJ), 2021 census, anonymised
+  description:
+    sk: 'Ukazovatele tabuľky „Počet obyvateľov podľa pohlavia v základných sídelných jednotkách - anonymizované“ z data.bratislava.sk, jeden na základnú sídelnú jednotku (ZSJ), obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Residents by sex in the basic settlement units (ZSJ), 2021 census, anonymised”, one per basic settlement unit (ZSJ), period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: cjtxnqb25ok4olm6tkzv767e5xp6bpkg
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-obyvatelia-zsj-pohlavie
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/7a0fda4ad7a04a4ea353faf1d5a679ea
+        title:
+          sk: Počet obyvateľov podľa pohlavia v základných sídelných jednotkách - anonymizované
+          en: Residents by sex in the basic settlement units (ZSJ), 2021 census, anonymised
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet obyvateľov podľa pohlavia v základných sídelných jednotkách - anonymizované. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Residents by sex in the basic settlement units (ZSJ), 2021 census, anonymised. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-zsj-obyvatelia }

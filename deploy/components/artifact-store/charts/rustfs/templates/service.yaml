@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rustfs.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rustfs.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "rustfs.selectorLabels" . | nindent 4 }}
+    # The bootstrap Job carries the same release labels; without this the Service would list
+    # its pod as an endpoint and answer S3 calls with a container that is not the store.
+    app.kubernetes.io/component: store
+  ports:
+    - name: s3
+      port: {{ .Values.service.port }}
+      targetPort: s3
+      protocol: TCP
+    {{- if .Values.console.enabled }}
+    - name: console
+      port: {{ .Values.console.port }}
+      targetPort: console
+      protocol: TCP
+    {{- end }}

@@ -1,0 +1,53 @@
+# The mapping of the mhd-vozidla pipeline (T-5232): one Vehicle per bus or trolleybus of DPMŽ the
+# city's open data portal lists in service (opendata.zilina.sk dataset 124), with its line, where
+# it heads, its next stop and how late it runs. About 60 vehicles at midday on a weekday.
+#
+# Ids: urn:ngsi-ld:Vehicle:zilina.sk:{space}:dpmz-{vehicleId}, the portal's vehicle id (fleet
+# number and model, "284 ŠKODA26TR SOLARIS") with every run of characters other than ASCII letters
+# and digits turned into one "-" and lowercased ("284-koda26tr-solaris"), so a vehicle keeps its entity across trips and days.
+#
+# delay: the portal's deviation is minutes behind the timetable, negative when ahead; written as
+# whole seconds. observedAt is the portal's own timestamp of the position. A vehicle that leaves
+# service drops out of the list, so each entity carries expiresAt 15 minutes after its last
+# position (NGSI-LD 4.22): three missed reads and the broker forgets it, instead of a depot full of
+# buses "in service" on the map.
+#
+# An answer that is not a list is the portal failing: the run fails and the last positions stay.
+# An empty list is a quiet night, not a failure. More than 500 vehicles is not DPMŽ's fleet and
+# fails the run.
+
+pipeline:
+  processors:
+    # A response size cap: the count caps below bound the work only once the answer is parsed.
+    - mapping: |
+        root = if content().length() > 1048576 { throw("the portal answered %v bytes; more than 1048576 is not the vehicle list".format(content().length())) } else { this }
+    - mapping: |
+        let n = if this.type() == "array" { this.length() } else { -1 }
+        root = if $n < 0 { throw("the portal's vehicle list is not a list") } else if $n > 500 { throw("the portal listed %v vehicles; more than 500 is not DPMŽ's fleet".format($n)) } else { this }
+    - mapping: |
+        map seen {
+          root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+        }
+        root = this.filter(v -> v.vehicleId.type() == "string" && v.vehicleId.re_match("[A-Za-z0-9]") && v.position.coordinates.type() == "array" && v.position.coordinates.length() == 2 && v.timestamp.type() == "string").map_each(v -> {
+          "at": v.timestamp.apply("seen").catch(null),
+          "fleet": v.vehicleId.re_replace_all("[^A-Za-z0-9]+", "-").trim("-").lowercase(),
+          "v": v
+        }).filter(r -> r.at != null).map_each(r -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:dpmz-%v".format("Vehicle", "zilina.sk", env("JC_SPACE"), r.fleet),
+          "type": "Vehicle",
+          "name": { "type": "LanguageProperty", "languageMap": {
+            "sk": "Linka %v, vozidlo %v".format(r.v.route.shortName.or("?"), r.v.vehicleId),
+            "en": "Line %v, vehicle %v".format(r.v.route.shortName.or("?"), r.v.vehicleId) } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": r.v.position.coordinates }, "observedAt": r.at },
+          "vehicleType": if r.v.vehicleType.type() == "string" { { "type": "Property", "value": r.v.vehicleType } } else { null },
+          "lineName": if r.v.route.shortName.type() == "string" { { "type": "Property", "value": r.v.route.shortName } } else { null },
+          "direction": if r.v.direction.type() == "string" { { "type": "Property", "value": r.v.direction } } else { null },
+          "nextStop": if r.v.nextStop.name.type() == "string" { { "type": "Property", "value": r.v.nextStop.name } } else { null },
+          "delay": if r.v.deviation.type() == "number" { { "type": "Property", "value": (r.v.deviation * 60).round(), "unitCode": "SEC", "observedAt": r.at } } else { null },
+          "heading": if r.v.bearing.type() == "number" && r.v.bearing >= 0 && r.v.bearing <= 360 { { "type": "Property", "value": r.v.bearing.round(), "unitCode": "DD", "observedAt": r.at } } else { null },
+          "occupancy": if r.v.occupancyPercentage.type() == "number" && r.v.occupancyPercentage >= 0 && r.v.occupancyPercentage <= 100 { { "type": "Property", "value": r.v.occupancyPercentage.round(), "unitCode": "P1", "observedAt": r.at } } else { null },
+          "dateObserved": { "type": "Property", "value": r.at },
+          "dataProvider": { "type": "Property", "value": "Mesto Žilina, ODbL" },
+          "source": { "type": "Property", "value": "https://opendata.zilina.sk/sk/dataset-list/detail/124" },
+          "expiresAt": (r.at.ts_parse("2006-01-02T15:04:05Z").ts_unix() + 900).ts_format("2006-01-02T15:04:05Z", "UTC")
+        }.filter(kv -> kv.value != null))

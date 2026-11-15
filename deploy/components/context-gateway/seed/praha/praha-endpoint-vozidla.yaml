@@ -1,0 +1,42 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-vozidla-pid
+  namespace: praha
+  title: { cs: Vozidla PID v provozu — Praha, en: PID vehicles in service — Prague }
+  description:
+    cs: 'Autobusy, tramvaje, trolejbusy, metro a vlaky PID v Praze: poloha, linka, směr, další zastávka a zpoždění, každou minutu. Zdroj: Golemio, Operátor ICT; PID (ROPID).'
+    en: 'PID buses, trams, trolleybuses, metro trains and trains in Prague: position, line, direction, next stop and delay, every minute. Source: Golemio, Operátor ICT; PID (ROPID).'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: timaoos7pp5a4dzi5yeyzxrui7kurm2w
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-vozidla-pid
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  catalog:
+    # Off the catalogue (T-5788, owner order 2026-10-26: an empty dataset leaves it): on 2026-10-26
+    # prod held 0 Vehicle two hours after the runner resumed (dev 1445): its prod polls write nothing.
+    # The harvest feeds leave it out (EP-139); publish it again once prod holds data.
+    harvest: false
+    # Vehicles of public transport by line and fleet number: no record names a person (T-4596).
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    attribution:
+      cs: 'Zdroj: Golemio, Operátor ICT, a.s., s daty PID (ROPID) a dopravců; podmínky užití https://api.golemio.cz/api-keys/'
+      en: 'Source: Golemio, Operátor ICT, a.s., with data of PID (ROPID) and the carriers; terms of use https://api.golemio.cz/api-keys/'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, PID, MHD, polohy vozidel, zpoždění]
+      en: [Prague, PID, public transport, vehicle positions, delay]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: CONT
+    source:
+      - url: https://api.golemio.cz/v2/vehiclepositions?limit=10000
+        title: { cs: Polohy vozidel PID – API (Golemio), en: PID vehicle positions API (Golemio) }
+        description:
+          cs: Aktuální polohy a zpoždění vozidel PID, Operátor ICT, podle podmínek užití Golemio.
+          en: Current positions and delays of the PID vehicles, Operátor ICT, under Golemio's terms of use.
+    pipelineRef: { kind: Pipeline, name: pid-vehicles }

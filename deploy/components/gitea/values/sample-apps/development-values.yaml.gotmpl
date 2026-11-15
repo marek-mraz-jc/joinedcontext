@@ -1,0 +1,27 @@
+# The sample applications' files (T-2599), one ConfigMap each, read by the bootstrap Job
+# (values/bootstrap names the same files). JSON strings, not block scalars: a block scalar
+# rewrites trailing newlines, and a file the seed changed on the way would never match the blob
+# already on the forge, so every run would commit again.
+# An app lives in the release its name hashes to (gitea-sample-apps, -2, -3; T-3333), its
+# ConfigMap named gitea-sample-apps-<app> whichever it is, so the Job and the smoke find it.
+# The first release's apps split again by the hash's next digit, the odd ones into -4 (T-3393):
+# The third release's split the same way, the odd ones into -5 (T-3350), and the second's into -6
+# (T-4195); the fourth's by the third digit, the odd ones into -7 (T-4195). An app only ever moves
+# to a release synced after the one it left, never back.
+{{- $shard := .Release.Name | trimPrefix "gitea-sample-apps" | trimPrefix "-" | default "1" | atoi }}
+apps:
+{{- $apps := readFile "../../apps/index.yaml" | fromYaml }}
+{{- range $app, $files := $apps.apps }}
+{{- $hash := adler32sum $app | atoi }}
+{{- $home := add1 (mod $hash 3) }}
+{{- if and (eq $home 1) (eq (mod (div $hash 3) 2) 1) }}{{ $home = 4 }}{{ end }}
+{{- if and (eq $home 3) (eq (mod (div $hash 3) 2) 1) }}{{ $home = 5 }}{{ end }}
+{{- if and (eq $home 2) (eq (mod (div $hash 3) 2) 1) }}{{ $home = 6 }}{{ end }}
+{{- if and (eq $home 4) (eq (mod (div $hash 6) 2) 1) }}{{ $home = 7 }}{{ end }}
+{{- if eq $home $shard }}
+  {{ $app }}:
+{{- range $files }}
+    {{ . | replace "/" "__" | quote }}: {{ readFile (printf "../../apps/%s/%s" $app .) | toJson }}
+{{- end }}
+{{- end }}
+{{- end }}

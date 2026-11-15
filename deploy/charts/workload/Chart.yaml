@@ -1,0 +1,7 @@
+---
+apiVersion: v2
+name: workload
+description: Shared workload chart for platform microservices (Deployment, Service, ServiceAccount)
+type: application
+version: 0.1.0
+appVersion: '0.1.0'

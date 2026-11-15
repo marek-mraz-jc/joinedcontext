@@ -1,0 +1,19 @@
+# Open Data BCN's package fonts-ornamentals (CC BY 4.0): the city's 335 ornamental fountains (67 kB in 2026), one CSV file a
+# year, each March under a new name. The DataSource answers the package; the pipeline reads its
+# newest CSV file from the same host. No credential (T-5431).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-ornamental-fountains
+  namespace: barcelona
+  title:
+    ca: Fonts ornamentals de Barcelona (Open Data BCN)
+    es: Fuentes ornamentales de Barcelona (Open Data BCN)
+    en: Barcelona ornamental fountains (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/package_show?id=fonts-ornamentals
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

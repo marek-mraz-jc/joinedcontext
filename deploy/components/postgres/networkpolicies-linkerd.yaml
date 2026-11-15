@@ -1,0 +1,213 @@
+---
+postgres-allow-linkerd:
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+          componentNamespace: postgres.operator
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: database
+              app.kubernetes.io/name: postgresql
+          componentNamespace: postgres
+        - podSelector:
+            matchLabels:
+              joinedcontext.com/psql-client: "true"
+              app.kubernetes.io/name: databases
+          componentNamespace: postgres
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+              app.kubernetes.io/name: keycloakx
+          componentNamespace: keycloak
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+    # The Prometheus that scrapes the instances' exporter on :9187 (cluster.monitoring.enabled, T-5125),
+    # from its own namespace only; no peer is rendered while monitoring.prometheusNamespace is empty.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# A meshed pod under an egress policy needs two things spelled out. The Linkerd control
+# plane — identity (8080), destination (8086), policy (8090) — or the proxy never learns the
+# inbound policy for its own admin port, answers the kubelet startup probe with 403 and the
+# pod loops in Init forever. And 4143 on every peer it calls: meshed traffic lands on the
+# peer's inbound proxy, not on the service port, so the plain rule in networkpolicies.yaml
+# allows a connection the proxy never makes.
+
+postgres-linkerd-control-plane:
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+    # The in-cluster artifact store, where an environment archives to it (T-5289): its inbound proxy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 4143
+
+postgres-operator-linkerd:
+  deployLayer: operators
+  componentNamespace: postgres.operator
+  podSelector:
+    app.kubernetes.io/name: cloudnative-pg
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster-drill
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# The role-setup hook Job, meshed like everything else in this namespace. Its plain policy in
+# networkpolicies.yaml allows 5432 to the cluster pods, which is a connection its proxy never
+# makes: meshed traffic lands on the peer's inbound proxy on 4143. Without this the Job resolves
+# the service, opens a connection that dies with "server closed the connection unexpectedly", and
+# retries until the helm hook times out and the whole release upgrade fails.
+# The ingress half is already in `postgres-allow-linkerd` above.
+role-setup-linkerd:
+  podSelector:
+    joinedcontext.com/psql-client: "true"
+    app.kubernetes.io/name: databases
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# The restore drill's copy and its job (T-0046), meshed like the rest of the namespace: the
+# control plane for both, and the operator's way in to the copy's proxy.
+postgres-drill-linkerd:
+  podSelector:
+    cnpg.io/cluster: postgres-cluster-drill
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    # The archive in the in-cluster artifact store (T-5289): its inbound proxy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 4143
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+          componentNamespace: postgres.operator
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+dr-drill-linkerd:
+  podSelector:
+    app.kubernetes.io/component: database-dr-drill
+    app.kubernetes.io/name: databases
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090

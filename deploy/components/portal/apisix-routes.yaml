@@ -1,0 +1,206 @@
+---
+# The Portal lives on its own host, portal.{domain} (ADR-N-019). `subDomain` puts the host on
+# the edge Ingress and in the certificate SAN list, both derived from this map; the apex keeps
+# the shared surfaces (/apps/*, /git/*, /cs/*, /api/endpoint/*) and redirects the rest here.
+portal-ui:
+  name: portal-ui
+  description: Portal user interface
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/*'
+  subDomain: portal
+  priority: 1
+
+# The Portal's Prometheus surface is on the same port the UI is published on, so the edge is
+# what keeps it inside the cluster (OPS-16, and components/monitoring/README.md). The route
+# terminates at APISIX and never dials the upstream, the way ckan-redirect does; the
+# ServiceMonitor reaches the pod directly and is unaffected.
+portal-metrics:
+  name: portal-metrics
+  description: /metrics is scraped inside the cluster and refused at the edge
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/metrics'
+  subDomain: portal
+  # Above the UI's `/*`, below the API routes, which do not match this path anyway.
+  priority: 5
+
+# RFC 9728 discovery is unauthenticated by definition: an MCP client reads the Portal's
+# protected-resource metadata before it holds a token (AG-60, AG-32). No login in front; the
+# Portal answers a JSON document on this path and nothing else.
+portal-well-known:
+  name: portal-well-known
+  description: OAuth protected-resource metadata of the Portal MCP server, public
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/.well-known/oauth-protected-resource*'
+  subDomain: portal
+  priority: 5
+
+# A personal connector's MCP server, `/c/{id}`, and its RFC 9728 metadata,
+# `/c/{id}/.well-known/oauth-protected-resource` (API/14 §3, AG-143). An MCP client holds only a
+# bearer, so a login redirect in front is a door nobody can open: the client must get the
+# Portal's own 401 and its `WWW-Authenticate` naming the metadata. No edge session either: the
+# Portal reads `Authorization` alone on this path and limits calls per connector and per person.
+# The plugin config is portal-well-known's: forged headers cleared, a per-address limit, no login.
+portal-connector:
+  name: portal-connector
+  description: Personal connector MCP servers, bearer only, verified by the Portal
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/c/*'
+  subDomain: portal
+  priority: 5
+  pluginConfig: portal-well-known
+
+# Where the gateway delivers the notifications of the Portal's own live-update subscriptions
+# (API/01 §32, T-3105). The broker behind the gateway holds no token, so there is no login in
+# front; the path's key is an HMAC only this Portal can make, and a notification only makes an
+# open view read again with the person's own session.
+portal-live-notify:
+  name: portal-live-notify
+  description: Notifications of the Portal's live-update subscriptions, delivered by the gateway
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/live-notify/*'
+  subDomain: portal
+  priority: 5
+
+# The public open-data catalogue (EP-81): the one Portal page a visitor reads without an account,
+# and the static bundle every Portal page loads. The edge session is read when there is one and
+# a visitor without one passes as anonymous; every read the page makes goes through portal-api,
+# where the Portal decides what an anonymous caller sees. `/catalogue*` also takes
+# `/catalogue/{dataset}`; anything else under the prefix is the Portal's own 404.
+portal-public:
+  name: portal-public
+  description: The public catalogue page, edge session optional
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/catalogue*'
+  subDomain: portal
+  priority: 5
+
+# A data view published as a public link (API/01 §33, T-3108): a read-only page with no login in
+# front, whose every read goes to the public Endpoint the view was published as, where the
+# gateway enforces what the link shows. The plugin config is portal-public's.
+portal-public-view:
+  name: portal-public-view
+  description: A published data view, edge session optional
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/v/*'
+  subDomain: portal
+  priority: 5
+  pluginConfig: portal-public
+
+# A form view published as a public form (API/01 §33, T-3103): a page with no login in front,
+# whose one write is an anonymous create through the public Endpoint the form was published as,
+# where the gateway decides and rate-limits it. Its plugin config is its own: portal-public's
+# without X-Frame-Options, so the sites the form's Endpoint names may frame it (EP-101, T-3266).
+portal-public-form:
+  name: portal-public-form
+  description: A published form, anonymous
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/f/*'
+  subDomain: portal
+  priority: 5
+
+# A public Endpoint's API documentation (EP-99, T-3265): a page with no login in front that reads
+# the OpenAPI document the gateway generates, under the caller's rights, and holds no data. The
+# plugin config is portal-public's.
+portal-public-docs:
+  name: portal-public-docs
+  description: A public Endpoint's API documentation, edge session optional
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/d/*'
+  subDomain: portal
+  priority: 5
+  pluginConfig: portal-public
+
+# The documentation (T-4063, API/00 §1) has no route of its own since T-6200: `/docs/*` is
+# portal-ui's, so a visitor is sent to sign in like on every other Portal page, and the Portal
+# itself refuses a request without a session.
+
+# The public setup page of a named MCP server (T-4169): `/connect/{project}/{name}`, a page with no
+# login in front that asks the server's own address for its tools as an anonymous caller would, and
+# holds no data. The plugin config is portal-public's: a session is read when there is one and
+# nobody is redirected.
+portal-public-connect:
+  name: portal-public-connect
+  description: The public setup page of a named MCP server, edge session optional
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/connect/*'
+  subDomain: portal
+  priority: 5
+  pluginConfig: portal-public
+
+# The front door (T-5627, EP-81): `/` exactly, so a citizen who types the installation's name is
+# not sent to Keycloak. The Portal answers a visitor without a session 302 to /catalogue and a
+# signed-in person the home page; every other path stays on portal-ui's login. The plugin config
+# is portal-public's: a session is read when there is one and nobody is redirected.
+portal-home:
+  name: portal-home
+  description: The Portal's front door, edge session optional
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/'
+  subDomain: portal
+  priority: 5
+  pluginConfig: portal-public
+
+# The glossary (T-3236) and the accessibility statement (T-5108): the two pages every public page's
+# footer links and every word's hint in the catalogue opens, the same text for everyone and no
+# data. Exact paths, so nothing else of the Portal UI loses its login (T-5293). The plugin config
+# is portal-public's: a session is read when there is one and nobody is redirected.
+portal-public-glossary:
+  name: portal-public-glossary
+  description: The glossary page, edge session optional
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/glossary'
+  subDomain: portal
+  priority: 5
+  pluginConfig: portal-public
+
+portal-public-accessibility:
+  name: portal-public-accessibility
+  description: The accessibility statement, edge session optional
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/accessibility'
+  subDomain: portal
+  priority: 5
+  pluginConfig: portal-public
+
+# The bundle the catalogue page (and every Portal page) runs on: the same files for everyone,
+# holding no data. The plugin config is portal-public's.
+portal-public-assets:
+  name: portal-public-assets
+  description: The Portal's static bundle, edge session optional
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/assets/*'
+  subDomain: portal
+  priority: 5
+  pluginConfig: portal-public
+  # A cold dataset page fetches about 45 chunks; in the page's own bucket (the web class, 300 a
+  # minute on stage) five visitors behind one address (a school, a carrier's CGNAT) got 429 on a
+  # chunk and a "Too many requests" page instead of the dataset (T-6539). The files are
+  # content-hashed and hold no data, so they count in a bucket of their own, as CKAN's (T-4717).
+  plugins:
+    limit-count:
+      count: 3000
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+
+portal-api:
+  name: portal-api
+  description: Portal REST API
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/api/v1/*'
+  subDomain: portal
+  priority: 10
+
+# The lowest-priority apex route: whatever no other apex route serves is sent to the Portal
+# host (see apisix-plugins.yaml). Bound to the apex, or it would also match idm.<domain> and
+# swallow the login pages.
+portal-redirect:
+  name: portal-redirect
+  description: The apex redirects to the Portal host
+  upstream: portal.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "portal") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  uri: '/*'
+  host: '{{ .Values.global.domain }}'
+  priority: 1

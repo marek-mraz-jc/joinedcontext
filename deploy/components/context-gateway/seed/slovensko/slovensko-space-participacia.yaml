@@ -1,0 +1,47 @@
+# Citizen participation in Slovakia (T-5065): the processes, proposals, budget projects, results,
+# meetings, debates and surveys the towns' Decidim platforms publish, one Slovakia-wide space so a
+# new instance is one row of seeds/decidim/instances.csv. The decidim-* pipelines write it.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: slovensko-participacia
+  namespace: slovensko
+  title: { sk: Participácia občanov na Slovensku, en: Citizen participation in Slovakia }
+  description:
+    sk: >-
+      Participatívne procesy, návrhy občanov, projekty participatívneho rozpočtu, výsledky, stretnutia, diskusie
+      a dotazníky z participatívnych platforiem miest (Decidim), napríklad Spoločne tvorme Banskú Bystricu.
+      Každý záznam má rozsah /SK/{kraj}/{obec} a odkaz na svoju stránku. Bez osobných údajov: mená autorov,
+      profily a komentáre sa nepreberajú.
+    en: >-
+      Participatory processes, residents' proposals, participatory budget projects, results, meetings, debates
+      and surveys from the towns' participation platforms (Decidim), for example Spoločne tvorme Banskú
+      Bystricu. Each record carries the scope /SK/{region}/{town} and the link to its page. No personal data:
+      author names, profiles and comments are never read.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: slovensko-participacia
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: slovensko-participacia }
+  defaultLocale: sk
+  # Current state only (DM-82): the platform keeps the history of its own records; an entity leaves
+  # the space through the rolling expiresAt its pipeline writes when no run has seen it for three days.
+  retention:
+    - entityType: ParticipatoryProcess
+      history: 'off'
+    - entityType: Proposal
+      history: 'off'
+    - entityType: BudgetProject
+      history: 'off'
+    - entityType: Result
+      history: 'off'
+    - entityType: Meeting
+      history: 'off'
+    - entityType: Debate
+      history: 'off'
+    - entityType: Survey
+      history: 'off'
+    # Recomputed each hour from Proposal; the figures of an earlier hour are not kept.
+    - entityType: ProposalStatistic
+      history: 'off'

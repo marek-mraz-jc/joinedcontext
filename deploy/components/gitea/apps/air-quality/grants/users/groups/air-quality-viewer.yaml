@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: air-quality-viewer
+  namespace: org
+  annotations:
+    joinedcontext.com/app: helsinki/air-quality
+spec:
+  description: The viewers of air-quality, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000002 # demo.viewer

@@ -1,0 +1,17 @@
+# One FloodZone per record of the IPR layer Záplavové území drobných vodních toků into the city space (T-5683).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-flood-small-streams
+  namespace: praha
+  title: { en: Flood areas of the small streams, cs: Záplavové území drobných vodních toků }
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '5 3 * * 0'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-flood-small-streams }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: FloodZone, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

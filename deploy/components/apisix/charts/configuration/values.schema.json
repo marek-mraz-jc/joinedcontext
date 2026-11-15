@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of configuration (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "plugins": {
+      "type": "object"
+    },
+    "routes": {
+      "type": "object"
+    },
+    "maxRequestBodyMegabytes": {
+      "type": "number"
+    },
+    "domain": {
+      "type": "string"
+    },
+    "realm": {
+      "type": "string"
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "secretName": {
+          "type": "string"
+        },
+        "clusterIssuer": {
+          "type": "string"
+        },
+        "ingressClass": {
+          "type": "string"
+        },
+        "hosts": {
+          "type": "array"
+        },
+        "stagingHosts": {
+          "type": "array"
+        },
+        "appsWildcard": {
+          "type": "string"
+        },
+        "appHosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+          }
+        },
+        "websocketHosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "serviceMesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "podSelector": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "app.kubernetes.io/name": {
+              "type": "string"
+            }
+          }
+        },
+        "dataPlanePort": {
+          "type": "number"
+        },
+        "allowUnauthenticatedIngress": {
+          "type": "boolean"
+        }
+      }
+    },
+    "composer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "serviceAccount": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      }
+    },
+    "global": {
+      "type": "object"
+    }
+  }
+}

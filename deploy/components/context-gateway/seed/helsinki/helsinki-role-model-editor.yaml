@@ -1,0 +1,11 @@
+# The role taxonomy every organization starts from (PF-56, T-0602): the modeller proposes
+# changes to data models and mappings and nothing else; approval stays with the steward.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: model-editor
+  namespace: org
+spec:
+  rules:
+    - kinds: [DataModel, Mapping]
+      verbs: [propose]

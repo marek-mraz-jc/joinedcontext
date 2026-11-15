@@ -1,0 +1,12 @@
+# The default group of sharing-roles' viewer role (T-4911): demo.bearer holds the role through it
+# and has no binding anywhere.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: sharing-roles-viewer
+  namespace: org
+  annotations: { joinedcontext.com/app: sharing/sharing-roles }
+spec:
+  description: The viewers of sharing-roles, its default group.
+  members:
+    - user: de300000-0000-4000-8000-00000000000e # demo.bearer

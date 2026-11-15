@@ -1,0 +1,57 @@
+# Barcelona's street furniture in the city's CKAN organisation: StreetFurniture points (today the
+# speed reducers) as NGSI-LD, CSV, GeoJSON by OGC API Features, OData and MCP, refreshed weekly
+# (T-5431, EP-118).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: street-furniture
+  namespace: barcelona
+  title:
+    ca: Mobiliari urbà de Barcelona
+    es: Mobiliario urbano de Barcelona
+    en: Barcelona street furniture
+  description:
+    ca: Els reductors de velocitat dels carrers de Barcelona (coixins berlinesos i bandes reductores), amb el seu tipus, el model, l'adreça i el punt.
+    es: Los reductores de velocidad de las calles de Barcelona (cojines berlineses y bandas reductoras), con su tipo, el modelo, la dirección y el punto.
+    en: The speed reducers on Barcelona's streets (Berlin cushions and speed bands), with their kind, model, address and point.
+spec:
+  contextSpaceRef: barcelona
+  slug: rw5en2xocss47sdcbs6rcoadqj2gh4ce
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-street-furniture
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      ca: [reductors de velocitat, mobiliari urbà, via pública, mobilitat]
+      es: [reductores de velocidad, mobiliario urbano, vía pública, movilidad]
+      en: [speed reducers, street furniture, public space, mobility]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: WEEKLY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/infraestructures-inventari-reductors-velocitat
+        title:
+          ca: Inventari de reductors de velocitat (Open Data BCN)
+          en: Inventory of speed reducers (Open Data BCN)
+        description:
+          ca: Reductors de velocitat actuals i retirats, amb el model, l'adreça i el punt, CC BY 4.0.
+          en: Current and removed speed reducers with their model, address and point, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: speed-reducers }

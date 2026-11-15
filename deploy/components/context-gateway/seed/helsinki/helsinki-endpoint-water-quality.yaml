@@ -1,0 +1,49 @@
+# One Smart Data Model type per catalogue dataset (T-4344): WaterQualityObserved of the space
+# helsinki, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-beach-water
+  namespace: helsinki
+  title: { fi: Uimarantojen vesi — Helsinki, en: Beach water — Helsinki }
+  description:
+    fi: 'Uimarantojen veden lämpötila antureista. Kukin mittaus viittaa rantaansa. Lähde: Forum Virium Helsinki, Uiras, CC BY 4.0.'
+    en: 'Water temperature at the beaches from their sensors. Each reading references its beach. Source: Forum Virium Helsinki, Uiras, CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: w5vgo2mi6phigetdq3pvvcjgznw73hji
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-water-quality
+  # The contact lines stay in the space, as on helsinki-all (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Forum Virium Helsinki, Uiras, CC BY 4.0'
+      sv: 'Källa: Forum Virium Helsinki, Uiras, CC BY 4.0'
+      en: 'Source: Forum Virium Helsinki, Uiras, CC BY 4.0'
+    themes: [ENVI, HEAL]
+    keywords:
+      fi: [uimarannat, veden lämpötila]
+      sv: [badstränder, vattentemperatur]
+      en: [beaches, water temperature]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: HOURLY
+    source:
+      - url: https://iot.fvh.fi/opendata/uiras/uiras_latest.geojson
+        title: { fi: Uimarantojen veden lämpötila (Uiras), en: Beach water temperature (Uiras) }
+        description:
+          fi: Uimarantojen anturien viimeisimmät veden lämpötilat GeoJSON-muodossa.
+          en: The beaches' sensors' latest water temperatures as GeoJSON.
+    pipelineRef: { kind: Pipeline, name: beach-water }

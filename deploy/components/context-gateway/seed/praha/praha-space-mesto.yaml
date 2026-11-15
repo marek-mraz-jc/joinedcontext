@@ -1,0 +1,214 @@
+# Prague's open data as its publishers published it, every source in one space (T-2785). Its
+# publishers: nextbike (CC0), ČHMÚ (CC BY 4.0), IPR Praha (CC BY 4.0, "datový podklad © IPR
+# Praha"), ROPID (CC BY 4.0) and the City of Prague (no rights reserved).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: praha-mesto
+  namespace: praha
+  title: { cs: Praha — městská data, en: Prague city data }
+  description:
+    cs: >-
+      Sdílená kola, kvalita ovzduší, městské části, školy, kultura, veřejné toalety, tříděný
+      odpad a zaplněnost kontejnerů, P+R a jejich obsazenost, vozidla PID v provozu, prodejní místa PID, rozpočet města,
+      služebny městské policie, knihovny, úřady, zahrady, dětská hřiště, sběrné dvory, občanská vybavenost, oázy chladu,
+      linky, zastávky a tarifní pásma PID, vstupy do metra a parkování na ulici (zóny placeného stání, vyhrazená stání,
+      zákazy stání a parkovací automaty), uliční úseky a termíny blokového čištění, parky, zeleň a stromy, zdroje znečišťování ovzduší, radonové riziko,
+      hluková mapa, záplavová území, protipovodňová ochrana, počasí, hřbitovy, naučné stezky, vodní plochy a toky,
+      psí zóny, bilanční územní celky, cyklotrasy, pietní místa a válečné hroby, pošty, technické
+      prvky zeleně, činnost městské policie, čerpání rozpočtu, finanční vztahy s městskými částmi a
+      opravy a uzavírky ulic.
+      Zdroje: nextbike (CC0), ČHMÚ, IPR Praha (datový podklad © IPR Praha) a ROPID pod CC BY 4.0,
+      Magistrát hl. m. Prahy a Městská policie hl. m. Prahy bez výhrad, Golemio (Operátor ICT, s daty TSK hl. m. Prahy) jako
+      otevřená data.
+    en: >-
+      Shared bikes, air quality, city districts, schools, culture, public toilets, sorted waste
+      and how full its containers are, park and ride and how full it is, the PID vehicles in service, PID ticket points,
+      the city budget, municipal police stations, libraries, municipal offices, gardens, playgrounds,
+      waste collection yards, city amenities, cool spots, the PID lines, stops and fare zones, the metro entrances and
+      on-street parking (paid parking zones, reserved bays, no-parking stretches and parking machines), the street sections and the street cleaning dates, parks, green
+      areas and trees, air pollution sources, radon risk, the noise map, flood areas, flood defences, the weather,
+      cemeteries, nature trails, water areas and streams, dog zones, planning balance units,
+      cycle routes, memorials and war graves, post offices, the elements of the green spaces, the
+      municipal police's activity, the budget execution, the transfers to the city districts and the
+      road works and closures.
+      Sources: nextbike (CC0), ČHMÚ, IPR Praha (datový podklad © IPR Praha) and ROPID
+      under CC BY 4.0, the City of Prague and its municipal police with no rights reserved, Golemio (Operátor ICT, with TSK
+      hl. m. Prahy's counters) as open data.
+spec:
+  # The rendered segment, pinned so it cannot drift (PF-84).
+  urnSegment: praha-mesto
+  isSandbox: false
+  # Its one model (DM-61, ADR-N-033).
+  dataModelRef: { kind: DataModel, name: praha-mesto }
+  defaultLocale: cs
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: AdministrativeArea
+      history: 'off'
+    - entityType: AirQualityObserved
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        dataProvider: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+    - entityType: BikeHireDockingStation
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        availableBikeNumber: { record: onChange, heartbeat: P7D }
+        dataProvider: { record: onChange, heartbeat: P7D }
+        # dateModified is the pipeline's refresh stamp, new on every write: no history of its own (DM-132, T-5848).
+        dateModified: { record: never }
+        freeSlotNumber: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        status: { record: onChange, heartbeat: P7D }
+        totalSlotNumber: { record: onChange, heartbeat: P7D }
+    - entityType: BikeLane
+      history: 'off'
+    - entityType: RoadSegment
+      history: 'off'
+    - entityType: BudgetLine
+      history: 'off'
+    - entityType: EmissionSource
+      history: 'off'
+    - entityType: FareZone
+      history: 'off'
+    - entityType: FloodDefence
+      history: 'off'
+    - entityType: FloodZone
+      history: 'off'
+    - entityType: NoiseZone
+      history: 'off'
+    - entityType: Garden
+      history: 'off'
+    - entityType: GtfsAccessPoint
+      history: 'off'
+    - entityType: GtfsStop
+      history: 'off'
+    - entityType: OffStreetParking
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        availableSpotNumber: { record: onChange, heartbeat: P7D }
+        dataProvider: { record: onChange, heartbeat: P7D }
+        # dateModified is the pipeline's refresh stamp, new on every write: no history of its own (DM-132, T-5848).
+        dateModified: { record: never }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        occupiedSpotNumber: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        totalSpotNumber: { record: onChange, heartbeat: P7D }
+        # Mr.Parkit's garages (T-5680), written once a day.
+        address: { record: onChange, heartbeat: P7D }
+        priceCurrency: { record: onChange, heartbeat: P7D }
+        pricePerDay: { record: onChange, heartbeat: P7D }
+        priceRatePerMinute: { record: onChange, heartbeat: P7D }
+        url: { record: onChange, heartbeat: P7D }
+    - entityType: PointOfInterest
+      history: 'off'
+    - entityType: PublicTransportRoute
+      history: 'off'
+    - entityType: RadonRiskArea
+      history: 'off'
+    - entityType: OnStreetParking
+      history: 'off'
+    - entityType: ParkingGroup
+      history: 'off'
+    - entityType: RestrictedTrafficArea
+      history: 'off'
+    - entityType: FareCollectionSystem
+      history: 'off'
+    # One entity per figure and period (T-5428): a month's count or a year's drawing is its own entity,
+    # so the series needs no history of its own; a road work keeps its current state.
+    - entityType: KeyPerformanceIndicator
+      history: 'off'
+    - entityType: CityWork
+      history: 'off'
+    - entityType: TrafficFlowObserved
+      # A direction's count of its newest five minutes, a row per interval for 30 days (the count
+      # carries its observedAt); the counter's name, place and source repeat it: one row per change
+      # and one a week (T-5681).
+      history: P30D
+      attributes:
+        name: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        vehicleType: { record: onChange, heartbeat: P7D }
+        dataProvider: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        # The interval's bounds change with the count and repeat when a run reads the same interval again.
+        dateObservedFrom: { record: onChange, heartbeat: P7D }
+        dateObservedTo: { record: onChange, heartbeat: P7D }
+    - entityType: Tree
+      history: 'off'
+    - entityType: GreenAsset
+      history: 'off'
+    - entityType: Vehicle
+      # A vehicle keeps an hour of track at most, the owner's order for every live vehicle feed
+      # (T-4624, tests/test_helsinki_retention.py); a tram standing at a stop writes no row per read.
+      history: PT1H
+      record: onChange
+      heartbeat: PT1H
+      minDistance: 25
+      attributes:
+        dateObserved: { record: never }
+    - entityType: WasteContainer
+      # The sensors' fill level is a measurement series (T-5270): a week of it, one row per new
+      # reading and one a week otherwise. ~7,400 containers that read a few times a day: about
+      # 0.3 million rows, at most 1.2 million if every container changed every hourly run. The
+      # ~20,600 containers without a sensor (waste-containers, daily) add one row a week per attribute
+      # and one per moved collection day, one to four a week: about 0.3 million rows more (T-5427).
+      history: P7D
+      attributes:
+        containerCode: { record: onChange, heartbeat: P7D }
+        dataProvider: { record: onChange, heartbeat: P7D }
+        # dateModified is the pipeline's refresh stamp, new on every write: no history of its own (DM-132, T-5848).
+        dateModified: { record: never }
+        fillingLevel: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        nextActuationDeadline: { record: onChange, heartbeat: P7D }
+        refWasteContainerIsle: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        wasteKind: { record: onChange, heartbeat: P7D }
+    - entityType: WasteContainerIsle
+      # A week too, only because the Endpoint praha-trideny-odpad serves it beside the containers
+      # and its one Policy grants the history of all its types or none (T-4372, T-5270). A point
+      # never changes: one row each and one a week.
+      history: P7D
+      attributes:
+        accessRestriction: { record: onChange, heartbeat: P7D }
+        dataProvider: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        refDistrict: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        stationCode: { record: onChange, heartbeat: P7D }
+    - entityType: WeatherObserved
+      history: P30D
+      # Written every hour with the newest 10-minute values: the readings keep a row per run, the
+      # station's fixed attributes one per change and one a week (T-4844, DM-108, DM-109).
+      attributes:
+        dataProvider: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        stationCode: { record: onChange, heartbeat: P7D }
+  # The space's place (T-4525): the catalogue's Dataset carries it, so georel=near finds the space.
+  # Prague with a margin; a BikeHireDockingStation outside it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area
+      entityType: BikeHireDockingStation
+      kind: area
+      attribute: location
+      bbox: [14.2, 49.9, 14.75, 50.2]

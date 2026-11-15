@@ -1,0 +1,49 @@
+---
+{{- $this := index .Values "pipeline-runner" "scheduled" -}}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> not applicable: a Job is alive until it exits, and it exits when the
+#       stream ends. `activeDeadlineSeconds` is what a hung fetch runs into.
+# - [x] Graceful shutdown -> the pod is gone the moment Bento returns
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required -> project-scoped, no token mounted
+# - [ ] Named ports -> not applicable, a scheduled pipeline serves nothing
+# - [ ] Ingress with TLS -> not applicable
+
+project: {{ $this.project | quote }}
+
+# The same Bento the resident runner uses: one image, one version to pin (PL-04).
+{{- $images := index .Values.images "pipeline-runner" "runner" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+pipelines:
+  {{- $this.pipelines | default dict | toYaml | nindent 2 }}
+
+env:
+  # The organization segment of every id a pipeline mints, resolved here and never written
+  # into a pipeline file (PF-42, PF-44).
+  JC_ORG_DOMAIN: {{ $global.orgDomain | default $global.domain | quote }}
+
+# PL-11: the same envelope as the resident runner. One fetch does not need more, and a
+# runaway mapping must not take the node with it.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

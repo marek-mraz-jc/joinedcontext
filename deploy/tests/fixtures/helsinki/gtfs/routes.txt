@@ -1,0 +1,8 @@
+route_id,agency_id,route_short_name,route_long_name,route_desc,route_type,route_url
+1001,HSL,1,Eira - Lasipalatsi - Ooppera - Sörnäinen (M) - Käpylä,,0,http://aikataulut.hsl.fi/linjat/fi/h1_1a.html
+1002,HSL,2,Olympiaterm. - Lasipalatsi - Ooppera - Messukeskus,,0,http://aikataulut.hsl.fi/linjat/fi/h2.html
+31M1,HSL,M1,Kivenlahti - Vuosaari,,1,http://aikataulut.hsl.fi/linjat/fi/bM1.html
+1009,HSL,9,Länsisatama - Päärautatieas. - Kallio - Pasila as. - Ilmala,,0,http://aikataulut.hsl.fi/linjat/fi/h9.html
+1019,HSL,19,Kauppatori-Suomenlinna,,4,http://aikataulut.hsl.fi/linjat/fi/hLautta_Kauppatori.html
+3001I,HSL,I,Helsinki-Helsinki,,109,https://www.vr.fi/cs/vr/fi/paakaupunkiseudun_lahiliikenne
+1040,HSL,40,Elielinaukio-Haaga-Kannelmäki,,715,http://aikataulut.hsl.fi/linjat/fi/b40.html

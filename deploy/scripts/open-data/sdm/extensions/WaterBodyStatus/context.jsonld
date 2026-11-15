@@ -1,0 +1,140 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "WaterBodyStatus": {
+      "@id": "jc:WaterBodyStatus"
+    },
+    "aCH": {
+      "@id": "jc:aCH",
+      "@type": "xsd:integer"
+    },
+    "aUT": {
+      "@id": "jc:aUT",
+      "@type": "xsd:integer"
+    },
+    "celkChemStav": {
+      "@id": "jc:celkChemStav"
+    },
+    "charakter": {
+      "@id": "jc:charakter"
+    },
+    "charakter1": {
+      "@id": "jc:charakter1"
+    },
+    "dOW": {
+      "@id": "jc:dOW",
+      "@type": "xsd:dateTime"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dlzkaVU1": {
+      "@id": "jc:dlzkaVU1",
+      "@type": "xsd:float"
+    },
+    "ekologickyStav": {
+      "@id": "jc:ekologickyStav",
+      "@type": "xsd:float"
+    },
+    "fACC": {
+      "@id": "jc:fACC"
+    },
+    "fIDKraj0": {
+      "@id": "jc:fIDKraj0",
+      "@type": "xsd:integer"
+    },
+    "fIDRiekyBbskJoin": {
+      "@id": "jc:fIDRiekyBbskJoin",
+      "@type": "xsd:integer"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "iDN2": {
+      "@id": "jc:iDN2",
+      "@type": "xsd:integer"
+    },
+    "id": "@id",
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "kODVU202": {
+      "@id": "jc:kODVU202"
+    },
+    "kod": {
+      "@id": "jc:kod"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "nAZOVVUD": {
+      "@id": "jc:nAZOVVUD"
+    },
+    "nM2": {
+      "@id": "jc:nM2"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "nazovVU1": {
+      "@id": "jc:nazovVU1"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "pOVODIE": {
+      "@id": "jc:pOVODIE"
+    },
+    "pOZN1": {
+      "@id": "jc:pOZN1"
+    },
+    "pOZNAMKA": {
+      "@id": "jc:pOZNAMKA"
+    },
+    "potencial": {
+      "@id": "jc:potencial"
+    },
+    "rkmDo1": {
+      "@id": "jc:rkmDo1",
+      "@type": "xsd:float"
+    },
+    "rkmOd1": {
+      "@id": "jc:rkmOd1",
+      "@type": "xsd:float"
+    },
+    "sOI": {
+      "@id": "jc:sOI",
+      "@type": "xsd:integer"
+    },
+    "sUBUNIT": {
+      "@id": "jc:sUBUNIT"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "skupina": {
+      "@id": "jc:skupina",
+      "@type": "xsd:float"
+    },
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "typ": {
+      "@id": "jc:typ"
+    },
+    "type": "@type",
+    "vYMERA": {
+      "@id": "jc:vYMERA",
+      "@type": "xsd:float"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

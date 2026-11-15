@@ -1,0 +1,162 @@
+---
+# Meshed traffic lands on a pod's Linkerd inbound proxy on 4143, not on the service port, so
+# every rule in networkpolicies.yaml needs a mirror here or the connection it allows is one
+# the proxy never makes.
+grafana-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# Grafana declares an egress policy, so its proxy needs identity (8080), destination (8086)
+# and policy (8090) spelled out. Without them the proxy never learns the inbound policy for
+# its own admin port, the kubelet startup probe gets a 403 and the pod never leaves Init.
+grafana-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: grafana
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 4143
+    # Prometheus is outside this repository's components and may or may not be meshed; the
+    # outbound proxy connects to 4143 when it is and to 9090 when it is not, so both are
+    # allowed and neither widens the peer.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: grafana.grafana.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 4143
+
+context-gateway-linkerd-from-grafana:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+keycloak-linkerd-from-grafana:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+apisix-linkerd-egress-to-grafana:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - protocol: TCP
+          port: 4143
+
+grafana-linkerd-from-portal:
+  podSelector:
+    app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+portal-linkerd-egress-to-grafana:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - protocol: TCP
+          port: 4143

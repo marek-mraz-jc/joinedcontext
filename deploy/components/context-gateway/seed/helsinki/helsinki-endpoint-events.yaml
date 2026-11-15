@@ -1,0 +1,65 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-events
+  namespace: helsinki
+  title: { en: Helsinki events }
+  description:
+    fi: 'Helsingin kaupungin tämän päivän tapahtumat: nimi, aika, paikka ja linkki. Lähde: Linked Events, CC BY 4.0.'
+    en: "Today's events in Helsinki: name, time, venue and link. Source: the City of Helsinki's Linked Events, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: gx2knuus75alkjgc24kjz7llte6q5jkk
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-events
+  # ical: the calendars a person subscribes to, /api/endpoint/{slug}/ical/v1/{name}.ics, one per output of
+  # representations.ical (EP-125, EP-159).
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata, ical]
+  representations:
+    ical:
+      - name: vsetky
+        title: { fi: Kaikki tapahtumat Helsingissä, en: All events in Helsinki }
+        lang: fi
+        timezone: Europe/Helsinki
+        sources:
+          - type: Event
+            preset: sdm-event
+            mapping:
+              SUMMARY:
+                firstOf: [name, type]
+              URL: webSite
+  # The organizer's contact line stays in the space for the city's own coordination and is
+  # served by no public endpoint (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  # The catalogue entry (EP-62..EP-65): one dataset in the hel-fi catalogue, one resource per
+  # representation, and a DataStore mirror of the CSV rows reloaded on every publish run.
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, Linked Events, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, Linked Events, CC BY 4.0'
+      en: 'Source: City of Helsinki, Linked Events, CC BY 4.0'
+    themes: [EDUC]
+    keywords:
+      fi: [tapahtumat, kulttuuri, vapaa-aika]
+      sv: [evenemang, kultur, fritid]
+      en: [events, culture, leisure]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: HOURLY
+    source:
+      - url: https://hri.fi/data/en_GB/dataset/linked-events-tapahtumarajapinta
+        title: { fi: Linked Events -tapahtumarajapinta, en: Linked Events API }
+        description:
+          fi: Helsingin kaupungin tapahtumarekisteri, CC BY 4.0.
+          en: The City of Helsinki's event register, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: linked-events }

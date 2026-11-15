@@ -1,0 +1,14 @@
+---
+# Checklist:
+# - [x] Resources (requests and limits), from the kind measurement (T-6316, Deployment/18)
+# - [x] 1 Replica: jobs are queued in Redis, so a restart delays them and loses none queued
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 640Mi
+  limits:
+    cpu: '1'
+    memory: 1Gi

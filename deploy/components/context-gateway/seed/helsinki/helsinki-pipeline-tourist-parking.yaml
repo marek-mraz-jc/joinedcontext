@@ -1,0 +1,17 @@
+# One OnStreetParking per record of `hel-tourist-parking`, written into the city space (T-5286).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: tourist-parking
+  namespace: helsinki
+  title: { en: Tourist coach parking places }
+spec:
+  class: auto
+  # The places change with the season at most; weekly is enough.
+  period: 168h
+  schedule: '50 4 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-tourist-parking }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: OnStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

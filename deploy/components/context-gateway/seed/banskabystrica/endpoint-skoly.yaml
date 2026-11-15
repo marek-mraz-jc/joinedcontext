@@ -1,0 +1,38 @@
+# One Smart Data Model type per catalogue dataset (T-4344): Organization of the space
+# banskabystrica-verejne, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: banskabystrica-skoly
+  namespace: banskabystrica
+  title: { sk: Školy — Banská Bystrica, en: Schools — Banská Bystrica }
+  description:
+    sk: 'Školy v meste z Digitálnej mapy škôl. Zdroj: Ministerstvo školstva SR, CC BY 4.0.'
+    en: 'The schools in the city from the Digitálna mapa škôl. Source: the Slovak Ministry of Education, CC BY 4.0.'
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  slug: bkc4g3zfirh6zae3owdike7am2upayjs
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:skoly-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: banskabystrica }
+      license: cc-by
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Ministerstvo školstva SR, Digitálna mapa škôl, CC BY 4.0'
+      en: 'Source: Slovak Ministry of Education, Digitálna mapa škôl, CC BY 4.0'
+    themes: [EDUC]
+    keywords:
+      sk: [školy, vzdelávanie, Banská Bystrica]
+      en: [schools, education, Banská Bystrica]
+    spatial:
+      - SK032
+      - https://data.gov.sk/id/lau2/SK0321508438
+    frequency: ANNUAL
+    pipelineRef: { kind: Pipeline, name: skoly }

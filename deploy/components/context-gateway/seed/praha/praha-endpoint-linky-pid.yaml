@@ -1,0 +1,44 @@
+# The PID lines of the IPR Praha geoportal (T-5423), PublicTransportRoute of the space praha-mesto
+# read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-linky-pid
+  namespace: praha
+  title: { cs: Linky PID — Praha, en: PID lines — Prague }
+  description:
+    cs: 'Tramvajové, autobusové, trolejbusové, vlakové a příměstské linky PID, metro, přívozy a lanovka: číslo, trasa, druh dopravy a průběh linky po Praze a Středočeském kraji. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'The PID tram, bus, trolleybus, train and regional lines, the metro, the ferries and the funicular: number, termini, mode and the line they run through Prague and Central Bohemia. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: ywsdwraspqsj5bchoimxbrle4mtuy4af
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-linky-pid
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # The public transport network; no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, PID, linky, MHD, doprava]
+      en: [Prague, PID, lines, public transport, transport]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: DAILY
+    source:
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_PID_LINKY_L/FeatureServer/0/query?where=1%3D1&outFields=route_id,linka,trasa,druh,odkaz,globalid&outSR=4326&f=geojson&maxAllowableOffset=0.00005&geometryPrecision=6
+        title: { cs: Linky PID (IPR Praha), en: PID lines (IPR Praha) }
+        description:
+          cs: Linky Pražské integrované dopravy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The Prague Integrated Transport lines from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

@@ -1,0 +1,16 @@
+# The edge as it is rendered: the server block turns APISIX's own 429 into Problem Details.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: apisix }
+data:
+  config.yaml: |
+    nginx_config:
+      http_server_configuration_snippet: |
+        client_max_body_size 16m;
+        error_page 429 = @too_many_requests;
+        location @too_many_requests {
+          internal;
+          default_type application/problem+json;
+          add_header Retry-After $sent_http_x_ratelimit_reset always;
+          return 429 '{"type":"https://joinedcontext.com/errors/too-many-requests","title":"Too Many Requests","status":429}';
+        }

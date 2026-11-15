@@ -1,0 +1,693 @@
+---
+{{- $this := .Values.apisix.apisix }}
+{{- $image := .Values.images.apisix.apisix.gateway }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [ ] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> enabled by default in chart
+# - [x] Graceful shutdown -> handled by chart
+# - [ ] Standard labels
+# - [x] ServiceAccount with least privilege where required
+# - [x] Named ports -> handled by chart
+# - [ ] Ingress with TLS -> not applicable, APISIX is the gateway itself
+
+fullnameOverride: apisix
+
+# Container images
+image:
+  repository: {{ $image.repository }}
+  # The chart has no digest field and builds `repository:tag`; a tag that carries the
+  # digest makes that one pinned reference (BSI TR-03187 AR-4).
+  tag: {{ $image.tag }}@{{ $image.digest }}
+  pullPolicy: IfNotPresent
+
+service:
+  type: "ClusterIP"
+  externalTrafficPolicy: null
+
+serviceAccount:
+  create: true
+
+rbac:
+  create: false
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+# Standalone file mode (ADR-N-007): no etcd, no Admin API. Routes, upstreams and plugin
+# configs come from the ConfigMap rendered by the `configuration` chart (apisix.yaml, #END).
+etcd:
+  enabled: false
+
+# Secrets referenced from apisix.yaml through APISIX environment-variable substitution.
+# Every name here is repeated in `apisix.nginx.envs` below, or the workers never see it.
+extraEnvVars:
+  - name: OIDC_SESSION_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: apisix-oidc-session
+        key: secret
+  # The confidential `edge` client of the edge login (ADR-N-019, AP-27): the secret reaches
+  # APISIX only this way, from the Secret the secrets component generates for the client
+  # declared in keycloak-clients.yaml, never through the rule file in Git.
+  - name: EDGE_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-client-edge
+        key: client-secret
+
+# The openid-connect plugin dials the PUBLIC issuer host (discovery, token, JWKS, userinfo):
+# the `iss` claim carries it, and CoreDNS points it back at the cluster's own ingress
+# controller. A meshed pod's outbound proxy builds an HTTP balancer for that hop and resets
+# the connection, and the Portal hit exactly this on the same hop (T-0400). Taking 443 out of
+# the outbound redirect makes the hop what it is anyway: the gateway's own TLS to a host that
+# terminates public TLS, which the mesh never protected. Every in-cluster upstream is on
+# another port and stays meshed.
+podAnnotations:
+  config.linkerd.io/skip-outbound-ports: "443"
+  {{- if and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+  # Every request of every host passes this pod, and dev runs one (T-3024, OPS-27). The chart's
+  # preStop keeps nginx serving for 30 s while the ingress controller stops sending to the old
+  # pod, but the kubelet stops the meshed proxy at the same instant, and it refuses new
+  # connections from then on: a roll answered ~3 s of 502s in 0.1 s on both hosts. The proxy now
+  # outlives the pause and a drain; the grace period that outlives both is set in component.yaml
+  # (the chart has no value for it).
+  config.alpha.linkerd.io/proxy-wait-before-exit-seconds: "35"
+  {{- end }}
+
+# Config to ensure functionality with read-only filesystem
+# Ensures that /usr/local/apisix/conf and /tmp are writable, while also preserving
+# the default configuration by copying it in an init container.
+{{- $writableVolumes := dict
+  "conf" "/usr/local/apisix/conf"
+  "tmp" "/tmp"
+  "body-tmp" "/usr/local/apisix/client_body_temp"
+  "proxy-tmp" "/usr/local/apisix/proxy_temp"
+  "fastcgi-tmp" "/usr/local/apisix/fastcgi_temp"
+  "uwsgi-tmp" "/usr/local/apisix/uwsgi_temp"
+  "scgi-tmp" "/usr/local/apisix/scgi_temp"
+  "logs" "/usr/local/apisix/logs"
+}}
+
+extraVolumes:
+{{- range $name, $path := $writableVolumes }}
+  - name: apisix-{{ $name }}-writable
+    emptyDir: { }
+{{- end }}
+
+extraVolumeMounts:
+{{- range $name, $path := $writableVolumes }}
+  - name: apisix-{{ $name }}-writable
+    mountPath: {{ $path }}
+{{- end }}
+
+extraInitContainers:
+  - name: copy-apisix-conf
+    image: {{ $image.repository }}:{{ $image.tag }}@{{ $image.digest }}
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/sh", "-c"]
+    args:
+      # The chart symlinks the standalone ConfigMap to conf/apisix.yaml on startup,
+      # so the default file copied out of the image has to go, or the link fails
+      # with "File exists" and the gateway crash-loops.
+      - cp -r /usr/local/apisix/conf/* /mnt/apisix-conf/ && rm -f /mnt/apisix-conf/apisix.yaml ;
+    volumeMounts:
+      - name: apisix-conf-writable
+        mountPath: /mnt/apisix-conf
+    securityContext:
+      {{ .Values.securityDefaults.securityContext | toYaml | nindent 8 }}
+    resources:
+      requests:
+        cpu: "10m"
+        memory: "16Mi"
+      limits:
+        cpu: "10m"
+        memory: "16Mi"
+
+# APISIX Gateway configuration
+apisix:
+  prometheus:
+    enabled: {{ $global.metrics.enabled }}
+  # `Server: APISIX` instead of `Server: APISIX/3.x.y` (T-1674, OPS-27): the version of the
+  # gateway is the first thing a scanner matches against a CVE list, and no client needs it.
+  # The header itself stays — nginx has no switch that removes it — so what goes is the
+  # number, not the fact that APISIX answers.
+  enableServerTokens: false
+  {{- if eq ($global.ingress.clusterIssuer | default "") "selfsigned-ca" }}
+  # A self-signed platform CA (the k3d variants of ci-full): the openid-connect plugin fetches
+  # the realm's discovery document over https://idm.{domain} with `ssl_verify: true`, and
+  # without the CA in its trust store every login route answers 500. The chart writes
+  # `ssl_trusted_certificate` only under `ssl.enabled`, so the 9443 listener comes along; the
+  # Ingress keeps terminating TLS and forwarding to 9080. The Secret is the one the prepare
+  # component distributes to every namespace from cert-manager/ca-secret (T-0651).
+  ssl:
+    enabled: true
+    existingCASecret: custom-ca-cert
+    certCAFilename: ca.crt
+  {{- end }}
+  admin:
+    enabled: false
+  deployment:
+    # Both keys are needed: the chart picks the container command from `mode` but
+    # writes `deployment.role` / `role_data_plane.config_provider` into config.yaml
+    # from `role`. With only `mode`, APISIX still boots as a traditional node and
+    # dies trying to reach etcd on 127.0.0.1:2379.
+    mode: standalone
+    role: data_plane
+    standalone:
+      existingConfigMap: apisix-standalone-config
+  trustedAddresses:
+    - 127.0.0.1
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  nginx:
+    # nginx workers inherit nothing: a variable not declared here is invisible to
+    # `os.getenv`, so every secret placeholder in apisix.yaml resolves to nothing and the
+    # whole rule file is rejected with "can't find environment variable" — APISIX then keeps
+    # serving the last file that parsed, which makes route changes look silently ignored.
+    envs:
+      - OIDC_SESSION_SECRET
+      - EDGE_CLIENT_SECRET
+    configurationSnippet:
+      httpEnd: |
+        proxy_buffer_size 32k;
+        proxy_buffers 4 32k;
+        client_header_buffer_size 16k;
+        large_client_header_buffers 4 16k;
+        # Who the caller is (T-0929, EP-20, SP-22). APISIX is a ClusterIP behind the ingress
+        # controller, and the chart writes `set_real_ip_from 127.0.0.1` only, so without this
+        # line `$remote_addr` is the ingress pod for every caller on the internet: one address
+        # in the access log, and one `limit-count` bucket the first caller empties for
+        # everybody. `set_real_ip_from` is the one realip directive that may be repeated — the
+        # chart's `real_ip_header X-Real-IP` and `real_ip_recursive off` are already in this
+        # http block, and nginx refuses to start on a second one of either (the first attempt
+        # at this fix crash-looped the pod, and the retry's "File exists" on the config symlink
+        # hid the reason). X-Real-IP is what the header rewrite then reads, which the ingress
+        # controller sets to the address it accepted the connection from and overwrites on
+        # every request, so a client cannot forge it.
+        set_real_ip_from {{ $this.trustedProxyCidr }};
+        # The edge's own error answers (T-5119): what nginx answers itself when no route matches
+        # (404), a plugin fails (500), the upstream is down or slow (502, 503, 504), or a host is
+        # in maintenance. An answer an upstream wrote passes untouched (`proxy_intercept_errors`
+        # is off). These maps live here because `map` is an http-block directive; nginx evaluates
+        # one only when an error page reads it. `$jc_refusal` is set per request in the server
+        # block below; a Czech reader gets the Slovak page.
+        map $jc_refusal $jc_page_not_found {
+          ~^html_(sk|cs) '<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Táto stránka neexistuje</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Táto stránka neexistuje</h1><p>Na tejto adrese nie je žiadna stránka ani služba platformy. Skontrolujte adresu alebo začnite na úvodnej stránke.</p><p><a href="/">Prejsť na úvodnú stránku</a></p></main></body></html>';
+          default '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>This page does not exist</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>This page does not exist</h1><p>No page or service of the platform lives at this address. Check the address, or start from the home page.</p><p><a href="/">Go to the home page</a></p></main></body></html>';
+        }
+        map $jc_refusal $jc_page_error {
+          ~^html_(sk|cs) '<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nastala chyba</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Nastala chyba</h1><p>Požiadavku sa nepodarilo vybaviť pre chybu na strane platformy. Skúste to znova o chvíľu; ak chyba pretrváva, napíšte správcovi platformy.</p><p><a href="">Načítať stránku znova</a></p></main></body></html>';
+          default '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Something went wrong</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Something went wrong</h1><p>The platform could not complete the request because of an error on its side. Try again in a moment; if it keeps happening, tell the administrator of the platform.</p><p><a href="">Load the page again</a></p></main></body></html>';
+        }
+        map $jc_refusal $jc_page_unavailable {
+          ~^html_(sk|cs) '<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Služba je dočasne nedostupná</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Služba je dočasne nedostupná</h1><p>Služba na tejto adrese práve neodpovedá, napríklad počas aktualizácie. Zvyčajne je späť do niekoľkých minút. Skúste to znova o chvíľu.</p><p><a href="">Načítať stránku znova</a></p></main></body></html>';
+          default '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>The service is temporarily unavailable</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>The service is temporarily unavailable</h1><p>The service at this address is not answering right now, for example during an update. It is usually back within a few minutes. Try again in a moment.</p><p><a href="">Load the page again</a></p></main></body></html>';
+        }
+        map $jc_refusal $jc_page_maintenance {
+          ~^html_(sk|cs) '<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Prebieha plánovaná údržba</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Prebieha plánovaná údržba</h1><p>Táto služba je počas plánovanej údržby vypnutá. Vaše údaje sú v bezpečí. Skúste to znova o niekoľko minút.</p><p><a href="">Načítať stránku znova</a></p></main></body></html>';
+          default '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Planned maintenance in progress</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Planned maintenance in progress</h1><p>This service is switched off during planned maintenance. Your data is safe. Try again in a few minutes.</p><p><a href="">Load the page again</a></p></main></body></html>';
+        }
+        map $jc_refusal $jc_page_format {
+          ~^html html;
+          default json;
+        }
+        # Host -> seconds for `Retry-After` while the host is in maintenance; empty is open.
+        {{- $maintenance := $this.maintenance | default dict }}
+        {{- $retry := int ($maintenance.retryAfterSeconds | default 900) }}
+        {{- if or (lt $retry 1) (gt $retry 86400) }}
+        {{- fail (printf "apisix.apisix.maintenance.retryAfterSeconds must be 1..86400 seconds, got %v" $maintenance.retryAfterSeconds) }}
+        {{- end }}
+        map $host $jc_maintenance {
+          default "";
+        {{- range $host := ($maintenance.hosts | default list) }}
+        {{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" (toString $host)) }}
+        {{- fail (printf "apisix.apisix.maintenance.hosts: %q is not a subdomain name (for example: portal)" (toString $host)) }}
+        {{- end }}
+          {{ $host }}.{{ $global.domain }} {{ $retry }};
+        {{- end }}
+        }
+        map $jc_maintenance $jc_retry_after {
+          "" 30;
+          default $jc_maintenance;
+        }
+        # `Retry-After` of a 429 the edge writes (T-6022): the seconds `limit-count` published in
+        # `X-RateLimit-Reset`, so it counts down with the window. `limit-conn` (the bulk and
+        # temporal routes) and `limit-req` publish no reset, and nginx drops an `add_header` with
+        # an empty value, so their 429 told the client to read a header it never got. Their
+        # fallback is 60 s: the window every `limit-count` of the edge uses, and the scale on which
+        # one of the 10 held bulk exports ends. A map is evaluated when it is read, here in the
+        # named 429 location, after the limiter set (or did not set) its header.
+        map $sent_http_x_ratelimit_reset $jc_refusal_retry_after {
+          "" 60;
+          default $sent_http_x_ratelimit_reset;
+        }
+        # T-6170: the Origin a refusal the edge writes itself (429, 502, 503, 504) hands its answer
+        # to, by the `cors` rule of the routes (`allow_origins_by_regex` in apisix-plugins.yaml):
+        # an https page on a host under this platform's domain, with its dots escaped, and no
+        # other. The named locations run after the plugin chain, so the route's `cors` headers
+        # never reach them: without this a page on the open data host read an edge 429 as a
+        # network error, never saw `Retry-After`, and the chart stayed blank. No credentials are
+        # allowed (the routes send none either) and the answer holds no data, only the refusal.
+        map $http_origin $jc_refusal_origin {
+          default "";
+          "~^https://[^@/]+\.{{ $global.domain | replace "." "[.]" }}$" $http_origin;
+        }
+      # The body ceiling belongs here, in the server block, and not above: APISIX's own
+      # `client_max_body_size 0` is already in the http block and nginx refuses to start on a
+      # duplicate in the same block (T-2263). `0` reads as "no limit" for a body with a
+      # Content-Length, but nginx's chunked filter compares `content_length_n + chunk`
+      # against the same number with no zero guard, so with `0` every streamed body is over
+      # the limit: dev answered `413` to a 435-byte Portal write with
+      # `client intended to send too large chunked body: 0+435 bytes`. 16m is above every
+      # limit a service enforces for itself (the Portal's pipeline test accepts 11 MB,
+      # functions 8 MB, the agent proxy 4 MB), so each service stays the authority over its
+      # own bodies and the edge only stops the absurd ones.
+      httpSrv: |
+        client_max_body_size 16m;
+        # The shape of a refusal the edge writes itself (T-2237, API-08, GW26, R20). Every
+        # `limit-count` answers `rejected_code: 429` and APISIX then serves its own
+        # `<h1>429 Too Many Requests</h1><hr>openresty` page, while the platform's error
+        # contract is RFC 9457 `application/problem+json` — a client that parses the contract
+        # fails on the parse instead of reading `Retry-After` and slowing down.
+        #
+        # Here, and not in each route's `response-rewrite`, for two reasons measured on
+        # `apache/apisix:3.17.0-ubuntu` (the pinned image) on 2026-09-20: a
+        # `response-rewrite` gated on `status == 429` would have to carry the body, and every
+        # route's `response-rewrite` already carries the unconditional security headers, which
+        # the same gate would then drop from every ordinary answer; and the same plugin in a
+        # `global_rule` beside a route's own is merged into one configuration, which applied
+        # this body to a `502` as well. One `error_page` in the server block is read by every
+        # route, the quota headers `limit-count` set still come out, an answer the upstream
+        # wrote is untouched (`proxy_intercept_errors` is off, so an upstream `429` — the
+        # gateway's own, which is already Problem Details — passes through), and there is one
+        # place to change.
+        #
+        # `Retry-After` is the seconds `limit-count` itself published in `X-RateLimit-Reset`,
+        # so it counts down with the window instead of naming a constant that would lie the
+        # day a route's `time_window` changes; a limiter that publishes none (`limit-conn`,
+        # `limit-req`) gets the fixed fallback of `$jc_refusal_retry_after` in the http block
+        # (T-6022). The detail names no route, no quota and no upstream (R20).
+        # nginx builds this answer in the named location, after the plugin chain's
+        # `header_filter` has run, so each route's `response-rewrite` headers do not reach it:
+        # the ones a refusal needs are repeated here. HSTS and `nosniff` are the two every
+        # route sets identically; `no-store` keeps a refusal out of a cache; the frame and
+        # referrer values are the strictest of the ones the routes use (`DENY` beside
+        # `SAMEORIGIN`, `no-referrer` beside `strict-origin-when-cross-origin`), which a body
+        # of JSON with nothing to frame and nothing to link can always afford. The
+        # CSP is the `DENY` routes' OPS-34 baseline: no upstream wrote this answer, so it has none.
+        # T-4201: a browser asking for a page gets a page, in its language, that names the
+        # seconds left and links the same address (`href=""`, so nothing of the request is
+        # echoed into the page); T-5078 dropped its `<meta http-equiv="refresh">`, a timed
+        # reload the reader cannot stop (WCAG 2.2.1, axe meta-refresh, critical). A client
+        # asking for anything else keeps the Problem Details
+        # above. The choice is made in the server's rewrite phase from `Accept` (text/html) and
+        # `Accept-Language` (sk, cs, de, else en), before any route runs. The page carries no
+        # script and loads nothing (`default-src 'none'`).
+        set $jc_refusal json;
+        set $jc_refusal_lang "";
+        if ($http_accept ~* "text/html") {
+          set $jc_refusal html_en;
+        }
+        if ($jc_refusal = html_en) {
+          set $jc_refusal_lang $http_accept_language;
+        }
+        if ($jc_refusal_lang ~* "^\s*sk") {
+          set $jc_refusal html_sk;
+        }
+        if ($jc_refusal_lang ~* "^\s*cs") {
+          set $jc_refusal html_cs;
+        }
+        if ($jc_refusal_lang ~* "^\s*de") {
+          set $jc_refusal html_de;
+        }
+        error_page 429 = @too_many_requests_$jc_refusal;
+        # T-6170: an `error_page` is an internal redirect, which empties `ngx.ctx`, and APISIX's
+        # log phase lives in its own locations, not in these named ones: a request a `limit-conn`
+        # had admitted and that ended here (a 502 or 504 the edge wrote, a later plugin's 429)
+        # never gave its slot back. Prod's temporal route admitted 5 of its 10 per client that
+        # way. The `edge-not-found` global rule holds the context of a request on a route with a
+        # `limit-conn` under `$request_id` (which survives the redirect), `edge-headers` drops it
+        # when the answer is the route's own, and this block, inherited only by the named
+        # locations (APISIX's locations set their own), runs APISIX's log phase for the rest.
+        log_by_lua_block {
+          local held = package.loaded["jc.edge.held"]
+          local ctx = held and held:get(ngx.var.request_id)
+          if ctx then
+            held:delete(ngx.var.request_id)
+            ngx.ctx.api_ctx = ctx
+            apisix.http_log_phase()
+          end
+        }
+        location @too_many_requests_html_sk {
+          internal;
+          default_type text/html;
+          charset utf-8;
+          add_header Retry-After $jc_refusal_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+          return 429 '<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Príliš veľa požiadaviek</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Príliš veľa požiadaviek</h1><p>Z vašej siete prišlo za poslednú minútu viac požiadaviek, ako platforma prijme z jednej adresy. Skúste to znova o $jc_refusal_retry_after s.</p><p><a href="">Načítať stránku znova</a></p></main></body></html>';
+        }
+        location @too_many_requests_html_cs {
+          internal;
+          default_type text/html;
+          charset utf-8;
+          add_header Retry-After $jc_refusal_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+          return 429 '<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Příliš mnoho požadavků</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Příliš mnoho požadavků</h1><p>Z vaší sítě přišlo za poslední minutu více požadavků, než platforma přijme z jedné adresy. Zkuste to znovu za $jc_refusal_retry_after s.</p><p><a href="">Načíst stránku znovu</a></p></main></body></html>';
+        }
+        location @too_many_requests_html_de {
+          internal;
+          default_type text/html;
+          charset utf-8;
+          add_header Retry-After $jc_refusal_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+          return 429 '<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Zu viele Anfragen</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Zu viele Anfragen</h1><p>Aus Ihrem Netz kamen in der letzten Minute mehr Anfragen, als die Plattform von einer Adresse annimmt. Versuchen Sie es in $jc_refusal_retry_after s erneut.</p><p><a href="">Seite neu laden</a></p></main></body></html>';
+        }
+        location @too_many_requests_html_en {
+          internal;
+          default_type text/html;
+          charset utf-8;
+          add_header Retry-After $jc_refusal_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+          return 429 '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Too many requests</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#1a1a1a;background:#f6f6f6}main{max-width:36rem;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px}h1{font-size:1.4rem;margin:0 0 8px}</style></head><body><main><h1>Too many requests</h1><p>Your network sent more requests in the last minute than the platform accepts from one address. Try again in $jc_refusal_retry_after s.</p><p><a href="">Load the page again</a></p></main></body></html>';
+        }
+        location @too_many_requests_json {
+          internal;
+          default_type application/problem+json;
+          add_header Retry-After $jc_refusal_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
+          return 429 '{"type":"https://joinedcontext.com/errors/too-many-requests","title":"Too Many Requests","status":429,"detail":"the rate limit of this route was reached; retry after the window in the Retry-After header. To read a whole dataset, download it once: every Endpoint serves {endpoint}/file.csv, and every catalogue dataset its datastore dump"}';
+        }
+        # T-5119: the edge's own 404, 500, 502, 503 and 504, and the maintenance switch, in the
+        # same two shapes as the 429 above: a page in the reader's language (sk, else en) for a
+        # browser, RFC 9457 Problem Details for everybody else. Neither names a route, a
+        # service, an upstream address or an nginx version (R20); the maps that hold the pages
+        # are in the http block. The 404 is the one APISIX answers for an address no route
+        # serves (the global rule `edge-not-found` turns its JSON into a bare 404 that lands
+        # here). A 502, 503 or 504 says when to try again; the maintenance 503 says what the
+        # deployer set, the others 30 s. The maintenance return comes after every `set` above,
+        # because a `return` ends the server's rewrite phase.
+        error_page 404 = @jc_404_$jc_page_format;
+        error_page 500 = @jc_500_$jc_page_format;
+        error_page 502 = @jc_502_$jc_page_format;
+        error_page 503 = @jc_503_$jc_page_format;
+        error_page 504 = @jc_504_$jc_page_format;
+        if ($jc_maintenance) {
+          return 503;
+        }
+        location @jc_404_html {
+          internal;
+          default_type text/html;
+          charset utf-8;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+          return 404 $jc_page_not_found;
+        }
+        location @jc_404_json {
+          internal;
+          default_type application/problem+json;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
+          return 404 '{"type":"https://joinedcontext.com/errors/resource-not-found","title":"Not Found","status":404,"detail":"no page or API of the platform lives at this address"}';
+        }
+        location @jc_500_html {
+          internal;
+          default_type text/html;
+          charset utf-8;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+          return 500 $jc_page_error;
+        }
+        location @jc_500_json {
+          internal;
+          default_type application/problem+json;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
+          return 500 '{"type":"https://joinedcontext.com/errors/internal-error","title":"Internal Server Error","status":500,"detail":"the platform could not complete the request; retry later"}';
+        }
+        location @jc_502_html {
+          internal;
+          default_type text/html;
+          charset utf-8;
+          add_header Retry-After $jc_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+          return 502 $jc_page_unavailable;
+        }
+        location @jc_502_json {
+          internal;
+          default_type application/problem+json;
+          add_header Retry-After $jc_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
+          return 502 '{"type":"https://joinedcontext.com/errors/upstream-unavailable","title":"Bad Gateway","status":502,"detail":"the service behind this address is not answering; retry after the seconds in the Retry-After header"}';
+        }
+        location @jc_503_html {
+          internal;
+          default_type text/html;
+          charset utf-8;
+          add_header Retry-After $jc_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+          if ($jc_maintenance) {
+            return 503 $jc_page_maintenance;
+          }
+          return 503 $jc_page_unavailable;
+        }
+        location @jc_503_json {
+          internal;
+          default_type application/problem+json;
+          add_header Retry-After $jc_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
+          if ($jc_maintenance) {
+            return 503 '{"type":"https://joinedcontext.com/errors/service-unavailable","title":"Service Unavailable","status":503,"detail":"the service behind this address is off for planned maintenance; retry after the seconds in the Retry-After header"}';
+          }
+          return 503 '{"type":"https://joinedcontext.com/errors/service-unavailable","title":"Service Unavailable","status":503,"detail":"the service behind this address is not answering; retry after the seconds in the Retry-After header"}';
+        }
+        location @jc_504_html {
+          internal;
+          default_type text/html;
+          charset utf-8;
+          add_header Retry-After $jc_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+          return 504 $jc_page_unavailable;
+        }
+        location @jc_504_json {
+          internal;
+          default_type application/problem+json;
+          add_header Retry-After $jc_retry_after always;
+          add_header Access-Control-Allow-Origin $jc_refusal_origin always;
+          add_header Access-Control-Expose-Headers Retry-After always;
+          add_header Vary Origin always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          add_header Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
+          return 504 '{"type":"https://joinedcontext.com/errors/delivery-timeout","title":"Gateway Timeout","status":504,"detail":"the service behind this address is not answering; retry after the seconds in the Retry-After header"}';
+        }
+ingress:
+  enabled: true
+  className: {{ $global.ingress.ingressClass }}
+  annotations:
+    ingress.kubernetes.io/affinity: cookie
+    # No `cert-manager.io/cluster-issuer` here: the certificate is an explicit resource in
+    # the configuration chart (T-0045). The ingress-shim would issue a second one for the
+    # same Secret.
+    {{- if eq $global.ingress.ingressClass "traefik" }}
+    # BSI TR-02102 listener policy (T-0044); Traefik addresses a TLSOption as
+    # <namespace>-<name>@kubernetescrd.
+    traefik.ingress.kubernetes.io/router.tls.options: {{ printf "%s-bsi-tr-02102@kubernetescrd" $this.namespace | quote }}
+    {{- else }}
+    # The same policy for ingress-nginx. The protocol floor is a property of the controller
+    # (its `ssl-protocols` ConfigMap key, TLSv1.2+TLSv1.3 by default), not of one Ingress.
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+    nginx.ingress.kubernetes.io/ssl-prefer-server-ciphers: "true"
+    # http answers a redirect to https and never the page (T-1674, OPS-27). The controller
+    # already redirects an Ingress that carries TLS, but that is its `ssl-redirect` default
+    # and a ConfigMap key an operator may turn off for the whole controller; saying it on the
+    # Ingress makes the edge's own redirect a property of this deployment. The Traefik branch
+    # has no equivalent annotation: there the redirect is on the `web` entrypoint, which the
+    # Hetzner kit configures, and the live check in the conformance suite is what holds it.
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    {{- end }}
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
+    nginx.ingress.kubernetes.io/proxy-busy-buffers-size: "24k"
+  {{- /* One rule per hostname: several routes share a subdomain (the Portal's three), and
+         the same list feeds the certificate's SAN list in the configuration chart. */}}
+  {{- $subDomains := list }}
+  {{- $ownTls := dict }}
+  {{- range $component, $config := .Values.routes }}
+    {{- if and (hasKey $config "subDomain") (hasKey $config "tlsSecret") }}
+    {{- $_ := set $ownTls $config.subDomain $config.tlsSecret }}
+    {{- else if hasKey $config "subDomain" }}
+    {{- $subDomains = append $subDomains $config.subDomain }}
+    {{- end }}
+  {{- end }}
+  {{- $subDomains = $subDomains | uniq | sortAlpha }}
+  hosts:
+    # The apex carries the shared surfaces (apps, forge, context) and the redirect to the
+    # Portal; those routes match on `host: <domain>` and would never be reached without a
+    # rule for it here.
+    - host: {{ $global.domain }}
+      paths:
+        - '/'
+  {{- range $subDomains }}
+    - host: {{ . }}.{{ $global.domain }}
+      paths:
+        - '/'
+  {{- end }}
+  {{- range $sub, $_ := $ownTls }}
+    # A host on a certificate of its own (route `tlsSecret`), off the shared SAN list.
+    - host: {{ $sub }}.{{ $global.domain }}
+      paths:
+        - '/'
+  {{- end }}
+  {{- $appsWildcard := dig "ingress" "appsWildcard" "enabled" false $global }}
+  {{- if $appsWildcard }}
+    # Every App host on one rule and one certificate (ADR-N-037 §6, T-3013). APISIX answers
+    # a host that no published App owns with a 404.
+    - host: '*.apps.{{ $global.domain }}'
+      paths:
+        - '/'
+  {{- end }}
+  {{- /* App hosts one by one, each on its own certificate (global.ingress.appHosts). */}}
+  {{- $appHosts := dig "ingress" "appHosts" list $global }}
+  {{- range $appHosts }}
+    - host: {{ . }}.apps.{{ $global.domain }}
+      paths:
+        - '/'
+  {{- end }}
+  tls:
+    # Its own Secret, not the `apisix-tls` cert-manager's ingress-shim used to fill: two
+    # Certificates cannot share one Secret, and an upgrade that renamed the owner instead of
+    # the Secret would deadlock until someone deleted the old Certificate by hand.
+    - secretName: apisix-edge-tls
+      hosts:
+        - {{ $global.domain }}
+      {{- range $subDomains }}
+        - {{ . }}.{{ $global.domain }}
+      {{- end }}
+    {{- range $sub, $secret := $ownTls }}
+    - secretName: {{ $secret }}
+      hosts:
+        - {{ $sub }}.{{ $global.domain }}
+    {{- end }}
+    {{- if $appsWildcard }}
+    - secretName: apisix-apps-wildcard-tls
+      hosts:
+        - '*.apps.{{ $global.domain }}'
+    {{- end }}
+    {{- range $appHosts }}
+    - secretName: app-{{ . }}-tls
+      hosts:
+        - {{ . }}.apps.{{ $global.domain }}
+    {{- end }}
+
+# Ingress Controller
+ingress-controller:
+  enabled: false
+
+# Metrics
+metrics:
+  serviceMonitor:
+    enabled: {{ $global.metrics.enabled }}

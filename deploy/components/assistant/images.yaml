@@ -1,0 +1,10 @@
+---
+assistant:
+  worker:
+    # The platform image carries jc-assistant beside the gateway's binaries (platform T-3052);
+    # the entrypoint is the gateway, so the values name the worker as `command`. The digest is
+    # the integrator's to pin once image.yml has published a platform build that contains the
+    # binary; until then no environment lists the component.
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-platform'
+    tag: 'main'
+    digest: 'sha256:a43cb1a1dca5a1e2de60f586341b2b66a8d9d07c66af6ea50e5a52510cd5dbe8'

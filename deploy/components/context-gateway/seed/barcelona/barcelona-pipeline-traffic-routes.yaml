@@ -1,0 +1,19 @@
+# The travel time of each traffic route into the space barcelona every five minutes, the source's
+# own period (T-5262): one TrafficFlowObserved per route with the lines of its sections.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: traffic-routes
+  namespace: barcelona
+  title:
+    ca: Temps de recorregut per itineraris, cada 5 minuts
+    es: Tiempo de recorrido por itinerarios, cada 5 minutos
+    en: Travel time by route, every 5 min
+spec:
+  class: auto
+  period: 300s
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-traffic-routes }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:barcelona:barcelona
+  output: { type: TrafficFlowObserved, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

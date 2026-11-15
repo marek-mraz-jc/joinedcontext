@@ -1,0 +1,85 @@
+---
+# Meshed traffic reaches a pod on its Linkerd inbound proxy (4143), so every rule of
+# networkpolicies.yaml has its half here (T-5314: caller egress and callee ingress on 4143), and
+# the App pod, which declares an egress policy, reaches the control plane (8080, 8086, 8090).
+hsl-transport-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: app-hsl-transport
+    app.kubernetes.io/instance: app-pods-hsl-transport
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+              app.kubernetes.io/instance: jc-server
+          componentNamespace: jc
+      ports:
+        - protocol: TCP
+          port: 4143
+        - protocol: TCP
+          port: 4190
+        - protocol: TCP
+          port: 4191
+hsl-transport-linkerd-cp:
+  podSelector:
+    app.kubernetes.io/name: app-hsl-transport
+    app.kubernetes.io/instance: app-pods-hsl-transport
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+              app.kubernetes.io/instance: jc-server
+          componentNamespace: jc
+      ports:
+        - protocol: TCP
+          port: 4143
+jc-linkerd-egress-to-app-pods:
+  componentNamespace: jc
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: app-hsl-transport
+              app.kubernetes.io/instance: app-pods-hsl-transport
+          componentNamespace: app-pods
+      ports:
+        - protocol: TCP
+          port: 4143
+jc-linkerd-from-app-pods:
+  componentNamespace: jc
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: app-hsl-transport
+              app.kubernetes.io/instance: app-pods-hsl-transport
+          componentNamespace: app-pods
+      ports:
+        - protocol: TCP
+          port: 4143

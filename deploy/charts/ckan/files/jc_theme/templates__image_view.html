@@ -1,0 +1,2 @@
+{#- CKAN 2.11.6's image view, its style attribute as a class in jc-theme.css: the CSP refuses style attributes (T-5147). -#}
+<img class="jc-image-view" src="{{ resource_view.get('image_url') or resource.get('url') }}" />

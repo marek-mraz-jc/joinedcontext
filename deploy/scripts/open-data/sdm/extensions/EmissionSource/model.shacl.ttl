@@ -1,0 +1,112 @@
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix ns1: <https://w3id.org/linkml/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sdm: <https://smartdatamodels.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://joinedcontext.com/models/sdm/extensions/EmissionSource> ns1:generator_version "linkml-1.12.0" .
+
+jc:EmissionSource a sh:NodeShape ;
+    rdfs:comment "One stationary source of air pollution of a city's emission register: where it is, its fuel and its yearly emissions." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 14 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "The name, per language, as the publisher writes it." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 4 ;
+            sh:path sdm:name ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source's yearly emission of volatile organic compounds, in tonnes a year." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 10 ;
+            sh:path jc:vocEmission ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source's yearly emission of carbon monoxide, in tonnes a year." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path jc:coEmission ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source's yearly emission of sulphur dioxide, in tonnes a year." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 9 ;
+            sh:path jc:so2Emission ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source's yearly emission of PM2.5, in tonnes a year (REZZO 2 only)." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 7 ;
+            sh:path jc:pm25Emission ],
+        [ sh:datatype xsd:anyURI ;
+            sh:description "The service the row was read from." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 1 ;
+            sh:path sdm:source ],
+        [ sh:datatype xsd:string ;
+            sh:description "The fuel group that dominates the source as the register writes it, such as zemní plyn, nafta or technologie (a process, not a fuel)." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path jc:fuelType ],
+        [ sh:datatype xsd:string ;
+            sh:description "Who published the row, with the credit its licence asks for." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 0 ;
+            sh:path sdm:dataProvider ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source's yearly emission of nitrogen oxides (NOx), in tonnes a year." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 5 ;
+            sh:path jc:noxEmission ],
+        [ sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:BlankNodeOrIRI ;
+            sh:order 13 ;
+            sh:path geojson:geometry ],
+        [ sh:datatype xsd:string ;
+            sh:description "Which part of the Prague emission register lists the source: REZZO 1 (large stationary sources, rezzo1) or REZZO 2 (medium sources, rezzo2), as IPR Praha publishes them." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 8 ;
+            sh:path jc:registerCategory ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source's yearly emission of PM10, in tonnes a year, as the register states it." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 6 ;
+            sh:path jc:pm10Emission ] ;
+    sh:targetClass jc:EmissionSource .
+
+ngsi-ld:Entity a sh:NodeShape ;
+    rdfs:comment "The root every NGSI-LD entity class specialises." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type jc:coEmission jc:fuelType jc:noxEmission jc:pm10Emission jc:pm25Emission jc:registerCategory jc:so2Emission jc:vocEmission sdm:dataProvider sdm:name sdm:source ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:BlankNodeOrIRI ;
+            sh:order 2 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass ngsi-ld:Entity .
+

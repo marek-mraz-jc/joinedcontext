@@ -1,0 +1,394 @@
+{
+  "uid": "jc-k6-load",
+  "title": "k6 load runs",
+  "description": "The load runs of T-5901 (conformance tests/k6/load.sh), remote-written by k6 per run with a testid: rate, latency and errors per standard and per query kind, beside what the gateway and the broker saw in the same window.",
+  "tags": [
+    "joinedcontext",
+    "load",
+    "k6"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timezone": "browser",
+  "templating": {
+    "list": [
+      {
+        "name": "testid",
+        "label": "Run",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(k6_http_reqs_total, testid)",
+          "refId": "testid"
+        },
+        "definition": "label_values(k6_http_reqs_total, testid)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "sort": 2,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests per second by standard",
+      "description": "The rate k6 sent per standard (NGSI-LD, OGC, SensorThings, OData, MCP, CSV, iCal, CKAN) during the run. The steady profile aims at 1,000 per second in total (T-5901).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (standard) (rate(k6_http_reqs_total{testid=~\"$testid\"}[30s]))",
+          "legendFormat": "{{standard}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(k6_http_reqs_total{testid=~\"$testid\"}[30s]))",
+          "legendFormat": "all",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "p95 by standard, as the client saw it",
+      "description": "The 95th percentile of each standard's round trip from the load generator, edge included. The budget is 500 ms; the run aborts after a minute above 2 s.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (standard) (k6_http_req_duration_p95{testid=~\"$testid\"})",
+          "legendFormat": "{{standard}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Errors by query kind",
+      "description": "Share of failed requests per query kind (a status outside 2xx, a timeout or a reset). The run aborts after a minute above 2 % in total.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (kind) (k6_http_req_failed_rate{testid=~\"$testid\"})",
+          "legendFormat": "{{kind}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Answers by status",
+      "description": "What came back: 429 is the edge or the gateway shedding a caller, 503 the gateway's in-flight cap, 0 a timeout or a reset.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(k6_http_reqs_total{testid=~\"$testid\"}[30s]))",
+          "legendFormat": "{{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "p50 / p95 / p99 by query kind",
+      "description": "Each query kind's latency at the end of the selected range: the table the optimisation reads first (T-5901 step 5).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (kind) (k6_http_req_duration_p50{testid=~\"$testid\"})",
+          "legendFormat": "p50",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "max by (kind) (k6_http_req_duration_p95{testid=~\"$testid\"})",
+          "legendFormat": "p95",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "expr": "max by (kind) (k6_http_req_duration_p99{testid=~\"$testid\"})",
+          "legendFormat": "p99",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Virtual users and dropped iterations",
+      "description": "VUs k6 held, and iterations it could not start in time: dropped iterations mean the generator, not the platform, ran out of room.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(k6_vus{testid=~\"$testid\"})",
+          "legendFormat": "VUs",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(k6_dropped_iterations_total{testid=~\"$testid\"}[30s]))",
+          "legendFormat": "dropped per second",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Gateway: service time p95 by route",
+      "description": "The same window as the gateway saw it: the difference to the client's p95 is the edge and the network.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(jc_gateway_request_duration_seconds_bucket[1m])) by (le, route))",
+          "legendFormat": "{{route}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Broker: service time p95 and Postgres transaction begin p95",
+      "description": "Antares's own time per request and its wait for a pooled Postgres connection: a begin time that climbs with the load names the pool or Postgres as the saturating component.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(antares_http_request_duration_seconds_bucket[1m])) by (le))",
+          "legendFormat": "broker p95",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(antares_pg_transaction_begin_seconds_bucket[1m])) by (le))",
+          "legendFormat": "pg begin p95",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Gateway answers by status",
+      "description": "503s here are the gateway's in-flight caps (per caller 32, total 128 per replica), 429 its anonymous share.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(jc_gateway_requests_total[1m])) by (status)",
+          "legendFormat": "{{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

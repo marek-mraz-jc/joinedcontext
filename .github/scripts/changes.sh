@@ -18,15 +18,19 @@
 #   EVENT=push BEFORE=<sha> sh changes.sh      # in ci.yml (reads GITHUB_REF)
 #   sh changes.sh --selftest
 set -eu
-JOBS="root antares ekiben portal ui supply workflows image dockerfiles platform"
+JOBS="root antares ekiben portal ui supply workflows image dockerfiles platform deploy"
 
 # map: changed paths on stdin -> the job lines
 map() {
   awk -v jobs="$JOBS" '
     BEGIN { n = split(jobs, j, " "); for (i = 1; i <= n; i++) on[j[i]] = "false" }
+    # the deployment code (T-6986): only the deploy jobs, its Markdown included (its tests read the
+    # runbooks); deploy/rehearsal is the single-host form the root jobs and smoke.yml exercise
+    /^deploy\// && !/^deploy\/rehearsal\// { on["deploy"] = "true"; next }
     # docs never run a build: Markdown anywhere, the docs/ tree and the nested trees docs
     /\.md$/ || /^docs\// || /^crates\/[^\/]+\/docs\// { next }
     /^\.github\// { on["workflows"] = "true" }
+    /^\.github\/actions\/deploy-tools\// { on["deploy"] = "true" }
     /^\.github\/workflows\/ci\.yml$/ || /^\.github\/scripts\// { for (k in on) on[k] = "true"; next }
     /^\.github\// { next }
     /^bins\/jc\/Dockerfile$/ || /^\.dockerignore$/ { on["image"] = "true" }
@@ -196,6 +200,13 @@ if [ "${1:-}" = --selftest ]; then
   check 'bins/jc/Dockerfile' 'root image dockerfiles'
   check 'Cargo.lock' 'root supply platform'
   check '.github/workflows/image.yml' 'workflows'
+  check '.github/actions/deploy-tools/action.yml' 'workflows deploy'
+  check 'deploy/components/jc/images.yaml' 'deploy'
+  check 'deploy/components/monitoring/RUNBOOK.md\ndeploy/tests/test_pins.py' 'deploy'
+  check 'deploy/rehearsal/up.sh' 'root'
+  check 'deploy/rehearsal/REHEARSAL.md' ''
+  check 'deploy/components/jc/images.yaml\ncrates/antares/crates/antares-broker/src/lib.rs' 'root antares deploy'
+  [ "$(printf 'deploy/components/jc/images.yaml\n' | map | ship)" = ship=false ] || { echo "FAIL: a pin ships"; exit 1; }
   check '.github/scripts/changes.sh' "$JOBS"
   for r in refs/heads/jc-portal-1 refs/heads/main refs/heads/ship-proof/x; do trunk "$r" || { echo "FAIL: trunk $r"; exit 1; }; done
   for r in refs/heads/jc-ui-node24 refs/pull/1/merge; do ! trunk "$r" || { echo "FAIL: branch $r"; exit 1; }; done

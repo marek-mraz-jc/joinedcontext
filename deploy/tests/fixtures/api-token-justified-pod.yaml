@@ -1,0 +1,17 @@
+---
+# A pod that has to reach the Kubernetes API and says why: the CloudNativePG instance
+# manager watches its own Cluster resource. The reason is what keeps it out of the
+# mutation, so the annotation is the whole fixture.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: instance-manager-pod
+  namespace: dev
+  annotations:
+    security.joinedcontext.com/api-access-reason: >-
+      CloudNativePG instance manager: watches its own Cluster resource and
+      reports instance status back to the operator.
+spec:
+  containers:
+    - name: postgres
+      image: ghcr.io/cloudnative-pg/postgis:16-3.6-system-trixie@sha256:9d597fcf4350e4bae9ff40cbe0e4383746a9c7f9c60da72483b0e966e4c20765

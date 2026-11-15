@@ -1,0 +1,17 @@
+# The pipelines write the demo sensors' readings, and only those (T-4857).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: senzory-pipelines-write
+  namespace: banskabystrica
+  title:
+    sk: Kanály zapisujú ukážkové senzory
+    en: The ingestion pipelines write the demo sensors
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: senzory }
+  assigner: did:web:banskabystrica.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  operations: [upsertBatch, createBatch, queryBatch, queryEntity]
+  information:
+    - entities:
+        - type: AirQualityObserved

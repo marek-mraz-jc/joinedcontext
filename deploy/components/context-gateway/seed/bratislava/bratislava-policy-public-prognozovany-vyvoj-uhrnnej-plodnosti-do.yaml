@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-prognozovany-vyvoj-uhrnnej-plodnosti-do
+  namespace: bratislava
+  title:
+    sk: 'Verejné čítanie: Prognózovaný vývoj úhrnnej plodnosti v Bratislave do roku 2050'
+    en: 'Public read: Projected total fertility in Bratislava to 2050'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  # Read only, the rows of this one hub dataset (CC BY 4.0, nothing about a person); discovery
+  # beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:prognozovany-vyvoj-uhrnnej-plodnosti-do[.][a-z0-9.-]+$

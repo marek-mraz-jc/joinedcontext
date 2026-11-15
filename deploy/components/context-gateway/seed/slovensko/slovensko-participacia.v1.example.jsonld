@@ -1,0 +1,33 @@
+{
+  "activeStep": "activeStep",
+  "dataProvider": "dataProvider",
+  "dateModified": "2026-01-01T00:00:00Z",
+  "description": "description",
+  "endDate": "2027-12-30",
+  "id": "urn:ngsi-ld:ParticipatoryProcess:joinedcontext.com:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": "name",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "processType": "process",
+  "reference": "reference",
+  "source": "source",
+  "sourceId": "sourceId",
+  "startDate": "2026-05-01",
+  "status": "upcoming",
+  "steps": [
+    {
+      "active": true,
+      "endDate": "2027-12-30",
+      "startDate": "2026-05-01",
+      "title": "title"
+    }
+  ],
+  "type": "ParticipatoryProcess",
+  "url": "url"
+}

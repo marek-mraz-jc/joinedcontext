@@ -1,0 +1,36 @@
+# The mapping of the fortifications pipeline (PL-03): one HeritageArea per strongpoint (tukikohta) of
+# the First World War land fortifications of Helsinki, from the open WFS layer `Maalinnoitus_rajaukset`.
+#
+# The layer outlines each strongpoint once (`rajaustyyppi` tukikohta) and the positions inside it
+# (`laji`, numbered I:1, I:2...). The positions carry no name or kind of their own, so only the
+# strongpoints are written; a strongpoint is keyed by its Roman numeral, the map's own key, and
+# every outline that names it becomes one MultiPolygon. The map has not changed since 2020.
+#
+# `expiresAt` (NGSI-LD 4.22): a strongpoint leaves every read 21 days after the layer last listed
+# it, three weekly runs, so one the map drops does not stay; an outage of three weeks empties it.
+
+pipeline:
+  processors:
+    - mapping: |
+        let lease = (now().ts_unix() + 1814400).ts_format("2006-01-02T15:04:05Z", "UTC")
+        let features = this.features.or([]).filter(f -> f.properties.rajaustyyppi.or("") == "tukikohta" && f.properties.tukikohtanumero.or("").string().re_match("^[IVXL]{1,8}$") && ["Polygon", "MultiPolygon"].contains(f.geometry.type.or("")))
+        let numbers = $features.map_each(f -> f.properties.tukikohtanumero).unique()
+        root = $numbers.map_each(number -> $features.filter(f -> f.properties.tukikohtanumero == number)).map_each(outlines -> {
+          "number": outlines.index(0).properties.tukikohtanumero,
+          "updated": outlines.map_each(f -> f.properties.paivitetty_tietopalveluun.or("").string()).filter(d -> d.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).sort().index(-1).or(null),
+          "polygons": outlines.map_each(f -> if f.geometry.type == "MultiPolygon" { f.geometry.coordinates } else { [f.geometry.coordinates] }).flatten()
+        }).map_each(s -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:fortification-%v".format("HeritageArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), s.number),
+          "type": "HeritageArea",
+          "expiresAt": $lease,
+          "name": { "type": "LanguageProperty", "languageMap": { "fi": "Tukikohta " + s.number, "en": "Strongpoint " + s.number } },
+          "heritageCategory": { "type": "Property", "value": "fortification" },
+          "description": { "type": "LanguageProperty", "languageMap": {
+            "fi": "Ensimmäisen maailmansodan aikaisen maalinnoituksen tukikohta " + s.number + " (1914-1918).",
+            "en": "Strongpoint " + s.number + " of the First World War land fortifications of Helsinki (1914-1918)."
+          } },
+          "dateModified": if s.updated == null { null } else { { "type": "Property", "value": s.updated + "T00:00:00Z" } },
+          "location": { "type": "GeoProperty", "value": { "type": "MultiPolygon", "coordinates": s.polygons } },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Urban Environment Division (KYMP)" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Maalinnoitus_rajaukset" }
+        }.filter(entry -> entry.value != null))

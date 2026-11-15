@@ -1,0 +1,45 @@
+# Nature trails of the IPR Praha geoportal (T-5426), PointOfInterest of the space praha-mesto read through
+# its own Policy, which narrows the public read to the area-nature-trails- ids.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-naucne-stezky
+  namespace: praha
+  title: { cs: Naučné stezky — Praha, en: Nature trails — Prague }
+  description:
+    cs: 'Naučné stezky odboru ochrany prostředí MHMP jako trasy: název, průběh a web. Zdroj: IPR Praha, CC BY 4.0.'
+    en: "The City of Prague's nature trails as lines: name, course and web page. Source: IPR Praha, CC BY 4.0."
+spec:
+  contextSpaceRef: praha-mesto
+  slug: nq4tz7ewk2mhrd3vbcs6gjyxf5ula2po
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-naucne-stezky
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Mapped areas and lines: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [ENVI, EDUC]
+    keywords:
+      cs: [Praha, naučné stezky, příroda, vycházky]
+      en: [Prague, nature trails, nature, walks]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/927f999ff604463cbce63914de97a6d7_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Naučné stezky (IPR Praha), en: Nature trails (IPR Praha) }
+        description:
+          cs: Naučné stezky z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Nature trails from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+    pipelineRef: { kind: Pipeline, name: area-nature-trails }

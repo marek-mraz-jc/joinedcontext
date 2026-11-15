@@ -1,0 +1,15 @@
+{{- $images := index .Values.images "viz" "renderer" }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Runs as non-root with `readOnlyRootFilesystem`: nginx writes /tmp and its cache only
+# - [x] Health probes
+# - [x] Standard labels
+# - [x] No ServiceAccount token: it talks to no Kubernetes API
+# - [x] Named port, Service; the route is in apisix-routes.yaml (viz.{domain})
+
+image: {{ $images.server | toJson }}
+host: {{ printf "viz.%s" $global.domain | quote }}
+domain: {{ $global.domain | quote }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

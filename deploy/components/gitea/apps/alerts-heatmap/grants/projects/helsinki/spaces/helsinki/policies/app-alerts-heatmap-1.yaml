@@ -1,0 +1,35 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-alerts-heatmap-1
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-alerts-heatmap
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  information:
+  - entities:
+    - type: Alert
+    propertyNames:
+    - name
+    - subCategory
+    - address
+    - dateIssued
+    - validFrom
+    - location
+    relationshipNames:
+    - name
+    - subCategory
+    - address
+    - dateIssued
+    - validFrom
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity

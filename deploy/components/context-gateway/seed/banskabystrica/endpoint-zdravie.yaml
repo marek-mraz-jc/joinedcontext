@@ -1,0 +1,40 @@
+# One Smart Data Model type per catalogue dataset (T-4344): PointOfInterest of the space
+# banskabystrica-verejne from OpenStreetMap (T-4514), read through its own Policy. ODbL 1.0: the
+# dataset and every entity credit © OpenStreetMap contributors, and the CKAN dataset is ODbL,
+# never CC BY (share-alike on the derived database).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: banskabystrica-zdravie
+  namespace: banskabystrica
+  title:
+    sk: Lekárne, nemocnice a defibrilátory — Banská Bystrica
+    en: Pharmacies, hospitals and defibrillators — Banská Bystrica
+  description:
+    sk: Lekárne, nemocnice, ambulancie a verejné defibrilátory (AED) v okrese Banská Bystrica, ako ich mapuje OpenStreetMap, týždenne. © prispievatelia OpenStreetMap, ODbL 1.0.
+    en: The pharmacies, hospitals, clinics and public defibrillators (AED) in the district of Banská Bystrica as OpenStreetMap maps them, weekly. © OpenStreetMap contributors, ODbL 1.0.
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  slug: w3stbpbmvssqvu4upe4kgvvgdjl5ohvx
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:zdravie-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  catalog:
+    # Off the catalogue (T-5788, owner order 2026-10-26: an empty dataset leaves it): on 2026-10-26
+    # prod held 0 PointOfInterest (dev 37): its prod runs write nothing.
+    # The harvest feeds leave it out (EP-139); publish it again once prod holds data.
+    harvest: false
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    license: ODC_ODBL
+    attribution:
+      sk: © prispievatelia OpenStreetMap, ODbL 1.0 (openstreetmap.org/copyright)
+      en: © OpenStreetMap contributors, ODbL 1.0 (openstreetmap.org/copyright)
+    themes: [HEAL]
+    keywords:
+      sk: [lekáreň, nemocnica, defibrilátor, AED, OpenStreetMap, Banská Bystrica]
+      en: [pharmacy, hospital, defibrillator, AED, OpenStreetMap, Banská Bystrica]
+    spatial: [SK032]
+    frequency: WEEKLY
+    pipelineRef: { kind: Pipeline, name: osm }

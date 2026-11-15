@@ -1,0 +1,111 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "AdministrativeArea": {
+      "@id": "jc:AdministrativeArea"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "dOW": {
+      "@id": "jc:dOW",
+      "@type": "xsd:dateTime"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "fACC": {
+      "@id": "jc:fACC"
+    },
+    "fLAT": {
+      "@id": "jc:fLAT"
+    },
+    "fLON": {
+      "@id": "jc:fLON"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "iDN2": {
+      "@id": "jc:iDN2",
+      "@type": "xsd:integer"
+    },
+    "iDN3": {
+      "@id": "jc:iDN3",
+      "@type": "xsd:integer"
+    },
+    "iDN4": {
+      "@id": "jc:iDN4",
+      "@type": "xsd:integer"
+    },
+    "id": "@id",
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "lAU1": {
+      "@id": "jc:lAU1"
+    },
+    "lAU1CODE": {
+      "@id": "jc:lAU1CODE"
+    },
+    "lAU2": {
+      "@id": "jc:lAU2"
+    },
+    "lAU2CODE": {
+      "@id": "jc:lAU2CODE"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "nM2": {
+      "@id": "jc:nM2"
+    },
+    "nM3": {
+      "@id": "jc:nM3"
+    },
+    "nUTS1": {
+      "@id": "jc:nUTS1"
+    },
+    "nUTS1CODE": {
+      "@id": "jc:nUTS1CODE"
+    },
+    "nUTS2": {
+      "@id": "jc:nUTS2"
+    },
+    "nUTS2CODE": {
+      "@id": "jc:nUTS2CODE"
+    },
+    "nUTS3": {
+      "@id": "jc:nUTS3"
+    },
+    "nUTS3CODE": {
+      "@id": "jc:nUTS3CODE"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "typObce": {
+      "@id": "jc:typObce"
+    },
+    "type": "@type",
+    "vYMERA": {
+      "@id": "jc:vYMERA",
+      "@type": "xsd:float"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

@@ -1,0 +1,106 @@
+---
+# Meshed traffic lands on the peer's inbound proxy (4143), never on the service port, so each
+# rule of networkpolicies.yaml has a twin here; the Linkerd Servers of the chart then name the
+# one identity each listener admits. The control plane (8080 identity, 8086 destination,
+# 8090 policy) is what a meshed pod under an egress policy needs to start at all.
+mqtt-brokers-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: mqtt-broker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [traefik, kube-system]
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - port: 4143
+          protocol: TCP
+    - ports:
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+gateway-from-mqtt-brokers-linkerd:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt-broker
+          componentNamespace: mqtt-brokers
+      ports:
+        - port: 4143
+          protocol: TCP
+
+runner-to-mqtt-brokers-linkerd:
+  componentNamespace: pipeline-runner
+  podSelector:
+    app.kubernetes.io/name: pipeline-runner-runner
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt-broker
+          componentNamespace: mqtt-brokers
+      ports:
+        - port: 4143
+          protocol: TCP
+
+# The Portal's meshed read of 6060 leaves through its proxy to the broker's inbound proxy.
+portal-to-mqtt-brokers-linkerd:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt-broker
+          componentNamespace: mqtt-brokers
+      ports:
+        - protocol: TCP
+          port: 4143

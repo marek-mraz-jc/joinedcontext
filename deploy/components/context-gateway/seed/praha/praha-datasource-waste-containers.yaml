@@ -1,0 +1,25 @@
+# Golemio's sorted-waste collection points with every container of each, monitored or not, and the
+# collection schedule the city's waste register keeps for it: 7222 points and 28 025 containers on
+# 2026-10-25, about 11 MB. It replaces IPR's "Stanoviště tříděného odpadu - položky"
+# (1185c458ba6e4d939b335457b57feb5d), whose copy was last edited 2021-06-16 and carries no
+# collection day (T-5427). The key travels as the X-Access-Token header from the secret `golemio`,
+# never as a value here (CC-06, MF-35). Terms as golemio-waste-containers: "Open Data", no licence
+# named, credited as "Golemio, Operátor ICT".
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: golemio-waste-all-containers
+  namespace: praha
+  title:
+    en: Sorted-waste containers and their collection days (Golemio)
+    cs: Kontejnery na tříděný odpad a dny jejich svozu (Golemio)
+spec:
+  type: http
+  http:
+    url: https://api.golemio.cz/v2/sortedwastestations
+    verb: GET
+    headers: { Accept: application/json }
+    authorization:
+      header: X-Access-Token
+      headerRef: { name: golemio, key: token }
+    timeout: 60s

@@ -1,0 +1,476 @@
+{
+  "gateway": [
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "AdministrativeArea",
+        "offset": "0"
+      },
+      "file": "host-test/districts.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "Event",
+        "offset": "0"
+      },
+      "file": "host-test/events.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "BikeHireDockingStation",
+        "offset": "0"
+      },
+      "file": "host-test/bikes.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "Alert",
+        "offset": "0"
+      },
+      "file": "host-test/alerts.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "AirQualityObserved",
+        "offset": "0"
+      },
+      "file": "host-test/air.json"
+    }
+  ],
+  "steps": [
+    {
+      "call": "GET /api/metrics",
+      "status": 400
+    },
+    {
+      "call": "GET /api/metrics?codes=101;drop",
+      "status": 400
+    },
+    {
+      "call": "GET /api/boundaries",
+      "status": 404
+    },
+    {
+      "call": "GET /api/metrics?codes=101,102",
+      "status": 200,
+      "length": {
+        "/days": 0
+      },
+      "expect": {
+        "/stale": true
+      }
+    },
+    {
+      "job": "keep-metrics"
+    },
+    {
+      "call": "GET /api/metrics?codes=101,102",
+      "status": 200,
+      "length": {
+        "/days": 2
+      },
+      "expect": {
+        "/stale": false,
+        "/days/0/code": "101",
+        "/days/0/name": "Vironniemi",
+        "/days/0/events": 2,
+        "/days/0/bikes": 1,
+        "/days/0/bike_slots": 20,
+        "/days/0/pm25": 4.5,
+        "/days/0/aqi": 2.0,
+        "/days/1/code": "102",
+        "/days/1/events": 1,
+        "/days/1/alerts": 1
+      }
+    },
+    {
+      "call": "GET /api/metrics?codes=102",
+      "status": 200,
+      "length": {
+        "/days": 1
+      }
+    },
+    {
+      "call": "GET /api/boundaries",
+      "status": 200,
+      "download": "/geojson",
+      "downloaded": "Ullanlinna"
+    },
+    {
+      "call": "GET /api/boundaries",
+      "status": 200,
+      "download": "/licence",
+      "downloaded": "CC BY 4.0"
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/default",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/comparisons",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "POST /api/comparisons",
+      "caller": "anonymous",
+      "body": {
+        "name": "Centre",
+        "codes": [
+          "101",
+          "102"
+        ],
+        "measure": "events"
+      },
+      "status": 401,
+      "rows": {
+        "comparisons": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/comparisons",
+      "caller": "viewer",
+      "body": {
+        "name": "Centre",
+        "codes": [
+          "101",
+          "102"
+        ],
+        "measure": "noise"
+      },
+      "status": 400,
+      "rows": {
+        "comparisons": 0
+      }
+    },
+    {
+      "call": "POST /api/comparisons",
+      "caller": "viewer",
+      "body": {
+        "name": "Centre",
+        "codes": [
+          "101",
+          "102"
+        ],
+        "measure": "events",
+        "owner_id": "u-steward"
+      },
+      "status": 400,
+      "rows": {
+        "comparisons": 0
+      }
+    },
+    {
+      "call": "POST /api/comparisons",
+      "caller": "viewer",
+      "body": {
+        "name": "Centre",
+        "codes": [
+          "101",
+          "102"
+        ],
+        "measure": "events"
+      },
+      "status": 201,
+      "expect": {
+        "/name": "Centre",
+        "/codes/1": "102",
+        "/ownerName": "Person u-viewer"
+      },
+      "save": {
+        "mine": "/id",
+        "token": "/share"
+      },
+      "rows": {
+        "comparisons": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "GET /api/comparisons",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/codes/0": "101",
+        "/0/measure": "events"
+      }
+    },
+    {
+      "call": "GET /api/comparisons",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/comparisons/{mine}",
+      "caller": "viewer@u-2",
+      "status": 404
+    },
+    {
+      "call": "GET /api/shared/{token}",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "expect": {
+        "/name": "Centre",
+        "/mine": false,
+        "/ownerName": "Person u-viewer"
+      }
+    },
+    {
+      "call": "GET /api/shared/{token}",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/shared/0000000000000000000000000000000000000000000000000000000000000000",
+      "caller": "viewer@u-2",
+      "status": 404
+    },
+    {
+      "call": "GET /api/shared/{mine}",
+      "caller": "viewer@u-2",
+      "status": 404
+    },
+    {
+      "call": "GET /api/comparisons/{mine}",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/comparisons/999999",
+      "caller": "viewer",
+      "status": 404
+    },
+    {
+      "call": "PUT /api/comparisons/{mine}",
+      "caller": "viewer@u-2",
+      "body": {
+        "name": "Taken",
+        "codes": [
+          "101",
+          "102"
+        ],
+        "measure": "events"
+      },
+      "status": 404,
+      "rows": {
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "DELETE /api/comparisons/{mine}",
+      "caller": "viewer@u-2",
+      "status": 404,
+      "rows": {
+        "comparisons": 1
+      }
+    },
+    {
+      "call": "PUT /api/comparisons/{mine}",
+      "caller": "viewer",
+      "body": {
+        "name": "Centre and south",
+        "codes": [
+          "101",
+          "102",
+          "103"
+        ],
+        "measure": "events"
+      },
+      "status": 204,
+      "rows": {
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "GET /api/comparisons/{mine}",
+      "caller": "viewer",
+      "status": 200,
+      "expect": {
+        "/name": "Centre and south",
+        "/codes/2": "103",
+        "/mine": true
+      }
+    },
+    {
+      "call": "PUT /api/default",
+      "caller": "anonymous",
+      "body": {
+        "name": "Centre",
+        "codes": [
+          "101",
+          "102"
+        ],
+        "measure": "events"
+      },
+      "status": 401,
+      "rows": {
+        "pins": 0
+      }
+    },
+    {
+      "call": "PUT /api/default",
+      "caller": "viewer",
+      "body": {
+        "name": "Centre",
+        "codes": [
+          "101",
+          "102"
+        ],
+        "measure": "events"
+      },
+      "status": 403,
+      "rows": {
+        "pins": 0,
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "PUT /api/default",
+      "caller": "steward+viewer",
+      "body": {
+        "name": "Centre",
+        "codes": [],
+        "measure": "events"
+      },
+      "status": 400,
+      "rows": {
+        "pins": 0
+      }
+    },
+    {
+      "call": "PUT /api/default",
+      "caller": "steward+viewer",
+      "body": {
+        "name": "Air",
+        "codes": [
+          "101",
+          "102"
+        ],
+        "measure": "pm25"
+      },
+      "status": 200,
+      "expect": {
+        "/name": "Air",
+        "/measure": "pm25",
+        "/ownerName": "Person u-steward"
+      },
+      "rows": {
+        "pins": 1,
+        "app_audit": 3
+      }
+    },
+    {
+      "call": "GET /api/default",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "/name": "Air",
+        "/codes/0": "101"
+      }
+    },
+    {
+      "call": "DELETE /api/default",
+      "caller": "viewer",
+      "status": 403,
+      "rows": {
+        "pins": 1
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 2
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "steward+viewer",
+      "status": 200,
+      "length": {
+        "": 3
+      },
+      "expect": {
+        "/0/action": "insert",
+        "/0/summary": "pinned Air for everyone",
+        "/0/actorName": "Person u-steward"
+      }
+    },
+    {
+      "call": "DELETE /api/default",
+      "caller": "steward+viewer",
+      "status": 204,
+      "rows": {
+        "pins": 0,
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "DELETE /api/default",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "DELETE /api/comparisons/{mine}",
+      "caller": "viewer",
+      "status": 204,
+      "rows": {
+        "comparisons": 0,
+        "app_audit": 5
+      }
+    },
+    {
+      "call": "GET /api/default",
+      "as": "second",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/boundaries",
+      "as": "second",
+      "status": 404
+    }
+  ]
+}

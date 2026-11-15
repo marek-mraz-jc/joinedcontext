@@ -1,0 +1,54 @@
+{
+ "last_updated": 1790313928,
+ "ttl": 60,
+ "data": {
+  "stations": [
+   {
+    "station_id": "27581946",
+    "name": "P10-Čechovo náměstí",
+    "short_name": "46007",
+    "lat": 50.06821,
+    "lon": 14.45876,
+    "region_id": "661",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=27581946",
+     "ios": "https://app.nextbike.net/station?id=27581946",
+     "web": "https://nxtb.it/p/27581946"
+    },
+    "is_virtual_station": false,
+    "capacity": 10
+   },
+   {
+    "station_id": "27581959",
+    "name": "P10-Moskevská 2 - AIRBANK",
+    "short_name": "46009",
+    "lat": 50.06916,
+    "lon": 14.45526,
+    "region_id": "661",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=27581959",
+     "ios": "https://app.nextbike.net/station?id=27581959",
+     "web": "https://nxtb.it/p/27581959"
+    },
+    "is_virtual_station": false,
+    "capacity": 10
+   },
+   {
+    "station_id": "27582060",
+    "name": "P10-Vršovické náměstí - REST. WAIKIKI",
+    "short_name": "46010",
+    "lat": 50.0691,
+    "lon": 14.45338,
+    "region_id": "661",
+    "rental_uris": {
+     "android": "https://app.nextbike.net/station?id=27582060",
+     "ios": "https://app.nextbike.net/station?id=27582060",
+     "web": "https://nxtb.it/p/27582060"
+    },
+    "is_virtual_station": false,
+    "capacity": 10
+   }
+  ]
+ },
+ "version": "2.3"
+}

@@ -1,0 +1,18 @@
+# One TrafficFlowObserved per lane, vehicle class and day of `fvh-vision-counts`, the closed spring
+# 2023 machine vision pilot (T-5669). The file never changes, so the pipeline has no clock: it runs
+# once.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: vision-counts
+  namespace: helsinki
+  title:
+    en: Machine vision traffic counts per lane and day, spring 2023
+spec:
+  class: auto
+  source:
+    dataSourceRef: { kind: DataSource, name: fvh-vision-counts }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: TrafficFlowObserved, mode: upsert }
+  # The 2.8 MB file and 1024 entities ran in 128 MiB (docker run --memory 128m, 2026-10-25).
+  quotas: { maxMemoryMb: 192, cpuMillicores: 200 }

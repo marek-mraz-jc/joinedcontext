@@ -1,0 +1,983 @@
+id: https://joinedcontext.com/models/bbsk/bbsk-registre
+name: bbsk-registre
+title: Registers of the Banská Bystrica region
+description: >-
+  What the region's register space carries side by side (DM-01, DM-61): the outlines of its 13
+  districts and 516 municipalities, the organisations the region founded, the hospitals, the
+  social services run by public bodies, and the bridges of the road network, each read from the
+  region's own open-data portal (opendata.bbsk.sk). One model, one space, one public endpoint.
+  Where Smart Data Models has the class, its IRI is cited rather than minted (DM-04, DM-16).
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  jc: https://joinedcontext.com/models/
+  smartdatamodels: https://smartdatamodels.org/
+  sdm-poi: https://smartdatamodels.org/dataModel.PointOfInterest/
+  sdm-cpsv: https://smartdatamodels.org/dataModel.CPSV-AP/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+  schema: http://schema.org/
+default_prefix: smartdatamodels
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+
+slots:
+  name:
+    slot_uri: schema:name
+    description: The name as the publisher writes it, in Slovak; a string, as every Smart Data Model's `name` is.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov
+          cs: Název
+          en: Name
+          de: Name
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/name
+  alternateName:
+    slot_uri: schema:alternateName
+    description: The shorter name the organisation goes by, when it differs from the official one.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Skrátený názov
+          cs: Zkrácený název
+          en: Short name
+          de: Kurzname
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/alternateName
+  address:
+    slot_uri: schema:address
+    description: >-
+      The postal address as the register publishes it, field by field (Smart Data Models' common PostalAddress); a field the register leaves out is absent, never guessed.
+    range: PostalAddress
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Adresa
+          cs: Adresa
+          en: Address
+          de: Adresse
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models/blob/master/common-schema.json
+  streetAddress:
+    slot_uri: schema:streetAddress
+    description: The street and the house number, or the venue.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Ulica a číslo
+          cs: Ulice a číslo
+          en: Street
+          de: Straße
+      upstream_source: https://schema.org/streetAddress
+  postalCode:
+    slot_uri: schema:postalCode
+    description: The postal code.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: PSČ
+          cs: PSČ
+          en: Postal code
+          de: Postleitzahl
+      upstream_source: https://schema.org/postalCode
+  addressLocality:
+    slot_uri: schema:addressLocality
+    description: The town or the municipality.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obec
+          cs: Obec
+          en: Town
+          de: Ort
+      upstream_source: https://schema.org/addressLocality
+  addressCountry:
+    slot_uri: schema:addressCountry
+    description: The country, as an ISO 3166-1 alpha-2 code.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Krajina
+          cs: Země
+          en: Country
+          de: Land
+      upstream_source: https://schema.org/addressCountry
+  category:
+    slot_uri: sdm-poi:category
+    description: >-
+      What kind of place it is: `hospital` or `socialService`. The two registers share the
+      Smart Data Model PointOfInterest, and an application asks for one with
+      `q=category=="hospital"`.
+    range: PlaceCategory
+    multivalued: true
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh
+          cs: Druh
+          en: Kind
+          de: Art
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.PointOfInterest
+  preferredLabel:
+    slot_uri: sdm-cpsv:preferredLabel
+    description: The organisation's official name, as CPSV-AP's PublicOrganization requires it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Úradný názov
+          cs: Úřední název
+          en: Official name
+          de: Amtlicher Name
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.CPSV-AP
+  spatial:
+    slot_uri: sdm-cpsv:spatial
+    description: The municipality the organisation is in, by name, as CPSV-AP's PublicOrganization requires it.
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obec
+          cs: Obec
+          en: Municipality
+          de: Gemeinde
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.CPSV-AP
+  url:
+    slot_uri: schema:url
+    description: The web page the publisher gives for it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Webová stránka
+          cs: Webová stránka
+          en: Web page
+          de: Webseite
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/url
+  dataProvider:
+    slot_uri: smartdatamodels:dataProvider
+    description: >-
+      Who publishes the data the entity was read from, with the credit its licence asks for, as
+      an application shows it beside the data.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Poskytovateľ údajov
+          cs: Poskytovatel dat
+          en: Data provider
+          de: Datenanbieter
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  source:
+    slot_uri: smartdatamodels:source
+    description: The open-data service the entity was read from.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zdroj
+          cs: Zdroj
+          en: Source
+          de: Quelle
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  isPartOf:
+    slot_uri: jc:isPartOf
+    description: The catalogue dataset the record belongs to, which tells the region's districts from its municipalities in one type.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Dataset
+          cs: Datová sada
+          en: Dataset
+          de: Datensatz
+      ngsi_ld_kind: Property
+  areaCode:
+    slot_uri: jc:areaCode
+    description: >-
+      The area's statistical code: LAU 1 (`SK0321`) for a district, LAU 2 (`SK0321508438`) for a
+      municipality, the same codes the Statistical Office's cubes carry in `refArea`.
+    required: true
+    pattern: ^SK032[0-9A-D]([0-9]{6})?$
+    examples:
+      - value: SK0321508438
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kód územia
+          cs: Kód území
+          en: Area code
+          de: Gebietscode
+      ngsi_ld_kind: Property
+  divisionLevel:
+    slot_uri: jc:divisionLevel
+    description: Which tier of the territorial division the area is.
+    range: DivisionLevel
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Úroveň
+          cs: Úroveň
+          en: Level
+          de: Ebene
+      ngsi_ld_kind: Property
+  refParentArea:
+    slot_uri: jc:refParentArea
+    description: The district a municipality lies in; absent on a district.
+    range: AdministrativeArea
+    inverse: childAreas
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Okres
+          cs: Okres
+          en: District
+          de: Bezirk
+      ngsi_ld_kind: Relationship
+      on_delete: restrict
+  surfaceArea:
+    slot_uri: jc:surfaceArea
+    description: The area's surface as the cadastre states it.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: m2 }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Výmera
+          cs: Výměra
+          en: Area
+          de: Fläche
+      ngsi_ld_kind: Property
+  legalId:
+    slot_uri: jc:legalId
+    description: The body's identification number (IČO) in the Slovak register of legal persons.
+    pattern: ^[0-9]{8}$
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: IČO
+          cs: IČO
+          en: Company ID
+          de: Firmennummer
+      ngsi_ld_kind: Property
+  organizationCategory:
+    slot_uri: jc:organizationCategory
+    description: The field the region founded the organisation for.
+    range: OrganizationCategory
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Oblasť
+          cs: Oblast
+          en: Field
+          de: Bereich
+      ngsi_ld_kind: Property
+  refMunicipality:
+    slot_uri: jc:refMunicipality
+    description: The municipality the record lies in.
+    range: AdministrativeArea
+    inverse: publicOrganizations
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obec
+          cs: Obec
+          en: Municipality
+          de: Gemeinde
+      ngsi_ld_kind: Relationship
+      on_delete: restrict
+  hospitalKind:
+    slot_uri: jc:hospitalKind
+    description: Whether the hospital is a general one or specialises in some fields.
+    range: HospitalKind
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Typ nemocnice
+          cs: Typ nemocnice
+          en: Hospital type
+          de: Krankenhausart
+      ngsi_ld_kind: Property
+  operatorName:
+    slot_uri: jc:operatorName
+    description: The legal person that runs it, as the register names it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Prevádzkovateľ
+          cs: Provozovatel
+          en: Operator
+          de: Betreiber
+      ngsi_ld_kind: Property
+  medicalSpecialties:
+    slot_uri: jc:medicalSpecialties
+    description: The fields of medicine the hospital is licensed for, with their codes, as the register lists them.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Odbornosti
+          cs: Odbornosti
+          en: Specialties
+          de: Fachrichtungen
+      ngsi_ld_kind: Property
+  serviceKind:
+    slot_uri: jc:serviceKind
+    description: >-
+      The kind of social service in the words of Act 448/2008 Z. z., such as `zariadenie pre
+      seniorov` or `opatrovateľská služba`.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh služby
+          cs: Druh služby
+          en: Service
+          de: Leistungsart
+      ngsi_ld_kind: Property
+  serviceForm:
+    slot_uri: jc:serviceForm
+    description: How the service reaches the person it serves.
+    range: ServiceForm
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Forma služby
+          cs: Forma služby
+          en: Service form
+          de: Leistungsform
+      ngsi_ld_kind: Property
+  targetGroup:
+    slot_uri: jc:targetGroup
+    description: Whom the service is for, as the provisions of the Act the register cites.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Cieľová skupina
+          cs: Cílová skupina
+          en: Target group
+          de: Zielgruppe
+      ngsi_ld_kind: Property
+  capacity:
+    slot_uri: jc:capacity
+    description: How many people the service may take at once, as registered; absent for a service registered without one.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kapacita
+          cs: Kapacita
+          en: Capacity
+          de: Kapazität
+      ngsi_ld_kind: Property
+  providerKind:
+    slot_uri: jc:providerKind
+    description: Which public body provides the service.
+    range: ProviderKind
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Poskytovateľ
+          cs: Poskytovatel
+          en: Provider
+          de: Träger
+      ngsi_ld_kind: Property
+  bridgeCode:
+    slot_uri: jc:bridgeCode
+    description: The bridge's number in the national road databank (Cestná databanka), such as `M9673`.
+    required: true
+    pattern: ^M[0-9]+$
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Číslo mosta
+          cs: Číslo mostu
+          en: Bridge number
+          de: Brückennummer
+      ngsi_ld_kind: Property
+  roadClass:
+    slot_uri: jc:roadClass
+    description: The class of the road the bridge carries.
+    range: RoadClass
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Trieda cesty
+          cs: Třída silnice
+          en: Road class
+          de: Straßenklasse
+      ngsi_ld_kind: Property
+  roadNumber:
+    slot_uri: jc:roadNumber
+    description: The number of the road the bridge carries, such as `66b`.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Číslo cesty
+          cs: Číslo silnice
+          en: Road number
+          de: Straßennummer
+      ngsi_ld_kind: Property
+  yearBuilt:
+    slot_uri: jc:yearBuilt
+    description: The year the bridge was built.
+    range: integer
+    minimum_value: 1000
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Rok výstavby
+          cs: Rok výstavby
+          en: Year built
+          de: Baujahr
+      ngsi_ld_kind: Property
+  spanCount:
+    slot_uri: jc:spanCount
+    description: How many openings the bridge has.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Počet polí
+          cs: Počet polí
+          en: Spans
+          de: Felderanzahl
+      ngsi_ld_kind: Property
+  bridgedLength:
+    slot_uri: jc:bridgedLength
+    description: The length of the bridged gap.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: m }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Dĺžka premostenia
+          cs: Délka přemostění
+          en: Bridged length
+          de: Überbrückte Länge
+      ngsi_ld_kind: Property
+  structureMaterial:
+    slot_uri: jc:structureMaterial
+    description: The material of the load-bearing structure, in the databank's words.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Materiál konštrukcie
+          cs: Materiál konstrukce
+          en: Structure material
+          de: Tragwerksmaterial
+      ngsi_ld_kind: Property
+  structureKind:
+    slot_uri: jc:structureKind
+    description: The kind of load-bearing structure, in the databank's words, such as `dosková`.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh konštrukcie
+          cs: Druh konstrukce
+          en: Structure type
+          de: Tragwerksart
+      ngsi_ld_kind: Property
+  heritageStatus:
+    slot_uri: jc:heritageStatus
+    description: Whether the bridge is a listed monument; absent where the databank does not say.
+    range: HeritageStatus
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Pamiatková ochrana
+          cs: Památková ochrana
+          en: Heritage status
+          de: Denkmalschutz
+      ngsi_ld_kind: Property
+  managerName:
+    slot_uri: jc:managerName
+    description: The road administration that manages the bridge.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Správca
+          cs: Správce
+          en: Manager
+          de: Verwalter
+      ngsi_ld_kind: Property
+  districtName:
+    slot_uri: jc:districtName
+    description: The district the record lies in, by name, as the publisher writes it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Okres
+          cs: Okres
+          en: District
+          de: Bezirk
+      ngsi_ld_kind: Property
+  childAreas:
+    slot_uri: jc:childAreas
+    description: The municipalities of a district, computed from their refParentArea and never stored.
+    range: AdministrativeArea
+    multivalued: true
+    inverse: refParentArea
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obce
+          cs: Obce
+          en: Municipalities
+          de: Gemeinden
+      ngsi_ld_kind: Relationship
+  publicOrganizations:
+    slot_uri: jc:publicOrganizations
+    description: The organisations the region founded in this municipality, computed from their refMunicipality and never stored.
+    range: PublicOrganization
+    multivalued: true
+    inverse: refMunicipality
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Organizácie kraja
+          cs: Organizace kraje
+          en: Regional bodies
+          de: Einrichtungen der Region
+      ngsi_ld_kind: Relationship
+
+classes:
+  AdministrativeArea:
+    class_uri: jc:AdministrativeArea
+    description: One district (okres) or municipality (obec) of the region, its outline and its code, as the Smart Data Model extension AdministrativeArea (PointOfInterest base).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/AdministrativeArea
+    slots:
+      - name
+      - areaCode
+      - divisionLevel
+      - refParentArea
+      - surfaceArea
+      - isPartOf
+      - dataProvider
+      - source
+      - childAreas
+      - publicOrganizations
+  PublicOrganization:
+    class_uri: sdm-cpsv:PublicOrganization
+    description: >-
+      One organisation the region founded: a secondary school, a social-care home, a theatre, a
+      museum or an office. The FIWARE Smart Data Model CPSV-AP PublicOrganization.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.CPSV-AP
+    slots:
+      - name
+      - preferredLabel
+      - spatial
+      - alternateName
+      - legalId
+      - organizationCategory
+      - address
+      - refMunicipality
+      - dataProvider
+      - source
+  PointOfInterest:
+    class_uri: sdm-poi:PointOfInterest
+    description: >-
+      One hospital (by its facility number in the health-care register) or one registered social
+      service a municipality, a town or the region provides; `category` says which. The FIWARE
+      Smart Data Model PointOfInterest: no published model is a hospital or a social
+      service. Private providers of social services are not in the space.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.PointOfInterest
+    slots:
+      - name
+      - category
+      - hospitalKind
+      - operatorName
+      - medicalSpecialties
+      - serviceKind
+      - serviceForm
+      - targetGroup
+      - capacity
+      - providerKind
+      - legalId
+      - address
+      - districtName
+      - url
+      - dataProvider
+      - source
+  PostalAddress:
+    class_uri: schema:PostalAddress
+    description: >-
+      The value of `address`: a postal address, never an entity of its own (Smart Data Models'
+      common schema).
+    annotations:
+      upstream_source: https://schema.org/PostalAddress
+    slots: [streetAddress, postalCode, addressLocality, addressCountry]
+  Bridge:
+    class_uri: jc:Bridge
+    description: One bridge of the road network in the region, its road, its age, its size and who manages it, as the Smart Data Model extension Bridge (PointOfInterest base).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/Bridge
+    slots:
+      - name
+      - bridgeCode
+      - roadClass
+      - roadNumber
+      - yearBuilt
+      - spanCount
+      - bridgedLength
+      - structureMaterial
+      - structureKind
+      - heritageStatus
+      - managerName
+      - districtName
+      - dataProvider
+      - source
+
+enums:
+  PlaceCategory:
+    permissible_values:
+      hospital:
+        description: A general or specialised hospital.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: nemocnica
+              cs: nemocnice
+              en: hospital
+              de: Krankenhaus
+      socialService:
+        description: A registered social service.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: sociálna služba
+              cs: sociální služba
+              en: social service
+              de: Sozialdienst
+  DivisionLevel:
+    permissible_values:
+      district:
+        description: A district (okres), LAU 1.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: okres
+              cs: okres
+              en: district
+              de: Bezirk
+      municipality:
+        description: A municipality or town (obec, mesto), LAU 2.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: obec
+              cs: obec
+              en: municipality
+              de: Gemeinde
+  OrganizationCategory:
+    permissible_values:
+      school:
+        description: A secondary school or a school facility (školy).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: školstvo
+              cs: školství
+              en: education
+              de: Bildung
+      socialCare:
+        description: A social-care facility (sociálne).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: sociálne služby
+              cs: sociální služby
+              en: social care
+              de: Sozialwesen
+      culture:
+        description: A theatre, a museum, a gallery, a library or an education centre (kultúra).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: kultúra
+              cs: kultura
+              en: culture
+              de: Kultur
+      office:
+        description: An office or an agency of the region (úrad).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: úrad
+              cs: úřad
+              en: office
+              de: Amt
+  HospitalKind:
+    permissible_values:
+      general:
+        description: A general hospital (všeobecná nemocnica).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: všeobecná
+              cs: všeobecná
+              en: general
+              de: allgemein
+      specialised:
+        description: A specialised hospital (špecializovaná nemocnica).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: špecializovaná
+              cs: specializovaná
+              en: specialised
+              de: spezialisiert
+  ServiceForm:
+    permissible_values:
+      field:
+        description: Provided where the person lives (terénna).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: terénna
+              cs: terénní
+              en: field
+              de: aufsuchend
+      outpatient:
+        description: The person comes to it (ambulantná).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: ambulantná
+              cs: ambulantní
+              en: outpatient
+              de: ambulant
+      residentialYearRound:
+        description: The person lives there all year (pobytová - ročná).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: pobytová celoročná
+              cs: pobytová celoroční
+              en: residential, all year
+              de: stationär, ganzjährig
+      residentialWeekly:
+        description: The person lives there during the week (pobytová - týždenná).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: pobytová týždenná
+              cs: pobytová týdenní
+              en: residential, weekly
+              de: stationär, wöchentlich
+      remote:
+        description: By telephone or another telecommunication means (iná forma).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: na diaľku
+              cs: na dálku
+              en: remote
+              de: aus der Ferne
+  ProviderKind:
+    permissible_values:
+      municipality:
+        description: A municipality or a town itself (obec/mesto).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: obec
+              cs: obec
+              en: municipality
+              de: Gemeinde
+      municipalityFounded:
+        description: A legal person a municipality or a town founded.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: zriadená obcou
+              cs: zřízená obcí
+              en: founded by a municipality
+              de: von der Gemeinde gegründet
+      regionFounded:
+        description: A legal person the self-governing region founded.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: zriadená krajom
+              cs: zřízená krajem
+              en: founded by the region
+              de: von der Region gegründet
+  RoadClass:
+    permissible_values:
+      motorway:
+        description: A motorway or an expressway (diaľnica).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: diaľnica
+              cs: dálnice
+              en: motorway
+              de: Autobahn
+      firstClass:
+        description: A first-class road (cesta I. triedy).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: cesta I. triedy
+              cs: silnice I. třídy
+              en: first-class road
+              de: Straße 1. Klasse
+      secondClass:
+        description: A second-class road (cesta II. triedy).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: cesta II. triedy
+              cs: silnice II. třídy
+              en: second-class road
+              de: Straße 2. Klasse
+      thirdClass:
+        description: A third-class road (cesta III. triedy).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: cesta III. triedy
+              cs: silnice III. třídy
+              en: third-class road
+              de: Straße 3. Klasse
+      local:
+        description: A local road of no stated class (miestna neurčená).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: miestna komunikácia
+              cs: místní komunikace
+              en: local road
+              de: Gemeindestraße
+      service:
+        description: A service road (účelová cesta).
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: účelová cesta
+              cs: účelová komunikace
+              en: service road
+              de: Wirtschaftsweg
+  HeritageStatus:
+    permissible_values:
+      notListed:
+        description: The bridge is not a listed monument.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: nie je chránená
+              cs: není chráněná
+              en: not listed
+              de: nicht geschützt
+      cultural:
+        description: The bridge is a listed cultural monument.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: kultúrna pamiatka
+              cs: kulturní památka
+              en: cultural monument
+              de: Kulturdenkmal
+      culturalAndTechnical:
+        description: The bridge is listed as a cultural and a technical monument.
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: kultúrna a technická pamiatka
+              cs: kulturní a technická památka
+              en: cultural and technical monument
+              de: Kultur- und technisches Denkmal

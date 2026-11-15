@@ -1,0 +1,45 @@
+---
+# Entrypoint for the SHARED CLUSTER OPERATORS (CloudNativePG).
+#
+# Deploy this ONCE per cluster. It installs only the operator parts (plus the
+# namespace preparation for the shared operator namespace) and configures the
+# operators to watch ALL namespaces, so a single operator deployment serves every
+# instance running on the cluster.
+#
+#   helmfile -f deployment/helmfile-operators.yaml sync -e <env>
+#
+# Afterwards deploy any number of instances with deployment/helmfile-instance.yaml.gotmpl.
+environments:
+  # empty environments must exist. When no environments are defined and one is set via CLI,
+  # helmfile will error out.
+  testing:
+    values: []
+  local:
+    values: []
+  production:
+    values: []
+---
+helmfiles:
+  - path: '../helmfile-root.yaml.gotmpl'
+    values:
+      - environments:
+          - testing
+          - local
+          - production
+        # Render only the operator parts (see components/*/helmfile.yaml.gotmpl).
+        deployLayer: operators
+        # Only the components that own a cluster operator + kyverno runtime policies are needed here.
+        components:
+          - prepare
+          - postgres
+          - runtime-policies
+          - networkpolicies
+        global:
+          operators:
+            # Watch all namespaces so the operators reconcile every instance.
+            watchAllNamespaces: true
+            # The operator namespace is NOT hardcoded here so it can be customised per
+            # environment: set global.operators.namespace in
+            # deployment/environments/<env>/global.yaml.gotmpl. When left unset it
+            # defaults to "jc-operators". The instance entrypoint resolves the same
+            # value from the same environment file, so the two layers always agree.

@@ -1,0 +1,47 @@
+# ČHMÚ's weather stations in Prague and their newest 10-minute values (T-5429), WeatherObserved of the
+# space praha-mesto read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-pocasi
+  namespace: praha
+  title: { cs: Počasí — Praha, en: Weather — Prague }
+  description:
+    cs: 'Nejnovější desetiminutové hodnoty osmi meteorologických stanic ČHMÚ v Praze: teplota, vlhkost, tlak, srážky, rychlost a směr větru a nárazy. Zdroj: Český hydrometeorologický ústav, CC BY 4.0.'
+    en: 'The newest 10-minute values of the eight ČHMÚ weather stations in Prague: temperature, humidity, pressure, precipitation, wind speed and direction and gusts. Source: the Czech Hydrometeorological Institute, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: fudnrvyz5x6iugzs5dudektnpnlvud54
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-pocasi
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp, sta]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Weather readings at fixed stations: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: Český hydrometeorologický ústav (CC BY 4.0)'
+      en: 'Source: Czech Hydrometeorological Institute (CC BY 4.0)'
+    themes: [ENVI]
+    keywords:
+      cs: [Praha, počasí, teplota, srážky, vítr]
+      en: [Prague, weather, temperature, precipitation, wind]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: HOURLY
+    source:
+      - url: https://opendata.chmi.cz/meteorology/climate/now/data/
+        title:
+          cs: Desetiminutová meteorologická data (ČHMÚ)
+          en: '10-minute weather data (ČHMÚ)'
+        description:
+          cs: Aktuální desetiminutová pozorování stanic ČHMÚ, z nichž prostor drží osm pražských, CC BY 4.0.
+          en: The current 10-minute observations of ČHMÚ's stations, of which the space keeps Prague's eight, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: chmi-weather }

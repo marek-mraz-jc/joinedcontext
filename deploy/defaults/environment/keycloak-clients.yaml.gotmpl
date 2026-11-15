@@ -1,0 +1,52 @@
+---
+# A client with `profiles` is rendered under those profiles only: the demo seed's accounts
+# exist on the workbench and never in a production realm (T-1720, CC-73).
+keycloakClients:
+  {{- $profile := .Values.global.valuesProfile | default .Values.global.profile }}
+  {{- $production := eq .Values.global.profile "production" }}
+  {{- range $component := .Values.components }}
+    {{- $filePath := printf "../../components/%s/keycloak-clients.yaml" $component }}
+    {{- $addonPath := printf "../../deployment/addons/%s" $component }}
+    {{- if isDir $addonPath }}
+      {{- $filePath = printf "%s/keycloak-clients.yaml" $addonPath }}
+    {{- end }}
+    {{- if isFile $filePath }}
+      {{- range $clientId, $client := readFile $filePath | fromYaml | default dict }}
+        {{- $profiles := index $client "profiles" | default list }}
+        {{- if and (or (not $profiles) (has $profile $profiles)) (not (and $production (index $client "test"))) }}
+  {{ $clientId }}:
+    {{- toYaml $client | nindent 4 }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- /* Each ContextBroker beside `main` its own identity (ADR-N-046 §2.5, T-3989): a federated
+         client on its pod's ServiceAccount, holding no secret (PF-47), whose tokens name its
+         own audience alone, so a token minted for one broker is never one another accepts. */}}
+  {{- if has "context-broker" .Values.components }}
+  {{- range $b := .Values.global.contextBrokers | default list }}
+  context-broker-{{ $b.name }}:
+    name: Context Broker {{ $b.name }}
+    description: Service account of the Context Broker {{ $b.name }}; client_credentials only, no browser flow
+    subdomain: ''
+    redirectPath: /
+    federated:
+      release: context-broker.broker
+      serviceAccount: context-broker-{{ $b.name }}
+    rawValues:
+      publicClient: false
+      standardFlowEnabled: false
+      implicitFlowEnabled: false
+      directAccessGrantsEnabled: false
+      serviceAccountsEnabled: true
+      protocolMappers:
+        - name: context-broker-{{ $b.name }}-audience
+          protocol: openid-connect
+          protocolMapper: oidc-audience-mapper
+          consentRequired: false
+          config:
+            included.custom.audience: context-broker-{{ $b.name }}
+            access.token.claim: 'true'
+            id.token.claim: 'false'
+  {{- end }}
+  {{- end }}

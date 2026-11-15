@@ -1,0 +1,15 @@
+<%# Decidim's footer legal row (decidim-core 0.32.2) plus the Portal and the data catalogue (T-6453). %>
+<ul class="flex flex-col gap-6 md:flex-row md:gap-10 text-sm text-white [&_a]:underline">
+  <li>
+    <%= link_to t("layouts.decidim.footer.terms_of_service"), decidim.page_path("terms-of-service") %>
+  </li>
+  <li>
+    <a href="#" role="button" data-dialog-open="dc-modal"><%= t("layouts.decidim.footer.data_consent_settings") %></a>
+  </li>
+  <% if ENV["DECIDIM_PORTAL_URL"].present? %>
+    <li><%= link_to(I18n.locale == :sk ? "Dátová platforma" : "Data platform", ENV["DECIDIM_PORTAL_URL"]) %></li>
+  <% end %>
+  <% if ENV["DECIDIM_CATALOGUE_URL"].present? %>
+    <li><%= link_to(I18n.locale == :sk ? "Katalóg otvorených dát" : "Open data catalogue", ENV["DECIDIM_CATALOGUE_URL"]) %></li>
+  <% end %>
+</ul>

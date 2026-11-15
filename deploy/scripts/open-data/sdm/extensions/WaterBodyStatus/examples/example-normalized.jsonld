@@ -1,0 +1,150 @@
+{
+  "id": "urn:ngsi-ld:WaterBodyStatus:joinedcontext.com:example:1",
+  "type": "WaterBodyStatus",
+  "aCH": {
+    "type": "Property",
+    "value": 0
+  },
+  "aUT": {
+    "type": "Property",
+    "value": 0
+  },
+  "celkChemStav": {
+    "type": "Property",
+    "value": "celkChemStav"
+  },
+  "charakter": {
+    "type": "Property",
+    "value": "charakter"
+  },
+  "charakter1": {
+    "type": "Property",
+    "value": "charakter1"
+  },
+  "dOW": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "dlzkaVU1": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "ekologickyStav": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "fACC": {
+    "type": "Property",
+    "value": "fACC"
+  },
+  "fIDKraj0": {
+    "type": "Property",
+    "value": 0
+  },
+  "fIDRiekyBbskJoin": {
+    "type": "Property",
+    "value": 0
+  },
+  "iDN2": {
+    "type": "Property",
+    "value": 0
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "kODVU202": {
+    "type": "Property",
+    "value": "kODVU202"
+  },
+  "kod": {
+    "type": "Property",
+    "value": "kod"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "nAZOVVUD": {
+    "type": "Property",
+    "value": "nAZOVVUD"
+  },
+  "nM2": {
+    "type": "Property",
+    "value": "nM2"
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "nazovVU1": {
+    "type": "Property",
+    "value": "nazovVU1"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "pOVODIE": {
+    "type": "Property",
+    "value": "pOVODIE"
+  },
+  "pOZN1": {
+    "type": "Property",
+    "value": "pOZN1"
+  },
+  "pOZNAMKA": {
+    "type": "Property",
+    "value": "pOZNAMKA"
+  },
+  "potencial": {
+    "type": "Property",
+    "value": "potencial"
+  },
+  "rkmDo1": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "rkmOd1": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "sOI": {
+    "type": "Property",
+    "value": 0
+  },
+  "sUBUNIT": {
+    "type": "Property",
+    "value": "sUBUNIT"
+  },
+  "skupina": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "typ": {
+    "type": "Property",
+    "value": "typ"
+  },
+  "vYMERA": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/WaterBodyStatus/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

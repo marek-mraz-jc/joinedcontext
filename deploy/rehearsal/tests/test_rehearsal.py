@@ -172,7 +172,7 @@ def test_seed_files_are_cut_into_repositories_as_layout_2():
 def test_the_importer_writes_only_to_a_loopback_jc():
     for base in ["http://localhost:1", "http://127.0.0.1:1", "http://[::1]:1"]:
         rh.loopback_only(base)
-    for base in ["https://portal.dev.joinedcontext.com", "http://10.0.0.5:8080", "http://116.203.134.249"]:
+    for base in ["https://portal.dev.joinedcontext.com", "http://10.0.0.5:8080", "http://203.0.113.10"]:
         with pytest.raises(SystemExit):
             rh.loopback_only(base)
 

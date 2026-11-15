@@ -1,0 +1,5 @@
+{"definitions": {
+  "Entity": {"type": "object", "properties": {"id": {"type": "string"}}},
+  "Alert": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "severity": {"type": "integer"}, "validFrom": {"type": "string", "format": "date-time"}}},
+  "Event": {"type": "object", "properties": {"name": {"type": "string"}, "startDate": {"type": "string", "format": "date-time"}}}
+}}

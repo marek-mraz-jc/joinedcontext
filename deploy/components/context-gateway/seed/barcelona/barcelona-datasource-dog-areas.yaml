@@ -1,0 +1,19 @@
+# Open Data BCN's dog areas (dataset arees-esbarjo-gossos-bcn, CC BY 4.0): the fenced areas for dogs
+# in the city's parks and squares, one CSV the city rewrites twice a year (2025_2S on 2026-10-20).
+# About 200 KB; the mapping refuses more than 2 MiB. T-5413.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-dog-areas
+  namespace: barcelona
+  title:
+    ca: Àrees de gossos (Open Data BCN)
+    es: Áreas para perros (Open Data BCN)
+    en: Dog areas (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/resources/bcn/AreesGossos/arees_gossos_i_esbarjo_gossos.csv
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 30s

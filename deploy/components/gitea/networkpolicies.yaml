@@ -1,0 +1,195 @@
+---
+gitea:
+  podSelector:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/instance: gitea-forge
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        # The Portal reads and writes the configuration repository over the in-cluster
+        # Service, not the public host: under a self-signed cluster issuer the public host is
+        # served with the cluster CA and its forge client carries no exemption for it.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        # The Actions runner (ADR-N-028, AP-81): it takes jobs from the forge, and the jobs
+        # clone, publish packages and call the forge API through it.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea-runner
+          componentNamespace: gitea-runner
+        # The bootstrap Job, which creates the repository and mints the two tokens (T-0399).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bootstrap
+          componentNamespace: gitea
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+        # The forge itself, cloning a repository it holds into a new one (PF-89, the
+        # migrations section of values/forge/base-values.yaml.gotmpl).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # CoreDNS. Every rule below names a Service, and a Service name is worth nothing
+    # without this one.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Webhook delivery to the reconciler. Gitea also refuses to dial a private address
+    # unless it is in webhook.ALLOWED_HOST_LIST, so both halves live together: the config
+    # in values/forge/base-values.yaml.gotmpl, the path here.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Its own Service, for the migration that duplicates a project's repository (PF-89).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    # OIDC against the public issuer URL: the `iss` claim carries the public host, so the
+    # in-cluster Keycloak Service is not a substitute. Egress is 443 and nothing else — plus
+    # 8443, because kube-proxy DNATs before this rule is evaluated and the port it then sees
+    # is the ingress controller's container port (Traefik binds 8443, ingress-nginx 443).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+
+postgres-from-gitea:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 5432
+
+portal-from-gitea:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# The Portal's own policy names the peers it calls; the forge is a new one.
+portal-egress-to-gitea:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+
+# The bootstrap Job talks to exactly two things: the forge, and the Kubernetes API it writes
+# the minted tokens into. The API server is not a pod, so it is named by address: `ipBlock`
+# with the whole range and port 443/6443 is the only portable way to say "the control plane"
+# in a NetworkPolicy, and the Job's Role is what actually bounds what it may do there.
+gitea-bootstrap:
+  podSelector:
+    app.kubernetes.io/name: bootstrap
+    app.kubernetes.io/instance: gitea-bootstrap
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443

@@ -1,0 +1,48 @@
+# The mapping of the skoly pipeline (PL-03, T-2781): one Organization per school and school facility of
+# the national school map (Digitálna mapa škôl, MŠVVaM SR) whose address is in Banská Bystrica,
+# keyed by its EDUID. The map is one national CSV; the rows of other towns are dropped here.
+# The map publishes counts only; the count of pupils from a disadvantaged background is left out
+# too, because at a small facility it comes down to a few children.
+
+pipeline:
+  processors:
+    - mapping: |
+        # "1 721" with a no-break space, "6,0" with a decimal comma, "9 702 €", or
+        # "údaj nedostupný" (not available), which is no number and becomes none.
+        map number {
+          root = this.or("").string().replace_all(" ", "").replace_all(" ", "").replace_all("€", "").replace_all(",", ".").number().catch(null)
+        }
+        map text {
+          root = if this.or("").string().trim() == "" || this.string().trim() == "údaj nedostupný" || this.string().trim() == "Nesleduje sa" { null } else { this.string().trim() }
+        }
+        # The budget column is named for its year ("Rozpočet v 2024") and moves on with it.
+        map budget_column {
+          root = this.keys().filter(k -> k.re_match("^Rozpočet v [0-9]{4}$")).index(0).or(null)
+        }
+        root = content().string().trim_prefix("﻿").parse_csv(true, ";").filter(r -> r.Obec.or("").trim().re_match("^[0-9]{5} Banská Bystrica$") && r.EDUID.or("").trim().re_match("^[0-9]{9}$") && r."Názov".or("").trim() != "").map_each(r -> r.assign({ "_budget": r.apply("budget_column") })).map_each(r -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:school-%v".format("Organization", "banskabystrica.sk", env("JC_SPACE"), r.EDUID.trim()),
+          "type": "Organization",
+          "name": { "type": "LanguageProperty", "languageMap": { "sk": r."Názov".trim() } },
+          "schoolCode": { "type": "Property", "value": r.EDUID.trim() },
+          # `Obec` is "97590 Banská Bystrica" on every row the filter keeps: postal code, then town.
+          "address": { "type": "Property", "value": {
+            "streetAddress": r.Ulica.or("").trim(),
+            "postalCode": r.Obec.trim().slice(0, 5),
+            "addressLocality": r.Obec.trim().slice(6),
+            "addressCountry": "SK"
+          }.filter(f -> f.value != "") },
+          # The map writes most sites without a scheme ("www.cvcbb.svsbb.sk"); a URI needs one.
+          "url": if r."Web stránka".apply("text") == null { null } else { { "type": "Property", "value": if r."Web stránka".trim().re_match("^https?://") { r."Web stránka".trim() } else { "http://" + r."Web stránka".trim() } } },
+          "teachingLanguage": if r."Vyuč.jaz.".apply("text") == null { null } else { { "type": "Property", "value": r."Vyuč.jaz.".trim() } },
+          "pupilCount": if r."Počet žiakov".apply("number") == null { null } else { { "type": "Property", "value": r."Počet žiakov".apply("number").int64() } },
+          "teachingStaff": if r."Počet ped.zam.".apply("number") == null { null } else { { "type": "Property", "value": r."Počet ped.zam.".apply("number") } },
+          "nonTeachingStaff": if r."Počet neped.zam.".apply("number") == null { null } else { { "type": "Property", "value": r."Počet neped.zam.".apply("number") } },
+          "annualBudget": if r._budget == null || r.get(r._budget).apply("number") == null { null } else { { "type": "Property", "value": r.get(r._budget).apply("number") } },
+          "budgetYear": if r._budget == null || r.get(r._budget).apply("number") == null { null } else { { "type": "Property", "value": r._budget.trim_prefix("Rozpočet v ").number().int64() } },
+          # GPS1 is the latitude and GPS2 the longitude, both with a decimal comma.
+          "location": if r.GPS1.apply("number") == null || r.GPS2.apply("number") == null { null } else {
+            { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [r.GPS2.apply("number"), r.GPS1.apply("number")] } }
+          },
+          "dataProvider": { "type": "Property", "value": "Ministerstvo školstva, výskumu, vývoja a mládeže SR, Digitálna mapa škôl (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://mapaskol.iedu.sk/" }
+        }.filter(entry -> entry.value != null))

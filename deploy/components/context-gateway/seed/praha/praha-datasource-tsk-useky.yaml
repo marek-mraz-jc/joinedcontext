@@ -1,0 +1,18 @@
+# IPR Praha's geoportal item 1bbe08c6c9f44c70810957c5e10f22db (Uliční úseky TSK včetně zatřídění komunikací), 50,623 street sections on 2026-10-26:
+# the layer's description on IPR's ArcGIS server, whose field list the mapping checks before it pages through
+# the layer's FeatureServer. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5677).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-tsk-useky
+  namespace: praha
+  title:
+    en: TSK street sections with their road class (IPR Praha)
+    cs: Uliční úseky TSK včetně zatřídění komunikací (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_TSK_ULICUSPAKOM_L/FeatureServer/0?f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

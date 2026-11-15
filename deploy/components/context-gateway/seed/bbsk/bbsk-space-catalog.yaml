@@ -1,0 +1,29 @@
+# The project's own slice of the NGSI-LD open-data catalogue (T-5493, T-4746 owner addendum,
+# EP-140): its CKAN organization as an Organization, its public datasets as Datasets and its public
+# Endpoints as DataServices, written by the Portal reconciler from the gateway's DCAT-AP feed and
+# CKAN. Nothing in it is authored here. Its segment `bbsk-catalog` makes it a slice (pinned, as
+# every space's is, so no id moves); the installation's whole catalogue is the space with the
+# segment `catalog` (slovensko).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: catalog
+  namespace: bbsk
+  title: { sk: Banskobystrický kraj – katalóg dát, en: Banská Bystrica Region – data catalogue }
+  description:
+    sk: 'Každý verejný dataset projektu ako NGSI-LD entita Dataset, jeho vydavateľ ako Organization a každý jeho verejný prístupový bod ako DataService: názov, popis, téma, miesto, obdobie, typy a počty entít.'
+    en: 'Every public dataset of the project as an NGSI-LD Dataset entity, its publisher as an Organization and each of its public Endpoints as a DataService: title, description, theme, place, time range, entity types and counts.'
+spec:
+  urnSegment: bbsk-catalog
+  dataModelRef: { kind: DataModel, name: catalog }
+  isSandbox: false
+  defaultLocale: sk
+  # The reconciler rewrites each record on every change: the current state is the catalogue, so no
+  # history (DM-82, T-4275).
+  retention:
+    - entityType: Dataset
+      history: 'off'
+    - entityType: DataService
+      history: 'off'
+    - entityType: Organization
+      history: 'off'

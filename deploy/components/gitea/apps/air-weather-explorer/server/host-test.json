@@ -1,0 +1,543 @@
+{
+  "gateway": [
+    {
+      "path": "/ngsi-ld/v1/temporal/entities",
+      "query": {
+        "type": "AirQualityObserved",
+        "id": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2"
+      },
+      "file": "host-test/air.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/temporal/entities",
+      "query": {
+        "type": "WeatherObserved",
+        "id": "urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi"
+      },
+      "file": "host-test/weather.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/temporal/entities",
+      "query": {
+        "type": "AirQualityObserved",
+        "id": "urn:ngsi-ld:AirQualityObserved:hsy:none"
+      },
+      "file": "host-test/none.json"
+    }
+  ],
+  "steps": [
+    {
+      "call": "GET /api/series?air=urn:ngsi-ld:WeatherObserved:x&weather=urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi",
+      "status": 400
+    },
+    {
+      "call": "GET /api/series?air=urn:ngsi-ld:AirQualityObserved:hsy:kallio-2&weather=urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi&days=2",
+      "status": 400
+    },
+    {
+      "call": "GET /api/series?air=urn:ngsi-ld:AirQualityObserved:hsy:none&weather=urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi",
+      "status": 404
+    },
+    {
+      "call": "GET /api/series?air=urn:ngsi-ld:AirQualityObserved:hsy:kallio-2&weather=urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi&days=7",
+      "status": 200,
+      "expect": {
+        "/air/pm25/0": [
+          1893456000000,
+          5.0
+        ],
+        "/air/pm25/2": [
+          1893463200000,
+          9.0
+        ],
+        "/air/airQualityIndex/0": [
+          1893456000000,
+          2.0
+        ],
+        "/weather/relativeHumidity/0": [
+          1893456000000,
+          75.0
+        ],
+        "/weather/windSpeed/1": [
+          1893459600000,
+          2.0
+        ]
+      },
+      "length": {
+        "/air/pm25": 3,
+        "/air/airQualityIndex": 1,
+        "/weather/windSpeed": 3
+      }
+    },
+    {
+      "call": "GET /api/series?air=urn:ngsi-ld:AirQualityObserved:hsy:kallio-2&weather=urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi&days=1",
+      "status": 200,
+      "length": {
+        "/air/pm25": 3
+      }
+    },
+    {
+      "call": "POST /api/exports",
+      "body": {
+        "air": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "weather": "urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi",
+        "days": 7
+      },
+      "status": 201,
+      "download": "/url",
+      "downloaded": "hour_utc,pm10,pm25,airQualityIndex,temperature,windSpeed,relativeHumidity,precipitation\n2030-01-01T00:00:00Z,,5,2,,3.5,75,\n"
+    },
+    {
+      "call": "POST /api/exports",
+      "body": {
+        "air": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "weather": "urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi",
+        "days": 5
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/comparisons",
+      "body": {
+        "name": "Kallio and the wind",
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "weather": "urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi",
+        "days": 7,
+        "smoothing": 3,
+        "air": "pm25",
+        "variable": "windSpeed"
+      },
+      "status": 201,
+      "expect": {
+        "/name": "Kallio and the wind"
+      },
+      "save": {
+        "code": "/code"
+      }
+    },
+    {
+      "call": "POST /api/comparisons",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "weather": "urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi",
+        "days": 2,
+        "smoothing": 3
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/comparisons",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "weather": "urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi",
+        "days": 3,
+        "smoothing": 3,
+        "colour": "red"
+      },
+      "status": 400
+    },
+    {
+      "call": "GET /api/comparisons/{code}",
+      "status": 200,
+      "expect": {
+        "/station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "/weather": "urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi",
+        "/days": 7,
+        "/smoothing": 3,
+        "/air": "pm25",
+        "/variable": "windSpeed"
+      }
+    },
+    {
+      "call": "GET /api/comparisons/{code}",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "GET /api/comparisons/ABCDEF123456",
+      "status": 404
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/places",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "POST /api/places",
+      "caller": "anonymous",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "name": "Home",
+        "attr": "pm25",
+        "threshold": 25
+      },
+      "status": 401,
+      "rows": {
+        "places": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/places",
+      "caller": "viewer",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "name": "Home",
+        "attr": "temperature",
+        "threshold": 25
+      },
+      "status": 400,
+      "rows": {
+        "places": 0
+      }
+    },
+    {
+      "call": "POST /api/places",
+      "caller": "viewer",
+      "body": {
+        "station": "urn:ngsi-ld:WeatherObserved:fmi:kaisaniemi",
+        "name": "Home",
+        "attr": "pm25",
+        "threshold": 25
+      },
+      "status": 400,
+      "rows": {
+        "places": 0
+      }
+    },
+    {
+      "call": "POST /api/places",
+      "caller": "viewer",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "name": "Home",
+        "attr": "pm25",
+        "threshold": -1
+      },
+      "status": 400,
+      "rows": {
+        "places": 0
+      }
+    },
+    {
+      "call": "POST /api/places",
+      "caller": "viewer",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "name": "Home",
+        "attr": "pm25",
+        "threshold": 25,
+        "owner_id": "u-steward"
+      },
+      "status": 400,
+      "rows": {
+        "places": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/places",
+      "caller": "viewer",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "name": "  Home  ",
+        "attr": "pm25",
+        "threshold": 25
+      },
+      "status": 201,
+      "expect": {
+        "/name": "Home",
+        "/attr": "pm25",
+        "/threshold": 25.0
+      },
+      "save": {
+        "place": "/id"
+      },
+      "rows": {
+        "places": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "GET /api/places",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/name": "Home",
+        "/0/station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2"
+      }
+    },
+    {
+      "call": "GET /api/places",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/places",
+      "caller": "steward+viewer",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "PUT /api/places/{place}",
+      "caller": "viewer@u-2",
+      "body": {
+        "name": "Mine",
+        "threshold": 5
+      },
+      "status": 404,
+      "rows": {
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "PUT /api/places/{place}",
+      "caller": "steward+viewer",
+      "body": {
+        "name": "Mine",
+        "threshold": 5
+      },
+      "status": 404,
+      "rows": {
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "DELETE /api/places/{place}",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "places": 1
+      }
+    },
+    {
+      "call": "PUT /api/places/{place}",
+      "caller": "viewer",
+      "body": {
+        "name": "Home",
+        "threshold": 2000
+      },
+      "status": 400
+    },
+    {
+      "call": "PUT /api/places/{place}",
+      "caller": "viewer",
+      "body": {
+        "name": "Home, school run",
+        "threshold": 15.5
+      },
+      "status": 204,
+      "rows": {
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "GET /api/places",
+      "caller": "viewer",
+      "status": 200,
+      "expect": {
+        "/0/name": "Home, school run",
+        "/0/threshold": 15.5
+      }
+    },
+    {
+      "call": "GET /api/faults?station=urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/faults?station=urn:ngsi-ld:WeatherObserved:x",
+      "caller": "anonymous",
+      "status": 400
+    },
+    {
+      "call": "POST /api/faults",
+      "caller": "viewer",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "from": 0,
+        "to": 3600000,
+        "note": "iced"
+      },
+      "status": 403,
+      "rows": {
+        "faults": 0,
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "POST /api/faults",
+      "caller": "anonymous",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "from": 0,
+        "to": 3600000,
+        "note": "iced"
+      },
+      "status": 401,
+      "rows": {
+        "faults": 0
+      }
+    },
+    {
+      "call": "POST /api/faults",
+      "caller": "steward+viewer",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "from": 3600000,
+        "to": 0,
+        "note": "iced"
+      },
+      "status": 400,
+      "rows": {
+        "faults": 0
+      }
+    },
+    {
+      "call": "POST /api/faults",
+      "caller": "steward+viewer",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "from": 0,
+        "to": 3600000,
+        "note": ""
+      },
+      "status": 400,
+      "rows": {
+        "faults": 0
+      }
+    },
+    {
+      "call": "POST /api/faults",
+      "caller": "steward+viewer",
+      "body": {
+        "station": "urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+        "from": 1900000000000,
+        "to": 1900021600000,
+        "note": " sensor iced "
+      },
+      "status": 201,
+      "expect": {
+        "/note": "sensor iced"
+      },
+      "save": {
+        "fault": "/id"
+      },
+      "rows": {
+        "faults": 1,
+        "app_audit": 3
+      }
+    },
+    {
+      "call": "GET /api/faults?station=urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/from": 1900000000000,
+        "/0/note": "sensor iced"
+      }
+    },
+    {
+      "call": "GET /api/faults?station=urn:ngsi-ld:AirQualityObserved:hsy:kallio-2",
+      "as": "second",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "DELETE /api/faults/{fault}",
+      "caller": "viewer",
+      "status": 403,
+      "rows": {
+        "faults": 1
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 2
+      },
+      "expect": {
+        "/0/summary": "changed the place Home, school run",
+        "/1/action": "insert"
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "steward+viewer",
+      "status": 200,
+      "length": {
+        "": 3
+      },
+      "expect": {
+        "/0/summary": "marked kallio-2 faulty: sensor iced",
+        "/0/actorName": "Person u-steward"
+      }
+    },
+    {
+      "call": "DELETE /api/faults/{fault}",
+      "caller": "steward+viewer",
+      "status": 204,
+      "rows": {
+        "faults": 0,
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "DELETE /api/faults/{fault}",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "DELETE /api/places/{place}",
+      "caller": "viewer",
+      "status": 204,
+      "rows": {
+        "places": 0,
+        "app_audit": 5
+      }
+    }
+  ]
+}

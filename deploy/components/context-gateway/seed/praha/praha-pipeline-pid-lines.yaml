@@ -1,0 +1,18 @@
+# One PublicTransportRoute per PID line of the IPR layer Pražská integrovaná doprava - linky (T-5423).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: pid-lines
+  namespace: praha
+  title: { en: PID lines, cs: Linky PID }
+spec:
+  class: auto
+  # ROPID changes lines with each timetable change; one read a day keeps up.
+  period: 24h
+  schedule: '10 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-pid-lines }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PublicTransportRoute, mode: upsert }
+  # 7.3 MB of GeoJSON needs 160 MiB in Bento (measured 2026-10-24 with docker --memory).
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

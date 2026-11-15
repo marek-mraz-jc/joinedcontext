@@ -1,0 +1,105 @@
+{{- if .Values.appTests.enabled }}
+{{- $release := required "release is the installation's release name" .Values.release }}
+{{- $sa := .Values.serviceAccount }}
+{{- $namespace := printf "%s-app-tests" $release }}
+{{- /*
+  Where a run tests the model's code before it offers publication (SDK-38): one Job per version,
+  created by the Portal, running the lane's builder image. Nothing else lives here. The namespace
+  enforces the restricted Pod Security Standard, admits no traffic in or out of any pod, and is
+  capped at four pods; the Portal may create, read and delete ConfigMaps and Jobs here and read
+  pods and their logs, nothing more.
+*/}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $namespace }}
+  labels:
+    joinedcontext.com/purpose: app-tests
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+  annotations:
+    # No sidecar: the pods have no network to proxy, and a proxy would be one more process
+    # beside the model's code.
+    linkerd.io/inject: disabled
+    helm.sh/resource-policy: keep
+---
+# No rule at all: nothing reaches a test pod and a test pod reaches nothing, DNS included. The
+# SDK's stubClient answers every data call inside the test.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $namespace }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: app-tests
+  namespace: {{ $namespace }}
+spec:
+  hard:
+    pods: "4"
+    count/jobs.batch: "4"
+    configmaps: "8"
+    requests.cpu: "4"
+    limits.cpu: "4"
+    requests.memory: 4Gi
+    limits.memory: 4Gi
+---
+# What a container gets when its spec names nothing: the sandbox's own ceiling (SDK-38).
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: app-tests
+  namespace: {{ $namespace }}
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "1"
+        memory: 1Gi
+      defaultRequest:
+        cpu: 250m
+        memory: 512Mi
+      max:
+        cpu: "1"
+        memory: 1Gi
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-test-runner
+  namespace: {{ $namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-test-runner
+  namespace: {{ $namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: app-test-runner
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa.name }}
+    namespace: {{ required "serviceAccount.namespace is the Portal's namespace" $sa.namespace }}
+{{- end }}

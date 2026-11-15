@@ -1,0 +1,105 @@
+{{/*
+  The seeded people under the fixed Keycloak ids the manifests name them by (PF-126, ADR-N-061):
+  `ensure-user-ids.sh` creates each through the realm's partial import, which keeps the id that
+  keycloak-config-cli's user create drops. A post-install/post-upgrade hook of a release the
+  realm import needs, so it runs before the import. Nothing is rendered without people.
+  It runs `kcadm.sh` from the Keycloak image itself, so the Job adds no image to pin.
+*/}}
+{{- if .Values.users }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-user-ids
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: keycloak-user-ids
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  ensure-user-ids.sh: |
+{{ .Files.Get "files/ensure-user-ids.sh" | indent 4 }}
+  users: |
+    {{- range .Values.users }}
+    {{ required "users[].id" .id }} {{ required "users[].username" .username }} {{ .recreate | default false }}
+    {{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-user-ids
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: keycloak-user-ids
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keycloak-user-ids
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        # In a meshed namespace the proxy runs as a native sidecar, so it starts before the
+        # script and stops after it, and the Job completes.
+        config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+    spec:
+      restartPolicy: OnFailure
+      # It talks to Keycloak over HTTP and never to the API server: no token (TS-19, CC-12).
+      serviceAccountName: {{ .Values.serviceAccount }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.securityDefaults.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: config
+          configMap:
+            name: keycloak-user-ids
+        # kcadm.sh keeps its session in a file and the JVM its scratch: neither on the image.
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: ensure
+          image: {{ .Values.image }}
+          command: ["/bin/bash", "/config/ensure-user-ids.sh"]
+          securityContext:
+            {{- toYaml .Values.securityDefaults.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          env:
+            - name: HOME
+              value: /tmp
+            - name: TMPDIR
+              value: /tmp
+            # kcadm.sh hands KC_OPTS to its JVM: a small heap and its scratch on the volume.
+            - name: KC_OPTS
+              value: "-Xmx96m -Djava.io.tmpdir=/tmp"
+            - name: KEYCLOAK_URL
+              value: {{ required "keycloakUrl" .Values.keycloakUrl | quote }}
+            - name: KEYCLOAK_USER
+              value: {{ required "admin.username" .Values.admin.username | quote }}
+            - name: KEYCLOAK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.admin.existingSecret }}
+                  key: {{ .Values.admin.existingSecretKey }}
+            - name: REALM
+              value: {{ required "realm" .Values.realm | quote }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+{{- end }}

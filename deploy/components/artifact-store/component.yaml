@@ -1,0 +1,4 @@
+---
+component: artifact-store
+parts:
+  - name: store

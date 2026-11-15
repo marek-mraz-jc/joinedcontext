@@ -1,0 +1,46 @@
+# The city's indicators, what the project publishes as its own numbers (PF-54, PF-55).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-kpi
+  namespace: zilina
+  title:
+    sk: Žilina — ukazovatele
+    en: Žilina, indicators
+  description:
+    sk: 'Šesť ukazovateľov mesta Žilina vypočítaných z otvorených údajov ŠÚ SR: obyvatelia, index starnutia, priemerný vek, celkový prírastok, uchádzači o zamestnanie a návštevníci za rok; hodnota, jednotka, obdobie a čas výpočtu.'
+    en: "Six indicators of the city of Žilina computed from the Statistical Office's open data: population, ageing index, mean age, total change, jobseekers and visitors per year; value, unit, period and when it was computed."
+spec:
+  contextSpaceRef: zilina-kpi
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-kpi:app-zilina-ukazovatele-1
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-kpi:kpi-pipelines-write
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-kpi:kpi-read
+  slug: ricvfpfxtaxeyzf5c3b3es7ymc6unh3o
+  audience: public
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: zilina }
+      # ShareAlike: the indicators are derived from CC BY-SA 4.0 cubes.
+      license: cc-by-sa
+  catalog:
+    publisher:
+      name:
+        sk: Projekt Žilina, platforma joinedcontext
+        en: The Žilina project, joinedcontext platform
+      uri: https://dev.joinedcontext.com/
+    license: CC_BYSA_4_0
+    attribution:
+      sk: Vypočítané z údajov Štatistického úradu SR (DATAcube om7101qr, om7052rr, om7105rr, pr5001rr, cr3803mr), CC BY-SA 4.0
+      en: Computed from the Statistical Office of the SR's data (DATAcube om7101qr, om7052rr, om7105rr, pr5001rr, cr3803mr), CC BY-SA 4.0
+    themes: [REGI, SOCI, ECON]
+    keywords:
+      sk: [ukazovatele, obyvateľstvo, starnutie, nezamestnanosť, cestovný ruch, Žilina]
+      en: [indicators, population, ageing, jobseekers, tourism, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: WEEKLY
+    pipelineRef: { kind: Pipeline, name: ukazovatele }

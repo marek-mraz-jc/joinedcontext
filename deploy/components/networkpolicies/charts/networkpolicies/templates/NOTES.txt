@@ -1,0 +1,9 @@
+{{- $policyCount := len .Values.networkpolicies }}
+NetworkPolicies have been deployed successfully.
+
+Number of NetworkPolicy resources created: {{ $policyCount }}
+
+NetworkPolicies created:
+{{- range $name, $config := .Values.networkpolicies }}
+  - {{ $name }}
+{{- end }}

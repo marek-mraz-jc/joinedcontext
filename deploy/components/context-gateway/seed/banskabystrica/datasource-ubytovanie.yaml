@@ -1,0 +1,16 @@
+# Accommodation establishments, rooms and beds in the city per quarter, 2017 on. No key, CC-BY-SA-4.0 (NKOD, the cr38 distribution family).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-cr3809qr
+  namespace: banskabystrica
+  title:
+    sk: Kapacity ubytovacích zariadení v obciach (ŠÚ SR, cr3809qr)
+    en: Accommodation capacity in municipalities (ŠÚ SR, cr3809qr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/cr3809qr/SK0321508438/*/U_CR_0002,U_CR_0003,U_CR_0004/1.Q.,2.Q.,3.Q.,4.Q.?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

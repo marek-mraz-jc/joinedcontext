@@ -1,0 +1,109 @@
+# The mapping of the air-quality pipeline (PL-03, T-5263): one AirQualityObserved per station of
+# Barcelona's air-quality network, with the newest valid hourly mean of each pollutant it measures.
+# The source is Open Data BCN's Qualitat_Aire_Detall.csv (dataset qualitat-aire-detall-bcn,
+# rewritten every hour): one row per station, pollutant and day for the last four days, columns
+# H01..H24 the means of the hours ending 01:00..24:00 local time, V01..V24 "V" for a valid value
+# and "N" for none. The stations' names and places are not in it; they are listed here, read from
+# the dataset qualitat-aire-estacions-bcn (2026_qualitat_aire_estacions.csv, 2026-10-22). That
+# list also names station 81 at Navas with station 60's EoI code and place; the hourly file has no
+# 81, so it is left out as the duplicate it is. The pollutant codes are the dataset
+# contaminants-estacions-mesura-qualitat-aire (qualitat_aire_contaminants.csv): the codes 1xx
+# ("SO2*" and so on), the analysers' internal flows (995..998), the biomass share of black carbon
+# (999, a percentage) and the codes that list does not name (11, 901) are no reading of this model.
+#
+# Plausibility (owner 2026-10-22): an hour the file marks "N", a value that is no number, below 0
+# or above its pollutant's ceiling, an hour more than a day ahead, and a second row for the same
+# station, pollutant and day are each dropped and counted by reason in `dropped`, which the next
+# step logs; the hour before the dropped one then stands. A file with no valid reading at all, or
+# whose newest reading is more than three hours old (three update periods), fails the run, so the
+# entities keep their last values instead of going quiet.
+
+pipeline:
+  processors:
+    - mapping: |
+        let text = if content().length() > 1048576 { throw("the hourly file is %d bytes, more than the 1 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿") }
+        # The run's clock; a test sets bcn_now to read a recorded file as of its own day.
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        let stations = {
+          "004": { "code": "8019004", "name": "Barcelona - Poblenou", "street": "Plaça Josep Trueta (Pujades - Lope de Vega)", "district": "Sant Marti", "barri": "el Poblenou", "coordinates": [2.2045, 41.4039] },
+          "042": { "code": "8019042", "name": "Barcelona - Sants", "street": "Jardins de Can Mantega (Joan Güell - Violant d’Hongria)", "district": "Sants-Montjuic", "barri": "Sants", "coordinates": [2.1331, 41.3788] },
+          "043": { "code": "8019043", "name": "Barcelona - Eixample", "street": "Av. Roma - c/ Comte Urgell", "district": "Eixample", "barri": "la Nova Esquerra de l'Eixample", "coordinates": [2.1538, 41.3853] },
+          "044": { "code": "8019044", "name": "Barcelona - Gràcia", "street": "Plaça Gal·la Placídia (Via Augusta - Travessera de Gràcia)", "district": "Gracia", "barri": "la Vila de Gracia", "coordinates": [2.1534, 41.3987] },
+          "050": { "code": "8019050", "name": "Barcelona - Ciutadella", "street": "Parc de la Ciutadella", "district": "Ciutat Vella", "barri": "Sant Pere, Santa Caterina i la Ribera", "coordinates": [2.1874, 41.3864] },
+          "054": { "code": "8019054", "name": "Barcelona - Vall Hebron", "street": "Parc de la Vall d’Hebron. c/ Martí Codolar - c/ Granja Vella", "district": "Horta-Guinardo", "barri": "la Vall d'Hebron", "coordinates": [2.1480, 41.4261] },
+          "057": { "code": "8019057", "name": "Barcelona - Palau Reial", "street": "c/ John Maynard Keynes - c/ de Jordi Girona", "district": "Les Corts", "barri": "Pedralbes", "coordinates": [2.1151, 41.3875] },
+          "058": { "code": "8019058", "name": "Barcelona - Observatori Fabra", "street": "Camí de l'Observatori-s/n", "district": "Sarria-Sant Gervasi", "barri": "Vallvidrera-el Tibidabo-les Planes", "coordinates": [2.1239, 41.41843] },
+          "060": { "code": "8019060", "name": "Barcelona - Navas", "street": "Av. Meridiana 216", "district": "Sant Andreu", "barri": "Navas", "coordinates": [2.1871, 41.4159] }
+        }
+        # code -> attribute, UN/CEFACT unit (GQ µg/m³, GP mg/m³) and the highest hourly mean taken
+        # as a reading: several times the worst hour a European city station has reported. Black
+        # carbon comes in ng/m³ although the pollutant list says µg/m³: its hours (median 502, up to
+        # 4030 in the 2026-10-22 file) stand above the same station's PM2.5 (about 10 µg/m³), of
+        # which black carbon is a part, so it is divided by 1000 (T-5263).
+        let pollutants = {
+          "1": { "attribute": "so2", "unit": "GQ", "ceiling": 1000 },
+          "6": { "attribute": "co", "unit": "GP", "ceiling": 50 },
+          "7": { "attribute": "no", "unit": "GQ", "ceiling": 2000 },
+          "8": { "attribute": "no2", "unit": "GQ", "ceiling": 1000 },
+          "9": { "attribute": "pm25", "unit": "GQ", "ceiling": 1000 },
+          "10": { "attribute": "pm10", "unit": "GQ", "ceiling": 1000 },
+          "12": { "attribute": "nox", "unit": "GQ", "ceiling": 3000 },
+          "14": { "attribute": "o3", "unit": "GQ", "ceiling": 800 },
+          "22": { "attribute": "blackCarbon", "unit": "GQ", "ceiling": 100, "divisor": 1000 }
+        }
+        let rows = $text.parse_csv(true, ",").map_each(r -> r.assign({
+          "station": r.ESTACIO.or("").trim(),
+          "code": r.CODI_CONTAMINANT.or("").trim().number().catch(-1).string(),
+          "day": "%04d-%02d-%02d".format(r.ANY.number().catch(0).int64(), r.MES.number().catch(0).int64(), r.DIA.number().catch(0).int64())
+        }))
+        let known = $rows.filter(r -> $stations.exists(r.station) && $pollutants.exists(r.code))
+        # One row per station, pollutant and day; a repeated row is a duplicate, its first stands.
+        let keyed = $known.enumerated().map_each(e -> e.value.assign({ "key": "%v|%v|%v".format(e.value.station, e.value.code, e.value.day), "position": e.index }))
+        let first = $keyed.fold({}, item -> if item.tally.exists(item.value.key) { item.tally } else { item.tally.assign({ item.value.key: item.value.position }) })
+        let unique = $keyed.filter(r -> $first.get(r.key) == r.position)
+        let hours = $unique.map_each(r -> range(1, 25).map_each(h -> {
+          "station": r.station,
+          "code": r.code,
+          "flag": r.get("V%02d".format(h)).or("").trim(),
+          "raw": r.get("H%02d".format(h)).or("").trim(),
+          # The hour's end as local time read as UTC, then moved by Madrid's offset at that time.
+          "naive": (r.day + "T00:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_unix() + h * 3600
+        })).flatten().map_each(x -> x.assign({
+          "instant": x.naive - x.naive.ts_format("-07", "Europe/Madrid").number() * 3600,
+          "value": x.raw.number().catch(null)
+        })).map_each(x -> if x.value == null { x } else { x.assign({ "value": x.value / $pollutants.get(x.code).divisor.or(1) }) })
+        let marked = $hours.filter(x -> x.flag == "V")
+        let numeric = $marked.filter(x -> x.value != null)
+        let ranged = $numeric.filter(x -> x.value >= 0 && x.value <= $pollutants.get(x.code).ceiling)
+        let valid = $ranged.filter(x -> x.instant <= $now + 86400)
+        let newest = $valid.map_each(x -> x.instant).sort().index(-1).catch(null)
+        root.dropped = {
+          "unknownStationOrPollutant": $rows.length() - $known.length(),
+          "duplicateRow": $known.length() - $unique.length(),
+          "notValid": $hours.length() - $marked.length(),
+          "notANumber": $marked.length() - $numeric.length(),
+          "outOfRange": $numeric.length() - $ranged.length(),
+          "inTheFuture": $ranged.length() - $valid.length()
+        }
+        let by_station = if $newest == null { throw("the hourly file holds no valid reading of a known station") } else if $newest < $now - 3 * 3600 { throw("the newest reading of the hourly file is %v, more than three hours old".format($newest.ts_format("2006-01-02T15:04:05Z", "UTC"))) } else {
+          $valid.sort_by(x -> x.instant).fold({}, item -> item.tally.assign({ item.value.station + "|" + item.value.code: item.value })).values().fold({}, item -> item.tally.assign({ item.value.station: item.tally.get(item.value.station).or([]).append(item.value) }))
+        }
+        root.entities = $by_station.key_values().sort_by(s -> s.key).map_each(s -> $stations.get(s.key).assign({ "readings": s.value })).map_each(st -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:xvpca-%v".format("AirQualityObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), st.code),
+          "type": "AirQualityObserved",
+          "name": { "type": "Property", "value": st.name },
+          "stationCode": { "type": "Property", "value": st.code },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": st.coordinates } },
+          "address": { "type": "Property", "value": { "streetAddress": st.street, "addressLocality": "Barcelona", "district": st.district, "addressCountry": "ES" } },
+          "areaServed": { "type": "Property", "value": st.barri },
+          "dateObserved": { "type": "Property", "value": st.readings.map_each(x -> x.instant).sort().index(-1).ts_format("2006-01-02T15:04:05Z", "UTC") },
+          "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/qualitat-aire-detall-bcn" }
+        }.merge(st.readings.fold({}, item -> item.tally.assign({ $pollutants.get(item.value.code).attribute: {
+          "type": "Property", "value": item.value.value, "unitCode": $pollutants.get(item.value.code).unit,
+          "observedAt": item.value.instant.ts_format("2006-01-02T15:04:05Z", "UTC")
+        } }))))
+    - log:
+        level: INFO
+        message: 'air quality: ${! json("entities").length() } stations written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.entities

@@ -1,0 +1,49 @@
+{{- /*
+k3s's local-path-provisioner reads this ConfigMap (T-3431). Its stock helper pod is unlabelled for
+SELinux, and on an enforcing node it cannot remove a volume a pod wrote with its own MCS
+categories (every Portal build cache), so a released volume never deletes. Only the helper gets
+`spc_t`; the provisioner and every other workload keep their labels. k3s stops overwriting this
+ConfigMap once its local-storage manifest carries a `.skip` marker (see the README).
+*/ -}}
+{{- $image := printf "%s:%s" .Values.image.repository .Values.image.tag }}
+{{- if .Values.image.digest }}{{ $image = printf "%s@%s" $image .Values.image.digest }}{{ end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-path-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: local-path-config
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  config.json: |-
+    {
+      "nodePathMap":[
+      {
+        "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
+        "paths":[{{ .Values.path | quote }}]
+      }
+      ]
+    }
+  setup: |-
+    #!/bin/sh
+    set -eu
+    mkdir -m 0777 -p "${VOL_DIR}"
+    chmod 700 "${VOL_DIR}/.."
+  teardown: |-
+    #!/bin/sh
+    set -eu
+    rm -rf "${VOL_DIR}"
+  helperPod.yaml: |-
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: helper-pod
+    spec:
+      containers:
+      - name: helper-pod
+        image: {{ $image | quote }}
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          seLinuxOptions:
+            type: spc_t

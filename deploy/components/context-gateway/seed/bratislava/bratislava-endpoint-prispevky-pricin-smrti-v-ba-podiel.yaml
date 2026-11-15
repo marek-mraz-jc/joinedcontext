@@ -1,0 +1,44 @@
+# Contributions of the main causes of death to the change of life expectancy in Bratislava, 2000–2004 and 2015–2019 (%): one public dataset of the hub (T-5673), item d2f13330a7d9464082956b4a9c59f221, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-prispevky-pricin-smrti-v-ba-podiel
+  namespace: bratislava
+  title:
+    sk: Príspevky hlavných skupín príčin smrti k rozdielom strednej dĺžky života v BA (%)
+    en: Contributions of the main causes of death to the change of life expectancy in Bratislava, 2000–2004 and 2015–2019 (%)
+  description:
+    sk: 'Ukazovatele tabuľky „Príspevky hlavných skupín príčin smrti k rozdielom strednej dĺžky života v BA (%)“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Contributions of the main causes of death to the change of life expectancy in Bratislava, 2000–2004 and 2015–2019 (%)”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: z5mjc2oexarglrmgr6u2ubm43ktiihow
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-prispevky-pricin-smrti-v-ba-podiel
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [HEAL]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/d2f13330a7d9464082956b4a9c59f221
+        title:
+          sk: Príspevky hlavných skupín príčin smrti k rozdielom strednej dĺžky života v BA (%)
+          en: Contributions of the main causes of death to the change of life expectancy in Bratislava, 2000–2004 and 2015–2019 (%)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Príspevky hlavných skupín príčin smrti k rozdielom strednej dĺžky života v BA (%). Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Contributions of the main causes of death to the change of life expectancy in Bratislava, 2000–2004 and 2015–2019 (%). Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

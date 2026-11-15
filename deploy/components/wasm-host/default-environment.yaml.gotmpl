@@ -1,0 +1,23 @@
+---
+wasm-host:
+  # The Apps' bucket in the artifact store (JC_PORTAL_APPS_BUCKET): components/ and apps/<shard>/.
+  bucket: apps
+  shard-0:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "wasm-host") }}
+  shard-1:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "wasm-host") }}
+  portal-access:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "wasm-host") }}
+  # The job token service (AP-159): off until the federated mechanism is on, with identities.
+  tokens:
+    enabled: false
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "wasm-host") }}
+  # The Apps' job ServiceAccounts, in a namespace of their own the chart creates: the token
+  # service may mint a token of any ServiceAccount there and of none elsewhere.
+  identities:
+    enabled: false
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "wasm-host") }}
+    appNamespace: {{ printf "%s-app-identities" .Values.global.instanceSlug | trunc 63 | trimSuffix "-" }}

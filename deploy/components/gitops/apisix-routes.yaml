@@ -1,0 +1,12 @@
+---
+# The Argo CD UI and API on argocd.{domain} (ADR-N-056 §2.8). `subDomain` also puts the host on
+# the edge Ingress and in the certificate's SAN list (HTTP-01 per hostname). Argo CD verifies
+# every token itself; the edge only forwards.
+argocd:
+  name: argocd
+  description: The Argo CD UI and API that keep the environment on main
+  # The route table renders before the component's values, so the namespace and host are the
+  # defaults of default-environment.yaml.gotmpl, written out.
+  upstream: argocd-server.argocd.svc.cluster.local:80
+  subDomain: argocd
+  uri: '/*'

@@ -1,0 +1,15 @@
+---
+# Checklist:
+# - [x] Resources (requests and limits), from the kind measurement (T-6316, Deployment/18)
+# - [x] 1 Replica: the attachments claim is ReadWriteOnce; a second replica needs object storage
+#   first (ADR-N-065 section 3). A rollout surges a second pod on the same node.
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 900Mi
+  limits:
+    cpu: '2'
+    memory: 1536Mi

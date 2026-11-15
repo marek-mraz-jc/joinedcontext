@@ -1,0 +1,52 @@
+---
+{{- $image := .Values.images.apisix.dns01.webhook }}
+{{- $wildcard := dig "ingress" "appsWildcard" dict .Values.global }}
+# Hetzner's cert-manager webhook, the DNS-01 solver of the App wildcard certificate
+# (ADR-N-037 §6, T-3013). cert-manager calls it through its APIService; it writes the
+# `_acme-challenge` TXT record into the delegated App zone and removes it again.
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> chart
+# - [x] ServiceAccount with least privilege: the chart's read-every-Secret grant is emptied
+#       (component.yaml); the token arrives as a mounted file
+
+# Stable names, whatever the release is called: component.yaml patches the grant by name.
+fullnameOverride: cert-manager-webhook-hetzner
+
+certManager:
+  namespace: {{ dig "certManagerNamespace" "cert-manager" $wildcard | quote }}
+  serviceAccountName: cert-manager
+
+image:
+  repository: {{ $image.repository }}
+  # The chart builds `repository:tag`; a tag carrying the digest pins it (BSI TR-03187 AR-4).
+  tag: {{ $image.tag }}@{{ $image.digest }}
+  pullPolicy: IfNotPresent
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  runAsNonRoot: true
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# The Hetzner Cloud token of the project that holds the App zone alone, supplied by the
+# operator as the Secret `tokenSecret` (key `token`) and never in values or Git. The Issuer
+# names the file (`tokenFilePath`), so the webhook never reads a Secret through the API.
+extraVolumes:
+  - name: hetzner-token
+    secret:
+      secretName: {{ dig "tokenSecret" "hetzner-dns" $wildcard | quote }}
+      items:
+        - key: token
+          path: token
+extraVolumeMounts:
+  - name: hetzner-token
+    mountPath: /var/run/secrets/hetzner
+    readOnly: true

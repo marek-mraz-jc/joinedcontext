@@ -1,0 +1,8 @@
+{{- /*
+Scoped to the namespaces this deployment owns, the same list the Pod Security policies
+use: a cluster-wide token mutation would reach the distribution's own controllers
+(traefik, cert-manager, kyverno), which need their tokens to work at all.
+*/ -}}
+{{- if .Values.podSecurity.namespaces }}
+{{ .Files.Get "files/justify-api-token-access.yaml" | replace "KYVERNO_FAILURE_ACTION" .Values.failureAction | replace "KYVERNO_NAMESPACES" (.Values.podSecurity.namespaces | toJson) }}
+{{- end }}

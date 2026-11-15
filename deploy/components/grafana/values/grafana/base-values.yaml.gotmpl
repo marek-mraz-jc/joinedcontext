@@ -1,0 +1,236 @@
+---
+{{- $this := index .Values "grafana" "grafana" }}
+{{- $global := .Values.global }}
+{{- $images := index .Values.images "grafana" }}
+# Checklist:
+# - [x] Runs as non-root -> the chart's own 472:472, with every capability dropped
+# - [x] Health probes -> the chart's /api/health readiness and liveness
+# - [x] Standard labels -> the chart's
+# - [x] ServiceAccount with least privilege -> no RBAC at all, no sidecar watches the API
+# - [x] Ingress with TLS -> the APISIX route of apisix-routes.yaml, never an Ingress here
+
+{{- if $this.enabled }}
+{{- if not $this.prometheusUrl }}
+{{- fail "grafana: the component is enabled and no prometheusUrl is set. Every dashboard here queries Prometheus, and this repository deploys none (components/monitoring/README.md): name the one that scrapes this installation, or leave the component off." }}
+{{- end }}
+{{- end }}
+
+# The Service, the ConfigMaps and the Deployment are all called `grafana`, which is the
+# upstream the documented route names (docs Deployment/10 section 2).
+fullnameOverride: grafana
+
+{{- $image := index $images "grafana" }}
+{{- $reference := splitList "/" $image.repository }}
+image:
+  # The chart joins registry and repository with a slash of its own, so the one reference in
+  # images.yaml is split here rather than written out twice.
+  registry: {{ first $reference | quote }}
+  repository: {{ rest $reference | join "/" | quote }}
+  tag: {{ $image.tag | quote }}
+  sha: {{ $image.digest | trimPrefix "sha256:" | quote }}
+  pullPolicy: IfNotPresent
+
+# One replica, and not because HA was forgotten: Grafana keeps sessions and starred
+# dashboards in an embedded database, so a second replica would log an operator out on every
+# other request. Sharing them needs a Postgres, which is a database and a backup schedule for
+# a read-only dashboard viewer. The dashboards themselves are provisioned, so a restart loses
+# nothing that was authored here.
+replicas: 1
+
+# Nothing is authored in the UI and nothing survives a restart on purpose, so there is no
+# volume to keep.
+persistence:
+  enabled: {{ $this.persistence }}
+
+# The chart's test pod runs `curl` against the Service as a Helm hook. It is not part of what
+# `helmfile sync` applies, and it would be one more image to pin for a check the readiness
+# probe already makes on every pod.
+testFramework:
+  enabled: false
+
+# No sidecar watches the cluster for dashboards, so the pod needs no API access, no Role and
+# no token: everything it serves is mounted at start-up.
+rbac:
+  create: false
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+automountServiceAccountToken: false
+
+# The image writes to three paths and each of them is a volume, so the root filesystem is
+# read-only: `/var/lib/grafana` and `/var/lib/grafana-search` are the chart's own emptyDirs
+# (persistence is off) and these two are the rest. If Grafana ever fails to start with a
+# read-only filesystem error, this is the list to extend rather than the flag to remove.
+containerSecurityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  privileged: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+extraEmptyDirMounts:
+  - name: tmp
+    mountPath: /tmp
+  - name: logs
+    mountPath: /var/log/grafana
+
+service:
+  enabled: true
+  type: ClusterIP
+  # One number for the container, the Service, the route's upstream and the network policy.
+  port: 3000
+  targetPort: 3000
+  portName: http
+
+# The edge terminates TLS and APISIX is the only client, so Grafana serves plain HTTP under
+# the path it is published on. `serve_from_sub_path` is what makes every asset and every
+# redirect carry the `/grafana` prefix, which is why the route needs no URI rewriting.
+grafana.ini:
+  server:
+    domain: {{ $global.domain | quote }}
+    root_url: "https://{{ $global.domain }}/grafana"
+    serve_from_sub_path: true
+{{- if $this.projects }}
+  # The NGSI-LD datasource is in the image (images/grafana), outside the chart's emptyDir, and it
+  # is the one unsigned plugin this Grafana loads.
+  paths:
+    plugins: /usr/share/grafana/jc-plugins
+  plugins:
+    allow_loading_unsigned_plugins: ngsild-grafana-datasource
+    # Grafana's own downloads at start: the egress policy drops them, and nothing here wants them.
+    preinstall_disabled: true
+{{- end }}
+  analytics:
+    reporting_enabled: false
+    check_for_updates: false
+  news:
+    news_feed_enabled: false
+  users:
+    # A dashboard is opened by whoever the realm says may open it; nobody signs up here.
+    allow_sign_up: false
+    auto_assign_org: true
+    auto_assign_org_role: Viewer
+  auth:
+    disable_login_form: true
+    oauth_auto_login: true
+  auth.anonymous:
+    enabled: false
+  auth.generic_oauth:
+    enabled: true
+    name: {{ $global.branding.instanceName | default "joinedcontext" | quote }}
+    client_id: grafana
+    scopes: 'openid profile email'
+    # The browser follows `auth_url`, so that one is the public realm; the code exchange
+    # and the userinfo call are made by the pod, so those take the in-cluster Service and
+    # never leave the cluster to come back in through the edge — the same split the gateway
+    # makes between its issuer and its JWKS URL.
+    auth_url: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/auth"
+    token_url: "http://keycloak-app-keycloakx-http.{{ .Values.keycloak.app.namespace }}.svc.cluster.local:80{{ .Values.keycloak.app.pathPrefix | trimSuffix "/" }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/token"
+    api_url: "http://keycloak-app-keycloakx-http.{{ .Values.keycloak.app.namespace }}.svc.cluster.local:80{{ .Values.keycloak.app.pathPrefix | trimSuffix "/" }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/userinfo"
+    # The realm decides what an operator may see here, the same way it does everywhere else:
+    # a viewer reads, `platform-admin` administers, and nobody is an editor, because a
+    # dashboard edited in the UI is a dashboard that disappears with the pod (CC-02).
+{{- if $this.projects }}
+    # One organization per project, so a dashboard is out of reach for anyone outside it: a
+    # folder cannot be closed here, because team sync is Enterprise. A person's groups pick the
+    # organizations at each login, platform-admin alone reaches the operational dashboards of
+    # organization 1, and a person with neither is refused at the door.
+    org_attribute_path: "[groups, realm_access.roles][]"
+    # By number: Grafana reads this list when it starts, before the hook has made any
+    # organization, and drops a name it cannot find. provision.sh makes them in this order on the
+    # empty database and refuses to go on when a number differs.
+    {{- $names := list }}
+    {{- range $project := $this.projects }}{{ $names = append $names $project.name }}{{ end }}
+    {{- $ids := dict }}
+    {{- range $index, $name := sortAlpha $names }}{{ $_ := set $ids $name (add $index 2) }}{{ end }}
+    {{- $mapping := list "platform-admin:1:Admin" }}
+    {{- $members := list }}
+    {{- range $project := $this.projects }}
+    {{- range $group := $project.groups }}
+    {{- $mapping = append $mapping (printf "%s:%d:Viewer" $group (index $ids $project.name)) }}
+    {{- $members = append $members (printf "@ == '%s'" $group) }}
+    {{- end }}
+    {{- end }}
+    org_mapping: {{ join " " $mapping | quote }}
+    # No role for anyone else, which is what the strict line below refuses.
+    role_attribute_path: {{ printf "contains(realm_access.roles[*], 'platform-admin') && 'Admin' || groups[?%s] | [0] && 'Viewer'" (join " || " $members) | quote }}
+    role_attribute_strict: true
+    # A datasource forwards the person's access token, which outlives no panel refresh by itself.
+    use_refresh_token: true
+{{- else }}
+    role_attribute_path: "contains(realm_access.roles[*], 'platform-admin') && 'Admin' || 'Viewer'"
+    role_attribute_strict: false
+{{- end }}
+    use_pkce: true
+    tls_skip_verify_insecure: false
+
+# The confidential client's secret, generated by the secrets component from
+# keycloak-clients.yaml and never rendered into `grafana.ini` (CC-06).
+envValueFrom:
+  GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET:
+    secretKeyRef:
+      name: keycloak-client-grafana
+      key: client-secret
+
+# The local administrator, for the day the identity provider is the thing that is broken.
+admin:
+  existingSecret: grafana-admin
+  userKey: username
+  passwordKey: password
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        url: {{ $this.prometheusUrl | quote }}
+        isDefault: true
+        # Read-only: a datasource edited in the UI is configuration that exists nowhere in
+        # Git, which is the drift CC-02 is about.
+        editable: false
+        jsonData:
+          timeInterval: 15s
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: platform
+        orgId: 1
+        folder: {{ $global.branding.instanceName | default "joinedcontext" | quote }}
+        type: file
+        disableDeletion: true
+        editable: false
+        options:
+          path: /var/lib/grafana/dashboards/platform
+
+# The dashboards are committed JSON, not an import from grafana.com: a dashboard nobody in
+# this repository can read is a dashboard nobody can review, and a chart that fetches one at
+# start-up is an outbound call this component's egress policy does not allow.
+#
+# They travel as a ConfigMap of this component's own (charts/dashboards) rather than through
+# the chart's `dashboards:` values, because those add an init container that curls each
+# dashboard: one more image to pin and re-pin, running a shell script that has nothing to
+# fetch when every dashboard is already a file in this repository.
+dashboardsConfigMaps:
+  platform: {{ index .Values "grafana" "dashboards" "configMapName" }}
+{{- if $this.projects }}
+
+# What provision.sh reads, and the hook that runs it inside this container: the image holds curl
+# and the chart hands it the local administrator, so no second image and no Job (T-6504). It also
+# has to hold on a pod that starts from an empty database, which only the pod itself sees.
+extraConfigmapMounts:
+  - name: projects
+    mountPath: /etc/grafana/projects
+    configMap: {{ index .Values "grafana" "dashboards" "projectsConfigMapName" }}
+    readOnly: true
+lifecycleHooks:
+  postStart:
+    exec:
+      command: [/bin/bash, /etc/grafana/projects/provision.sh]
+{{- end }}

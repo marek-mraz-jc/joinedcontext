@@ -1,0 +1,82 @@
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`; history.json on its own volume
+# - [x] Health probes -> /healthz (a page rendered in the last three minutes)
+# - [x] Standard labels
+# - [x] Named port, Service; the route is in apisix-routes.yaml (status.{domain})
+# - [x] No token, no Secret: it reads the probe's results inside the namespace and serves GET only
+
+fullnameOverride: status-page
+nameOverride: probes-status
+
+{{- $images := index .Values.images "probes" "probe" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+command: ["python3", "/etc/status/status.py"]
+
+env:
+  # The probe target that is this environment: probe.py names its own one so.
+  STATUS_TARGET: {{ splitList "." $global.domain | first | quote }}
+  STATUS_DOMAIN: {{ $global.domain | quote }}
+  STATUS_PROBE_URL: {{ printf "http://probe.%s.svc.cluster.local:9100/results.json" .Values.probes.probe.namespace | quote }}
+  STATUS_INCIDENTS: {{ readFile "../../files/incidents.yaml" | fromYaml | toJson | quote }}
+  STATUS_DATA: /data
+  STATUS_PORT: "8080"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+configMap:
+  enabled: true
+  mountPath: /etc/status
+  data:
+    status.py: |
+{{ readFile "../../files/status.py" | indent 6 }}
+
+containerPort: 8080
+
+service:
+  enabled: true
+  port: 8080
+  targetPort: 8080
+  name: http
+
+# 90 days of minute counts per surface: a few hundred KiB.
+persistence:
+  enabled: true
+  size: 64Mi
+  mountPath: /data
+  storageClass: {{ $global.storage.storageClass.rwo | quote }}
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 30
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 30
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

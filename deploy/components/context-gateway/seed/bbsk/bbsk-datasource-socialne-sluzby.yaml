@@ -1,0 +1,17 @@
+# Hub item 9ab090b9, data from e-VÚC, updated yearly; the query keeps the 407 services of public providers (a private provider can be a person) and leaves out the e-mail and telephone columns. Read from the region's own ArcGIS FeatureServer, the service behind its open-data portal (opendata.bbsk.sk): the query asks for the columns the mapping reads, in WGS 84 (outSR=4326). No key. CC BY-SA 4.0, read from the Hub DCAT feed (opendata.bbsk.sk/api/feed/dcat-us/1.1.json) and the item's licenseInfo on arcgis.com.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bbsk-socialne-sluzby
+  namespace: bbsk
+  title:
+    sk: Zoznam poskytovateľov sociálnych služieb v BBK – verejní poskytovatelia (BBSK)
+    en: Social-service providers in the region, public ones (BBSK)
+spec:
+  type: http
+  http:
+    url: https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Zoznam_poskytovate%C4%BEov_soci%C3%A1lnych_slu%C5%BEieb_v_BBK_public_2025/FeatureServer/0/query?where=Typ_poskytovate%C4%BEa%20%3C%3E%20%27neverejn%C3%BD%20poskytovate%C4%BE%27&outFields=Druh_poskytovanej_soci%C3%A1lnej_slu,Forma_poskytovanej_soci%C3%A1lnej_sl,Cie%C4%BEova_skupina_fyzick%C3%BDch_os%C3%B4b_,Kapacita,Ulica_soci%C3%A1lnej_slu%C5%BEby,Obec_soci%C3%A1lnej_slu%C5%BEby,PS%C4%8C_soci%C3%A1lnej_slu%C5%BEby,Okres_soci%C3%A1lnej_slu%C5%BEby,Webov%C3%A1_adresa,Typ_poskytovate%C4%BEa,Obchodn%C3%A9_meno,I%C4%8CO&returnGeometry=false&f=geojson
+    verb: GET
+    headers:
+      Accept: application/geo+json, application/json
+    timeout: 60s

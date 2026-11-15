@@ -1,0 +1,125 @@
+---
+{{- $global := .Values.global }}
+{{- /* The instance this release serves (T-4636): `catalogue`, or a global.catalogues entry named
+       by the release's `catalogue` label, whose words are `ckan.<name>` and host its entry's. */}}
+{{- $name := index .Release.Labels "catalogue" | default "catalogue" }}
+{{- $this := .Values.ckan.catalogue }}
+{{- if ne $name "catalogue" }}
+{{- $this = dict "assistant" "" "languages" dict "site" dict "samples" dict }}
+{{- $this = merge (deepCopy (index .Values.ckan $name | default dict)) $this }}
+{{- range $c := .Values.global.catalogues | default list }}
+{{- if eq $c.name $name }}{{ $_ := set $this "subDomain" $c.subDomain }}{{ end }}
+{{- end }}
+{{- end }}
+{{- $images := index .Values.images "ckan" }}
+{{- $branding := $global.branding | default dict }}
+{{- if $this.languages }}
+{{- $branding = set (deepCopy $branding) "languages" $this.languages }}
+{{- end }}
+{{- /* The instance's own words (T-4636): its name per language, its header image and the
+       connector page's sample questions, set once in `ckan.<instance>` and read by the theme. */}}
+{{- $site := $this.site | default dict }}
+{{- if $site.title }}
+{{- $branding = set (deepCopy $branding) "siteTitle" $site.title }}
+{{- end }}
+{{- if $site.tagline }}
+{{- $branding = set (deepCopy $branding) "siteTagline" $site.tagline }}
+{{- end }}
+{{- if $site.logo }}
+{{- $branding = set (deepCopy $branding) "siteLogo" $site.logo }}
+{{- end }}
+{{- with index $site "issued" }}
+{{- $branding = set (deepCopy $branding) "siteIssued" . }}
+{{- end }}
+{{- if $this.samples }}
+{{- $branding = set (deepCopy $branding) "samples" $this.samples }}
+{{- end }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /api/3/action/status_show
+# - [x] Standard labels
+# - [x] Named ports -> 5000 container mapped to 5000 service
+# - [ ] Ingress with TLS -> not applicable, the catalogue is fronted by APISIX
+
+# The public URL every link in the catalogue is built from. It has to be the host the edge
+# serves (components/ckan/apisix-routes.yaml), or every dataset page links somewhere else.
+siteUrl: https://{{ $this.subDomain }}.{{ $global.domain }}
+
+ckan:
+  image:
+    repository: {{ index $images "catalogue" "repository" }}
+    tag: {{ index $images "catalogue" "tag" | quote }}
+    digest: {{ index $images "catalogue" "digest" }}
+    pullPolicy: IfNotPresent
+  storage:
+    storageClass: "{{ $global.storage.storageClass.rwo | default "" }}"
+  # Keycloak login needs an OIDC authenticator, which the stock CKAN image does not carry: the
+  # image this repository builds (`images/ckan/Dockerfile`) does. `global.ckan.sso` turns on the
+  # plugin here and the egress to the realm in the NetworkPolicy together — one flag, and the
+  # image pinned above has to be the one that carries the extension (T-0403).
+  sso:
+    # ponytail: a further catalogue (T-4636) has no Keycloak client of its own yet and signs in
+    # with its local administrator; add a client per instance when a city logs in through the realm.
+    enabled: {{ and ($global.ckan.sso | default false) (eq $name "catalogue") }}
+    clientId: ckan
+    issuer: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}"
+  # DCAT-AP for harvesters: `global.ckan.dcat`, against an image that carries ckanext-dcat
+  # (images/ckan/Dockerfile), the same pairing as the login above (T-3010).
+  dcat:
+    enabled: {{ $global.ckan.dcat | default false }}
+
+solr:
+  image:
+    repository: {{ index $images "solr" "repository" }}
+    tag: {{ index $images "solr" "tag" | quote }}
+    digest: {{ index $images "solr" "digest" }}
+    pullPolicy: IfNotPresent
+  storage:
+    storageClass: "{{ $global.storage.storageClass.rwo | default "" }}"
+
+redis:
+  image:
+    repository: {{ index $images "redis" "repository" }}
+    tag: {{ index $images "redis" "tag" | quote }}
+    digest: {{ index $images "redis" "digest" }}
+    pullPolicy: IfNotPresent
+
+database:
+  host: postgres-cluster-rw.{{ .Values.postgres.cluster.namespace }}.svc.cluster.local
+  port: 5432
+
+# One image serves every installation: the identity is mounted, not built in (OPS-46,
+# OPS-47). The theme reads this block and nothing else, so a rebrand is a values edit and an
+# apply — the same block the Portal serves at /api/v1/branding.
+branding:
+  {{- $branding | toYaml | nindent 2 }}
+
+# The assistant's widget on every page (AG-114): its own host frames nothing but the origins
+# its AssistantDeployment allows, so that deployment's allowedOrigins names this catalogue.
+{{- if and (has "assistant" .Values.components) ($this.assistant | default "") }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $this.assistant) }}
+{{- fail (printf "ckan.%s.assistant: %q is not a publicId (lowercase letters, digits and dashes)" $name $this.assistant) }}
+{{- end }}
+assistantWidget: "https://assistant.{{ $global.domain }}/d/{{ $this.assistant }}/widget"
+# A dataset page frames its publisher's assistant, by CKAN organization (T-4281).
+assistantWidgets:
+{{- range $organization, $publicId := (index $this "assistantByOrganization") | default dict }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $publicId) }}
+{{- fail (printf "ckan.%s.assistantByOrganization.%s: %q is not a publicId (lowercase letters, digits and dashes)" $name $organization $publicId) }}
+{{- end }}
+  {{ $organization | quote }}: "https://assistant.{{ $global.domain }}/d/{{ $publicId }}/widget"
+{{- end }}
+{{- end }}
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+{{- if has "viz" .Values.components }}
+# The chart renderer (T-4641, components/viz) reads published views through the action API.
+vizOrigin: "https://viz.{{ $global.domain }}"
+{{- end }}

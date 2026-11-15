@@ -1,0 +1,2 @@
+plugins:
+{{ include "jc.configFiles" (dict "components" .Values.components "file" "apisix-plugins.yaml" "global" .) | nindent 2 }}

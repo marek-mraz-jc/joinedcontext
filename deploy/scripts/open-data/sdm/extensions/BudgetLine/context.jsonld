@@ -1,0 +1,63 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "BudgetLine": {
+      "@id": "jc:BudgetLine"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "adjustedAmount": {
+      "@id": "jc:adjustedAmount",
+      "@type": "xsd:float"
+    },
+    "approvedAmount": {
+      "@id": "jc:approvedAmount",
+      "@type": "xsd:float"
+    },
+    "budgetArea": {
+      "@id": "jc:budgetArea"
+    },
+    "budgetFunction": {
+      "@id": "jc:budgetFunction"
+    },
+    "budgetItem": {
+      "@id": "jc:budgetItem"
+    },
+    "budgetPurpose": {
+      "@id": "jc:budgetPurpose"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "fiscalYear": {
+      "@id": "jc:fiscalYear",
+      "@type": "xsd:integer"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "type": "@type",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

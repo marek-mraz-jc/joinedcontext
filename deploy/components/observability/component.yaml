@@ -1,0 +1,4 @@
+---
+component: observability
+parts:
+  - name: collector

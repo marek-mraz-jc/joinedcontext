@@ -1,0 +1,17 @@
+id: https://hel.fi/models/helsinki-mobility/mobility
+name: mobility
+title: Mobility analytics
+description: >-
+  The types the mobility project keeps in its own space, one class per entity type (DM-61). None
+  yet: what it reads is the helsinki project's city bikes, through the shared space.
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  jc: https://joinedcontext.com/models/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+default_prefix: jc
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+classes: {}

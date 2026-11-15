@@ -1,0 +1,4 @@
+---
+ai:
+  app:
+    chart: charts/app

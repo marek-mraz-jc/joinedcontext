@@ -1,0 +1,30 @@
+{{- /*
+  CC-73, T-1720: a production instance is named by its own domain. The defaults carry the
+  development placeholder `joinedcontext.test` (RFC 2606), and dev runs on dev.joinedcontext.com
+  (the node's sslip.io host before T-2806); a production render that inherits any of them is dev
+  under another name, so it stops here and says which value to set.
+*/}}
+{{- /* T-6720: an instance that serves production hosts under the development profile (jc-prod:
+       its sizes are dev's, its names and users are production's) is judged here too. */}}
+{{- if or (eq .Values.global.profile "production") (dig "productionGuard" false .Values.global) }}
+{{- range $key := list "domain" "orgDomain" }}
+{{- $value := index $.Values.global $key | default "" | toString }}
+{{- if or (eq $value "") (hasSuffix ".test" $value) (hasSuffix ".localhost" $value) (eq $value "localhost") (contains "sslip.io" $value) (eq $value "dev.joinedcontext.com") (hasSuffix ".dev.joinedcontext.com" $value) }}
+{{- fail (printf "global.%s is %q: a production instance names its own domain, not the development placeholder or a dev cluster host (CC-73, T-1720)" $key $value) }}
+{{- end }}
+{{- end }}
+{{- range $key := list "contact" "expires" }}
+{{- if eq (index $.Values.global.securityTxt $key | default "" | toString) "" }}
+{{- fail (printf "global.securityTxt.%s is empty: a production instance serves security.txt with its own contact and expiry (RFC 9116, OPS-52, T-1721)" $key) }}
+{{- end }}
+{{- end }}
+{{- /* ADR-N-062, T-5548: branch previews run on dev alone; a production render never admits pv-* namespaces. */}}
+{{- if (dig "branchPreviews" "enabled" false .Values.global) }}
+{{- fail "global.branchPreviews.enabled is true: branch previews run only on the dev cluster, never on a production instance (ADR-N-062, T-5548)" }}
+{{- end }}
+{{- /* T-5776: only dev lets approvers sign in without a one-time code; production keeps T-5120. */}}
+{{- if eq (toString .Values.global.approverMfa) "false" }}
+{{- fail "global.approverMfa is false: a production instance asks every approver for a one-time code; set it to true or remove it (AUT-2, T-5120, T-5776)" }}
+{{- end }}
+{{- end }}
+{}

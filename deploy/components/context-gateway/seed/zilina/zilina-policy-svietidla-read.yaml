@@ -1,0 +1,27 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: svietidla-read
+  namespace: zilina
+  title: { sk: 'Verejné čítanie: pouličné svietidlá', en: 'Public read: street lights' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-doprava }
+  assigner: did:web:zilina.sk
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint zilina-svietidla, and only
+  # its type (T-4344).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Streetlight

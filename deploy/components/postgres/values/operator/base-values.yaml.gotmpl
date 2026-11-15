@@ -1,0 +1,47 @@
+---
+{{- $global := .Values.global }}
+
+# values: https://github.com/cloudnative-pg/charts/blob/main/charts/cloudnative-pg/values.yaml
+# raw: https://raw.githubusercontent.com/cloudnative-pg/charts/refs/heads/main/charts/cloudnative-pg/values.yaml
+# - [ ] Containers run as non-root with `readOnlyRootFilesystem`
+# - [ ] Health probes
+# - [ ] Graceful shutdown
+# - [ ] Standard labels
+# - [ ] ServiceAccount with least privilege where required
+# - [ ] Named ports
+# - [ ] Ingress with TLS
+
+image:
+  repository: {{ .Values.images.postgres.operator.repository }}
+  # The chart builds `repository:tag` and has no digest field. This reference is also what
+  # the operator writes into every instance pod's bootstrap init container
+  # (OPERATOR_IMAGE_NAME), so pinning it here pins those containers too.
+  tag: {{ .Values.images.postgres.operator.tag }}@{{ .Values.images.postgres.operator.digest }}
+
+# clusterWide=true makes the CNPG operator watch ALL namespaces, so a single shared operator
+# reconciles the Postgres clusters of every instance.
+config:
+  clusterWide: {{ $global.operators.watchAllNamespaces }}
+  # Propagate the Linkerd skip-inbound-ports annotation from the Cluster CR onto the
+  # CNPG-managed INSTANCE pods. Their instance-manager health/probe server on :8000
+  # serves the instance's own TLS, so the kubelet probe arrives unmeshed (tls=None)
+  # and mandatory mTLS (cluster-authenticated) would deny it -> instance CrashLoop.
+  # The matching annotation value lives on the Cluster (see cluster base-values).
+  data:
+    INHERITED_ANNOTATIONS: config.linkerd.io/skip-inbound-ports,security.joinedcontext.com/api-access-reason
+
+# The CNPG manager serves its admission webhook AND its health/probe endpoints on
+# port 9443 over its own TLS (`--webhook-port=9443`, webhook-certificates). Both
+# callers are UNMESHED: the kubelet probe (`https://:9443/readyz`) and the
+# kube-apiserver webhook arrive without a Linkerd identity (tls=None). Under the
+# namespace's mandatory mTLS (`config.linkerd.io/default-inbound-policy:
+# cluster-authenticated`) the proxy denies them, so the manager fails its startup
+# probe and CrashLoopBackOffs. Skip the proxy for inbound 9443 so probe + webhook
+# reach the manager's TLS directly; outbound stays meshed. (Inert without Linkerd.)
+podAnnotations:
+  config.linkerd.io/skip-inbound-ports: "9443"
+  # The one exemption from justify-api-token-access: a controller without an API token
+  # cannot reconcile anything (BSI TR-03187 AUT-3).
+  security.joinedcontext.com/api-access-reason: >-
+    CloudNativePG operator: reconciles Cluster resources, their Secrets and their pods
+    through the Kubernetes API.

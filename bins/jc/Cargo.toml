@@ -83,6 +83,8 @@ base64 = "0.22"
 age = { version = "0.12", default-features = false }
 serde_json = { version = "1", features = ["preserve_order"] }
 tower = { version = "0.5", features = ["util"] }
+# `jc doctor domains`: the authoritative name servers of each host (as crates/portal).
+hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "json", "migrate"] }
 url = "2"

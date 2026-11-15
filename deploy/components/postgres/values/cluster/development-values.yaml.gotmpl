@@ -1,0 +1,52 @@
+---
+{{- $this := .Values.postgres.cluster -}}
+{{- $global := .Values.global }}
+# - [x] Minimal Resources
+# - [x] Minimal storage
+# - [x] 1 Replica
+
+cluster:
+  instances: 1
+
+  # One instance carries the Portal, the broker, Keycloak, Gitea and CKAN. At 512Mi the
+  # kernel killed it seven times in a week, every time under a recording (a checkpoint or a
+  # broker statement on top of ~460Mi resident), and each kill took Gitea's git-sync and the
+  # Portal's reconciler lock with it. At 1Gi it was killed four times on 2026-09-25 under the
+  # seeded pipelines (~530Mi anon, 20 broker connections, the rest page cache); 2Gi still
+  # leaves the 16 GB node ~2 GB of headroom.
+  resources:
+    requests:
+      cpu: 100m
+      # T-4473: dev, kubectl top 2026-10-17 21:22-22:22Z: median 1,739, peak 1,893Mi.
+      memory: 1792Mi
+    limits:
+      # 2 cores: at 500m the kernel throttled it in 31% of its periods (4365 s in all by
+      # 2026-09-25 18:30Z), the broker's 1000-entity upserts outran their time and every praha
+      # waste-stations batch came back "database error" (T-2971). The node has 8 vCPUs, ~28% used.
+      # 3 cores: at 2 it was throttled in 22% of its periods (22 499 s in 14 h, 2026-10-12), each
+      # broker transaction waited a median 0.15 s to begin and a gateway upsert took 1 s, which
+      # capped the HSL vehicle stream at about 62 writes/s (T-4075).
+      # 6 cores: prod sat at 3.07 of 3 under the assistant's type warming and the HSL feed
+      # (2026-10-19 04:58Z, T-4683); both clusters were patched to 6 by hand at 04:59/05:29Z and
+      # this carries it, so the next sync does not restart the single instance a third time.
+      # The request stays 100m: a limit only lets it burst into an idle node.
+      cpu: '6'
+      memory: 2Gi
+
+  # Sized so the worst case stays under 80 % of the 2Gi limit (T-4933, the sum in
+  # tests/test_postgres_memory_budget.py): every process holds about 19MiB of its own, so the
+  # number of processes is the lever, not shared_buffers. 55 connections: CNPG's 3 reserved
+  # ones plus every client's pool ceiling (broker 16, Keycloak 7, CKAN 8, Portal 5, assistant 4,
+  # Gitea 3 = 43) with 20 % headroom, tests/test_postgres_connection_budget.py; at 50 the
+  # uncounted Keycloak and Gitea pools took the last slots (53300, 2026-10-21).
+  # CNPG starts 32 parallel workers by default, each a full process; 2 keep one big scan
+  # parallel. Each autovacuum worker takes 32MB instead of maintenance_work_mem, which pays
+  # for the five connections above 50.
+  postgresql:
+    parameters:
+      max_connections: "55"
+      max_parallel_workers: "2"
+      autovacuum_work_mem: "32MB"
+
+  storage:
+    size: 1Gi

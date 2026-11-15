@@ -1,0 +1,45 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: helsinki
+  namespace: helsinki
+  title: { en: Helsinki city context }
+spec:
+  contextSpaceRef: helsinki
+  linkml: ./helsinki.linkml.yaml
+  version: 1.15.0
+  lifecycle: published
+  classes:
+    - Event
+    - BikeHireDockingStation
+    - Vehicle
+    - Article
+    - WeatherObserved
+    - Alert
+    - AirQualityObserved
+    - PointOfInterest
+    - WaterQualityObserved
+    - OnStreetParking
+    - CityWork
+    - AdministrativeArea
+    - HeritageArea
+    - TrafficSignalJunction
+    - NoiseZone
+    - Tree
+    - NatureSite
+    - GtfsStop
+    - PublicTransportRoute
+    - GtfsStation
+    - GtfsAgency
+    - GtfsRoute
+    - GtfsDailyDepartures
+    - GtfsShape
+    - OffStreetParking
+    - ServiceRequest
+    - KeyPerformanceIndicator
+    - TrafficFlowObserved
+  artifacts:
+    jsonSchema: ./helsinki.v1.schema.json
+    context: ./helsinki.v1.context.jsonld
+    docs: ./helsinki.v1.md
+    example: ./helsinki.v1.example.jsonld

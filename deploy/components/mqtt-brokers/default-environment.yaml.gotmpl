@@ -1,0 +1,10 @@
+---
+mqtt-brokers:
+  brokers:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "mqtt") }}
+    # The brokers the configuration repository declares, one release each (MqttBroker, PL-74).
+    # The Portal's reconciler stamps them from this chart (T-3994); an entry here is the way to
+    # run one before it does: {project, name, limits: {maxMessageBytes, messagesPerSecond,
+    # maxConnections}}.
+    brokers: []

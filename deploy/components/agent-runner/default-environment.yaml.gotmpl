@@ -1,0 +1,31 @@
+---
+agent-runner:
+  proxy:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "agent-runner") }}
+    # The project whose endpoints the proxy's own client may read: its Keycloak client is
+    # `{project}-agent-proxy`, the ServiceAccount manifest of the same name in that project
+    # is what the gateway resolves the token to (PF-46).
+    project: helsinki
+    # The model behind the builder profile (AG-26). An OpenAI-compatible API by default;
+    # `anthropic` switches the proxy to the Messages API.
+    modelBase: https://openrouter.ai/api/v1
+    modelProvider: openai-compatible
+    # The model key is an operator-supplied credential (docs/secrets: SOPS + age, or a Secret
+    # created out of band): one key `key` in this Secret, in the proxy's namespace. Never
+    # generated, never committed.
+    modelKeySecret: agent-runner-model-key
+    # How often the proxy asks OpenRouter's GET /key about the key, in seconds; 0 turns it off.
+    # It costs no completion; the Portal turns the answer into the jc_model_key_* gauges and a
+    # model.key activity event in the project org (AG-96).
+    modelProbeSecs: 900
+    # Daily model token caps, UTC day, enforced by the proxy before it calls the provider
+    # (AG-97); 0 is no cap. The key is shared by everything here and by nobody else's budget:
+    # at about 0.3 USD a million tokens (2026-10-06, google/gemini-3.8-flash) these defaults
+    # spend at most about 2 USD a day. One app build is about 2 million tokens.
+    dailyTokens:
+      assistant: 2000000
+      appBuilder: 4000000
+      other: 1000000
+      # No per-person cap for now (owner 2026-11-02); the three caps above still hold.
+      perPerson: 0

@@ -1,0 +1,24 @@
+# Filled from components/ai/images.yaml and values/app.
+image: {repository: '', tag: '', digest: ''}
+imagePullPolicy: IfNotPresent
+
+# The page is ai.{domain}; it asks assistant.{domain} and frames viz.{domain}.
+domain: ''
+
+serviceMesh:
+  enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources: {}

@@ -1,0 +1,73 @@
+# The mapping of the transit-stops pipeline (PL-03, T-3356, T-3890): HSL's GTFS `stops.txt`, as
+# the archive read of `hsl-gtfs-stops` leaves it (one message holding the member's text, its name
+# in `archive_filename`, PL-72). One GtfsStop per stop or platform (location type 0): where it is,
+# the code on its sign, its fare zone, what serves it, step-free access and the station it belongs
+# to. One GtfsStation per station (location type 1); its platforms (hasStop) are the stops whose
+# hasParentStation names it, which the model computes and never stores. Entrances, nodes and
+# boarding areas (2 to 4) are not written.
+#
+# A row without a usable id or position is skipped rather than written somewhere wrong. A stop
+# beyond HSL's zones has the zone "Ei HSL" (not HSL) and no fare zone here. A parent the file does
+# not list as a station is not linked.
+#
+# vehicle_type is GTFS's route type: 3 a bus, 0 a tram, 1 the metro, 109 the commuter train, 4 a
+# ferry. wheelchair_boarding is GTFS's: 0 unknown, 1 possible, 2 not possible.
+
+pipeline:
+  processors:
+    - mapping: |
+        map mode {
+          root = match this.string() {
+            "0" => "tram",
+            "900" => "tram",
+            "1" => "metro",
+            "109" => "train",
+            "4" => "ferry",
+            _ => "bus",
+          }
+        }
+        map text {
+          root = this.or("").string().trim()
+        }
+        map urn {
+          root = "urn:ngsi-ld:%v:%v:%v:%v".format(this.type, env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id)
+        }
+        # One row as its entity, or deleted: `this` is { row, stations }.
+        map entity {
+          let r = this.row
+          let id = $r.stop_id.apply("text")
+          let kind = if $r.location_type.apply("text") == "" { "0" } else { $r.location_type.apply("text") }
+          let lat = $r.stop_lat.apply("text").number().catch(null)
+          let lon = $r.stop_lon.apply("text").number().catch(null)
+          let parent = $r.parent_station.apply("text")
+          let usable = ["0", "1"].contains($kind) && $id.re_match("^[A-Za-z0-9._-]{1,64}$") && $lat != null && $lon != null && $lat >= -90 && $lat <= 90 && $lon >= -180 && $lon <= 180
+          let type = if $kind == "1" { "GtfsStation" } else { "GtfsStop" }
+          root = if !$usable { deleted() } else { {
+            "id": { "type": $type, "id": $id }.apply("urn"),
+            "type": $type,
+            "name": if $r.stop_name.apply("text") != "" { { "type": "LanguageProperty", "languageMap": { "fi": $r.stop_name.apply("text") } } },
+            "stopCode": if $kind == "0" && $r.stop_code.apply("text") != "" { { "type": "Property", "value": $r.stop_code.apply("text") } },
+            "description": if $kind == "0" && $r.stop_desc.apply("text") != "" { { "type": "LanguageProperty", "languageMap": { "fi": $r.stop_desc.apply("text") } } },
+            "fareZone": if $r.zone_id.apply("text").re_match("^[A-Z]$") { { "type": "Property", "value": $r.zone_id.apply("text") } },
+            "transportMode": { "type": "Property", "value": $r.vehicle_type.apply("text").or("3").apply("mode") },
+            "wheelChairAccessible": if ["0", "1", "2"].contains($r.wheelchair_boarding.apply("text")) { { "type": "Property", "value": $r.wheelchair_boarding.apply("text") } },
+            "hasParentStation": if $kind == "0" && this.stations.contains($parent) { { "type": "Relationship", "object": { "type": "GtfsStation", "id": $parent }.apply("urn") } },
+            "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [$lon, $lat] } },
+            "page": if $r.stop_url.apply("text").re_match("^https?://[^\\s\"<>]+$") { { "type": "Property", "value": $r.stop_url.apply("text") } },
+            "dataProvider": { "type": "Property", "value": "Helsinki Region Transport (HSL), GTFS" },
+            "source": { "type": "Property", "value": "https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip" }
+          }.filter(entry -> entry.value != null) }
+        }
+        let rows = if @archive_filename.or("") != "stops.txt" { [] } else { content().string().parse_csv() }
+        let stations = $rows.filter(r -> r.location_type.apply("text") == "1").map_each(r -> r.stop_id.apply("text"))
+        root = $rows.map_each(r -> { "row": r, "stations": $stations }.apply("entity"))
+
+    # One entity per message, and its URN into the runner's `gtfs` cache: hsl-hfp-vehicles links a
+    # vehicle only to a line or stop this read wrote (T-4052). The runner batches the messages
+    # back for the gateway as it does any array.
+    - unarchive: { format: json_array }
+    - cache:
+        resource: gtfs
+        operator: set
+        key: ${! json("id") }
+        value: '1'

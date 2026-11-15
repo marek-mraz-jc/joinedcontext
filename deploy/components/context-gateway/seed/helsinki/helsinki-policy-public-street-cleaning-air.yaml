@@ -1,0 +1,32 @@
+# Public read of the street cleaning air quality pilot (T-5255): its AirQualityObserved readings
+# only, by their swarco- ids. FMI's stations of the same type stay behind the app's own grant.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-street-cleaning-air
+  namespace: helsinki
+  title: { en: 'Public read: air quality during street cleaning' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: AirQualityObserved
+          idPattern: ^urn:ngsi-ld:AirQualityObserved:[a-z0-9.-]+:helsinki:swarco-[0-9]+-[0-9]+$
+      propertyNames: [dateObserved, location, name, pm10, pm25, source]

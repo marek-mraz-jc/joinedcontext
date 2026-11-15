@@ -1,0 +1,8 @@
+{% ckan_extends %}
+
+{# CKAN's own inline script, with this request's nonce: the CSP refuses any other (T-5147). #}
+{% block scripts %}
+  <script nonce="{{ h.jc_csp_nonce() }}">
+    var preload_resource = {{ resource | tojson }};
+  </script>
+{% endblock %}

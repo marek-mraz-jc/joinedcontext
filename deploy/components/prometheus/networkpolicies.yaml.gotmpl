@@ -1,0 +1,64 @@
+{{- /* Prometheus scrapes every component, so its egress lists every namespace this deployment puts
+       a workload in (each part's `namespace`, collected as runtime-policies does) and kube-system
+       (node-exporter, CoreDNS), on any port: each target's own policy admits it by label from this
+       namespace alone (namespaceFrom monitoring.monitoring.prometheusNamespace, T-3771), and that
+       side is the gate. Beside the pods, the API server for service discovery and the kubelet on
+       each node (10250) for kubelet_volume_stats and cAdvisor; both are host addresses after
+       kube-proxy's DNAT, so they are named by port. Nothing reaches Prometheus but Grafana; no
+       route at the edge (T-5154). */}}
+{{- /* Values files load before the components' defaults reach .Values, so the namespaces come from
+       each listed component's default-environment, rendered the way components-defaults does. */}}
+{{- $defaults := include "jc.configFiles" (dict "components" $.Values.components "file" "default-environment.yaml.gotmpl" "global" $) | fromYaml }}
+{{- $namespaces := list "kube-system" }}
+{{- range $component, $parts := $defaults }}
+  {{- range $part, $partData := $parts }}
+    {{- if and (kindIs "map" $partData) (hasKey $partData "namespace") }}
+      {{- $namespaces = append $namespaces (index $partData "namespace") }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- /* Another instance's namespaces on the same cluster (dev scrapes jc-prod, T-6727). A global
+       value: an environment's per-component values files are not loaded when this renders. */}}
+{{- $namespaces = concat $namespaces (dig "scrapeNamespaces" list $.Values.global.metrics) }}
+prometheus-server:
+  podSelector:
+    app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: {{ $namespaces | uniq | sortAlpha | toJson }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 10250
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

@@ -1,0 +1,79 @@
+{{- $global := .Values.global }}
+{{- $jc := .Values.jc.server }}
+{{- if ne (dig "mode" "slug" $jc) "host" }}
+{{- fail "jc.functions: needs jc.server.mode host (its issuer and gateway are jc's public idm. and api. hosts)" }}
+{{- end }}
+{{- $realm := dig "realmImport" "realm" "" $jc }}
+{{- if not $realm }}
+{{- fail "jc.functions: name jc.server.realmImport.realm, the realm whose portal-api tokens it accepts" }}
+{{- end }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /healthz
+# - [x] Standard labels, named port 8080, no API token
+# - [ ] Ingress with TLS -> not applicable, reached from jc alone
+
+fullnameOverride: jc-functions
+nameOverride: jc-functions
+
+{{- $images := .Values.images.jc.functions }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+# The image's entrypoint is the gateway; the runtime is the binary beside it.
+command:
+  - /usr/local/bin/jc-functions
+
+containerPort: 8080
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  name: http
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 5
+
+{{- with (dig "edgeAddress" "" $jc) }}
+# Until DNS moves, idm. and api. resolve to the old installation: pin them to this cluster's edge.
+hostAliases:
+  - ip: {{ . | quote }}
+    hostnames:
+      - idm.{{ $global.domain }}
+      - api.{{ $global.domain }}
+{{- end }}
+
+# No credential: the runtime verifies jc's Portal token (audience jc-functions, azp portal-api, the
+# realm's jc-functions-audience mapper) and passes each caller's own token to jc's gateway (SDK-23).
+env:
+  JC_FUNCTIONS_BIND: "0.0.0.0:8080"
+  JC_OIDC_ISSUER: "https://idm.{{ $global.domain }}/realms/{{ $realm }}"
+  JC_OIDC_JWKS_URL: "https://idm.{{ $global.domain }}/realms/{{ $realm }}/protocol/openid-connect/certs"
+  JC_FUNCTIONS_CALLER: portal-api
+  JC_FUNCTIONS_ASSISTANT_CALLER: jc-assistant
+  JC_FUNCTIONS_AUDIENCE: jc-functions
+  JC_GATEWAY_URL: "https://api.{{ $global.domain }}"
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

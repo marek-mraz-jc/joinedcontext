@@ -1,0 +1,19 @@
+# One Tree per record of the IPR layer Sdílená data o zeleni – vegetační prvky – linie into the city space (T-5425).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: green-register-tree-rows
+  namespace: praha
+  title:
+    en: 'Shared green register: tree rows'
+    cs: Sdílená data o zeleni – vegetační prvky – linie
+spec:
+  class: auto
+  # IPR republishes the green register every few weeks; one read a week keeps up.
+  period: 168h
+  schedule: '20 3 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-green-register-tree-rows }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: Tree, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

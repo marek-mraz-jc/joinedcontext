@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "joinedcontext deployment component schema",
+  "type": "object",
+  "required": ["component", "parts"],
+  "properties": {
+    "component": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parts": {
+      "type": "array",
+      "description": "The releases built from this component's charts.yaml and values; empty for a component whose helmfile writes its releases itself (prepare, runtime-policies)",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timeout": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Per-release helm wait timeout in seconds; overrides helmDefaults.timeout"
+          },
+          "valuesFrom": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Another part of the same component whose values/<part>/ directory this release renders with; the release keeps its own name"
+          },
+          "extraLabels": {
+            "type": "object",
+            "patternProperties": {
+              "^[a-zA-Z0-9_.-]+$": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^.]+\\.[^.]+$",
+              "description": "Must be in the format 'component.part'",
+              "examples": ["postgres.operator", "kafka.cluster"]
+            },
+            "uniqueItems": true
+          },
+          "jsonPatches": {
+            "type": "array",
+            "minItems": 1,
+            "description": "helmfile jsonPatches for the release: RFC 6902 operations on one rendered object, for what the chart cannot be told through values (needs kustomize on the path)",
+            "items": {
+              "type": "object",
+              "required": ["target", "patch"],
+              "properties": {
+                "target": {
+                  "type": "object",
+                  "required": ["version", "kind", "name"],
+                  "properties": {
+                    "group": { "type": "string" },
+                    "version": { "type": "string", "minLength": 1 },
+                    "kind": { "type": "string", "minLength": 1 },
+                    "name": { "type": "string", "minLength": 1 },
+                    "namespace": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                },
+                "patch": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "required": ["op", "path"],
+                    "properties": {
+                      "op": { "enum": ["add", "remove", "replace", "move", "copy", "test"] },
+                      "path": { "type": "string", "pattern": "^/" },
+                      "from": { "type": "string" },
+                      "value": {}
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "hooks": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["events", "command"],
+              "properties": {
+                "events": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true,
+                  "description": "List of hook events (e.g. presync, preapply, sync, postsync)"
+                },
+                "command": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Executable/command for the hook"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Arguments passed to the command; multiline scripts can be a single string item"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

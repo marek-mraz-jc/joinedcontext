@@ -1,0 +1,17 @@
+# Car parks and occupancy of Žilina from the city's open data portal into zilina-doprava through its one Endpoint (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: parkovanie
+  namespace: zilina
+  title: { sk: Parkoviská a obsadenosť, en: Car parks and occupancy }
+spec:
+  class: auto
+  # The portal counts every few minutes; five is what a driver deciding where to park needs.
+  period: 5m
+  schedule: '*/5 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: zilina-opendata-parkoviska }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-doprava:zilina-doprava
+  output: { type: OffStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

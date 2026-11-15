@@ -1,0 +1,277 @@
+---
+# Decidim's three workloads (ADR-N-065 section 5). The web answers the edge only; web and Sidekiq
+# reach their database, their Redis and outgoing mail (587/465, public addresses only); the web
+# reaches the realm, on its public host as ckan-sso does, for the OpenID Connect discovery, token
+# and key reads, and Sidekiq reaches the same edge for the realm's token and the gateway, because
+# only Sidekiq writes to the context space (T-6458). The nightly decidim-sync reaches the database
+# and Redis. Redis answers web, Sidekiq and decidim-sync and nothing else: its queue carries
+# participants' notification mail. Nothing else reaches any of them.
+decidim-web:
+  podSelector:
+    app.kubernetes.io/name: decidim-web
+    app.kubernetes.io/instance: decidim-web
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-redis
+              app.kubernetes.io/instance: decidim-redis
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values:
+                  - traefik
+                  - kube-system
+                  - ingress-nginx
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - traefik
+                  - ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 587
+        - protocol: TCP
+          port: 465
+decidim-sidekiq:
+  podSelector:
+    app.kubernetes.io/name: decidim-sidekiq
+    app.kubernetes.io/instance: decidim-sidekiq
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-redis
+              app.kubernetes.io/instance: decidim-redis
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values:
+                  - traefik
+                  - kube-system
+                  - ingress-nginx
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - traefik
+                  - ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 587
+        - protocol: TCP
+          port: 465
+decidim-sync:
+  podSelector:
+    app.kubernetes.io/name: decidim-sync
+    app.kubernetes.io/instance: decidim-sync
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-redis
+              app.kubernetes.io/instance: decidim-redis
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 6379
+decidim-redis:
+  podSelector:
+    app.kubernetes.io/name: decidim-redis
+    app.kubernetes.io/instance: decidim-redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-web
+              app.kubernetes.io/instance: decidim-web
+          componentNamespace: decidim
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-sidekiq
+              app.kubernetes.io/instance: decidim-sidekiq
+          componentNamespace: decidim
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-sync
+              app.kubernetes.io/instance: decidim-sync
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+postgres-from-decidim:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-web
+              app.kubernetes.io/instance: decidim-web
+          componentNamespace: decidim
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-sidekiq
+              app.kubernetes.io/instance: decidim-sidekiq
+          componentNamespace: decidim
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-sync
+              app.kubernetes.io/instance: decidim-sync
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 5432
+apisix-egress-to-decidim:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-web
+              app.kubernetes.io/instance: decidim-web
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 3000

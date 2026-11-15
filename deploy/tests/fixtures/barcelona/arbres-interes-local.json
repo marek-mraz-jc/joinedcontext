@@ -1,0 +1,119 @@
+{
+ "help": "https://opendata-ajuntament.barcelona.cat/data/api/3/action/help_show?name=datastore_search_sql",
+ "success": true,
+ "result": {
+  "records": [
+   {
+    "num": "4",
+    "name": "Tipuanes de la plaça Sant Felip Neri",
+    "district": "Ciutat Vella",
+    "lon": "2.1750950381875955",
+    "modified": "2024-02-19T17:51:38.480601",
+    "street": "Pl Sant Felip Neri",
+    "lat": "41.38346850793574",
+    "id": "99400454937"
+   },
+   {
+    "num": "40",
+    "name": "Til·ler argentat del Parc del Laberint",
+    "district": "Horta-Guinardó",
+    "lon": "2.1473683233213987",
+    "modified": "2024-02-16T14:09:48.995138",
+    "street": "Carrer dels Germans Desvalls",
+    "lat": "41.439472702917854",
+    "id": "99400454941"
+   },
+   {
+    "num": "70",
+    "name": "Til·lers de la Rambla Catalunya",
+    "district": "Eixample",
+    "lon": "2.1628245328746463",
+    "modified": "2025-07-15T11:10:47.842751",
+    "street": "Rambla de Catalunya",
+    "lat": "41.3917792573342",
+    "id": "99400454942"
+   },
+   {
+    "num": "4",
+    "name": "Tarongers de l'esglèsia de Sant Martí de Provençals",
+    "district": "Sant Martí",
+    "lon": "2.196930000123577",
+    "modified": "2024-02-19T18:00:10.513499",
+    "street": "Plaça d'Ignasi Juliol",
+    "lat": "41.42078750028179",
+    "id": "99400454947"
+   },
+   {
+    "num": "5",
+    "name": "Surera del Parc de Monterols",
+    "district": "Sarrià-Sant Gervasi",
+    "lon": "2.141237039248148",
+    "modified": "2024-02-16T10:40:52.600642",
+    "street": "Carrer de Ferran Valls i Taberner",
+    "lat": "41.402616485301614",
+    "id": "99400454949"
+   },
+   {
+    "num": "2",
+    "name": "Huingan del carrer Joaquim Blume",
+    "district": "Sants-Montjuïc",
+    "lon": "2.155331054511639",
+    "modified": "2024-02-16T12:13:23.750309",
+    "street": "Carrer de Joaquim Blume",
+    "lat": "41.37211150551578",
+    "id": "99400454952"
+   },
+   {
+    "num": "77",
+    "name": "Roure martinenc de l'Escola Lexia",
+    "district": "Gràcia",
+    "lon": "2.1396242587744174",
+    "modified": "2024-02-16T11:53:18.621337",
+    "street": "Carrer d'Esteve Terradas",
+    "lat": "41.414529270591046",
+    "id": "99400454958"
+   },
+   {
+    "num": "698",
+    "name": "Roures martinencs de l'Avinguda Diagonal",
+    "district": "Les Corts",
+    "lon": "2.1105580669920783",
+    "modified": "2025-07-15T11:57:08.139335",
+    "street": "Av Diagonal",
+    "lat": "41.38452147974752",
+    "id": "99400454960"
+   },
+   {
+    "num": "7",
+    "name": "Plàtans de la plaça Nadal",
+    "district": "Sant Andreu",
+    "lon": "2.188582993639656",
+    "modified": "2024-02-19T18:02:11.330996",
+    "street": "Plaça de Nadal",
+    "lat": "41.42889249151966",
+    "id": "99400454969"
+   },
+   {
+    "num": "48",
+    "name": "Washingtònia de Can Verdaguer",
+    "district": "Nou Barris",
+    "lon": "2.1790189983790422",
+    "modified": "2024-02-16T11:56:30.799317",
+    "street": "Carrer de l'Estudiant",
+    "lat": "41.43442848285889",
+    "id": "99400454983"
+   },
+   {
+    "num": null,
+    "name": "Pollancre del Canadà del Parc de l'Estació del Nord",
+    "district": "",
+    "lon": "2.1837503010846904",
+    "modified": "2024-02-16T12:11:14.549274",
+    "street": "Parc de l'Estació del Nord",
+    "lat": "41.393277251578034",
+    "id": "99400679820"
+   }
+  ],
+  "sql": "SELECT DISTINCT ON (id) replace(register_id, U&'\\FEFF', '') AS id, name, addresses_road_name AS street, addresses_start_street_number AS num, addresses_district_name AS district, geo_epgs_4326_lat AS lat, geo_epgs_4326_lon AS lon, modified FROM \"5bedd7c3-3201-4d9b-9062-1af8e9288ab1\" ORDER BY id, addresses_main_address = 'True' DESC LIMIT 1000"
+ }
+}

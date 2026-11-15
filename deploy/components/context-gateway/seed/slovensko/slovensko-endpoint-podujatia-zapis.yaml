@@ -1,0 +1,22 @@
+# The write door of slovensko-podujatia (T-5047, the T-5033 shape): the podujatia-* pipelines upsert through it.
+# Each Pipeline writes as its own derived account pl-{pipeline} under a derived Policy (PL-19, PL-20), and an
+# Endpoint binds those only without a policyRef; the public Endpoint keeps its read policyRef. The audience keeps
+# out anyone outside the organization.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: slovensko-podujatia-zapis
+  namespace: slovensko
+  title: { sk: 'Podujatia na Slovensku: zápis kanálov', en: 'Events in Slovakia: pipeline writes' }
+  description:
+    sk: Interný vstup, cez ktorý zberné kanály zapisujú podujatia; čítajú sa cez verejný Endpoint slovensko-podujatia.
+    en: The internal door the ingestion pipelines write the events through; people read them through the public Endpoint slovensko-podujatia.
+spec:
+  contextSpaceRef: slovensko-podujatia
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:joinedcontext.com:slovensko-podujatia:podujatia-bratislava-read
+    - urn:ngsi-ld:Policy:joinedcontext.com:slovensko-podujatia:podujatia-read
+  slug: 5kmumrgpatf2xaclhqh5zbnzzvpkilcm
+  audience: organization
+  enabledRepresentations: [ngsi-ld, websocket, ogc-features, mcp]

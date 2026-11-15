@@ -1,0 +1,2 @@
+agency_id,agency_name,agency_url,agency_timezone,agency_lang,agency_phone,agency_fare_url,agency_email
+01,"Dopravný podnik Bratislava, a.s.",http://www.dpb.sk,Europe/Bratislava,sk,02/59505950,,

@@ -1,0 +1,87 @@
+# One Smart Data Model type per catalogue dataset (T-4344): PointOfInterest of the space
+# helsinki, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-places
+  namespace: helsinki
+  title: { fi: Kaupungin palvelut — Helsinki, en: City services — Helsinki }
+  description:
+    fi: 'Palvelukartan kaikki Helsingin toimipisteet: kirjastot, terveysasemat, uimahallit, uimarannat, koulut, julkiset laitokset lajeittain (päiväkodit, sairaalat, sosiaalipalvelut, viranomaiset, liikunta- ja kulttuuripaikat...) ja muut (other), sekä HSL:n lipunmyyntipisteet: myyntipisteet, palvelupisteet, lippuautomaatit ja pysäköintiautomaatit (serviceCategory ticket…, vyöhyke kentässä fareZone, maksutavat kentässä description), sekä rantareitin paikat uusille palveluille, kuten saunoille ja kahviloille (serviceCategory waterfrontSite), vapaat yritystontit (serviceCategory businessPlot; mallin ulkopuoliset ominaisuudet plotArea, tontin pinta-ala m², ja floorAreaRight, rakennusoikeus k-m²; käyttötarkoitus ja kiinteistötunnus kentässä description) sekä ympäristölupakohteet (serviceCategory environmentalPermitSite, toiminta kentässä description). Lähteet: Helsingin kaupunki ja HSL, CC BY 4.0.'
+    en: "Every unit of the Service Map in Helsinki: libraries, health stations, swimming halls, beaches, schools, public institutions by kind (kindergartens, hospitals, social services, public authorities, sports and culture venues...) and the rest (other), and HSL's ticket sales points: kiosks, service points, ticket machines and parking meters (serviceCategory ticket…, the zone in fareZone, the payment methods in description), and the sites the city offers for new services such as saunas and cafes along its shore route (serviceCategory waterfrontSite), the plots the city offers to businesses (serviceCategory businessPlot; properties beyond the model: plotArea, the plot's area in m², and floorAreaRight, the floor area the plan allows in m²; the land use and the property code in description) and the sites holding an environmental permit (serviceCategory environmentalPermitSite, the activity in description). Sources: City of Helsinki and HSL, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: zq6avaaqv3d7ma2avz7rvkwtxelaxkc4
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-places
+  # The contact lines stay in the space, as on helsinki-all (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähteet: Helsingin kaupunki ja Helsingin seudun liikenne (HSL), CC BY 4.0'
+      sv: 'Källor: Helsingfors stad och Helsingforsregionens trafik (HRT), CC BY 4.0'
+      en: 'Sources: City of Helsinki and Helsinki Region Transport (HSL), CC BY 4.0'
+    themes: [EDUC, HEAL, SOCI, TRAN]
+    keywords:
+      fi: [palvelut, kirjastot, koulut, uimarannat, lipunmyynti, yritystontit, ympäristöluvat]
+      sv:
+        - tjänster
+        - bibliotek
+        - skolor
+        - badstränder
+        - biljettförsäljning
+        - företagstomter
+        - miljötillstånd
+      en:
+        - services
+        - libraries
+        - schools
+        - beaches
+        - ticket sales
+        - business plots
+        - environmental permits
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: WEEKLY
+    source:
+      - url: https://api.hel.fi/servicemap/v2/unit/?municipality=helsinki&page_size=1000&format=json
+        title: { fi: Kaupungin palvelut (Palvelukartta), en: City services (Service Map) }
+        description:
+          fi: 'Palvelukartan rajapinta: kaupungin toimipisteet sijainteineen.'
+          en: "The Service Map API: the city's units with their locations."
+      - url: https://hri.fi/data/en_GB/dataset/hsl-n-myyntipisteet
+        title:
+          fi: HSL:n myyntipisteet
+          en: HSL ticket sales points
+        description:
+          fi: HSL:n avoimen datan palvelun taso, GeoJSON (WGS84), CC BY 4.0. Luetaan päivittäin (putki sales-points).
+          en: A layer of HSL's open data hub, as GeoJSON (WGS84), CC BY 4.0. Read daily (pipeline sales-points).
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:rantareitin_uusien_toimintojen_paikat_2025
+        title:
+          fi: Uusien toimintojen paikat Helsingin rantareitillä
+          en: Sites for new services on the Helsinki shore route
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON. Luetaan viikoittain (putki waterfront-sites, serviceCategory waterfrontSite).
+          en: A WFS layer of the city's map service, as GeoJSON. Read weekly (pipeline waterfront-sites, serviceCategory waterfrontSite).
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Vapaat_yritystontit
+        title: { fi: Vapaat yritystontit, en: Plots for business }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON. Luetaan päivittäin (putki business-plots, serviceCategory businessPlot).
+          en: A WFS layer of the city's map service, as GeoJSON. Read daily (pipeline business-plots, serviceCategory businessPlot).
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Ymparistolupakohteet
+        title: { fi: Ympäristölupakohteet, en: Environmental permit sites }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON. Luetaan päivittäin (putki environmental-permit-sites, serviceCategory environmentalPermitSite).
+          en: A WFS layer of the city's map service, as GeoJSON. Read daily (pipeline environmental-permit-sites, serviceCategory environmentalPermitSite).
+    pipelineRef: { kind: Pipeline, name: services }

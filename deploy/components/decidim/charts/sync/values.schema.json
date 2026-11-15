@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of sync (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schedule": { "type": "string" },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string" },
+        "tag": { "type": "string" },
+        "digest": { "type": "string" }
+      }
+    },
+    "env": { "type": "array" },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "serviceMesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "enabled": { "type": "boolean" } }
+    },
+    "resources": { "type": "object" },
+    "global": { "type": "object" }
+  }
+}

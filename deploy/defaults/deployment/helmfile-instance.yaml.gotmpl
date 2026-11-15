@@ -1,0 +1,39 @@
+---
+# Entrypoint for a SINGLE INSTANCE — everything EXCEPT the shared cluster operators.
+#
+# Deploy the shared operators once (deployment/helmfile-operators.yaml), then deploy
+# any number of instances with this file. Each instance lives in its own namespace
+# (= global.instanceSlug) and is selected either by environment or by an ad-hoc slug:
+#
+#   helmfile -f deployment/helmfile-instance.yaml.gotmpl sync -e <env>
+#   helmfile -f deployment/helmfile-instance.yaml.gotmpl sync -e <env> --state-values-set instanceSlug=<slug>
+#
+# The operator parts (and their cross-namespace "needs") are excluded via deployLayer=instance.
+environments:
+  # empty environments must exist. When no environments are defined and one is set via CLI,
+  # helmfile will error out.
+  testing:
+    values: []
+  local:
+    values: []
+  production:
+    values: []
+---
+helmfiles:
+  - path: '../helmfile-root.yaml.gotmpl'
+    values:
+      - environments:
+          - testing
+          - local
+          - production
+        # Render everything EXCEPT the operator parts (see components/*/helmfile.yaml.gotmpl).
+        # The shared operator namespace is resolved from the environment
+        # (global.operators.namespace, default "jc-operators") exactly as in
+        # deployment/helmfile-operators.yaml, so it is consistently excluded from this
+        # instance's namespace preparation without being hardcoded here.
+        deployLayer: instance
+        {{- if hasKey .StateValues "instanceSlug" }}
+        global:
+          # Optional ad-hoc override: --state-values-set instanceSlug=<slug>
+          instanceSlug: {{ .StateValues.instanceSlug }}
+        {{- end }}

@@ -1,0 +1,104 @@
+{
+ "type": "FeatureCollection",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "EPSG:4326"
+  }
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     20.235342,
+     48.304527
+    ]
+   },
+   "properties": {
+    "IdZZ": "66-54355966-A0001",
+    "Názov": "Lekáreň LEVE",
+    "Druh_zariadenia": "verejná lekáreň",
+    "Ulica": "Malý rad 291",
+    "Mesto": "Rimavská Seč",
+    "PSČ": "98042",
+    "Okres": "Rimavská Sobota",
+    "Verejný_telefón": "0948695034",
+    "Verejný_email": "lekarenleve@hedofarm.sk",
+    "Prevádzkovateľ": "LEVEFARM s. r. o., Rimavská Sobota",
+    "IČO": "54355966",
+    "Sídlo_prevádzkovateľa": "Žánovská 5136/31, 97901 Rimavská Sobota",
+    "Pondelok": "8:00 - 13:00",
+    "Utorok": "8:00 - 13:00",
+    "Streda": "8:00 - 13:00",
+    "Štvrtok": "8:00 - 13:00",
+    "Piatok": "8:00 - 13:00",
+    "Sobota": null,
+    "Nedeľa": null
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     20.111826,
+     48.684914
+    ]
+   },
+   "properties": {
+    "IdZZ": "66-44835701-A0001",
+    "Názov": "Lekáreň LIANELA",
+    "Druh_zariadenia": "verejná lekáreň",
+    "Ulica": "Muránska 1335/12",
+    "Mesto": "Revúca",
+    "PSČ": "05001",
+    "Okres": "Revúca",
+    "Verejný_telefón": "+421584423195",
+    "Verejný_email": null,
+    "Prevádzkovateľ": "LIANELA, s.r.o., Revúca",
+    "IČO": "44835701",
+    "Sídlo_prevádzkovateľa": "Muránska 1335/12, 05001 Revúca",
+    "Pondelok": "7:30 - 16:00",
+    "Utorok": "7:30 - 16:00",
+    "Streda": "7:30 - 16:00",
+    "Štvrtok": "7:30 - 16:00",
+    "Piatok": "7:30 - 16:00",
+    "Sobota": null,
+    "Nedeľa": null
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     19.644115,
+     48.802456
+    ]
+   },
+   "properties": {
+    "IdZZ": "66-46760806-A0001",
+    "Názov": "Lekáreň Lieky24",
+    "Druh_zariadenia": "verejná lekáreň",
+    "Ulica": "Štúrova 49",
+    "Mesto": "Brezno",
+    "PSČ": "97666",
+    "Okres": "Brezno",
+    "Verejný_telefón": "0911080058",
+    "Verejný_email": null,
+    "Prevádzkovateľ": "Lekáreň Lieky24 s.r.o., Beňuš",
+    "IČO": "46760806",
+    "Sídlo_prevádzkovateľa": "Filipovo 20, 97664 Beňuš",
+    "Pondelok": "7:30 - 16:00",
+    "Utorok": "7:30 - 16:00",
+    "Streda": "7:30 - 16:00",
+    "Štvrtok": "7:30 - 16:00",
+    "Piatok": "7:30 - 16:00",
+    "Sobota": null,
+    "Nedeľa": null
+   }
+  }
+ ]
+}

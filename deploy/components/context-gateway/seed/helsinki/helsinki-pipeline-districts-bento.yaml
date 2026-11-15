@@ -1,0 +1,18 @@
+# The mapping of the districts pipeline (PL-03): one AdministrativeArea per district (kaupunginosa) of
+# the city's district division, from the open WFS layer `Kaupunginosajako`. The register writes
+# the names in capitals; they are written as a person reads them. The permits point at these
+# districts by number (`refDistrict`).
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.features.or([]).filter(f -> f.properties.tunnus.or("").string().re_match("^[0-9]{1,10}$") && f.geometry.or(null) != null).map_each(f -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:district-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.tunnus.string().number().int64()),
+          "type": "AdministrativeArea",
+          "name": { "type": "LanguageProperty", "languageMap": { "fi": f.properties.nimi_fi.or("").lowercase().capitalize(), "sv": f.properties.nimi_se.or("").lowercase().capitalize() }.filter(entry -> entry.value.trim() != "" && entry.value != "None") },
+          "districtCode": { "type": "Property", "value": f.properties.tunnus.string() },
+          "divisionLevel": { "type": "Property", "value": "district" },
+          "location": { "type": "GeoProperty", "value": f.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Kami district division" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Kaupunginosajako" }
+        }.filter(entry -> entry.value != null))

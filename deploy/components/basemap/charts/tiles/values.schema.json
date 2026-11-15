@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of tiles (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "server": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            }
+          }
+        },
+        "refresh": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "imagePullPolicy": {
+      "type": "string"
+    },
+    "host": {
+      "type": "string"
+    },
+    "corsDomain": {
+      "type": "string"
+    },
+    "schedule": {
+      "type": "string"
+    },
+    "file": {
+      "type": "string"
+    },
+    "maxzoom": {
+      "type": "number"
+    },
+    "regions": {
+      "type": "object"
+    },
+    "storage": {
+      "type": "string"
+    },
+    "builds": {
+      "type": "string"
+    },
+    "pmtiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "languages": {
+      "type": "array"
+    },
+    "serviceMesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "refresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "global": {
+      "type": "object"
+    }
+  }
+}

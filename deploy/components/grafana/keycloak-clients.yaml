@@ -1,0 +1,67 @@
+---
+# Browser login for the dashboards. Confidential, authorization-code with PKCE, and no
+# service account: Grafana acts for the person who logged in and never on its own.
+grafana:
+  # What the login page names ("Sign in to {name} · {organization}"): a key the login theme
+  # translates (components/keycloak/charts/theme).
+  name: ${jcClientMonitoring}
+  description: Confidential client of the Grafana addon for operator login
+  subdomain: ''
+  redirectPath: /grafana/login/generic_oauth
+  componentNamespaces:
+    - grafana
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    # The person's own token reaches the gateway through each project datasource (T-6504), so it
+    # has to name each Endpoint a project dashboard reads; the Endpoint's Policy then decides by
+    # the person. One audience per slug in the environments' `grafana.grafana.projects`
+    # (tests/test_grafana.py holds the two lists together). The realm roles go in the ID token
+    # because that is the token Grafana reads `realm_access` from.
+    protocolMappers:
+      - name: realm-roles-in-id-token
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-realm-role-mapper
+        consentRequired: false
+        config:
+          claim.name: realm_access.roles
+          jsonType.label: String
+          multivalued: 'true'
+          id.token.claim: 'true'
+          access.token.claim: 'false'
+          userinfo.token.claim: 'true'
+      - name: audience-helsinki-cycle-counts
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: kvhnixtbe5dex2wt2kx3i37dzw6yzsxt
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: audience-helsinki-air-quality
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: jtjnhkaau64zmzz5csmcwem52icvufy2
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: audience-helsinki-bikes-ops
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: ydp6nddchg4sewmylsiclg4377mlldrj
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: audience-bbsk-kpi
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: qfhhh5no5wz4lk3rfjisdtx3chiyfig3
+          access.token.claim: 'true'
+          id.token.claim: 'false'

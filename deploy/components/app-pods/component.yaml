@@ -1,0 +1,8 @@
+---
+component: app-pods
+# The ui-rust Apps an installation without a build lane runs as pods (jc-prod: hsl-transport, prod's
+# App pod rebuilt from its commit by the monorepo's image-apps.yml). jc's Portal answers the App's
+# host and proxies it here (JC_PORTAL_APP_PODS). Opt-in: an environment turns it on by listing
+# `app-pods` in its components after `jc`, its one caller (README.md).
+parts:
+  - name: hsl-transport

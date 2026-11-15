@@ -1,0 +1,85 @@
+# The street parking of Prague that TSK hl. m. Prahy maps on the IPR geoportal (T-5424): the paid
+# parking sections and their street segments (one referencing group, T-4344) and the bays reserved
+# for ZTP/P card holders, deliveries and special purposes, read through their own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-parkovani
+  namespace: praha
+  title: { cs: Parkování na ulici — Praha, en: On-street parking — Prague }
+  description:
+    cs: 'Zóny placeného stání (úseky s tarifem a zónou, úseky ulic s počtem stání) a vyhrazená stání pro držitele průkazu ZTP/P, pro zásobování a speciální: plochy a body na mapě. Zdroj: TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0.'
+    en: 'Paid parking zones (sections with their tariff and zone, street segments with their spaces) and bays reserved for ZTP/P card holders, deliveries and special purposes: areas and points on the map. Source: TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: o4skujqulerujig44bteetjkalme6iof
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-parkovani
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Street areas; the plate a reserved bay is bound to is not in the layer.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+      en: 'Source: data © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+    themes: [TRAN, REGI]
+    keywords:
+      cs: [Praha, parkování, zóny placeného stání, ZTP/P, zásobování]
+      en: [Prague, parking, paid parking zones, disabled parking, delivery bays]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/8e3420ecc539468489101958689a3cd9_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Zóny placeného stání vymezené tarifem (IPR Praha)
+          en: Paid parking sections by tariff (IPR Praha)
+        description:
+          cs: Úseky zón placeného stání s tarifem, zónou a počtem stání, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The paid parking sections with their tariff, zone and spaces, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/7cbfdf9f9d87418ba62b35762cd46ca7_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Úseky parkování v zónách placeného stání (IPR Praha)
+          en: Street segments of the paid parking zones (IPR Praha)
+        description:
+          cs: Úseky ulic v zónách placeného stání s počtem stání a úsekem tarifu, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The street segments of the paid parking zones with their spaces and tariff section, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/ab4a8cd8fc284b738ca806681559d694_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Vyhrazená stání pro držitele průkazu ZTP/P (IPR Praha)
+          en: Reserved bays for ZTP/P card holders (IPR Praha)
+        description:
+          cs: Vyhrazená parkovací stání pro držitele průkazu ZTP/P bez vazby na registrační značku, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Bays reserved for ZTP/P card holders, any vehicle, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/6bceef0c12d84031a0628fab533eecc1_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Vyhrazená stání pro invalidy – sdružená (IPR Praha)
+          en: Shared reserved bays for disabled drivers (IPR Praha)
+        description:
+          cs: Sdružená vyhrazená stání pro invalidy s počtem stání, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Shared reserved bays for disabled drivers with their spaces, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/1e6b9ad51a12468193f47e2b9b1b94ed_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Vyhrazené stání pro invalidy s registrační značkou (IPR Praha)
+          en: Reserved bays for one disabled driver's plate (IPR Praha)
+        description:
+          cs: Vyhrazená stání pro invalidy vázaná na registrační značku (značka se nečte), TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Bays reserved for one disabled driver's plate (the plate is not read), TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/b62d8490d0034b55b2982386a5d1027c_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Vyhrazené stání pro zásobování (IPR Praha), en: Delivery bays (IPR Praha) }
+        description:
+          cs: Vyhrazená stání pro zásobování, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Bays reserved for deliveries, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/720a5804b9ef4c73af2d85f5605c1dc6_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Vyhrazené stání speciální (IPR Praha), en: Special reserved bays (IPR Praha) }
+        description:
+          cs: Speciální vyhrazená stání, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Special reserved bays, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

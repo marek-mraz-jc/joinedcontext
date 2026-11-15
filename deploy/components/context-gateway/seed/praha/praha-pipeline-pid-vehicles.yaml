@@ -1,0 +1,18 @@
+# The PID vehicles in Prague from Golemio's vehicle positions into the city space, one Vehicle per
+# vehicle in service, every minute (T-5268).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: pid-vehicles
+  namespace: praha
+  title: { en: PID vehicles in service, cs: Vozidla PID v provozu }
+spec:
+  class: auto
+  # Golemio refreshes the positions every 20-30 s; one read a minute is where a rider waiting at a
+  # stop sees the tram coming, at one request of the key's 20 per 8 s.
+  period: 60s
+  source:
+    dataSourceRef: { kind: DataSource, name: golemio-pid-vehicles }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: Vehicle, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

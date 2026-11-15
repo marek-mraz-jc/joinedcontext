@@ -1,0 +1,10 @@
+replicaCount: 1
+
+# Static files: nginx holds a few MiB per worker.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

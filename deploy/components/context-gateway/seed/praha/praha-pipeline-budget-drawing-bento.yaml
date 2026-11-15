@@ -1,0 +1,73 @@
+# The mapping of the budget-drawing pipeline (T-5428, PL-03): one KeyPerformanceIndicator per line of
+# the City of Prague's budget execution (Čerpání rozpočtu MHMP, LKOD d8dab0f5, monthly, no rights
+# reserved), 1612 lines in 2026: what the city has drawn of the line so far this year (`kpiValue`)
+# beside the line's current budget (`adjustedAmount`). The lines are those of the budget pipeline,
+# keyed by the same five codes, so a reader sets a BudgetLine beside its drawing.
+#
+# The file starts with a UTF-8 byte order mark, read as text first, as the budget's. The codes stay
+# zero-padded strings. The amounts carry no unit in the file; the budget's add up to Prague's budget
+# in thousands of CZK, which `unitText` says. Each year's file adds a year to the series
+# `mhmp-cerpani`; the DataSource's URL moves in January (ponytail: the year is in the file name).
+#
+# Ids: urn:ngsi-ld:KeyPerformanceIndicator:{org}:{space}:mhmp-cerpani-{year}-{area}-{odpa}-{pol}-{uz}.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a line with a malformed code or amount, an amount beyond
+# 1,000,000,000 thousand CZK either way (eight times the city's yearly budget), a year after the
+# current one, or a second line of one key is dropped, and the log line counts each reason. An answer
+# without a row list, an empty one, or one where fewer than half the lines survive fails the run.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 8388608 { throw("the city answered %v bytes; more than 8 MiB is not a year of budget execution".format(content().length())) } else { content() }
+        - mapping: |
+            let source = "https://opendata-storage.praha.eu/UCT_cerpani_rozpoctu/cerpani_rozpoctu/Zdroje/2026/Cerpani_rozpoctu_MHMP_2026.json"
+            let rows = content().string().trim_prefix("\ufeff").parse_json().data.row.catch(null)
+            root = if $rows.type() != "array" {
+              throw("the budget execution file %v holds no row list".format($source))
+            } else if $rows.length() == 0 {
+              throw("the budget execution file %v lists no line; the budget is never empty, so the download failed".format($source))
+            } else { { "source": $source, "rows": $rows } }
+        - mapping: |
+            let year = now().ts_format("2006", "Europe/Prague")
+            let amount = "^-?[0-9]+(\\.[0-9]+)?$"
+            let rows = this.rows.map_each(r -> r.assign({ "area": if r.oblast.or("").trim() == "" { "00" } else { r.oblast.trim() } }))
+            let usable = $rows.filter(r -> r.rok.or("").re_match("^[0-9]{4}$") && r.area.re_match("^[0-9]{2}$") && r.odpa.or("").re_match("^[0-9]{6}$") && r.pol.or("").re_match("^[0-9]{4}$") && r.uz.or("").re_match("^[0-9]{9}$") && r.rozpocet_aktualni.or("").re_match($amount) && r.cerpani.or("").re_match($amount)).map_each(r -> r.assign({ "drawn": r.cerpani.number(), "budget": r.rozpocet_aktualni.number(), "key": "%v-%v-%v-%v-%v".format(r.rok, r.area, r.odpa, r.pol, r.uz) }))
+            let plausible = $usable.filter(r -> r.drawn.abs() <= 1000000000 && r.budget.abs() <= 1000000000)
+            let current = $plausible.filter(r -> r.rok <= $year)
+            let unique = $current.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta range = $usable.length() - $plausible.length()
+            meta future = $plausible.length() - $current.length()
+            meta duplicate = $current.length() - $unique.length()
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("budget execution file %v: only %v of %v lines are well-formed and plausible".format(this.source, $unique.length(), $rows.length()))
+            } else { this.assign({ "rows": $unique }) }
+        - log:
+            level: INFO
+            message: 'mhmp-cerpani: read ${! meta("read") }, dropped ${! meta("unusable") } malformed, ${! meta("range") } out of range, ${! meta("future") } of a future year, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            map named {
+              root = if this.code.or("").trim() == "" { null } else { (this.code.trim() + " " + this.name.or("").trim()).trim() }
+            }
+            let source = this.source
+            root = this.rows.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:mhmp-cerpani-%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.key),
+              "type": "KeyPerformanceIndicator",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": "Čerpání %v: %v".format(r.rok, [r.nazev_odpa.or("").trim(), r.nazev_pol.or("").trim(), r.nazev_uz.or("").trim()].filter(t -> t != "").join(": ")) } },
+              "dataSet": { "type": "Property", "value": "mhmp-cerpani" },
+              "indicator": { "type": "Property", "value": [{ "code": r.odpa, "name": r.nazev_odpa }.apply("named"), { "code": r.pol, "name": r.nazev_pol }.apply("named"), { "code": r.uz, "name": r.nazev_uz }.apply("named")].filter(t -> t != null).join(" / ") },
+              "refArea": { "type": "Property", "value": "CZ010" },
+              "refPeriod": { "type": "Property", "value": r.rok },
+              "dimensionKey": if { "code": r.oblast, "name": r.nazev_oblast }.apply("named") == null { null } else { { "type": "Property", "value": { "code": r.oblast, "name": r.nazev_oblast }.apply("named") } },
+              "kpiValue": { "type": "Property", "value": r.drawn },
+              "unitText": { "type": "Property", "value": "tis. Kč" },
+              "adjustedAmount": { "type": "Property", "value": r.budget },
+              "dataProvider": { "type": "Property", "value": "Magistrát hl. m. Prahy (open data, no rights reserved)" },
+              "source": { "type": "Property", "value": $source }
+            }.filter(kv -> kv.value != null))
+        # 500 records per request to the endpoint, about 0.5 MB, far under the broker's 4 MiB body limit.
+        - unarchive: { format: json_array }
+        - split: { size: 500 }
+        - archive: { format: json_array }

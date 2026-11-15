@@ -1,0 +1,60 @@
+# Queues the full pass of every active publication and exits; Sidekiq does the writing (T-6458).
+# Decidim's image carries no sidekiq-cron, and a pass heals what a job lost and renews expiresAt.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: decidim-sync
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: decidim-sync
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  timeZone: UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: decidim-sync
+            app.kubernetes.io/instance: {{ .Release.Name }}
+          {{- if .Values.serviceMesh.enabled }}
+          annotations:
+            # Without this the proxy keeps running after the task exits and the Job never completes.
+            linkerd.io/inject: enabled
+            config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: sync
+              image: {{ printf "%s:%s@%s" .Values.image.repository .Values.image.tag .Values.image.digest | quote }}
+              imagePullPolicy: IfNotPresent
+              command: ["sh", "-c", "mkdir -m 700 -p \"$TMPDIR\" && exec bundle exec rake decidim_joinedcontext:sync_all"]
+              env:
+                {{- toYaml .Values.env | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+                - { name: rails-tmp, mountPath: /code/tmp }
+                - { name: rails-log, mountPath: /code/log }
+          volumes:
+            - name: tmp
+              emptyDir: { sizeLimit: 64Mi }
+            - name: rails-tmp
+              emptyDir: { sizeLimit: 64Mi }
+            - name: rails-log
+              emptyDir: { sizeLimit: 64Mi }

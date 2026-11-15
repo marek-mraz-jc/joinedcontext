@@ -1,0 +1,554 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:WaterBodyStatus a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "WaterBodyStatus" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vYMERA ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pOVODIE ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rkmDo1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nM2 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:aUT ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:kod ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nazovVU1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:kODVU202 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rkmOd1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fACC ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iDN2 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typ ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dlzkaVU1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:sUBUNIT ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:celkChemStav ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:potencial ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dOW ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nAZOVVUD ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:charakter1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:sOI ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fIDRiekyBbskJoin ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:skupina ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:ekologickyStav ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pOZNAMKA ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:aCH ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:charakter ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fIDKraj0 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pOZN1 ],
+        jc:Entity ;
+    skos:definition "A water body with its ecological status or potential class." ;
+    skos:exactMatch jc:WaterBodyStatus ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:upstream_source "https://smart-data-models.github.io/dataModel.PointOfInterest/PointOfInterest/schema.json" .
+
+jc:aCH a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "aCH" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `ACH`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:aUT a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "aUT" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `AUT`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:celkChemStav a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "celkChemStav" ;
+    skos:definition "The source column `celk_chem_stav`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:charakter a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "charakter" ;
+    skos:definition "The source column `charakter`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:charakter1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "charakter1" ;
+    skos:definition "The source column `charakter_1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dOW a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dOW" ;
+    rdfs:range jc:datetime ;
+    skos:definition "The source column `DOW`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:date_or_datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date_or_datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:decimal a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:decimal ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dlzkaVU1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dlzkaVU1" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `dlzka_VU_1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:double a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:double ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:ekologickyStav a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "ekologickyStav" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `ekologicky_stav`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:fACC a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fACC" ;
+    skos:definition "The source column `FACC`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:fIDKraj0 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fIDKraj0" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `FID_kraj_0`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:fIDRiekyBbskJoin a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fIDRiekyBbskJoin" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `FID_rieky_bbsk_join`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iDN2 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iDN2" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `IDN2`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:jsonpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:jsonpointer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpointer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:kODVU202 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "kODVU202" ;
+    skos:definition "The source column `KOD_VU_202`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:kod a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "kod" ;
+    skos:definition "The source column `kod`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:nAZOVVUD a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nAZOVVUD" ;
+    skos:definition "The source column `NAZOV_VU_D`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nM2 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nM2" ;
+    skos:definition "The source column `NM2`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The source column `NAZOV_VU`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:nazovVU1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nazovVU1" ;
+    skos:definition "The source column `nazov_VU_1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:pOVODIE a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pOVODIE" ;
+    skos:definition "The source column `POVODIE`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pOZN1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pOZN1" ;
+    skos:definition "The source column `POZN_1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pOZNAMKA a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pOZNAMKA" ;
+    skos:definition "The source column `POZNAMKA`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:potencial a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "potencial" ;
+    skos:definition "The source column `potencial`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rkmDo1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rkmDo1" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `rkm_do_1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rkmOd1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rkmOd1" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `rkm_od_1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:sOI a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "sOI" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `SOI`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:sUBUNIT a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "sUBUNIT" ;
+    skos:definition "The source column `SUB_UNIT`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:skupina a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "skupina" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `skupina`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:sparqlpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:sparqlpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:time a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:time ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:typ a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typ" ;
+    skos:definition "The source column `typ`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:vYMERA a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vYMERA" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `VYMERA`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+
+<https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> a owl:Ontology ;
+    rdfs:label "WaterBodyStatus" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "WaterBodyStatus, an extension of dataModel.PointOfInterest/PointOfInterest" ;
+    skos:definition "A water body with its ecological status or potential class. Extends dataModel.PointOfInterest/PointOfInterest: WaterQualityObserved and WaterObserved require dateObserved and hold measured parameters; these rows are assessed classes of a located water body." .
+

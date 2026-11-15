@@ -1,0 +1,5 @@
+apiVersion: v2
+name: keycloak-user-ids
+description: Creates the seeded people with the fixed Keycloak ids the manifests name them by, before the realm import (PF-126)
+type: application
+version: 0.1.0

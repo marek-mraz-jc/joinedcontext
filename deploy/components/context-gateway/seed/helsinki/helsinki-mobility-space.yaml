@@ -1,0 +1,15 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: mobility
+  namespace: helsinki-mobility
+  title: { en: Mobility analytics }
+  description:
+    en: 'A second project of hel.fi: it reads the city-bike stations the helsinki project shares, and keeps its own derived data here'
+spec:
+  # Pinned so no entity id changes: the space predates rendered segments (PF-84).
+  urnSegment: mobility
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: mobility }
+  defaultLocale: en

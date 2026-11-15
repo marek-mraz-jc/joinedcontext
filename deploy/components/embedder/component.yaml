@@ -1,0 +1,8 @@
+---
+component: embedder
+# The embedding model as a service several deployments share (monorepo crates/embedder,
+# jc-embedder): each calling deployment signs in with its own kaisatsu token, quota per
+# deployment, no text stored or logged. Opt-in: an environment turns it on by listing `embedder`
+# in its components (README.md); dev and smartcity do not.
+parts:
+  - name: server

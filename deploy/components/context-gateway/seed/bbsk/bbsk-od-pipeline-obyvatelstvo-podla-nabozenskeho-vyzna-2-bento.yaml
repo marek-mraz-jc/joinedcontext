@@ -1,0 +1,198 @@
+# The mapping of the od-obyvatelstvo-podla-nabozenskeho-vyzna-2 pipeline, generated from the T-4254 mapping: one KeyPerformanceIndicator per row of
+# "Obyvateľstvo podľa náboženského vyznania (2011), okresy" (https://opendata.dev.joinedcontext.com/dataset/bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2011-okresy-3844c8). Do not edit: change the mapping and run scripts/open-data/generate.py.
+
+pipeline:
+  processors:
+    # A layer that answers an error or no feature list is the service failing, so the run fails
+    # where it can be seen rather than writing nothing.
+    - mapping: |
+        root = if this.error.or(null) != null || this.features.or(null) == null { throw("the layer answered no features: %v".format(this.error.message.or(""))) } else { this }
+    # Page 0 as it came. When the layer says there is more, it is asked how many rows it holds and
+    # every further page of them is read (T-5288), one page at a time: the runner fetches, maps and
+    # writes a page before the next, so a layer of any size runs in a page's memory (jc-ekiben-paging).
+    - branch:
+        request_map: |
+          root = if this.properties.exceededTransferLimit.or(false) { "" } else { deleted() }
+        processors:
+          - http:
+              url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Mapa_SODB_2011_n%C3%A1bo%C5%BEenstvo_okresy/FeatureServer/0/query?where=1%3D1&returnCountOnly=true&f=json"
+              verb: GET
+              headers:
+                Accept: application/json
+              timeout: 60s
+              retries: 2
+              rate_limit: pipeline_egress
+        result_map: |
+          root.rowCount = this.count.or(this.error.message.or("no count"))
+    - mapping: |
+        let rows = this.rowCount.or(null)
+        root = if !this.properties.exceededTransferLimit.or(false) { [this] } else if errored() || $rows.type() != "number" { [{ "problem": "the layer did not say how many rows it holds: %v".format(error().or($rows)) }] } else if this.features.length() < [1000, $rows].min() { [{ "problem": "the layer answered %v rows where 1000 were asked, so its pages would skip rows".format(this.features.length()) }] } else if $rows <= 1000 { [this] } else { [this].concat(range(1, (($rows + 999) / 1000).floor()).map_each(p -> { "offset": p * 1000, "rowCount": $rows })) }
+    - unarchive:
+        format: json_array
+    # Each page its own batch: fetched, mapped and written before the next is read.
+    - split:
+        size: 1
+    - switch:
+        - check: this.offset.or(null) != null
+          processors:
+            - mapping: |
+                meta offset = this.offset
+                meta rows = this.rowCount
+                root = ""
+            - http:
+                url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Mapa_SODB_2011_n%C3%A1bo%C5%BEenstvo_okresy/FeatureServer/0/query?where=1%3D1&outFields=DOW,FACC,IDN3,NM3,IDN2,NM2,VYMERA,NUTS1,NUTS1_CODE,NUTS2,NUTS2_CODE,NUTS3,NUTS3_CODE,LAU1,LAU1_CODE,Okres,%C4%8C%C3%ADslo_okresu,Rok,Po%C4%8Det_obyvate%C4%BEov_spolu,R%C3%ADmskokatol%C3%ADcka_cirkev,Gr%C3%A9ckokatol%C3%ADcka_cirkev,Pravosl%C3%A1vna_cirkev,Evanjelick%C3%A1_cirkev_augsbursk%C3%A9ho,Reformovan%C3%A1_kres%C5%A5ansk%C3%A1_cirkev,N%C3%A1bo%C5%BEensk%C3%A1_spolo%C4%8Dnos%C5%A5_Jehovovi_,Evanjelick%C3%A1_cirkev_metodistick%C3%A1,Kres%C5%A5ansk%C3%A9_zbory,Apo%C5%A1tolsk%C3%A1_cirkev,Bratsk%C3%A1_jednota_baptistov,Cirkev_adventistov_siedmeho_d%C5%88a,Cirkev_bratsk%C3%A1,%C3%9Astredn%C3%BD_zv%C3%A4z_%C5%BEidovsk%C3%BDch_n%C3%A1bo%C5%BEe,Starokatol%C3%ADcka_cirkev,Cirkev_%C4%8Deskoslovensk%C3%A1_husitsk%C3%A1,Novoapo%C5%A1tolsk%C3%A1_cirkev,Bah%C3%A1jske_spolo%C4%8Denstvo,Cirkev_Je%C5%BEi%C5%A1a_Krista_sv%C3%A4t%C3%BDch_ne,in%C3%A9,bez_vyznania,nezisten%C3%A9,R%C3%ADmskokatol%C3%ADcka_cirkev__,Gr%C3%A9ckokatol%C3%ADcka_cirkev__,Pravosl%C3%A1vna_cirkev__,Evanjelick%C3%A1_cirkev_augsbursk%C3%A9_1,Reformovan%C3%A1_kres%C5%A5ansk%C3%A1_cirkev__,N%C3%A1bo%C5%BEensk%C3%A1_spolo%C4%8Dnos%C5%A5_Jehovovi1,Evanjelick%C3%A1_cirkev_metodistic_1,Kres%C5%A5ansk%C3%A9_zbory__,Apo%C5%A1tolsk%C3%A1_cirkev__,Bratsk%C3%A1_jednota_baptistov__,Cirkev_adventistov_siedmeho_d_1,Cirkev_bratsk%C3%A1__,%C3%9Astredn%C3%BD_zv%C3%A4z_%C5%BEidovsk%C3%BDch_n%C3%A1bo_1,Starokatol%C3%ADcka_cirkev__,Cirkev_%C4%8Deskoslovensk%C3%A1_husitsk%C3%A1_,Novoapo%C5%A1tolsk%C3%A1_cirkev__,Bah%C3%A1jske_spolo%C4%8Denstvo__,Cirkev_Je%C5%BEi%C5%A1a_Krista_sv%C3%A4t%C3%BDch__1,in%C3%A9__,bez_vyznania__,nezisten%C3%A9__&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=${! @offset }&resultRecordCount=1000&orderByFields=ObjectId"
+                verb: GET
+                headers:
+                  Accept: application/geo+json
+                timeout: 60s
+                retries: 2
+                rate_limit: pipeline_egress
+            - mapping: |
+                root = if errored() { throw("the page at %v did not come: %v".format(@offset, error())) } else if this.features.or(null) == null { { "problem": "the page at %v answered no features: %v".format(@offset, this.error.message.or("")) } } else if this.features.length() < [1000, @rows - @offset].min() { { "problem": "the page at %v answered %v rows where %v were due".format(@offset, this.features.length(), [1000, @rows - @offset].min()) } } else { this }
+    # A refusal above fails the run and writes none of its page's rows; earlier pages stay written
+    # and the failed run deletes nothing (sourceDeletes waits for a finished run).
+    - mapping: |
+        root = if this.problem.or(null) != null { throw(this.problem) } else { this }
+    - mapping: |
+        root = this.features.or([])
+    - unarchive:
+        format: json_array
+    - mapping: |
+        # Slovak notation: a space (or a no-break one) between thousands, a comma before the decimals, so
+        # "10 700,01" is 10700.01 (T-4324); a text without a comma keeps its dot, "1.5" is one and a half.
+        map number {
+          let s = this.string().re_replace_all("[ 	  ]", "")
+          let t = if $s.contains(",") { $s.replace_all(".", "").replace_all(",", ".") } else { $s }
+          root = $t.number().catch(null)
+        }
+        map integer {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v.round().int64() } }
+        }
+        map float {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        map string {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": $v } }
+        }
+        map string_list {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": [$v] } }
+        }
+        map uri {
+          root = this.apply("string")
+        }
+        # An Esri date is milliseconds since the epoch; a WordPress one is text.
+        # `match` rebinds `this` to what it matches, so the value is named first.
+        map datetime {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02T15:04:05Z", "UTC").catch(null),
+            "string" => $x.ts_parse("2006-01-02T15:04:05").ts_format("2006-01-02T15:04:05Z", "UTC").catch($x.ts_format("2006-01-02T15:04:05Z", "UTC").catch(null)),
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        # The instant a row was observed, from its `observedAt` column: a bare year is its first instant,
+        # anything else reads as a datetime (T-4288).
+        map observed {
+          let x = this
+          root = if $x == null { null } else if $x.string().re_match("^[0-9]{4}$") { $x.string() + "-01-01T00:00:00Z" } else {
+            $x.apply("datetime").value.catch(null)
+          }
+        }
+        # A measured Property with the instant it holds, so SensorThings charts it (T-4288).
+        map stamped {
+          root = if this.p == null || this.at == null { this.p } else { this.p.merge({ "observedAt": this.at }) }
+        }
+        map date {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02", "UTC").catch(null),
+            # ISO, or the Slovak "29.08.2026" and "1. 3. 2024".
+            "string" => if $x.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}") { $x.slice(0, 10) } else {
+              $x.re_replace_all("[.] +", ".").trim().ts_parse("2.1.2006").ts_format("2006-01-02", "UTC").catch(null)
+            },
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        let local = "obyvatelstvo-podla-nabozenskeho-vyzna-2-" + [this.properties."IDN3"].map_each(v -> v.string()).join("-").re_replace_all("[^A-Za-z0-9._~-]", "-").slice(0, 80)
+        let at = this.properties."Rok".apply("observed")
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", "bbsk.sk", env("JC_SPACE"), $local),
+          "type": "KeyPerformanceIndicator",
+          "dOW": this.properties."DOW".apply("datetime"),
+          "fACC": this.properties."FACC".apply("string"),
+          "iDN3": {"p": this.properties."IDN3".apply("integer"), "at": $at}.apply("stamped"),
+          "nM3": this.properties."NM3".apply("string"),
+          "iDN2": {"p": this.properties."IDN2".apply("integer"), "at": $at}.apply("stamped"),
+          "nM2": this.properties."NM2".apply("string"),
+          "vYMERA": {"p": this.properties."VYMERA".apply("float"), "at": $at}.apply("stamped"),
+          "nUTS1": this.properties."NUTS1".apply("string"),
+          "nUTS1CODE": this.properties."NUTS1_CODE".apply("string"),
+          "nUTS2": this.properties."NUTS2".apply("string"),
+          "nUTS2CODE": this.properties."NUTS2_CODE".apply("string"),
+          "nUTS3": this.properties."NUTS3".apply("string"),
+          "nUTS3CODE": this.properties."NUTS3_CODE".apply("string"),
+          "lAU1": this.properties."LAU1".apply("string"),
+          "lAU1CODE": this.properties."LAU1_CODE".apply("string"),
+          "okres": this.properties."Okres".apply("string"),
+          "cisloOkresu": this.properties."Číslo_okresu".apply("string"),
+          "rok": this.properties."Rok".apply("string"),
+          "pocetObyvatelovSpolu": {"p": this.properties."Počet_obyvateľov_spolu".apply("integer"), "at": $at}.apply("stamped"),
+          "rimskokatolickaCirkev": {"p": this.properties."Rímskokatolícka_cirkev".apply("float"), "at": $at}.apply("stamped"),
+          "greckokatolickaCirkev": {"p": this.properties."Gréckokatolícka_cirkev".apply("float"), "at": $at}.apply("stamped"),
+          "pravoslavnaCirkev": {"p": this.properties."Pravoslávna_cirkev".apply("float"), "at": $at}.apply("stamped"),
+          "evanjelickaCirkevAugsburskeho": {"p": this.properties."Evanjelická_cirkev_augsburského".apply("float"), "at": $at}.apply("stamped"),
+          "reformovanaKrestanskaCirkev": {"p": this.properties."Reformovaná_kresťanská_cirkev".apply("float"), "at": $at}.apply("stamped"),
+          "nabozenskaSpolocnostJehovovi": {"p": this.properties."Náboženská_spoločnosť_Jehovovi_".apply("float"), "at": $at}.apply("stamped"),
+          "evanjelickaCirkevMetodisticka": {"p": this.properties."Evanjelická_cirkev_metodistická".apply("float"), "at": $at}.apply("stamped"),
+          "krestanskeZbory": {"p": this.properties."Kresťanské_zbory".apply("float"), "at": $at}.apply("stamped"),
+          "apostolskaCirkev": {"p": this.properties."Apoštolská_cirkev".apply("float"), "at": $at}.apply("stamped"),
+          "bratskaJednotaBaptistov": {"p": this.properties."Bratská_jednota_baptistov".apply("float"), "at": $at}.apply("stamped"),
+          "cirkevAdventistovSiedmehoDna": {"p": this.properties."Cirkev_adventistov_siedmeho_dňa".apply("float"), "at": $at}.apply("stamped"),
+          "cirkevBratska": {"p": this.properties."Cirkev_bratská".apply("float"), "at": $at}.apply("stamped"),
+          "ustrednyZvazZidovskychNaboze": {"p": this.properties."Ústredný_zväz_židovských_nábože".apply("float"), "at": $at}.apply("stamped"),
+          "starokatolickaCirkev": {"p": this.properties."Starokatolícka_cirkev".apply("float"), "at": $at}.apply("stamped"),
+          "cirkevCeskoslovenskaHusitska": {"p": this.properties."Cirkev_československá_husitská".apply("float"), "at": $at}.apply("stamped"),
+          "novoapostolskaCirkev": {"p": this.properties."Novoapoštolská_cirkev".apply("float"), "at": $at}.apply("stamped"),
+          "bahajskeSpolocenstvo": {"p": this.properties."Bahájske_spoločenstvo".apply("float"), "at": $at}.apply("stamped"),
+          "cirkevJezisaKristaSvatychNe": {"p": this.properties."Cirkev_Ježiša_Krista_svätých_ne".apply("float"), "at": $at}.apply("stamped"),
+          "ine": {"p": this.properties."iné".apply("float"), "at": $at}.apply("stamped"),
+          "bezVyznania": {"p": this.properties."bez_vyznania".apply("float"), "at": $at}.apply("stamped"),
+          "nezistene": {"p": this.properties."nezistené".apply("float"), "at": $at}.apply("stamped"),
+          "rimskokatolickaCirkev2": {"p": this.properties."Rímskokatolícka_cirkev__".apply("float"), "at": $at}.apply("stamped"),
+          "greckokatolickaCirkev2": {"p": this.properties."Gréckokatolícka_cirkev__".apply("float"), "at": $at}.apply("stamped"),
+          "pravoslavnaCirkev2": {"p": this.properties."Pravoslávna_cirkev__".apply("float"), "at": $at}.apply("stamped"),
+          "evanjelickaCirkevAugsburske1": {"p": this.properties."Evanjelická_cirkev_augsburské_1".apply("float"), "at": $at}.apply("stamped"),
+          "reformovanaKrestanskaCirkev2": {"p": this.properties."Reformovaná_kresťanská_cirkev__".apply("float"), "at": $at}.apply("stamped"),
+          "nabozenskaSpolocnostJehovovi1": {"p": this.properties."Náboženská_spoločnosť_Jehovovi1".apply("float"), "at": $at}.apply("stamped"),
+          "evanjelickaCirkevMetodistic1": {"p": this.properties."Evanjelická_cirkev_metodistic_1".apply("float"), "at": $at}.apply("stamped"),
+          "krestanskeZbory2": {"p": this.properties."Kresťanské_zbory__".apply("float"), "at": $at}.apply("stamped"),
+          "apostolskaCirkev2": {"p": this.properties."Apoštolská_cirkev__".apply("float"), "at": $at}.apply("stamped"),
+          "bratskaJednotaBaptistov2": {"p": this.properties."Bratská_jednota_baptistov__".apply("float"), "at": $at}.apply("stamped"),
+          "cirkevAdventistovSiedmehoD1": {"p": this.properties."Cirkev_adventistov_siedmeho_d_1".apply("float"), "at": $at}.apply("stamped"),
+          "cirkevBratska2": {"p": this.properties."Cirkev_bratská__".apply("float"), "at": $at}.apply("stamped"),
+          "ustrednyZvazZidovskychNabo1": {"p": this.properties."Ústredný_zväz_židovských_nábo_1".apply("float"), "at": $at}.apply("stamped"),
+          "starokatolickaCirkev2": {"p": this.properties."Starokatolícka_cirkev__".apply("float"), "at": $at}.apply("stamped"),
+          "cirkevCeskoslovenskaHusitska2": {"p": this.properties."Cirkev_československá_husitská_".apply("float"), "at": $at}.apply("stamped"),
+          "novoapostolskaCirkev2": {"p": this.properties."Novoapoštolská_cirkev__".apply("float"), "at": $at}.apply("stamped"),
+          "bahajskeSpolocenstvo2": {"p": this.properties."Bahájske_spoločenstvo__".apply("float"), "at": $at}.apply("stamped"),
+          "cirkevJezisaKristaSvatych1": {"p": this.properties."Cirkev_Ježiša_Krista_svätých__1".apply("float"), "at": $at}.apply("stamped"),
+          "ine2": {"p": this.properties."iné__".apply("float"), "at": $at}.apply("stamped"),
+          "bezVyznania2": {"p": this.properties."bez_vyznania__".apply("float"), "at": $at}.apply("stamped"),
+          "nezistene2": {"p": this.properties."nezistené__".apply("float"), "at": $at}.apply("stamped"),
+          "location": if this.geometry.or(null) == null { null } else { { "type": "GeoProperty", "value": this.geometry } },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Mapa_SODB_2011_n%C3%A1bo%C5%BEenstvo_okresy/FeatureServer/0/query?where=1%3D1&outFields=DOW,FACC,IDN3,NM3,IDN2,NM2,VYMERA,NUTS1,NUTS1_CODE,NUTS2,NUTS2_CODE,NUTS3,NUTS3_CODE,LAU1,LAU1_CODE,Okres,%C4%8C%C3%ADslo_okresu,Rok,Po%C4%8Det_obyvate%C4%BEov_spolu,R%C3%ADmskokatol%C3%ADcka_cirkev,Gr%C3%A9ckokatol%C3%ADcka_cirkev,Pravosl%C3%A1vna_cirkev,Evanjelick%C3%A1_cirkev_augsbursk%C3%A9ho,Reformovan%C3%A1_kres%C5%A5ansk%C3%A1_cirkev,N%C3%A1bo%C5%BEensk%C3%A1_spolo%C4%8Dnos%C5%A5_Jehovovi_,Evanjelick%C3%A1_cirkev_metodistick%C3%A1,Kres%C5%A5ansk%C3%A9_zbory,Apo%C5%A1tolsk%C3%A1_cirkev,Bratsk%C3%A1_jednota_baptistov,Cirkev_adventistov_siedmeho_d%C5%88a,Cirkev_bratsk%C3%A1,%C3%9Astredn%C3%BD_zv%C3%A4z_%C5%BEidovsk%C3%BDch_n%C3%A1bo%C5%BEe,Starokatol%C3%ADcka_cirkev,Cirkev_%C4%8Deskoslovensk%C3%A1_husitsk%C3%A1,Novoapo%C5%A1tolsk%C3%A1_cirkev,Bah%C3%A1jske_spolo%C4%8Denstvo,Cirkev_Je%C5%BEi%C5%A1a_Krista_sv%C3%A4t%C3%BDch_ne,in%C3%A9,bez_vyznania,nezisten%C3%A9,R%C3%ADmskokatol%C3%ADcka_cirkev__,Gr%C3%A9ckokatol%C3%ADcka_cirkev__,Pravosl%C3%A1vna_cirkev__,Evanjelick%C3%A1_cirkev_augsbursk%C3%A9_1,Reformovan%C3%A1_kres%C5%A5ansk%C3%A1_cirkev__,N%C3%A1bo%C5%BEensk%C3%A1_spolo%C4%8Dnos%C5%A5_Jehovovi1,Evanjelick%C3%A1_cirkev_metodistic_1,Kres%C5%A5ansk%C3%A9_zbory__,Apo%C5%A1tolsk%C3%A1_cirkev__,Bratsk%C3%A1_jednota_baptistov__,Cirkev_adventistov_siedmeho_d_1,Cirkev_bratsk%C3%A1__,%C3%9Astredn%C3%BD_zv%C3%A4z_%C5%BEidovsk%C3%BDch_n%C3%A1bo_1,Starokatol%C3%ADcka_cirkev__,Cirkev_%C4%8Deskoslovensk%C3%A1_husitsk%C3%A1_,Novoapo%C5%A1tolsk%C3%A1_cirkev__,Bah%C3%A1jske_spolo%C4%8Denstvo__,Cirkev_Je%C5%BEi%C5%A1a_Krista_sv%C3%A4t%C3%BDch__1,in%C3%A9__,bez_vyznania__,nezisten%C3%A9__&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=0&resultRecordCount=1000&orderByFields=ObjectId" },
+          "isPartOf": { "type": "Property", "value": "https://opendata.dev.joinedcontext.com/dataset/bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2011-okresy-3844c8" }
+        }.filter(entry -> entry.value != null)
+    # One request per run's batch rather than one per row.
+    - split:
+        size: 1000
+        byte_size: 2097152
+    - archive:
+        format: json_array

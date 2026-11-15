@@ -1,0 +1,44 @@
+# The no-parking stretches of Prague that TSK hl. m. Prahy maps on the IPR geoportal (T-5424), read
+# through their own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-zakazy-stani
+  namespace: praha
+  title: { cs: Zákazy stání — Praha, en: No-parking stretches — Prague }
+  description:
+    cs: 'Úseky ulic se zákazem stání: plochy na mapě. Zdroj: TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0.'
+    en: 'The stretches of street where parking is prohibited: areas on the map. Source: TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: umn7mlfjtnnih2j5uloixqtevoeg6tdf
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zakazy-stani
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Street areas; no record names a person or a vehicle.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+      en: 'Source: data © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+    themes: [TRAN, REGI]
+    keywords:
+      cs: [Praha, parkování, zákaz stání]
+      en: [Prague, parking, no parking]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/b2be4777cec1443fa1e9b4b0d385fed1_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Zákaz stání (IPR Praha), en: No parking (IPR Praha) }
+        description:
+          cs: Úseky ulic se zákazem stání, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The stretches of street where parking is prohibited, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

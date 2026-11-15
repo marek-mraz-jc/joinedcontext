@@ -1,0 +1,236 @@
+[
+ {
+  "vehicleId": "284 ŠKODA26TR SOLARIS",
+  "airConditioning": true,
+  "articulated": false,
+  "bearing": 186,
+  "currentStatus": "IN_TRANSIT_TO",
+  "deviation": 3.2,
+  "direction": "Jaseňová",
+  "lowFloor": true,
+  "multiCarriageDetails": [],
+  "nextStop": {
+   "stopId": "706",
+   "name": "Veľ. okružná, AUPARK"
+  },
+  "occupancyStatus": "STANDING_ROOM_ONLY",
+  "position": {
+   "type": "Point",
+   "coordinates": [
+    18.73849,
+    49.22014
+   ]
+  },
+  "timestamp": "2026-10-22T13:37:00.000Z",
+  "tripId": "694_1187",
+  "tripType": "Public",
+  "vehicleType": "Trolleybus",
+  "wheelchairAccessible": true,
+  "occupancyPercentage": 30,
+  "previousStop": {
+   "stopId": "202",
+   "name": "Polícia"
+  },
+  "route": {
+   "longName": "Solinky-Bôrik-centrum-Bôrik-Solinky",
+   "routeId": "694_3",
+   "shortName": "3",
+   "vehicleType": "Trolleybus",
+   "agency": "Dopravný podnik mesta Žiliny s.r.o."
+  }
+ },
+ {
+  "vehicleId": "267 ŠKODA27TR SOLARIS",
+  "airConditioning": true,
+  "articulated": true,
+  "bearing": 84,
+  "currentStatus": "IN_TRANSIT_TO",
+  "deviation": 3.8666666666666667,
+  "direction": "DUBEŇ obch. centrum",
+  "lowFloor": true,
+  "multiCarriageDetails": [],
+  "nextStop": {
+   "stopId": "296",
+   "name": "Závodská"
+  },
+  "occupancyStatus": "MANY_SEATS_AVAILABLE",
+  "position": {
+   "type": "Point",
+   "coordinates": [
+    18.72372,
+    49.21572
+   ]
+  },
+  "timestamp": "2026-10-22T13:36:58.000Z",
+  "tripId": "694_2154",
+  "tripType": "Public",
+  "vehicleType": "Trolleybus",
+  "wheelchairAccessible": true,
+  "occupancyPercentage": 10,
+  "previousStop": {
+   "stopId": "295",
+   "name": "Závodského"
+  },
+  "route": {
+   "longName": "Stodolova - Matice slovenskej a späť",
+   "routeId": "694_6",
+   "shortName": "6",
+   "vehicleType": "Trolleybus",
+   "agency": "Dopravný podnik mesta Žiliny s.r.o."
+  }
+ },
+ {
+  "vehicleId": "277 ŠKODA27TR SOLARIS",
+  "airConditioning": true,
+  "articulated": true,
+  "bearing": 266,
+  "currentStatus": "IN_TRANSIT_TO",
+  "deviation": 8.716666666666667,
+  "direction": "Stodolova",
+  "lowFloor": true,
+  "multiCarriageDetails": [],
+  "nextStop": {
+   "stopId": "351",
+   "name": "Závodského"
+  },
+  "occupancyStatus": "STANDING_ROOM_ONLY",
+  "position": {
+   "type": "Point",
+   "coordinates": [
+    18.72393,
+    49.21578
+   ]
+  },
+  "timestamp": "2026-10-22T13:36:58.000Z",
+  "tripId": "694_540",
+  "tripType": "Public",
+  "vehicleType": "Trolleybus",
+  "wheelchairAccessible": true,
+  "occupancyPercentage": 40,
+  "previousStop": {
+   "stopId": "350",
+   "name": "Závodská"
+  },
+  "route": {
+   "longName": "Stodolova - Matice slovenskej a späť",
+   "routeId": "694_6",
+   "shortName": "6",
+   "vehicleType": "Trolleybus",
+   "agency": "Dopravný podnik mesta Žiliny s.r.o."
+  }
+ },
+ {
+  "vehicleId": "270 ŠKODA27TR SOLARIS",
+  "airConditioning": true,
+  "articulated": true,
+  "bearing": 292,
+  "currentStatus": "IN_TRANSIT_TO",
+  "deviation": 0.9,
+  "direction": "Matice slovenskej",
+  "lowFloor": true,
+  "multiCarriageDetails": [],
+  "nextStop": {
+   "stopId": "311",
+   "name": "Predmestská"
+  },
+  "occupancyStatus": "FEW_SEATS_AVAILABLE",
+  "position": {
+   "type": "Point",
+   "coordinates": [
+    18.7571,
+    49.21976
+   ]
+  },
+  "timestamp": "2026-10-22T13:37:02.000Z",
+  "tripId": "694_8343",
+  "tripType": "Public",
+  "vehicleType": "Trolleybus",
+  "wheelchairAccessible": true,
+  "occupancyPercentage": 20,
+  "previousStop": {
+   "stopId": "564",
+   "name": "Košická, TESCO hyp."
+  },
+  "route": {
+   "longName": "Vlčince-centrum-Hliny-Solinky-Vlčince",
+   "routeId": "694_4",
+   "shortName": "4",
+   "vehicleType": "Trolleybus",
+   "agency": "Dopravný podnik mesta Žiliny s.r.o."
+  }
+ },
+ {
+  "vehicleId": "74 SOLARIS URBINO 12",
+  "airConditioning": true,
+  "articulated": false,
+  "bearing": 21,
+  "currentStatus": "STOPPED_AT",
+  "deviation": -0.016666666666666666,
+  "direction": "Vranie",
+  "lowFloor": true,
+  "multiCarriageDetails": [],
+  "nextStop": {
+   "stopId": "9020",
+   "name": "Budatínsky hrad"
+  },
+  "occupancyStatus": "MANY_SEATS_AVAILABLE",
+  "position": {
+   "type": "Point",
+   "coordinates": [
+    18.73775,
+    49.23592
+   ]
+  },
+  "timestamp": "2026-10-22T13:37:00.000Z",
+  "tripId": "694_10499",
+  "tripType": "Public",
+  "vehicleType": "Bus",
+  "wheelchairAccessible": true,
+  "occupancyPercentage": 20,
+  "previousStop": {
+   "stopId": "240",
+   "name": "Kysucká"
+  },
+  "route": {
+   "longName": "Vranie - Univerzitná a späť",
+   "routeId": "694_30",
+   "shortName": "30",
+   "vehicleType": "Bus",
+   "agency": "Dopravný podnik mesta Žiliny s.r.o."
+  }
+ },
+ {
+  "vehicleId": "no-position",
+  "airConditioning": true,
+  "articulated": true,
+  "bearing": 0,
+  "currentStatus": "STOPPED_AT",
+  "deviation": 0,
+  "direction": "Matice slovenskej",
+  "lowFloor": true,
+  "multiCarriageDetails": [],
+  "nextStop": {
+   "stopId": "148",
+   "name": "Fatranská"
+  },
+  "occupancyStatus": "NO_DATA_AVAILABLE",
+  "position": null,
+  "timestamp": "2026-10-22T13:37:00.000Z",
+  "tripId": "694_8416",
+  "tripType": "Public",
+  "vehicleType": "Trolleybus",
+  "wheelchairAccessible": true,
+  "previousStop": {
+   "stopId": "150",
+   "name": "Matice slovenskej"
+  },
+  "occupancyPercentage": 10,
+  "route": {
+   "longName": "Vlčince-centrum-Hliny-Solinky-Vlčince",
+   "routeId": "694_4",
+   "shortName": "4",
+   "vehicleType": "Trolleybus",
+   "agency": "Dopravný podnik mesta Žiliny s.r.o."
+  }
+ }
+]

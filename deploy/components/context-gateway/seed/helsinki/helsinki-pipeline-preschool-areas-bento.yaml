@@ -1,0 +1,84 @@
+# The mapping of the preschool-areas pipeline (PL-03): one AdministrativeArea (divisionLevel
+# preschoolAdmissionArea) per preschool admission area (esiopetusalue) of a school year, Finnish- or
+# Swedish-language, from four open WFS layers read in one GET (the running and the coming school year
+# of each language).
+#
+# An area is keyed by the layer's row id, unique over the four layers; the school year (lukuvuosi
+# "2026-2027") becomes validFrom 1 August and validTo 31 July, the school year of the Basic Education
+# Act, so a reader picks the year by date. The layer's `aluejako` names the language (RUOTSI is
+# Swedish). A Swedish-language area carries only a Swedish name, a Finnish one mostly both.
+#
+# `toimipiste_id` lists the Service Map units that give the area's preschool education, and each is
+# the PointOfInterest servicemap-<id> the services pipeline writes. The gateway refuses a link to an
+# entity the space does not hold (DM-70), and 5 of the 277 units the layers named on 2026-10-27 were
+# not in the space, so the pipeline asks the space which of the named units it holds and links only
+# those; a failed ask writes every area without its links this round.
+#
+# `expiresAt` (NGSI-LD 4.22): an area leaves every read 21 days after the layers last listed it,
+# three weekly runs, so a past school year the city removes does not stay.
+
+pipeline:
+  processors:
+    - mapping: |
+        let lease = (now().ts_unix() + 1814400).ts_format("2006-01-02T15:04:05Z", "UTC")
+        # The WFS writes a field it has no value for as null or the string "None".
+        map text {
+          root = if this == null || this.string().trim() == "" || this.string() == "None" { null } else { this.string().trim() }
+        }
+        root = this.features.or([]).filter(f -> f.properties.kunta.or("") == "091" && f.properties.id.or("").string().re_match("^[0-9]{1,10}$") && f.properties.lukuvuosi.or("").string().re_match("^[0-9]{4}-[0-9]{4}$") && f.geometry.or(null) != null && (f.properties.nimi_fi.apply("text") != null || f.properties.nimi_se.apply("text") != null)).map_each(f -> {
+          "p": f.properties,
+          "f": f,
+          "year": f.properties.lukuvuosi.string().slice(0, 4).number().int64(),
+          "swedish": f.properties.aluejako.or("").string().contains("RUOTSI"),
+          "units": f.properties.toimipiste_id.or("").string().split(",").map_each(u -> u.trim()).filter(u -> u.re_match("^[0-9]{1,10}$")).unique()
+        }).map_each(s -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:preschool-area-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), s.p.id.string()),
+          "type": "AdministrativeArea",
+          "expiresAt": $lease,
+          "name": { "type": "LanguageProperty", "languageMap": { "fi": s.p.nimi_fi.apply("text"), "sv": s.p.nimi_se.apply("text") }.filter(entry -> entry.value != null) },
+          "description": { "type": "LanguageProperty", "languageMap": if s.swedish {
+            { "fi": "Ruotsinkielinen esiopetusalue, lukuvuosi %d–%d".format(s.year, s.year + 1), "sv": "Svenskspråkigt förskoleområde, läsåret %d–%d".format(s.year, s.year + 1), "en": "Swedish-language preschool admission area, school year %d–%d".format(s.year, s.year + 1) }
+          } else {
+            { "fi": "Suomenkielinen esiopetusalue, lukuvuosi %d–%d".format(s.year, s.year + 1), "sv": "Finskspråkigt förskoleområde, läsåret %d–%d".format(s.year, s.year + 1), "en": "Finnish-language preschool admission area, school year %d–%d".format(s.year, s.year + 1) }
+          } },
+          "divisionLevel": { "type": "Property", "value": "preschoolAdmissionArea" },
+          "validFrom": { "type": "Property", "value": "%d-08-01T00:00:00+03:00".format(s.year) },
+          "validTo": { "type": "Property", "value": "%d-07-31T23:59:59+03:00".format(s.year + 1) },
+          "serviceUnits": if s.units.length() == 0 { null } else {
+            { "type": "Relationship", "object": s.units.map_each(u -> "urn:ngsi-ld:%v:%v:%v:servicemap-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), u)) }
+          },
+          "location": { "type": "GeoProperty", "value": s.f.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Education Division, preschool admission areas" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Esiopetusalue_" + if s.swedish { "ruotsi" } else { "suomi" } }
+        }.filter(entry -> entry.value != null))
+
+    - branch:
+        request_map: |
+          let units = this.filter(e -> e.serviceUnits != null).map_each(e -> e.serviceUnits.object).flatten().unique()
+          root = if $units.length() == 0 { deleted() } else { {
+            "type": "Query",
+            "entities": $units.map_each(id -> { "id": id, "type": "PointOfInterest" })
+          } }
+        processors:
+          - try:
+              - http:
+                  url: ${JC_GATEWAY_URL}/api/endpoint/si6epqkx364lprho5uaigutk274r5grb/ngsi-ld/v1/entityOperations/query?limit=1000&options=keyValues
+                  verb: POST
+                  headers: { Content-Type: application/json }
+                  oauth2:
+                    enabled: true
+                    client_key: ${JC_CLIENT_ID}
+                    client_secret: ${JC_CLIENT_SECRET}
+                    token_url: ${JC_TOKEN_URL}
+                  timeout: 20s
+                  rate_limit: pipeline_egress
+              - mapping: 'root = { "held": this.map_each(e -> e.id) }'
+          - catch:
+              - mapping: 'root = { "held": [] }'
+        result_map: meta held = this.held.join(" ")
+
+    - mapping: |
+        let held = @held.or("").split(" ")
+        root = this.map_each(e -> if e.serviceUnits == null { e } else {
+          e.assign({ "serviceUnits": e.serviceUnits.assign({ "object": e.serviceUnits.object.filter(u -> $held.contains(u)) }) })
+        }).map_each(e -> if e.serviceUnits != null && e.serviceUnits.object.length() == 0 { e.without("serviceUnits") } else { e })

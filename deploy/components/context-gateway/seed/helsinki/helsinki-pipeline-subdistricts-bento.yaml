@@ -1,0 +1,18 @@
+# The mapping of the sub-districts pipeline (PL-03): one AdministrativeArea per sub-district (osa-alue)
+# of the city's district division, from the open WFS layer `Piirijako_osaalue`. The id carries the
+# full ten-digit code, which is the area code of the city's statistics (Aluesarjat), so a table
+# by sub-district joins these outlines without a lookup.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.features.or([]).filter(f -> f.properties.kokotunnus.or("").string().re_match("^[0-9]{1,10}$") && f.geometry.or(null) != null).map_each(f -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:subdistrict-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.kokotunnus.string()),
+          "type": "AdministrativeArea",
+          "name": { "type": "LanguageProperty", "languageMap": { "fi": f.properties.nimi_fi.or(""), "sv": f.properties.nimi_se.or("") }.filter(entry -> entry.value.trim() != "" && entry.value != "None") },
+          "districtCode": { "type": "Property", "value": f.properties.kokotunnus.string() },
+          "divisionLevel": { "type": "Property", "value": "subDistrict" },
+          "location": { "type": "GeoProperty", "value": f.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Kami district division" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Piirijako_osaalue" }
+        }.filter(entry -> entry.value != null))

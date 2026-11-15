@@ -1,0 +1,46 @@
+# One Smart Data Model type per catalogue dataset (T-4344): the Vehicle cars free to rent of the
+# car-sharing companies in the space praha-mesto (T-5680), read through their own Policy, which
+# keeps the PID vehicles of the same type out.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-sdilena-auta
+  namespace: praha
+  title: { cs: Volná sdílená auta — Praha, en: Shared cars free to rent — Prague }
+  description:
+    cs: 'Auta car4way, Anytime a Bolt, která jsou v Praze právě volná k pronájmu: poloha, model, palivo a společnost, každých pět minut. Zdroj: Golemio, Operátor ICT.'
+    en: 'The car4way, Anytime and Bolt cars free to rent in Prague right now: where they stand, their model, fuel and company, every five minutes. Source: Golemio, Operátor ICT.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: lzpcnu3765hkykvm3ijnx7ou2lwvg77t
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-sdilena-auta
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  catalog:
+    # Off the catalogue (T-5767, owner order 2026-10-26T06:33Z: an empty dataset leaves it): on dev
+    # none of Golemio's 1282 cars free to rent reached the broker.
+    # The harvest feeds leave it out (EP-139); publish it again once it holds data.
+    harvest: false
+    # Company cars by their fleet key, only while nobody rents them: no record names a person,
+    # and no history is open (the Policy grants none).
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    attribution:
+      cs: 'Zdroj: Golemio, Operátor ICT, a.s., s daty společností car4way, Anytime a Bolt; podmínky užití https://api.golemio.cz/api-keys/'
+      en: 'Source: Golemio, Operátor ICT, a.s., with data of car4way, Anytime and Bolt; terms of use https://api.golemio.cz/api-keys/'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, sdílená auta, carsharing, mobilita]
+      en: [Prague, shared cars, car sharing, mobility]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: CONT
+    source:
+      - url: https://api.golemio.cz/v2/sharedcars?limit=10000
+        title: { cs: Sdílená auta – API (Golemio), en: Shared cars API (Golemio) }
+        description:
+          cs: Volná sdílená auta v Praze, Operátor ICT, podle podmínek užití Golemio.
+          en: The shared cars free to rent in Prague, Operátor ICT, under Golemio's terms of use.
+    pipelineRef: { kind: Pipeline, name: golemio-shared-cars }

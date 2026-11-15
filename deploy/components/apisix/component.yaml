@@ -1,0 +1,74 @@
+---
+component: apisix
+parts:
+  - name: configuration
+  - name: apisix
+    needs:
+      - apisix.configuration
+    # The chart mounts its standalone rule file from a ConfigMap and nothing else, but the file
+    # the gateway serves carries every App's client secret, so it is the Secret
+    # `apisix-standalone-config` (ADR-N-030, AP-112). The `test` makes a chart upgrade that moves
+    # the volume fail the render instead of mounting the wrong thing.
+    jsonPatches:
+      - target:
+          version: v1
+          kind: Deployment
+          name: apisix
+        patch:
+          - op: test
+            path: /spec/template/spec/volumes/0/name
+            value: apisix-admin
+          - op: replace
+            path: /spec/template/spec/volumes/0
+            value:
+              name: apisix-admin
+              secret:
+                secretName: apisix-standalone-config
+          # The chart pauses the gateway 30 s before it stops (a fixed preStop) and leaves the
+          # grace period at the kubelet's 30 s, so the kill lands at the end of the pause and the
+          # meshed proxy's wait (35 s, base-values) is cut short (T-3024). The grace period
+          # outlives the pause, the proxy's wait and nginx's own stop; the `test` makes a chart
+          # that changes its pause fail the render instead of silently undercutting this.
+          - op: test
+            path: /spec/template/spec/containers/0/lifecycle/preStop/exec/command/2
+            value: sleep 30
+          - op: add
+            path: /spec/template/spec/terminationGracePeriodSeconds
+            value: 45
+          # The chart ships a readiness probe only, so a gateway whose listener died stayed in
+          # place until someone looked (G-16, T-6727). Liveness reads the same proxy port: the
+          # status API (7085) exists only in the chart's traditional mode, not standalone, and
+          # every HTTP path here answers through a route. ponytail: a TCP accept proves the
+          # listener, not a worker that hangs after accepting; an HTTP probe needs a status
+          # listener first. Slower than readiness, so a busy edge leaves the Service first.
+          - op: test
+            path: /spec/template/spec/containers/0/readinessProbe/tcpSocket/port
+            value: 9080
+          - op: add
+            path: /spec/template/spec/containers/0/livenessProbe
+            value:
+              tcpSocket:
+                port: 9080
+              initialDelaySeconds: 30
+              periodSeconds: 20
+              timeoutSeconds: 3
+              failureThreshold: 6
+  # Only with global.ingress.appsWildcard (ADR-N-037 §6, T-3013). The chart grants the webhook
+  # get/list/watch on every Secret of the cluster so an Issuer may name its token by reference.
+  # Ours reads the token from a mounted file instead, so the grant is emptied: a solver pod
+  # that talks to the internet never reads the platform's Secrets. The `test` makes a chart
+  # upgrade that renames or reshapes the grant fail the render instead of keeping it.
+  - name: dns01
+    jsonPatches:
+      - target:
+          group: rbac.authorization.k8s.io
+          version: v1
+          kind: ClusterRole
+          name: cert-manager-webhook-hetzner:read-secrets
+        patch:
+          - op: test
+            path: /rules/0/resources
+            value: [secrets]
+          - op: replace
+            path: /rules
+            value: []

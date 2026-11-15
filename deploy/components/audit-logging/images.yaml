@@ -1,0 +1,13 @@
+---
+# Re-pin a digest with:
+#   T=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:timberio/vector:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $T" \
+#     -H 'Accept: application/vnd.oci.image.index.v1+json' \
+#     https://registry-1.docker.io/v2/timberio/vector/manifests/<tag> | grep -i docker-content-digest
+audit-logging:
+  collector:
+    # The distroless-libc build, the one the chart's appVersion names. Vector is the whole
+    # runtime: it reads the node's container logs and writes objects, and carries no shell.
+    repository: 'docker.io/timberio/vector'
+    tag: '0.58.0-distroless-libc'
+    digest: 'sha256:6c93dfe2554cc7e38316d618961cd657d5271c7a7aa727e0007502b28cb82c2e'

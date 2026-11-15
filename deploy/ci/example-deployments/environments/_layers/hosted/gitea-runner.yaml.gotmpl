@@ -1,0 +1,12 @@
+---
+gitea-runner:
+  # dev runs the two fullstack samples (T-2617), so it runs the rust-1.90 runner too. Checked
+  # 2026-09-22 13:1xZ: the node used 11.6 of 16 GiB and its requests stood at 37 %; the runner
+  # asks 1.5 GiB and a release build of air-quality peaked at 1.3 GiB (T-2616).
+  rust:
+    enabled: true
+    # Asks what it holds idle (14 Mi measured 2026-10-16 13:20Z, T-4358) instead of 1.5 GiB, and
+    # keeps the 4 GiB limit a build may reach; capacity 1 (runner.yaml) keeps it to one build.
+    resources:
+      requests: { cpu: 250m, memory: 256Mi }
+      limits: { cpu: '2', memory: 4Gi }

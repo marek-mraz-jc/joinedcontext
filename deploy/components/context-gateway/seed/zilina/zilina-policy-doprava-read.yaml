@@ -1,0 +1,32 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: doprava-read
+  namespace: zilina
+  title:
+    sk: Verejné čítanie dopravy mesta naživo
+    en: "Public read: the city's live mobility data"
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-doprava }
+  assigner: did:web:zilina.sk
+  assignee: { kind: role, id: public }
+  # The city publishes all four under ODbL: the space door reads them all; their history is read
+  # through each type's own Policy, which the door evaluates beside this one (T-5232).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: OffStreetParking
+        - type: Vehicle
+        - type: TrafficFlowObserved
+        - type: Streetlight

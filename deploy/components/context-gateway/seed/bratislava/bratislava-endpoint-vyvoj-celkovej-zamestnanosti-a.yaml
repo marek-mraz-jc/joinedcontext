@@ -1,0 +1,44 @@
+# Total and industrial employment in Bratislava, 2010-2021: one public dataset of the hub (T-5274), item 2588720903e7437b8c662becffae07b3, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vyvoj-celkovej-zamestnanosti-a
+  namespace: bratislava
+  title:
+    sk: Vývoj celkovej zamestnanosti a zamestnanosti v priemysle v Bratislave v rokoch 2010 - 2021
+    en: Total and industrial employment in Bratislava, 2010-2021
+  description:
+    sk: 'Ukazovatele tabuľky „Vývoj celkovej zamestnanosti a zamestnanosti v priemysle v Bratislave v rokoch 2010 - 2021“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Total and industrial employment in Bratislava, 2010-2021”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: pccdel7d4ga6xuk3yznbax5iwcf4ndn5
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vyvoj-celkovej-zamestnanosti-a
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ECON]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/2588720903e7437b8c662becffae07b3
+        title:
+          sk: Vývoj celkovej zamestnanosti a zamestnanosti v priemysle v Bratislave v rokoch 2010 - 2021
+          en: Total and industrial employment in Bratislava, 2010-2021
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Vývoj celkovej zamestnanosti a zamestnanosti v priemysle v Bratislave v rokoch 2010 - 2021. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Total and industrial employment in Bratislava, 2010-2021. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

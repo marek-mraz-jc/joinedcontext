@@ -1,0 +1,28 @@
+{{- /* A project's pod-backed Apps run in its own namespace, {instanceSlug}-{project}-apps,
+       which the Portal creates with these two labels (AP-116). APISIX reaches the App pods
+       there on their one port, and on the Linkerd inbound proxy meshed traffic lands on; the
+       namespace's own default-deny admits APISIX and nothing else. */}}
+{{- if has "portal" .Values.components }}
+apisix-project-apps:
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              joinedcontext.com/managed-by: joinedcontext-portal
+              joinedcontext.com/release: {{ .Values.global.instanceSlug | quote }}
+          podSelector:
+            matchLabels:
+              joinedcontext.com/app: "true"
+      ports:
+        - protocol: TCP
+          port: 8080
+        {{- if and (.Values.global.serviceMesh.enable | default false) (eq (.Values.global.serviceMesh.type | default "") "linkerd") }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+{{- end }}

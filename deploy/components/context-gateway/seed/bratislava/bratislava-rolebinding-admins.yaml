@@ -1,0 +1,13 @@
+# Bratislava's organization administrator (ADR-N-058 2.4, PF-123): org-admin on the capital's
+# settings and its projects, and nothing in another Organization's. The person is demo.bratislava
+# (components/keycloak/demo-users.yaml).
+apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: bratislava-admins
+  namespace: org
+spec:
+  subjects:
+    - user: de300000-0000-4000-8000-000000000007 # demo.bratislava
+  role: org-admin
+  scope: { organization: bratislava }

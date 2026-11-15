@@ -1,0 +1,33 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-news-topics-1
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-news-topics
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  information:
+  - entities:
+    - type: Article
+    propertyNames:
+    - name
+    - description
+    - url
+    - datePublished
+    - source
+    relationshipNames:
+    - name
+    - description
+    - url
+    - datePublished
+    - source
+  operations:
+  - queryEntity
+  - retrieveEntity

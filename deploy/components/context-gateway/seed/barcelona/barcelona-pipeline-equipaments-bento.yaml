@@ -1,0 +1,191 @@
+# The mapping of the equipaments pipeline (T-5265): the city's register of facilities (Guia BCN)
+# as Smart Data Models PointOfInterest, sixteen of its families and seven thematic extracts in
+# one run: culture and leisure, sports, education, social services, public administration,
+# markets, information centres, places of worship, environment, animals and plants, cemeteries,
+# media, utility companies, restaurants, transport (car parks, petrol stations, taxi ranks,
+# loading zones), pharmacies, hospitals and primary care, hotels, public toilets, beach showers,
+# tourist information points and climate shelters. The bcn-equipaments DataSource answers Open
+# Data BCN's list of those packages; each one's DataStore resource is then read with one SQL
+# query, one row per facility (main address first, a telephone where it lists one, every kind
+# the register gives it: a municipal library is also a library and a study room). Skipped:
+# equipament-associacions (8,165 associations, many at a member's home address) and
+# equipament-sanitat (no change since 2024-01-02 and no geo_epgs_4326_lat/lon; its pharmacies
+# and hospitals come live from sanitat-farmacies and sanitat-hospitals-atencio-primaria).
+# Nothing here deletes.
+pipeline:
+  processors:
+    - mapping: |
+        # Each family the run reads, by package name, and the code its PointOfInterest carries
+        # first in `category`. A package not listed here is never read. The register writes a
+        # facility listed in two families once, under the first family of this list; the thematic
+        # extracts (farmacies, hotels, toilets, showers, tourist points, climate shelters) come
+        # after the families. "no kind": the extract has no secondary_filters_name column.
+        let families = [
+          ["equipament-cultura-i-lleure", "culture-leisure"],
+          ["equipament-esports", "sports"],
+          ["equipament-educacio", "education"],
+          ["equipament-serveis-socials", "social-services"],
+          ["equipament-administracio", "public-administration"],
+          ["equipament-mercats-i-centres-comercials", "markets-shopping"],
+          ["equipament-centres-d-informacio", "information-centres"],
+          ["equipament-serveis-religiosos", "religious-services"],
+          ["equipament-medi-ambient-i-serveis-relacionats", "environment"],
+          ["equipament-animals-i-plantes", "animals-plants"],
+          ["equipament-cementiris-i-serveis-relacionats", "cemeteries"],
+          ["equipament-mitjans-de-comunicacio-i-serveis-relacionats", "media"],
+          ["equipament-companyies-de-serveis", "utility-companies"],
+          ["equipament-restaurants", "restaurants"],
+          ["equipament-transports-i-serveis-relacionats", "transport"],
+          ["equipaments-relacionats-amb-transports", "transport"],
+          ["sanitat-farmacies", "health"],
+          ["sanitat-hospitals-atencio-primaria", "health"],
+          ["allotjaments-hotels", "accommodation"],
+          ["lavabos-publics", "public-toilets"],
+          ["dutxes-platges", "beach-showers"],
+          ["punts-informacio-turistica", "tourist-information", "no kind"],
+          ["xarxa-refugis-climatics", "climate-shelters", "no kind"]
+        ]
+        let listed = this.result.results.or([])
+        let found = $families.map_each(f -> $listed.filter(p -> p.name.or("") == f.index(0)).index(0).or(null).(p -> if p == null { null } else { {
+          "family": f.index(1),
+          "package": p.name,
+          "kind": f.index(2).or("") != "no kind",
+          "resource": p.resources.or([]).filter(r -> r.datastore_active.or(false) == true && r.format.or("") == "CSV" && r.id.or("").re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")).index(0).id.or(null)
+        } })).filter(f -> f != null && f.resource != null)
+        # The package list is a few hundred kB; an empty or refused one is a broken portal, and a
+        # run that reads no family writes nothing, so it fails visibly instead.
+        root = if content().length() > 4194304 {
+          throw("the equipaments package list is %d bytes, more than the 4 MiB read".format(content().length()))
+        } else if this.success.or(false) != true {
+          throw("Open Data BCN refused the equipaments package list")
+        } else if $found.length() == 0 {
+          throw("Open Data BCN lists none of the equipaments families: nothing is written")
+        } else { $found }
+    - unarchive: { format: json_array }
+
+    # One family a request. The resource id is checked against the UUID form above before it
+    # goes into the query, so no text of the portal's answer reaches the SQL.
+    - branch:
+        request_map: |
+          let columns = "replace(register_id, U&'\\FEFF', '') AS id, name, to_char(modified, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS modified, addresses_road_name AS street, addresses_start_street_number::text AS num, to_char(addresses_zip_code, 'FM00000') AS zip, addresses_town AS town, addresses_district_name AS district, addresses_main_address AS main, geo_epgs_4326_lat::text AS lat, geo_epgs_4326_lon::text AS lon, " + (if this.kind { "secondary_filters_name AS kind, array_agg(secondary_filters_name) OVER (PARTITION BY register_id)" } else { "NULL::text AS kind, ARRAY[]::text[]" }) + " AS kinds, CASE WHEN values_category = 'Telèfons' AND values_value ~ '[0-9]' THEN values_value END AS phone"
+          meta sql = ("SELECT DISTINCT ON (id) * FROM (SELECT " + $columns + " FROM \"" + this.resource + "\") t ORDER BY id, main = 'True' DESC, phone IS NULL, kind LIMIT 20000").escape_url_query()
+          root = ""
+        processors:
+          - sleep: { duration: '300ms' }
+          - http:
+              url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/datastore_search_sql?sql=${! @sql }
+              verb: GET
+              headers:
+                Accept: application/json
+                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+              timeout: 60s
+              retries: 2
+        result_map: |
+          root.records = if content().length() > 16777216 {
+            throw("the family answer is over 16 MiB")
+          } else if this.success.or(false) != true {
+            throw("Open Data BCN refused the query: %s".format(this.error.format_json(no_indent: true).or("no reason given")))
+          } else if this.result.records.or([]).length() >= 20000 {
+            throw("the family answered %d rows, the LIMIT 20000 of its query: raise it, or the rows past it are dropped".format(this.result.records.length()))
+          } else { this.result.records.or([]) }
+    # A family the portal refuses is logged and left out of this run; the others still write.
+    - catch:
+        - log:
+            level: WARN
+            message: 'equipaments: ${! json("package") } not read: ${! error() }'
+    - archive: { format: json_array }
+
+    # The whole register at once: a facility listed in two families is one PointOfInterest, the
+    # first family's. A register whose newest change is older than three weeks (three of its
+    # weekly updates) is stale and fails the run.
+    - mapping: |
+        let rows = this.map_each(f -> f.records.or([]).map_each(r -> r.assign({ "family": f.family, "package": f.package }))).flatten()
+        let newest = $rows.map_each(r -> r.modified.or("")).sort().index(-1).or("")
+        let floor = now().ts_sub_iso8601("P21D").ts_format("2006-01-02T15:04:05", "Europe/Madrid")
+        root = if $rows.length() == 0 {
+          throw("the equipaments families list no facility: nothing is written")
+        } else if $newest < $floor {
+          throw("the Barcelona equipaments are stale: the newest change is %s, more than three weeks old".format($newest))
+        } else { $rows }
+
+    # Plausibility (owner 2026-10-22T18:10Z): dropped and counted by reason, never guessed at: no
+    # position; a point outside Barcelona and 1 km around it (the register's missing geometry
+    # converts to a point near 0,0); no name; one facility under two ids (same name, same place
+    # within 20 m); a facility listed in a second family is kept once, with the families and
+    # kinds of every listing (T-5692: one kind a facility hid 51 of 52 municipal libraries).
+    - mapping: |
+        # Two rows are one place when their names match and they lie within 20 m (owner
+        # 2026-10-22T18:10Z): rows sorted by name, each compared with the kept points of its name.
+        map near {
+          let lat = this.value.lat.number()
+          let lon = this.value.lon.number()
+          let pts = if this.tally.name == this.value._key { this.tally.pts } else { [] }
+          # Metres at Barcelona's latitude: 111,320 m a degree north, 83,520 m a degree east.
+          let near = $pts.any(p -> (p.index(0) - $lat) * (p.index(0) - $lat) * 12392142400 + (p.index(1) - $lon) * (p.index(1) - $lon) * 6975590400 <= 400)
+          root = if $near { this.tally.assign({ "dup": this.tally.dup.append(this.value.id) }) } else {
+            { "name": this.value._key, "pts": $pts.append([$lat, $lon]), "dup": this.tally.dup }
+          }
+        }
+        map reason {
+          let lat = this.lat.or("").number().catch(null)
+          let lon = this.lon.or("").number().catch(null)
+          root = if $lat == null || $lon == null { "no position" }
+            else if $lon < 2.04 || $lon > 2.24 || $lat < 41.3 || $lat > 41.48 { "outside Barcelona" }
+            else if !this.id.or("").re_match("^[0-9]{1,20}$") { "no id" }
+            else if this.name.or("").trim() == "" { "no name" }
+            else { null }
+        }
+        let rows = this.map_each(e -> e.assign({ "_drop": e.apply("reason") }))
+        let usable = $rows.filter(e -> e._drop == null)
+        let once = $usable.unique(e -> e.id)
+        let keyed = $once.map_each(e -> e.assign({ "_key": e.name.trim().lowercase() })).sort_by(e -> e._key)
+        let dup = $keyed.fold({ "name": "", "pts": [], "dup": [] }, item -> item.apply("near")).dup
+        # squash concatenates the arrays of one id's listings: every family and kind it has.
+        let listed = $usable.map_each(e -> { (e.id): { "families": [e.family], "kinds": e.kinds.or([]) } }).squash()
+        let kept = $once.filter(e -> !$dup.contains(e.id)).map_each(e -> e.assign({ "_listed": $listed.get(e.id) }))
+        let tally = $rows.filter(e -> e._drop != null).fold({}, item -> item.tally.assign({ item.value._drop: item.tally.get(item.value._drop).or(0) + 1 }))
+        let second = $usable.length() - $once.length()
+        let dups = $once.length() - $kept.length()
+        let counted = if $second > 0 { $tally.assign({ "listed in a second family": $second }) } else { $tally }
+        meta dropped = (if $dups > 0 { $counted.assign({ "duplicate": $dups }) } else { $counted }).format_json(no_indent: true)
+        meta kept = $kept.length().string()
+        root = $kept.map_each(e -> e.without("_drop", "kinds"))
+    - log:
+        level: INFO
+        message: 'equipaments: ${! @kept } facilities kept, dropped by reason ${! @dropped }'
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44); the register's
+        # register_id is the local id, the one the agendas' venues share.
+        # The register writes 9999 for a place with no street number (97 of them on 2026-10-23).
+        let street = [this.street.or("").trim(), this.num.or("").trim()].filter(s -> s != "" && s != "9999").join(" ")
+        let town = this.town.or("").trim()
+        let phone = this.phone.or("").trim()
+        let kinds = this._listed.kinds.filter(k -> k != null).map_each(k -> k.string().trim()).filter(k -> k != "").unique().sort()
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
+          "type": "PointOfInterest",
+          "name": { "type": "Property", "value": this.name.trim() },
+          # The first family's code, the other families' codes, then the register's own kinds in
+          # Catalan ("Biblioteques", "Biblioteques municipals").
+          "category": { "type": "Property", "value": [this.family].concat(this._listed.families).concat($kinds).unique() },
+          "location": { "type": "GeoProperty", "value": {
+            "type": "Point", "coordinates": [(this.lon.number() * 1000000).round() / 1000000, (this.lat.number() * 1000000).round() / 1000000]
+          } },
+          "address": { "type": "Property", "value": {
+            "streetAddress": $street,
+            "postalCode": this.zip.or(""),
+            "addressLocality": if $town.uppercase() == "BARCELONA" || $town == "" { "Barcelona" } else { $town },
+            "district": this.district.or("").trim(),
+            "addressCountry": "ES"
+          }.filter(entry -> entry.value != "") },
+          "contactPoint": if $phone == "" || !$phone.re_match("^[0-9 .+()/-]{6,40}$") { null } else {
+            { "type": "Property", "value": { "telephone": $phone } }
+          },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/" + this.package }
+        }
+        root = root.filter(entry -> entry.value != null)
+
+    - split: { size: 500 }
+    - archive: { format: json_array }

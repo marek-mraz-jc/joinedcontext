@@ -1,0 +1,83 @@
+# The one door of the city's public space: every source is open data under CC BY 4.0, and
+# republishing it with each publisher's credit is what that licence allows (T-2781).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: banskabystrica-verejne
+  namespace: banskabystrica
+  title:
+    sk: Banská Bystrica — verejné údaje
+    en: Banská Bystrica, open data
+  # The dataset's notes in the catalogue, through this endpoint's DCAT-AP record (EP-27).
+  description:
+    sk: 'Podujatia mesta, školy v meste, hodinové merania PM10, PM2.5, NO2 a O3 na stanici SK0263A a počasie na automatických staniciach SHMÚ Banská Bystrica - Zelená a Donovaly (každých päť minút). Zdroje: Mesto Banská Bystrica, Ministerstvo školstva SR (Digitálna mapa škôl), Európska environmentálna agentúra (údaje SHMÚ), Slovenský hydrometeorologický ústav; CC BY 4.0.'
+    en: "The city's events, the schools in the city, hourly PM10, PM2.5, NO2 and O3 at station SK0263A, and the weather at SHMÚ's automatic stations Banská Bystrica - Zelená and Donovaly (every five minutes). Sources: the City of Banská Bystrica, the Slovak Ministry of Education (Digitálna mapa škôl), the European Environment Agency (SHMÚ's data), the Slovak Hydrometeorological Institute; CC BY 4.0."
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:app-banskabystrica-data-1
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:app-banskabystrica-mapa-1
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:app-banskabystrica-ovzdusie-1
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:app-banskabystrica-ovzdusie-1-history
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:app-banskabystrica-skoly-1-viewer
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:kataster-read
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:nabijanie-read
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:pocasie-read
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:podujatia-read
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:skoly-read
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:verejne-osm-account
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:verejne-osm-delete
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:verejne-pipelines-write
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:verejne-read
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:verejne-read-history
+    - urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:zdravie-read
+  slug: rpfqszwlbp5bonvg7kckhdsne5qedjor
+  audience: public
+  # mcp: the members of the public `otvorene-data` MCP server (T-4141) and the public
+  # assistant's connectors (T-4167); the gateway lists a member only when it serves MCP.
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  # Off the catalogue (T-4344): its unrelated types are each their own dataset, through the
+  # narrowed Endpoints beside it. This Endpoint stays for the Apps and connectors that read it.
+  # What the dataset page and the DCAT-AP record carry beside the title (EP-27, T-3112): the
+  # publisher, the licence and each source's credit, the themes and keywords a reader searches
+  # by, the city, and how often it changes (continuous: the weather every five minutes).
+  catalog:
+    # Not a catalogue dataset: a door over the space; T-4344 split its types into datasets of their own, read by the Apps.
+    # Its own record stays; the harvest feeds leave it out (EP-139, T-4744).
+    harvest: false
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroje: Mesto Banská Bystrica (podujatia), Ministerstvo školstva SR, Digitálna mapa škôl (školy), Európska environmentálna agentúra, údaje SHMÚ (ovzdušie), Slovenský hydrometeorologický ústav (počasie); CC BY 4.0'
+      en: "Sources: City of Banská Bystrica (events), Slovak Ministry of Education, Digitálna mapa škôl (schools), European Environment Agency, SHMÚ's data (air), Slovak Hydrometeorological Institute (weather); CC BY 4.0"
+    themes: [EDUC, ENVI, SOCI]
+    keywords:
+      sk:
+        - podujatia
+        - školy
+        - kvalita ovzdušia
+        - PM10
+        - PM2.5
+        - NO2
+        - ozón
+        - počasie
+        - teplota
+        - Banská Bystrica
+      en:
+        - events
+        - schools
+        - air quality
+        - PM10
+        - PM2.5
+        - NO2
+        - ozone
+        - weather
+        - temperature
+        - Banská Bystrica
+    spatial:
+      - SK032
+      - https://data.gov.sk/id/lau2/SK0321508438
+    frequency: CONT

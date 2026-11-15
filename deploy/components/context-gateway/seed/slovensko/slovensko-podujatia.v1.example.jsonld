@@ -1,0 +1,37 @@
+{
+  "address": {
+    "addressCountry": "addressCountry",
+    "addressLocality": "addressLocality",
+    "addressRegion": "addressRegion",
+    "postalCode": "postalCode",
+    "streetAddress": "streetAddress"
+  },
+  "areaServed": "areaServed",
+  "dataProvider": "dataProvider",
+  "dateModified": "2026-01-01T00:00:00Z",
+  "description": "description",
+  "endDate": "2026-11-14T22:00:00+01:00",
+  "eventCategory": "eventCategory",
+  "id": "urn:ngsi-ld:Event:joinedcontext.com:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "locationPrecision": "source",
+  "name": "name",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "organizer": {
+    "name": "name",
+    "url": "url"
+  },
+  "refPointOfInterest": "urn:ngsi-ld:PointOfInterest:joinedcontext.com:example:1",
+  "source": "source",
+  "sourceId": "sourceId",
+  "startDate": "2026-11-14T19:00:00+01:00",
+  "type": "Event",
+  "url": "url",
+  "venue": "venue"
+}

@@ -1,0 +1,14 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-bike-stations
+  namespace: helsinki-mobility
+  title: { en: City bike stations, fi: Kaupunkipyöräasemat }
+  annotations: { joinedcontext.com/generated-by: portal/app-reconciler }
+spec:
+  allowedProjects: [helsinki-mobility]
+  audience: project-list
+  callerRole: true
+  contextSpaceRef: { kind: ContextSpace, name: mobility }
+  enabledRepresentations: [ngsi-ld, mcp, ogc-features, odata]
+  slug: 335ub3brbavwl7sfpc3dph4zi4

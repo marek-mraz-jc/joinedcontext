@@ -1,0 +1,21 @@
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage -> stateless
+# - [x] 2+ Replicas -> every invocation is self-contained, any pod answers it
+# - [x] Rolling updates maxUnavailable: 0, maxSurge: 1 -> default in workload chart
+# - [x] PodDisruptionBudget (at least minAvailable: 1)
+
+replicaCount: 2
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: '1'
+    memory: 1Gi

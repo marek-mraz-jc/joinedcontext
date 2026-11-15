@@ -1,0 +1,20 @@
+{
+  "@context": [
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld",
+    "statistical-observation.v1.context.jsonld"
+  ],
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:banskabystrica.sk:banskabystrica-mesto:vh5003rr-SK0321508438-2023-U03084",
+  "type": "KeyPerformanceIndicator",
+  "dataSet": { "type": "Property", "value": "vh5003rr" },
+  "indicator": { "type": "Property", "value": "U03084" },
+  "refArea": { "type": "Property", "value": "SK0321508438" },
+  "refPeriod": { "type": "Property", "value": "2023" },
+  "kpiValue": { "type": "Property", "value": 3991, "unitCode": "MTQ" },
+  "unitText": { "type": "Property", "value": "v tis. m3" },
+  "source": {
+    "type": "Property",
+    "value": "https://data.statistics.sk/api/v2/dataset/vh5003rr/SK0321508438/2023/U03084?lang=sk&type=json"
+  },
+  "dateObserved": { "type": "Property", "value": "2026-09-07T00:00:00Z" },
+  "observedAt": { "type": "Property", "value": "2026-09-07T00:00:00Z" }
+}

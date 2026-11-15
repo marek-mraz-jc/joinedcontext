@@ -1,0 +1,281 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:CommitteeSeat a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "CommitteeSeat" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pozicia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:poznamka ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        jc:Entity ;
+    skos:definition "A seat of a council committee; the citizens' names are kept out." ;
+    skos:exactMatch jc:CommitteeSeat ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:upstream_source "https://smart-data-models.github.io/DataModel.Organization/Organization/schema.json" .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.Organization/77a4911e7cbc72bf87bf202ade282c1bc41a36a4/context.jsonld" .
+
+jc:date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:date_or_datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date_or_datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:decimal a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:decimal ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:double a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:double ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:jsonpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:jsonpointer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpointer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The source column `Názov_komisie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.Organization/77a4911e7cbc72bf87bf202ade282c1bc41a36a4/context.jsonld" .
+
+jc:ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:pozicia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pozicia" ;
+    skos:definition "The source column `Pozícia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:poznamka a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "poznamka" ;
+    skos:definition "The source column `Poznámka`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.Organization/77a4911e7cbc72bf87bf202ade282c1bc41a36a4/context.jsonld" .
+
+jc:sparqlpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:sparqlpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:time a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:time ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+<https://joinedcontext.com/models/sdm/extensions/CommitteeSeat> a owl:Ontology ;
+    rdfs:label "CommitteeSeat" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "CommitteeSeat, an extension of dataModel.Organization/Organization" ;
+    skos:definition "A seat of a council committee; the citizens' names are kept out. Extends dataModel.Organization/Organization: Organization is the official model of a body; a seat is a position of one." .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+

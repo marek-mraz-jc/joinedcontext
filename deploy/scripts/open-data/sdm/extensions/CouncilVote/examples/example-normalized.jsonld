@@ -1,0 +1,70 @@
+{
+  "id": "urn:ngsi-ld:CouncilVote:joinedcontext.com:example:1",
+  "type": "CouncilVote",
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "datum": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "hlas": {
+    "type": "Property",
+    "value": "hlas"
+  },
+  "iCOSamospravy": {
+    "type": "Property",
+    "value": "iCOSamospravy"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "nazovSamospravy": {
+    "type": "Property",
+    "value": "nazovSamospravy"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "organSamospravy": {
+    "type": "Property",
+    "value": "organSamospravy"
+  },
+  "poslanec": {
+    "type": "Property",
+    "value": "poslanec"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "volebneObdobie": {
+    "type": "Property",
+    "value": 0
+  },
+  "zasadnutie": {
+    "type": "Property",
+    "value": "zasadnutie"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/CouncilVote/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

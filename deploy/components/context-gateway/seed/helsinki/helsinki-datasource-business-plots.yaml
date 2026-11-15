@@ -1,0 +1,15 @@
+# The plots the city offers to businesses (vapaat yritystontit) as an open WFS layer, in WGS84. No key.
+# CC-BY-4.0, read from the HRI catalogue (package helsingin-vapaat-yritystontit). 86 plots on 2026-10-27.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-business-plots
+  namespace: helsinki
+  title: { en: Plots for business, fi: Vapaat yritystontit }
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Vapaat_yritystontit
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

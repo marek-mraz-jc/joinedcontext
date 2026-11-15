@@ -370,9 +370,26 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
     let mut bound = std::collections::BTreeSet::new();
     for org in &cfg.organizations {
         table = table.organization(&org.name)?;
-        for (_, host) in org.hosts.by_module() {
-            table = table.bound(host, &org.name, "/")?;
-            bound.insert(host.split(':').next().unwrap_or(host).to_owned());
+        for m in org.hosts.by_module() {
+            if m.bound {
+                table = table.bound(m.host, &org.name, "/")?;
+                bound.insert(m.host.split(':').next().unwrap_or(m.host).to_owned());
+            }
+            if let Some(role) = m.role {
+                table = table.role(m.host, role)?;
+            }
+        }
+        // A page on another group's host moves to the host that serves it (T-6991 §7).
+        if org.hosts.opendata.is_some() {
+            table = table.move_pages(
+                &org.hosts.portal,
+                crate::config::DATAROOM_ON_WORKING_HOST,
+                &org.opendata_base(),
+                false,
+            )?;
+        }
+        if let Some(api) = org.hosts.api.as_deref().filter(|_| !org.hosts.shared) {
+            table = table.move_pages(api, "/", &org.hosts.portal, true)?;
         }
     }
     for row in &cfg.hosts {
@@ -383,11 +400,20 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
         )?;
         bound.insert(row.host.split(':').next().unwrap_or(&row.host).to_owned());
     }
-    let mounted = plans
+    let mounted: Vec<(&str, &str)> = plans
         .iter()
         .flat_map(|p| p.specs().chain(p.renamed.iter().map(|r| &r.spec)))
-        .filter_map(|spec| spec.host.as_deref());
-    for host in mounted.chain([cfg.base_host.as_str(), "localhost", "127.0.0.1", "[::1]"]) {
+        .filter_map(|spec| Some((spec.module.as_str(), spec.host.as_deref()?)))
+        .collect();
+    for &(module, host) in &mounted {
+        if apps_wildcard(host).is_some() {
+            table = table.role(host, jc_router::HostRole::Apps)?;
+        } else if module == Module::Kaisatsu.name() && host == cfg.login_host {
+            table = table.role(host, jc_router::HostRole::SignIn)?;
+        }
+    }
+    let hosts = mounted.iter().map(|&(_, h)| h);
+    for host in hosts.chain([cfg.base_host.as_str(), "localhost", "127.0.0.1", "[::1]"]) {
         if !bound.contains(host.split(':').next().unwrap_or(host)) {
             table = table.shared(host)?;
         }
@@ -395,25 +421,26 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
     Ok(Some(table))
 }
 
-/// The entries of `module` on the `[[organizations]]` hosts: each answers its whole host, and
-/// the gateway also answers its root paths on the Organization's Portal host, as on dev, where
-/// the Portal's pages read the gateway as the person on their own host.
+/// The entries of `module` on the `[[organizations]]` hosts (`OrganizationHosts::by_module`):
+/// each answers its whole host or its prefix there, once even when several `auto`
+/// Organizations share the host.
 fn organization_specs(cfg: &Config, module: Module) -> Vec<MountSpec> {
-    let spec = |host: &str, prefix: Option<&str>| MountSpec {
-        module: module.name().to_owned(),
-        host: Some(host.to_owned()),
-        path_prefix: prefix.map(str::to_owned),
-    };
-    let mut out = Vec::new();
+    let mut out: Vec<MountSpec> = Vec::new();
     for org in &cfg.organizations {
-        for (m, host) in org.hosts.by_module() {
-            if m == module {
-                out.push(spec(host, None));
-            }
-        }
-        if module == Module::Gateway && cfg.roles.contains(&Module::Portal) {
-            for prefix in ["/cs", "/api/endpoint", "/api/mcp"] {
-                out.push(spec(&org.hosts.portal, Some(prefix)));
+        for m in org.hosts.by_module() {
+            let spec = MountSpec {
+                module: module.name().to_owned(),
+                host: Some(m.host.to_owned()),
+                path_prefix: m.prefix.map(str::to_owned),
+            };
+            // The gateway's paths on the working host serve the Portal's pages there; a jc
+            // without the Portal leaves them to the one with it, unless there is no API host.
+            let beside_portal = module == Module::Gateway
+                && m.host == org.hosts.portal
+                && org.hosts.api.is_some()
+                && !cfg.roles.contains(&Module::Portal);
+            if m.module == module && !beside_portal && !out.contains(&spec) {
+                out.push(spec);
             }
         }
     }
@@ -431,7 +458,7 @@ fn check_organization_hosts(cfg: &Config, plans: &[MountPlan]) -> Result<(), Sta
             org.hosts
                 .by_module()
                 .into_iter()
-                .map(|(_, host)| (bare(host), org.name.as_str()))
+                .map(|m| (bare(m.host), org.name.as_str()))
         })
         .collect();
     let placed: Vec<MountSpec> = cfg
@@ -1527,8 +1554,8 @@ mod tests {
         for org in
             dev_config("dataroom", include_str!("../tests/fixtures/two-orgs.toml")).organizations
         {
-            for (_, host) in org.hosts.by_module() {
-                placed.insert(host.split('.').next().unwrap_or(host).to_owned());
+            for m in org.hosts.by_module() {
+                placed.insert(m.host.split('.').next().unwrap_or(m.host).to_owned());
             }
         }
         placed.insert(Module::KAISATSU_OLD_SLUG.to_owned());

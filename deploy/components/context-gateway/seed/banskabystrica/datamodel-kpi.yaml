@@ -1,0 +1,23 @@
+# The model the city's indicator space publishes. It states the contract the platform already
+# enforces — `schemas/kinds/KeyPerformanceIndicator.json` closes the object and requires every
+# attribute — so a reader of this space can see what an indicator is without reading the code,
+# and the look-inside view has a type to count (DM-01, PF-54, Development/10 §4).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: key-performance-indicator
+  namespace: banskabystrica
+  title: { sk: Ukazovateľ, en: Indicator }
+spec:
+  contextSpaceRef: banskabystrica-kpi
+  linkml: ./key-performance-indicator.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [KeyPerformanceIndicator]
+  # A published model commits all four artifacts (DM-02); the gateway opens them beside the
+  # manifest and serves schema/v1 from them (DM-22, EP-49). Regenerate: see README.md.
+  artifacts:
+    jsonSchema: ./key-performance-indicator.v1.schema.json
+    context: ./key-performance-indicator.v1.context.jsonld
+    docs: ./key-performance-indicator.v1.md
+    example: ./key-performance-indicator.v1.example.jsonld

@@ -1,0 +1,17 @@
+# One Event per record of `mesto-podujatia`, written into the city's public space through its one Endpoint (PL-18, T-2781).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: podujatia
+  namespace: banskabystrica
+  title: { sk: Podujatia mesta, en: Events of the city }
+spec:
+  class: auto
+  # The city announces events every day; one read a day finds them (PL-26).
+  period: 24h
+  schedule: '17 5 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: mesto-podujatia }
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-verejne:banskabystrica-verejne
+  output: { type: Event, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

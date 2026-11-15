@@ -1,0 +1,19 @@
+# Open Data BCN's barris file (dataset 20170706-districtes-barris, CC BY 4.0): the 73 barris, their
+# districts, codes and outlines as WKT in ETRS89 and WGS84. The resource's download link answers
+# 302 to this address on the same host. About 1 MB; the mapping refuses more than 4 MiB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-neighbourhoods
+  namespace: barcelona
+  title:
+    ca: Barris de Barcelona (Open Data BCN)
+    es: Barrios de Barcelona (Open Data BCN)
+    en: Barcelona neighbourhoods (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/resources/bcn/EstadisticaUnitatsAdministratives/BarcelonaCiutat_Barris.csv
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 30s

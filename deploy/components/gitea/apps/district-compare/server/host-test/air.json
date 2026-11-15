@@ -1,0 +1,1 @@
+[{"id": "urn:ngsi-ld:AirQualityObserved:q1", "type": "AirQualityObserved", "pm25": 4.5, "airQualityIndex": "2", "location": {"type": "Point", "coordinates": [24.92, 60.16]}}]

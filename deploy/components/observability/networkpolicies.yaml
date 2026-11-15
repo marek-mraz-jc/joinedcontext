@@ -1,0 +1,95 @@
+---
+# The collector is the one hop between every component's telemetry and a screen a citizen's
+# neighbour can open, so both of its sides are closed by name (OPS-48). Ingress: the three
+# workloads that emit activity events, and Prometheus for the collector's own metrics.
+# Egress: the Portal it posts to, Keycloak it fetches a token from, and DNS. It has no
+# database access and no APISIX route, so nothing outside the cluster can reach it at all.
+observability:
+  podSelector:
+    app.kubernetes.io/name: observability-collector
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-broker-broker
+          componentNamespace: context-broker
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The Portal's own policy lists the callers it accepts; the collector is a new one.
+portal-from-observability:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-collector
+          componentNamespace: observability
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# Keycloak lists its callers by name; the collector is one, because a token is the only thing
+# it fetches from anywhere.
+keycloak-from-observability:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-collector
+          componentNamespace: observability
+      ports:
+        - protocol: TCP
+          port: 8080

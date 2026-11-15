@@ -1,0 +1,66 @@
+{
+ "type": "FeatureCollection",
+ "name": "fsv_cur_ov_kultzar_b_fsv_cur_ov_kultzar_b",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+  }
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "objectid": 1,
+    "id_zar": 35,
+    "nazev_zar": "Divadlo DISK",
+    "ulice": "Karlova",
+    "cpop": 223,
+    "cor": 26,
+    "pism_cor": null,
+    "adresa_zar": "Karlova 223/26",
+    "bezbar": 1,
+    "web": "www.divadlodisk.cz",
+    "druh_uap": 5,
+    "id_poskyt": 43,
+    "zrizovatel_uap": 99,
+    "typ_uap": "05_01",
+    "globalid": "{FD30E67C-31B5-4E6C-8BAD-FA2EF039EFBD}"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.417235168000047,
+     50.08595336800005
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "objectid": 2,
+    "id_zar": 81,
+    "nazev_zar": "Divadlo U22",
+    "ulice": "K sokolovně",
+    "cpop": 201,
+    "cor": 8,
+    "pism_cor": null,
+    "adresa_zar": "K sokolovně 201/8",
+    "bezbar": 1,
+    "web": "www.divadlou22.cz",
+    "druh_uap": 5,
+    "id_poskyt": 43,
+    "zrizovatel_uap": 99,
+    "typ_uap": "05_01",
+    "globalid": "{F1FD6A10-6D54-48A0-A6F6-96F1956C8116}"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.605896264000023,
+     50.02878860700008
+    ]
+   }
+  }
+ ]
+}

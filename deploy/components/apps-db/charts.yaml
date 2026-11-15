@@ -1,0 +1,8 @@
+---
+apps-db:
+  cluster:
+    repository: https://cloudnative-pg.github.io/charts
+    chart: cnpg/cluster
+    version: '0.7.0'
+  backup:
+    chart: ../postgres/charts/databases

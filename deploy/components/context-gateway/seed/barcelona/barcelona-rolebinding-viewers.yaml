@@ -1,0 +1,13 @@
+# Barcelona's readers (PF-61 inside ADR-N-058 2.4): the members of the Keycloak group /barcelona,
+# the root of the Organization's subtree, read its projects and nothing of another Organization.
+apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: barcelona-viewers
+  namespace: org
+spec:
+  subjects:
+    - group: barcelona
+      source: provider
+  role: viewer
+  scope: { organization: barcelona }

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: keycloak-theme
+description: The joinedcontext login theme of the realm, as a ConfigMap the Keycloak pod copies into its themes directory
+type: application
+version: 0.1.0

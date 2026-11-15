@@ -1,0 +1,73 @@
+{{- $release := .Values.release }}
+{{- $sa := .Values.serviceAccount }}
+{{- /*
+  The bound on the pods the Portal's Deployments and Jobs become (T-4775). The Portal writes
+  Deployments in its own namespace and in each apps namespace, and Jobs for builds and agent
+  runs, and every one of them runs without a Kubernetes API token and without the node. A
+  template that mounts a token, by automount or by a projected serviceAccountToken volume, would
+  run as whichever ServiceAccount it names in that namespace, the restore drill's (pods/exec on
+  the database) or a token minter's among them; the Kyverno token rule only asks for an
+  annotation, which the writer sets. Server-side apply is judged on the merged object, so the
+  Portal's restart patch of a Helm-owned Deployment passes when that Deployment has no token.
+*/}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $release }}-portal-workloads
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        resources: ["deployments"]
+        operations: ["CREATE", "UPDATE"]
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        resources: ["jobs"]
+        operations: ["CREATE", "UPDATE"]
+  matchConditions:
+    - name: the-portal
+      expression: request.userInfo.username == "system:serviceaccount:{{ $sa.namespace }}:{{ $sa.name }}"
+  variables:
+    - name: pod
+      expression: object.spec.template.spec
+    - name: containers
+      expression: >-
+        variables.pod.containers + (has(variables.pod.initContainers) ? variables.pod.initContainers : [])
+  validations:
+    - expression: >-
+        has(variables.pod.automountServiceAccountToken) && variables.pod.automountServiceAccountToken == false
+        && (!has(variables.pod.volumes) || variables.pod.volumes.all(v,
+          !has(v.projected) || !has(v.projected.sources)
+          || v.projected.sources.all(s, !has(s.serviceAccountToken))))
+      messageExpression: >-
+        "A workload the Portal writes runs without a Kubernetes API token: set automountServiceAccountToken: false and mount no serviceAccountToken, not in " + request.namespace + "/" + request.name + " (AP-117)."
+    - expression: >-
+        !(has(variables.pod.hostNetwork) && variables.pod.hostNetwork)
+        && !(has(variables.pod.hostPID) && variables.pod.hostPID)
+        && !(has(variables.pod.hostIPC) && variables.pod.hostIPC)
+        && (!has(variables.pod.volumes) || variables.pod.volumes.all(v, !has(v.hostPath)))
+        && variables.containers.all(c, !has(c.securityContext)
+          || !has(c.securityContext.privileged) || c.securityContext.privileged == false)
+      messageExpression: >-
+        "A workload the Portal writes shares nothing with the node: no hostPath, host namespace or privileged container, not in " + request.namespace + "/" + request.name + " (AP-117)."
+    # Beyond the node's namespaces (F-R2DEP2-024): no added capability, no port on the node and
+    # no explicit privilege escalation. Pod Security admits these in the apps namespaces only;
+    # elsewhere Kyverno was the one check, and a webhook can fail open.
+    - expression: >-
+        variables.containers.all(c, (!has(c.ports) || c.ports.all(p, !has(p.hostPort) || p.hostPort == 0))
+          && (!has(c.securityContext)
+            || ((!has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.add)
+                 || size(c.securityContext.capabilities.add) == 0)
+              && (!has(c.securityContext.allowPrivilegeEscalation) || c.securityContext.allowPrivilegeEscalation == false))))
+      messageExpression: >-
+        "A workload the Portal writes adds no capability, binds no host port and allows no privilege escalation, not in " + request.namespace + "/" + request.name + " (AP-117)."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $release }}-portal-workloads
+spec:
+  policyName: {{ $release }}-portal-workloads
+  validationActions: [Deny]

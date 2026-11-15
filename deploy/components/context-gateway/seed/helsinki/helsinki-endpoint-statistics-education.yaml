@@ -1,0 +1,53 @@
+# Helsinki area statistics, education (T-5258): the KeyPerformanceIndicator entities of the
+# statistics pipeline whose id carries the theme `education`, one per indicator and area, the newest
+# period as the value and every period since the first run in the history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-statistics-education
+  namespace: helsinki
+  title:
+    fi: Koulutus — Helsingin aluesarjat
+    sv: Utbildning — Helsingfors områdesserier
+    en: Education — Helsinki area statistics
+  description:
+    fi: 'Helsingin aluesarjojen tilastot: 15 vuotta täyttänyt väestö koulutusasteen mukaan; kaupungin, suurpiirien, peruspiirien ja osa-alueiden tasolla. Yksi Smart Data Models KeyPerformanceIndicator kutakin tunnuslukua ja aluetta kohden. Lähde: Helsingin kaupunki, kaupunkitutkimus ja -tilastot (Aluesarjat), CC BY 4.0.'
+    sv: 'Helsingfors områdesserier: befolkningen 15 år och äldre efter utbildningsnivå; för staden, stordistrikten, distrikten och delområdena. En Smart Data Models KeyPerformanceIndicator per nyckeltal och område. Källa: Helsingfors stad, stadsforskning och statistik (Aluesarjat), CC BY 4.0.'
+    en: 'Helsinki area statistics: the population aged 15 and over by level of education; for the city, its major districts, basic districts and sub-districts. One Smart Data Models KeyPerformanceIndicator per indicator and area, the newest period as kpiValue and the earlier periods in its history. Properties beyond the model: districtCode (the code of the area in the statistics of the city), divisionLevel (city, majorDistrict, basicDistrict, subDistrict or cityPart), refArea (the AdministrativeArea of the sub-district), statisticsTable and dimensionKey (the source table and cell). Source: City of Helsinki, Urban Research and Statistics (Aluesarjat), CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: cparzbvehzoznbb2nuiyzkeudohmdhsq
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-education
+  # The NGSI-LD door also answers the temporal API, the series per indicator. An indicator has
+  # no geometry of its own: OGC API Features serves it as a feature without one.
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, kaupunkitutkimus ja -tilastot (Aluesarjat), CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, stadsforskning och statistik (Aluesarjat), CC BY 4.0'
+      en: 'Source: City of Helsinki, Urban Research and Statistics (Aluesarjat), CC BY 4.0'
+    themes: [EDUC, SOCI]
+    keywords:
+      fi: [koulutus, tutkinnot, aluesarjat]
+      sv: [utbildning, examina, områdesserier]
+      en: [education, qualifications, area statistics]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: ANNUAL
+    source:
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__kou/alu_kou_005n.px/
+        title: { fi: Aluesarjat alu_kou_005n, en: Area statistics table alu_kou_005n }
+        description:
+          fi: '15 vuotta täyttäneet'
+          en: Population 15 years of age and over of Helsinki, Espoo and Vantaa by gender, age and educational level 31.12.
+    pipelineRef: { kind: Pipeline, name: statistics }

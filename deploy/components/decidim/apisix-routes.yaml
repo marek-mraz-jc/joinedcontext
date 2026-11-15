@@ -1,0 +1,14 @@
+---
+# The participation platform on its own host. `subDomain` also puts participacia.{domain} on the
+# edge Ingress and in the certificate SAN list (one HTTP-01 certificate per host, no wildcard).
+decidim:
+  name: decidim
+  description: Participation platform (Decidim)
+  upstream: decidim-web.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "decidim") }}.svc.cluster.local:3000 # yamllint disable-line rule:line-length
+  subDomain: participacia
+  uri: '/*'
+  # An export or a proposal with attachments takes longer than a portal page.
+  timeout:
+    connect: 6
+    send: 60
+    read: 60

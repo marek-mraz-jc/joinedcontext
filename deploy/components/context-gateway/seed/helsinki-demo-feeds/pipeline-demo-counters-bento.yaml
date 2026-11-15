@@ -1,0 +1,18 @@
+# One demo message is one indicator (T-2960). The feed sends a full URN in its own space and
+# type (`urn:ngsi-ld:DemoCounter:{org}:helsinki:demo-counter-3`), so the local id is its last
+# segment and the entity is minted in this pipeline's space. The feed labels every reading as
+# synthetic, and the indicator says so in its formula. No closing `archive`: the Portal's batching
+# wraps the messages itself, and a second archive nests the batch (T-2914).
+pipeline:
+  processors:
+    - mapping: |
+        let local = this.id.string().split(":").index(-1)
+        let at = this.observedAt.ts_format("2006-01-02T15:04:05Z", "UTC")
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $local),
+          "type": "KeyPerformanceIndicator",
+          "name": { "type": "Property", "value": "Demo counter %v (synthetic)".format($local.split("-").index(-1)) },
+          "calculationFormula": { "type": "Property", "value": "messages published by the demo feed: %v".format(this.note) },
+          "currentValue": { "type": "Property", "value": this.count.number(), "observedAt": $at },
+          "updatedAt": { "type": "Property", "value": $at }
+        }

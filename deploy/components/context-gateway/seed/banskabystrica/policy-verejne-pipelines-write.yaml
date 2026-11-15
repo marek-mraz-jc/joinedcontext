@@ -1,0 +1,24 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: verejne-pipelines-write
+  namespace: banskabystrica
+  title:
+    sk: Kanály zapisujú verejné údaje mesta
+    en: The ingestion pipelines write the city's open data
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: banskabystrica-verejne }
+  assigner: did:web:banskabystrica.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is what a poll does; no delete: a record a source stops publishing stays until a
+  # person removes it.
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: Event
+        - type: Organization
+        - type: AirQualityObserved
+        - type: WeatherObserved
+        - type: PointOfInterest
+        - type: EVChargingStation
+        - type: CadastralParcel

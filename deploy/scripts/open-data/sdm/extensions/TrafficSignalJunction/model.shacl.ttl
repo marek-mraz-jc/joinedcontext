@@ -1,0 +1,95 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix ns1: <https://w3id.org/linkml/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sdm: <https://smartdatamodels.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://joinedcontext.com/models/sdm/extensions/TrafficSignalJunction> ns1:generator_version "linkml-1.12.0" .
+
+jc:TrafficSignalJunction a sh:NodeShape ;
+    rdfs:comment "One junction or crossing with traffic lights or warning lights: where it is, its installation number, its signal kind and whether it is in service." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the publisher last changed the record, or the station last reported." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path sdm:dateModified ],
+        [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 11 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "A bike station's working while it rents and takes returns, otherwise outOfService; a park and ride site's open, closed or closedAbnormal (Fintraffic LIIPI's IN_OPERATION, INACTIVE or TEMPORARILY_CLOSED, EXCEPTIONAL_SITUATION)." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 7 ;
+            sh:path jc:status ],
+        [ sh:datatype xsd:string ;
+            sh:description "The city's own number of the signal installation, as its controller cabinet shows it." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 4 ;
+            sh:path jc:junctionNumber ],
+        [ sh:datatype xsd:string ;
+            sh:description "What the junction's signals are: full traffic lights, or warning lights that only flash to warn of a crossing, a tram or a fire station exit." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 6 ;
+            sh:path jc:signalKind ],
+        [ sh:datatype xsd:string ;
+            sh:description "The name, per language." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 5 ;
+            sh:path sdm:name ],
+        [ sh:datatype xsd:anyURI ;
+            sh:description "The service the row was read from." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 1 ;
+            sh:path sdm:source ],
+        [ sh:datatype xsd:string ;
+            sh:description "Who published the row, with the credit its licence asks for." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 0 ;
+            sh:path sdm:dataProvider ],
+        [ sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:BlankNodeOrIRI ;
+            sh:order 10 ;
+            sh:path geojson:geometry ],
+        [ sh:datatype xsd:string ;
+            sh:description "A short description, per language." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path dcterms:description ] ;
+    sh:targetClass jc:TrafficSignalJunction .
+
+ngsi-ld:Entity a sh:NodeShape ;
+    rdfs:comment "The root every NGSI-LD entity class specialises." ;
+    sh:closed true ;
+    sh:ignoredProperties ( dcterms:description rdf:type jc:junctionNumber jc:signalKind jc:status sdm:dataProvider sdm:dateModified sdm:name sdm:source ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:BlankNodeOrIRI ;
+            sh:order 2 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass ngsi-ld:Entity .
+

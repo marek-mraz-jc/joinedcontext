@@ -1,0 +1,8 @@
+---
+# One replica per shard on the single dev node, and no budget that would block its drain.
+replicaCount: 1
+# T-5282: each shard held 3-6Mi on dev and 3Mi on prod (kubectl top, 2026-10-22 20:38-21:28Z) with
+# the Apps idle; the 1Gi limit of base-values still takes a loaded App.
+resources:
+  requests:
+    memory: 64Mi

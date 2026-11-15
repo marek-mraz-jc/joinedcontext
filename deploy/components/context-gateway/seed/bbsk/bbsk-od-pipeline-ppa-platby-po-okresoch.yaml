@@ -1,0 +1,24 @@
+# One KeyPerformanceIndicator per row of "PPA platby po okresoch" (T-4255); one row per area (and year).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-ppa-platby-po-okresoch
+  namespace: bbsk
+  title:
+    sk: PPA platby po okresoch
+    en: PPA platby po okresoch
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 53 2 4 * *
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-ppa-platby-po-okresoch
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: KeyPerformanceIndicator
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

@@ -1,0 +1,7 @@
+{# The publishers as a CSS grid (T-3028): without CKAN's `media-grid` script, whose masonry
+   placed each card absolutely at a width taken from its content. #}
+<ul class="media-grid">
+  {% for organization in organizations %}
+    {% snippet "organization/snippets/organization_item.html", organization=organization, position=loop.index, show_capacity=show_capacity %}
+  {% endfor %}
+</ul>

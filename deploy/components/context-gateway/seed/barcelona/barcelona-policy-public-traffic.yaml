@@ -1,0 +1,33 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-traffic
+  namespace: barcelona
+  title:
+    ca: 'Lectura pública: estat del trànsit'
+    es: 'Lectura pública: estado del tráfico'
+    en: 'Public read: traffic state'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116), the subscriptions and the history of the Endpoint
+  # barcelona-traffic, and only its type (T-4344, T-5262).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: TrafficFlowObserved

@@ -1,0 +1,21 @@
+---
+{{- $this := index .Values "sandbox-reaper" "reaper" }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Runs as non-root with `readOnlyRootFilesystem` -> /tmp is the one writable path
+# - [ ] Health probes -> not applicable, a Job either exits 0 or is retried
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> list and delete on namespaces, nothing else
+# - [ ] Named ports, Service, Ingress -> not applicable, it listens on nothing
+
+image:
+  repository: {{ index .Values.images "sandbox-reaper" "reaper" "repository" | quote }}
+  tag: {{ index .Values.images "sandbox-reaper" "reaper" "tag" | quote }}
+  digest: {{ index .Values.images "sandbox-reaper" "reaper" "digest" | quote }}
+
+schedule: {{ $this.schedule | default "17 * * * *" | quote }}
+ceilingDays: {{ $this.ceilingDays | default 14 }}
+dryRun: {{ $this.dryRun | default false }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

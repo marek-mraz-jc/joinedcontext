@@ -1,0 +1,4 @@
+---
+ckan:
+  catalogue:
+    chart: ../../charts/ckan

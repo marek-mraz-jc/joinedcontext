@@ -1,0 +1,34 @@
+---
+
+{{- /* dev's seeds rendered for a production instance that reads dev's values (T-4678): its own
+       hosts, the owner where the seeds name the demo steward, and no other demo person. */}}
+{{- $production := and (eq .Values.global.profile "production") .Values.global.valuesProfile }}
+{{- if or $production .Values.global.presenterUserId }}
+rewrites:
+  {{- with .Values.global.presenterUserId }}
+  # The presenter (T-6542, components/keycloak/presenter.yaml) stands beside the demo steward and
+  # each other Organization's administrator on every member line, before any rule below drops them.
+  - from: '(?m)^([ \t]*)- user: de300000-0000-4000-8000-00000000000[1567]( # demo\.[a-z]+)?\n'
+    to: {{ printf "${1}- user: %s # presenter\n${0}" . | quote }}
+  # A Group names the steward by e-mail in the sample Apps: the presenter joins by id (PF-126).
+  - from: '(?m)^([ \t]*)- user: demo\.(steward|zilina|barcelona|bratislava)@[A-Za-z0-9.-]+[^\n]*\n'
+    to: {{ printf "${1}- user: %s # presenter\n${0}" . | quote }}
+  {{- end }}
+  {{- if $production }}
+  # The seeds name the catalogue opendata.dev.joinedcontext.com, so the domain rule below moves it too (T-4679).
+  - from: 'dev\.joinedcontext\.com'
+    to: {{ .Values.global.domain | quote }}
+  # A Group names a member by Keycloak user id, never by e-mail (PF-126, ADR-N-061): an e-mail
+  # member fails the Group's validation on the Portal, so the steward line takes the owner's id.
+  - from: '(?m)^([ \t]*- user: )demo\.steward@[A-Za-z0-9.-]+'
+    to: {{ printf "${1}%s" .Values.global.initialUserId | quote }}
+  - from: 'demo\.steward@[A-Za-z0-9.-]+'
+    to: {{ .Values.global.initialUserEmail | quote }}
+  - from: '(?m)^[ \t]*- user: demo\.[a-z]+@[A-Za-z0-9.-]+[ \t]*\r?\n'
+    to: ''
+  # A Group whose only members were demo people keeps an empty list: a bare `members:` is null,
+  # which the Portal refuses as "invalid type: null, expected a sequence" (T-5774).
+  - from: '(?m)^([ \t]*)members:[ \t]*(\r?\n|\z)([ \t]*[^-\s]|\z)'
+    to: '${1}members: []${2}${3}'
+{{- end }}
+{{- end }}

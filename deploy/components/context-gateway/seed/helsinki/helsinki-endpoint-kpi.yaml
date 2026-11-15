@@ -1,0 +1,37 @@
+# The one door of the indicator space: pipelines write indicators through it with the
+# runner's service account, people, dashboards and the open web read them (PL-45).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-kpi
+  namespace: helsinki
+  title: { en: Helsinki indicators }
+spec:
+  contextSpaceRef: helsinki-kpi
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:hel.fi:helsinki-kpi:kpi-pipelines-write
+    - urn:ngsi-ld:Policy:hel.fi:helsinki-kpi:kpi-read
+  slug: kpi4h6q2wz7xr3nv5tj6pb3mydk2s4fa
+  # Public: the indicators are open data, and the gateway synthesises the `public` role
+  # only on a public endpoint, so the kpi-read grant (role public) applies to a signed-in
+  # steward and a dashboard alike (EP-16, GW22). On an organization endpoint nobody held it.
+  audience: public
+  enabledRepresentations: [ngsi-ld, mcp, csv, websocket, ogc-features, odata]
+  # No licence: an indicator is computed by a pipeline or the assistant from whatever the city space
+  # holds, and no seeded source names its inputs; the licence waits for that (T-2793).
+  catalog:
+    # Not a catalogue dataset: a door over the space; its indicators are datasets of their own, read by the Apps.
+    # Its own record stays; the harvest feeds leave it out (EP-139, T-4744).
+    harvest: false
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    themes: [REGI]
+    keywords:
+      fi: [tunnusluvut, kaupunki]
+      sv: [nyckeltal, staden]
+      en: [indicators, city]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091

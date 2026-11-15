@@ -1,0 +1,9 @@
+# gitops/<environment>.yaml (generated) and gitops/hold.yaml fill these in.
+repoURL: https://github.com/marek-mraz-jc/joinedcontext-deployment.git
+targetRevision: main
+argocdNamespace: argocd
+environment: ""
+namespaceAnnotations: {}
+components: []
+hold: false
+reason: ""

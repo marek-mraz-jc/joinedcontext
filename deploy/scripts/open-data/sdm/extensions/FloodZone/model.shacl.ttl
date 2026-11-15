@@ -1,0 +1,76 @@
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix ns1: <https://w3id.org/linkml/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sdm: <https://smartdatamodels.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://joinedcontext.com/models/sdm/extensions/FloodZone> ns1:generator_version "linkml-1.12.0" .
+
+jc:FloodZone a sh:NodeShape ;
+    rdfs:comment "One designated flood area: the ground a flood of a given return period covers, or a zone of it." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:datatype xsd:string ;
+            sh:description "The name, per language, as the publisher writes it." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 4 ;
+            sh:path sdm:name ],
+        [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 8 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The return period of the flood the area is flooded by, in years: 5, 20, 50 or 100 for the designated flood areas Q5, Q20, Q50 and Q100." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path jc:floodReturnPeriod ],
+        [ sh:datatype xsd:anyURI ;
+            sh:description "The service the row was read from." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 1 ;
+            sh:path sdm:source ],
+        [ sh:datatype xsd:string ;
+            sh:description "Who published the row, with the credit its licence asks for." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 0 ;
+            sh:path sdm:dataProvider ],
+        [ sh:datatype xsd:string ;
+            sh:description "The kind of zone of the Vltava and Berounka flood area: the active zone, where water flows through, where it stands, or ground the city or its owners protect." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path jc:floodZoneCategory ],
+        [ sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:BlankNodeOrIRI ;
+            sh:order 7 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass jc:FloodZone .
+
+ngsi-ld:Entity a sh:NodeShape ;
+    rdfs:comment "The root every NGSI-LD entity class specialises." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type jc:floodReturnPeriod jc:floodZoneCategory sdm:dataProvider sdm:name sdm:source ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:BlankNodeOrIRI ;
+            sh:order 2 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass ngsi-ld:Entity .
+

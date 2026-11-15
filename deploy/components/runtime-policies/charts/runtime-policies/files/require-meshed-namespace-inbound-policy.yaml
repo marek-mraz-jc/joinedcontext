@@ -1,0 +1,45 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-meshed-namespace-inbound-policy
+  annotations:
+    policies.kyverno.io/title: Meshed Namespaces Must Set a Default Inbound Policy
+    policies.kyverno.io/category: Linkerd
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Namespace
+    policies.kyverno.io/description: >-
+      A namespace marked for Linkerd injection (linkerd.io/inject=enabled) must
+      also declare config.linkerd.io/default-inbound-policy. Without it the
+      namespace falls back to the cluster default (all-unauthenticated), so
+      plaintext / unmeshed inbound traffic is silently accepted and the mesh
+      provides no enforcement. This catches namespaces that were injected but
+      never hardened, and those that set an unauthenticated or audit-only value
+      (T-5702): only cluster-authenticated, all-authenticated and deny pass.
+spec:
+  background: true
+  rules:
+    - name: inbound-policy-required
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+              operations: [CREATE, UPDATE]
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."linkerd.io/inject" || ''unset'' }}'
+            operator: Equals
+            value: enabled
+      validate:
+        failureAction: KYVERNO_FAILURE_ACTION
+        message: >-
+          Namespace is marked for Linkerd injection but its
+          config.linkerd.io/default-inbound-policy is missing or admits
+          unauthenticated traffic. Set it to cluster-authenticated,
+          all-authenticated or deny.
+        deny:
+          conditions:
+            all:
+              - key: '{{ request.object.metadata.annotations."config.linkerd.io/default-inbound-policy" || '''' }}'
+                operator: AnyNotIn
+                value: [cluster-authenticated, all-authenticated, deny]

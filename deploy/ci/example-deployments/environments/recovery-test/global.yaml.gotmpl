@@ -1,0 +1,47 @@
+---
+# A production instance in the middle of a point-in-time restore (OPS-10, OPS-11): the same
+# environment as `production`, with the postgres cluster bootstrapped from the WAL archive at a
+# historic instant instead of `initdb`. It exists so the restore path is rendered and asserted on
+# every push (tests/test_postgres_recovery.py) rather than written for the first time during an
+# incident. Runbook 6 in the operations guide is the procedure this environment is the shape of.
+global:
+  domain: platform.example.org
+  # The organisation's own domain in every entity id; production has no placeholder (CC-73).
+  orgDomain: example.org
+  profile: production
+  # security.txt (RFC 9116, T-1721): an example contact of the example domain.
+  securityTxt:
+    contact: mailto:security@platform.example.org
+    expires: "2027-09-24T00:00:00Z"
+  instanceSlug: jc
+  ingress:
+    enabled: true
+    clusterIssuer: 'letsencrypt-prod'
+    ingressClass: 'nginx'
+  metrics:
+    enabled: true
+
+postgres:
+  cluster:
+    # The restored cluster keeps the source cluster's name — every component connects to
+    # `postgres-cluster-rw` — so it must not archive into the path it is reading from. Its own
+    # archive gets a fresh prefix; the old one stays untouched and can be restored from again
+    # if this target time turns out to be the wrong one.
+    backups:
+      enabled: true
+      endpointURL: 'https://s3.example.org'
+      destinationPath: 's3://jc-backups/postgres-restored'
+      region: 'eu-central-1'
+      bucket: 'jc-backups'
+    recovery:
+      enabled: true
+      sourceCluster: 'postgres-cluster'
+      # Inside the 30-day retention window (OPS-10): the last consistent instant before the
+      # incident this environment stands in for.
+      targetTime: '2026-08-15T14:30:00Z'
+      destinationPath: 's3://jc-backups/postgres'
+
+# The project whose streams the pipeline runner carries: named here, never the demo city (CC-73).
+pipeline-runner:
+  runner:
+    project: city

@@ -1,0 +1,252 @@
+# file in this folder -> its path in the configuration repository (jc-core PATH_TEMPLATEs), read
+# by the forge bootstrap's seed (components/gitea/values/bootstrap/development-values). The
+# conformance project: one space, its published model with the artifacts beside it, one public
+# endpoint, the anonymous reader's policy and the writing account with its policy (T-0263,
+# T-0277, T-0278). The smoke run and the ETSI suite write through `conformance` (F-BNT1-002).
+project.yaml: projects/banskabystrica/project.yaml
+space.yaml: projects/banskabystrica/spaces/ovzdusie/space.yaml
+datamodel.yaml: projects/banskabystrica/spaces/ovzdusie/datamodels/bb-air-quality.yaml
+bb-air-quality.linkml.yaml: projects/banskabystrica/spaces/ovzdusie/datamodels/bb-air-quality.linkml.yaml
+bb-air-quality.v1.schema.json: projects/banskabystrica/spaces/ovzdusie/datamodels/bb-air-quality.v1.schema.json
+bb-air-quality.v1.context.jsonld: projects/banskabystrica/spaces/ovzdusie/datamodels/bb-air-quality.v1.context.jsonld
+bb-air-quality.v1.example.jsonld: projects/banskabystrica/spaces/ovzdusie/datamodels/bb-air-quality.v1.example.jsonld
+bb-air-quality.v1.md: projects/banskabystrica/spaces/ovzdusie/datamodels/bb-air-quality.v1.md
+endpoint.yaml: projects/banskabystrica/spaces/ovzdusie/endpoints/public-air.yaml
+policy-public-read.yaml: projects/banskabystrica/spaces/ovzdusie/policies/public-read.yaml
+# The conformance suite's own space (F-BNT1-002): the smoke run and the ETSI suite write their
+# fixtures there through `conformance`, never into ovzdusie's published readings.
+space-conformance.yaml: projects/banskabystrica/spaces/conformance/space.yaml
+datamodel-conformance.yaml: projects/banskabystrica/spaces/conformance/datamodels/conformance-air-quality.yaml
+conformance-air-quality.linkml.yaml: projects/banskabystrica/spaces/conformance/datamodels/conformance-air-quality.linkml.yaml
+conformance-air-quality.v1.schema.json: projects/banskabystrica/spaces/conformance/datamodels/conformance-air-quality.v1.schema.json
+conformance-air-quality.v1.context.jsonld: projects/banskabystrica/spaces/conformance/datamodels/conformance-air-quality.v1.context.jsonld
+conformance-air-quality.v1.example.jsonld: projects/banskabystrica/spaces/conformance/datamodels/conformance-air-quality.v1.example.jsonld
+conformance-air-quality.v1.md: projects/banskabystrica/spaces/conformance/datamodels/conformance-air-quality.v1.md
+endpoint-conformance.yaml: projects/banskabystrica/spaces/conformance/endpoints/conformance.yaml
+policy-conformance-write.yaml: projects/banskabystrica/spaces/conformance/policies/conformance-write.yaml
+policy-conformance-steward-read.yaml: projects/banskabystrica/spaces/conformance/policies/conformance-steward-read.yaml
+# The city's air quality (T-2916): a public static bundle the Portal image ships, reading the
+# EEA stations' PM10 and PM2.5 in banskabystrica-verejne through its own endpoint and nothing else.
+app-ovzdusie.yaml: projects/banskabystrica/apps/banskabystrica-ovzdusie/app.yaml
+# Its own Endpoint and Policies, where the Portal's door files them: the Endpoint under the space
+# it serves, a Policy under the project's own (T-2972).
+app-ovzdusie-endpoint.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/app-banskabystrica-ovzdusie.yaml
+app-ovzdusie-policy.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/app-banskabystrica-ovzdusie-1.yaml
+app-ovzdusie-policy-history.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/app-banskabystrica-ovzdusie-1-history.yaml
+# The city's map for its residents (T-2782): a public static bundle the Portal image ships, reading
+# the events, schools and the air station of banskabystrica-verejne through its own endpoint.
+app-mapa.yaml: projects/banskabystrica/apps/banskabystrica-mapa/app.yaml
+app-mapa-endpoint.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/app-banskabystrica-mapa.yaml
+app-mapa-policy.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/app-banskabystrica-mapa-1.yaml
+# The city's public datasets as grids (T-2782), with the endpoint's own downloads.
+app-data.yaml: projects/banskabystrica/apps/banskabystrica-data/app.yaml
+app-data-endpoint.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/app-banskabystrica-data.yaml
+app-data-policy.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/app-banskabystrica-data-1.yaml
+# The school coverage desk for city staff (T-2782): opened by its viewer role, which its default
+# group holds (AP-118); the group is the organization's, so it lives under users/groups/.
+app-skoly.yaml: projects/banskabystrica/apps/banskabystrica-skoly/app.yaml
+app-skoly-endpoint.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/app-banskabystrica-skoly.yaml
+app-skoly-policy-viewer.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/app-banskabystrica-skoly-1-viewer.yaml
+app-skoly-group-viewer.yaml: users/groups/banskabystrica-skoly-viewer.yaml
+serviceaccount.yaml: projects/banskabystrica/access/serviceaccounts/conformance.yaml
+# The city's own two spaces (T-2305): the published rows as published, and the indicators
+# computed from them. The indicator endpoint is shared with `bbsk` and is not public.
+space-mesto.yaml: projects/banskabystrica/spaces/banskabystrica-mesto/space.yaml
+datamodel-mesto.yaml: projects/banskabystrica/spaces/banskabystrica-mesto/datamodels/statistical-observation.yaml
+# The city's records (T-2916): a static bundle the Portal image ships and serves at
+# /apps/banskabystrica-zaznamy/, reading the rows of banskabystrica-mesto; the one write is the
+# steward's note, which policy mesto-steward-note grants.
+app-zaznamy.yaml: projects/banskabystrica/apps/banskabystrica-zaznamy/app.yaml
+statistical-observation.linkml.yaml: projects/banskabystrica/spaces/banskabystrica-mesto/datamodels/statistical-observation.linkml.yaml
+statistical-observation.v1.schema.json: projects/banskabystrica/spaces/banskabystrica-mesto/datamodels/statistical-observation.v1.schema.json
+statistical-observation.v1.context.jsonld: projects/banskabystrica/spaces/banskabystrica-mesto/datamodels/statistical-observation.v1.context.jsonld
+statistical-observation.v1.example.jsonld: projects/banskabystrica/spaces/banskabystrica-mesto/datamodels/statistical-observation.v1.example.jsonld
+statistical-observation.v1.md: projects/banskabystrica/spaces/banskabystrica-mesto/datamodels/statistical-observation.v1.md
+datamodel-kpi.yaml: projects/banskabystrica/spaces/banskabystrica-kpi/datamodels/key-performance-indicator.yaml
+key-performance-indicator.linkml.yaml: projects/banskabystrica/spaces/banskabystrica-kpi/datamodels/key-performance-indicator.linkml.yaml
+key-performance-indicator.v1.schema.json: projects/banskabystrica/spaces/banskabystrica-kpi/datamodels/key-performance-indicator.v1.schema.json
+key-performance-indicator.v1.context.jsonld: projects/banskabystrica/spaces/banskabystrica-kpi/datamodels/key-performance-indicator.v1.context.jsonld
+key-performance-indicator.v1.example.jsonld: projects/banskabystrica/spaces/banskabystrica-kpi/datamodels/key-performance-indicator.v1.example.jsonld
+key-performance-indicator.v1.md: projects/banskabystrica/spaces/banskabystrica-kpi/datamodels/key-performance-indicator.v1.md
+endpoint-mesto.yaml: projects/banskabystrica/spaces/banskabystrica-mesto/endpoints/banskabystrica-mesto.yaml
+policy-mesto-pipelines-write.yaml: projects/banskabystrica/spaces/banskabystrica-mesto/policies/mesto-pipelines-write.yaml
+policy-mesto-steward-read.yaml: projects/banskabystrica/spaces/banskabystrica-mesto/policies/mesto-steward-read.yaml
+policy-mesto-steward-note.yaml: projects/banskabystrica/spaces/banskabystrica-mesto/policies/mesto-steward-note.yaml
+space-kpi.yaml: projects/banskabystrica/spaces/banskabystrica-kpi/space.yaml
+endpoint-kpi.yaml: projects/banskabystrica/spaces/banskabystrica-kpi/endpoints/banskabystrica-kpi.yaml
+policy-kpi-pipelines-write.yaml: projects/banskabystrica/spaces/banskabystrica-kpi/policies/kpi-pipelines-write.yaml
+policy-kpi-shared-read.yaml: projects/banskabystrica/spaces/banskabystrica-kpi/policies/kpi-shared-read.yaml
+policy-kpi-steward-read.yaml: projects/banskabystrica/spaces/banskabystrica-kpi/policies/kpi-steward-read.yaml
+serviceaccount-pipelines.yaml: projects/banskabystrica/access/serviceaccounts/pipelines.yaml
+# The city's two ingestion pipelines and their mappings (T-2305).
+datasource-voda.yaml: projects/banskabystrica/datasources/susr-vh5003rr.yaml
+datasource-obyvatelia.yaml: projects/banskabystrica/datasources/mesto-obyvatelia-vek.yaml
+pipeline-voda.yaml: projects/banskabystrica/pipelines/voda/pipeline.yaml
+pipeline-voda-bento.yaml: projects/banskabystrica/pipelines/voda/bento.yaml
+pipeline-obyvatelia.yaml: projects/banskabystrica/pipelines/obyvatelia/pipeline.yaml
+pipeline-obyvatelia-bento.yaml: projects/banskabystrica/pipelines/obyvatelia/bento.yaml
+# The two indicator pipelines (T-2307), one per space the city computes from. Their Bloblang is
+# inline: the input is a query through an Endpoint, not a DataSource fetch.
+pipeline-ukazovatele-ovzdusie.yaml: projects/banskabystrica/pipelines/ukazovatele-ovzdusie/pipeline.yaml
+pipeline-ukazovatele-mesto.yaml: projects/banskabystrica/pipelines/ukazovatele-mesto/pipeline.yaml
+# Nine more ŠÚ SR municipal cubes of the city (T-2781), into banskabystrica-mesto through the
+# shared JSON-stat decoder.
+datasource-pohyb.yaml: projects/banskabystrica/datasources/susr-om7103rr.yaml
+pipeline-pohyb.yaml: projects/banskabystrica/pipelines/pohyb/pipeline.yaml
+pipeline-pohyb-bento.yaml: projects/banskabystrica/pipelines/pohyb/bento.yaml
+datasource-obyvatelstvo.yaml: projects/banskabystrica/datasources/susr-om7101qr.yaml
+pipeline-obyvatelstvo.yaml: projects/banskabystrica/pipelines/obyvatelstvo/pipeline.yaml
+pipeline-obyvatelstvo-bento.yaml: projects/banskabystrica/pipelines/obyvatelstvo/bento.yaml
+datasource-ubytovanie.yaml: projects/banskabystrica/datasources/susr-cr3809qr.yaml
+pipeline-ubytovanie.yaml: projects/banskabystrica/pipelines/ubytovanie/pipeline.yaml
+pipeline-ubytovanie-bento.yaml: projects/banskabystrica/pipelines/ubytovanie/bento.yaml
+datasource-navstevnost.yaml: projects/banskabystrica/datasources/susr-cr3803mr.yaml
+pipeline-navstevnost.yaml: projects/banskabystrica/pipelines/navstevnost/pipeline.yaml
+pipeline-navstevnost-bento.yaml: projects/banskabystrica/pipelines/navstevnost/bento.yaml
+datasource-pozemky.yaml: projects/banskabystrica/datasources/susr-pl5001rr.yaml
+pipeline-pozemky.yaml: projects/banskabystrica/pipelines/pozemky/pipeline.yaml
+pipeline-pozemky-bento.yaml: projects/banskabystrica/pipelines/pozemky/bento.yaml
+datasource-uchadzaci.yaml: projects/banskabystrica/datasources/susr-pr5001rr.yaml
+pipeline-uchadzaci.yaml: projects/banskabystrica/pipelines/uchadzaci/pipeline.yaml
+pipeline-uchadzaci-bento.yaml: projects/banskabystrica/pipelines/uchadzaci/bento.yaml
+datasource-materske-skoly.yaml: projects/banskabystrica/datasources/susr-sv5001rr.yaml
+pipeline-materske-skoly.yaml: projects/banskabystrica/pipelines/materske-skoly/pipeline.yaml
+pipeline-materske-skoly-bento.yaml: projects/banskabystrica/pipelines/materske-skoly/bento.yaml
+datasource-zakladne-skoly.yaml: projects/banskabystrica/datasources/susr-sv5002rr.yaml
+pipeline-zakladne-skoly.yaml: projects/banskabystrica/pipelines/zakladne-skoly/pipeline.yaml
+pipeline-zakladne-skoly-bento.yaml: projects/banskabystrica/pipelines/zakladne-skoly/bento.yaml
+datasource-kniznice.yaml: projects/banskabystrica/datasources/susr-ku5008rr.yaml
+pipeline-kniznice.yaml: projects/banskabystrica/pipelines/kniznice/pipeline.yaml
+pipeline-kniznice-bento.yaml: projects/banskabystrica/pipelines/kniznice/bento.yaml
+# The city's public space (T-2781): its model with the artifacts beside it, the public endpoint
+# the catalogue republishes, the anonymous reader's policy and the pipelines' write policy.
+space-verejne.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/space.yaml
+datamodel-verejne.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/datamodels/banskabystrica-verejne.yaml
+banskabystrica-verejne.linkml.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/datamodels/banskabystrica-verejne.linkml.yaml
+banskabystrica-verejne.v1.schema.json: projects/banskabystrica/spaces/banskabystrica-verejne/datamodels/banskabystrica-verejne.v1.schema.json
+banskabystrica-verejne.v1.context.jsonld: projects/banskabystrica/spaces/banskabystrica-verejne/datamodels/banskabystrica-verejne.v1.context.jsonld
+banskabystrica-verejne.v1.example.jsonld: projects/banskabystrica/spaces/banskabystrica-verejne/datamodels/banskabystrica-verejne.v1.example.jsonld
+banskabystrica-verejne.v1.md: projects/banskabystrica/spaces/banskabystrica-verejne/datamodels/banskabystrica-verejne.v1.md
+endpoint-verejne.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/banskabystrica-verejne.yaml
+policy-verejne-read.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/verejne-read.yaml
+policy-verejne-read-history.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/verejne-read-history.yaml
+policy-verejne-pipelines-write.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/verejne-pipelines-write.yaml
+# The same public Endpoint as a public, read-only MCP connector for any AI client (T-4141).
+banskabystrica-mcp-otvorene-data.yaml: projects/banskabystrica/mcp/otvorene-data.yaml
+# Its four feeds: the city's events, the school map and the EEA's hourly PM10 and PM2.5.
+datasource-podujatia.yaml: projects/banskabystrica/datasources/mesto-podujatia.yaml
+pipeline-podujatia.yaml: projects/banskabystrica/pipelines/podujatia/pipeline.yaml
+pipeline-podujatia-bento.yaml: projects/banskabystrica/pipelines/podujatia/bento.yaml
+datasource-skoly.yaml: projects/banskabystrica/datasources/minedu-mapa-skol.yaml
+pipeline-skoly.yaml: projects/banskabystrica/pipelines/skoly/pipeline.yaml
+pipeline-skoly-bento.yaml: projects/banskabystrica/pipelines/skoly/bento.yaml
+datasource-ovzdusie-pm10.yaml: projects/banskabystrica/datasources/eea-sk0263a-pm10.yaml
+pipeline-ovzdusie-pm10.yaml: projects/banskabystrica/pipelines/ovzdusie-pm10/pipeline.yaml
+pipeline-ovzdusie-pm10-bento.yaml: projects/banskabystrica/pipelines/ovzdusie-pm10/bento.yaml
+datasource-ovzdusie-pm25.yaml: projects/banskabystrica/datasources/eea-sk0263a-pm25.yaml
+pipeline-ovzdusie-pm25.yaml: projects/banskabystrica/pipelines/ovzdusie-pm25/pipeline.yaml
+pipeline-ovzdusie-pm25-bento.yaml: projects/banskabystrica/pipelines/ovzdusie-pm25/bento.yaml
+datasource-ovzdusie-no2.yaml: projects/banskabystrica/datasources/eea-sk0263a-no2.yaml
+pipeline-ovzdusie-no2.yaml: projects/banskabystrica/pipelines/ovzdusie-no2/pipeline.yaml
+pipeline-ovzdusie-no2-bento.yaml: projects/banskabystrica/pipelines/ovzdusie-no2/bento.yaml
+datasource-ovzdusie-o3.yaml: projects/banskabystrica/datasources/eea-sk0263a-o3.yaml
+pipeline-ovzdusie-o3.yaml: projects/banskabystrica/pipelines/ovzdusie-o3/pipeline.yaml
+pipeline-ovzdusie-o3-bento.yaml: projects/banskabystrica/pipelines/ovzdusie-o3/bento.yaml
+# SHMÚ's automatic weather stations in and near the city, every five minutes (T-4153).
+datasource-pocasie.yaml: projects/banskabystrica/datasources/shmu-aws1min.yaml
+pipeline-pocasie.yaml: projects/banskabystrica/pipelines/pocasie/pipeline.yaml
+pipeline-pocasie-bento.yaml: projects/banskabystrica/pipelines/pocasie/bento.yaml
+# OpenStreetMap's pharmacies, hospitals, clinics, defibrillators and charging stations in the
+# district, weekly, ODbL 1.0 (T-4514); the pipeline alone deletes what the map drops.
+datasource-osm.yaml: projects/banskabystrica/datasources/osm-overpass.yaml
+pipeline-osm.yaml: projects/banskabystrica/pipelines/osm/pipeline.yaml
+pipeline-osm-bento.yaml: projects/banskabystrica/pipelines/osm/bento.yaml
+policy-verejne-osm-delete.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/verejne-osm-delete.yaml
+policy-verejne-osm-account.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/verejne-osm-account.yaml
+# Both EEA files into `ovzdusie` too, so the public-air dataset carries the real reading; the
+# pipeline expires what it stops renewing (T-3120, PL-64).
+policy-ovzdusie-pipelines-write.yaml: projects/banskabystrica/spaces/ovzdusie/policies/ovzdusie-pipelines-write.yaml
+pipeline-public-air.yaml: projects/banskabystrica/pipelines/public-air/pipeline.yaml
+# The open-data catalogue of the city (T-2407): the one cleared endpoint, public-air, publishes here.
+ckan-banskabystrica.yaml: projects/banskabystrica/ckan/banskabystrica.yaml
+# The city's website as a knowledge source (T-3067, user decision 2026-10-07).
+banskabystrica-knowledge-web.yaml: projects/banskabystrica/assistant/sources/web.yaml
+banskabystrica-knowledge-catalogue-ngsi.yaml: projects/banskabystrica/assistant/sources/catalogue.yaml
+# The staff assistant over the website, for the answer-quality evals (T-3067).
+banskabystrica-assistant-knowledge.yaml: projects/banskabystrica/assistant/deployments/knowledge.yaml
+# The residents' public assistant of the city and the region (T-4167, Architecture/23).
+banskabystrica-knowledge-data-portal.yaml: projects/banskabystrica/assistant/sources/data-portal.yaml
+banskabystrica-assistant-public.yaml: projects/banskabystrica/assistant/deployments/banskabystrica.yaml
+# --- generated by scripts/open-data/generate.py (T-4255): do not edit by hand ---
+banskabystrica-od-space.yaml: projects/banskabystrica/spaces/banskabystrica-otvorene-data/space.yaml
+banskabystrica-od-datamodel.yaml: projects/banskabystrica/spaces/banskabystrica-otvorene-data/datamodels/banskabystrica-otvorene-data.yaml
+banskabystrica-otvorene-data.linkml.yaml: projects/banskabystrica/spaces/banskabystrica-otvorene-data/datamodels/banskabystrica-otvorene-data.linkml.yaml
+banskabystrica-otvorene-data.v1.schema.json: projects/banskabystrica/spaces/banskabystrica-otvorene-data/datamodels/banskabystrica-otvorene-data.v1.schema.json
+banskabystrica-otvorene-data.v1.context.jsonld: projects/banskabystrica/spaces/banskabystrica-otvorene-data/datamodels/banskabystrica-otvorene-data.v1.context.jsonld
+banskabystrica-otvorene-data.v1.md: projects/banskabystrica/spaces/banskabystrica-otvorene-data/datamodels/banskabystrica-otvorene-data.v1.md
+banskabystrica-otvorene-data.v1.example.jsonld: projects/banskabystrica/spaces/banskabystrica-otvorene-data/datamodels/banskabystrica-otvorene-data.v1.example.jsonld
+banskabystrica-od-endpoint.yaml: projects/banskabystrica/spaces/banskabystrica-otvorene-data/endpoints/banskabystrica-otvorene-data.yaml
+banskabystrica-od-policy-read.yaml: projects/banskabystrica/spaces/banskabystrica-otvorene-data/policies/otvorene-data-read.yaml
+banskabystrica-od-policy-read-history.yaml: projects/banskabystrica/spaces/banskabystrica-otvorene-data/policies/otvorene-data-read-history.yaml
+banskabystrica-od-policy-pipelines-write.yaml: projects/banskabystrica/spaces/banskabystrica-otvorene-data/policies/otvorene-data-pipelines-write.yaml
+banskabystrica-od-datasource-aktuality.yaml: projects/banskabystrica/datasources/od-aktuality.yaml
+banskabystrica-od-pipeline-aktuality.yaml: projects/banskabystrica/pipelines/od-aktuality/pipeline.yaml
+banskabystrica-od-pipeline-aktuality-bento.yaml: projects/banskabystrica/pipelines/od-aktuality/bento.yaml
+banskabystrica-od-datasource-dtm-bb-register-adries.yaml: projects/banskabystrica/datasources/od-dtm-bb-register-adries.yaml
+banskabystrica-od-pipeline-dtm-bb-register-adries.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-adries/pipeline.yaml
+banskabystrica-od-pipeline-dtm-bb-register-adries-bento.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-adries/bento.yaml
+banskabystrica-od-datasource-dtm-bb-register-statickej-dopravy.yaml: projects/banskabystrica/datasources/od-dtm-bb-register-statickej-dopravy.yaml
+banskabystrica-od-pipeline-dtm-bb-register-statickej-dopravy.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-statickej-dopravy/pipeline.yaml
+banskabystrica-od-pipeline-dtm-bb-register-statickej-dopravy-bento.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-statickej-dopravy/bento.yaml
+banskabystrica-od-datasource-dtm-bb-register-verejnej-zelene.yaml: projects/banskabystrica/datasources/od-dtm-bb-register-verejnej-zelene.yaml
+banskabystrica-od-pipeline-dtm-bb-register-verejnej-zelene.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-verejnej-zelene/pipeline.yaml
+banskabystrica-od-pipeline-dtm-bb-register-verejnej-zelene-bento.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-verejnej-zelene/bento.yaml
+banskabystrica-od-datasource-dtm-bb-register-verejnej-zelene-p2.yaml: projects/banskabystrica/datasources/od-dtm-bb-register-verejnej-zelene-p2.yaml
+banskabystrica-od-pipeline-dtm-bb-register-verejnej-zelene-p2.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-verejnej-zelene-p2/pipeline.yaml
+banskabystrica-od-pipeline-dtm-bb-register-verejnej-zelene-p2-bento.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-verejnej-zelene-p2/bento.yaml
+banskabystrica-od-datasource-dtm-bb-register-verejnej-zelene-p3.yaml: projects/banskabystrica/datasources/od-dtm-bb-register-verejnej-zelene-p3.yaml
+banskabystrica-od-pipeline-dtm-bb-register-verejnej-zelene-p3.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-verejnej-zelene-p3/pipeline.yaml
+banskabystrica-od-pipeline-dtm-bb-register-verejnej-zelene-p3-bento.yaml: projects/banskabystrica/pipelines/od-dtm-bb-register-verejnej-zelene-p3/bento.yaml
+# --- end of generated ---
+# One catalogue dataset per Smart Data Model type, or per group of types that reference
+# each other, each through its own narrowed Endpoint and Policy (T-4344).
+endpoint-podujatia.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/banskabystrica-podujatia.yaml
+policy-podujatia-read.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/podujatia-read.yaml
+endpoint-skoly.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/banskabystrica-skoly.yaml
+policy-skoly-read.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/skoly-read.yaml
+endpoint-pocasie.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/banskabystrica-pocasie.yaml
+policy-pocasie-read.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/pocasie-read.yaml
+endpoint-zdravie.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/banskabystrica-zdravie.yaml
+policy-zdravie-read.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/zdravie-read.yaml
+endpoint-nabijanie.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/banskabystrica-nabijanie.yaml
+policy-nabijanie-read.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/nabijanie-read.yaml
+# The cadastre's parcels of Banská Bystrica, register C, weekly, CC BY 4.0 ÚGKK SR (T-4697).
+datasource-kataster.yaml: projects/banskabystrica/datasources/kataster-inspire.yaml
+pipeline-kataster.yaml: projects/banskabystrica/pipelines/kataster/pipeline.yaml
+pipeline-kataster-bento.yaml: projects/banskabystrica/pipelines/kataster/bento.yaml
+endpoint-kataster.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/endpoints/banskabystrica-kataster.yaml
+policy-kataster-read.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/policies/kataster-read.yaml
+# The organization's own NGSI-LD catalogue (T-5493): written by the Portal reconciler, read by anyone.
+space-catalog.yaml: projects/banskabystrica/spaces/catalog/space.yaml
+datamodel-catalog.yaml: projects/banskabystrica/spaces/catalog/datamodels/catalog.yaml
+catalog.linkml.yaml: projects/banskabystrica/spaces/catalog/datamodels/catalog.linkml.yaml
+endpoint-catalog.yaml: projects/banskabystrica/spaces/catalog/endpoints/catalog.yaml
+policy-catalog-portal-write.yaml: projects/banskabystrica/spaces/catalog/policies/catalog-portal-write.yaml
+policy-catalog-public-read.yaml: projects/banskabystrica/spaces/catalog/policies/catalog-public-read.yaml
+# The MQTT demo (T-4857): one broker, its device and the pipeline writing the device's readings.
+mqttbroker-ovzdusie.yaml: projects/banskabystrica/mqttbrokers/ovzdusie.yaml
+serviceaccount-senzor-namestie.yaml: projects/banskabystrica/access/serviceaccounts/senzor-namestie.yaml
+datasource-mqtt-ovzdusie.yaml: projects/banskabystrica/datasources/mqtt-ovzdusie.yaml
+pipeline-mqtt-ovzdusie.yaml: projects/banskabystrica/pipelines/mqtt-ovzdusie/pipeline.yaml
+pipeline-mqtt-ovzdusie-bento.yaml: projects/banskabystrica/pipelines/mqtt-ovzdusie/bento.yaml
+# Its demo space, apart from ovzdusie, whose public-air expiry must be the one writer there (PL-64).
+space-senzory.yaml: projects/banskabystrica/spaces/senzory/space.yaml
+datamodel-senzory.yaml: projects/banskabystrica/spaces/senzory/datamodels/bb-air-sensors.yaml
+bb-air-sensors.linkml.yaml: projects/banskabystrica/spaces/senzory/datamodels/bb-air-sensors.linkml.yaml
+bb-air-sensors.v1.schema.json: projects/banskabystrica/spaces/senzory/datamodels/bb-air-sensors.v1.schema.json
+bb-air-sensors.v1.context.jsonld: projects/banskabystrica/spaces/senzory/datamodels/bb-air-sensors.v1.context.jsonld
+bb-air-sensors.v1.example.jsonld: projects/banskabystrica/spaces/senzory/datamodels/bb-air-sensors.v1.example.jsonld
+bb-air-sensors.v1.md: projects/banskabystrica/spaces/senzory/datamodels/bb-air-sensors.v1.md
+endpoint-senzory.yaml: projects/banskabystrica/spaces/senzory/endpoints/senzory.yaml
+policy-senzory-pipelines-write.yaml: projects/banskabystrica/spaces/senzory/policies/senzory-pipelines-write.yaml
+policy-senzory-steward-read.yaml: projects/banskabystrica/spaces/senzory/policies/senzory-steward-read.yaml

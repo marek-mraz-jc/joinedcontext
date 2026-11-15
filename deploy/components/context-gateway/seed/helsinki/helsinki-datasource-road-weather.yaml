@@ -1,0 +1,18 @@
+# Fintraffic's road weather stations, the whole country in one document, read every ten
+# minutes; the mapping keeps the stations inside the Helsinki box. Digitraffic asks every
+# client to name itself and to accept gzip, which the runner's client does by itself.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: digitraffic-road-weather
+  namespace: helsinki
+  title:
+    en: Road weather stations (Fintraffic Digitraffic)
+    fi: Tiesääasemat (Fintraffic Digitraffic)
+spec:
+  type: http
+  http:
+    url: https://tie.digitraffic.fi/api/weather/v1/stations/data
+    verb: GET
+    headers: { Accept: application/json, Digitraffic-User: joinedcontext-helsinki }
+    timeout: 30s

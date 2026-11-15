@@ -1,0 +1,70 @@
+# The mapping of the vision-counts pipeline (PL-03, T-5669): one TrafficFlowObserved per lane, vehicle
+# class and day of the city's machine vision counting pilot at Ratapihantie / Rautatieläisenkatu
+# (HRI datankeruukokeilu-helsingissa-liikennelaskenta-konenaon-avulla, Wapice Oy, spring 2023, CC BY
+# 4.0): one camera counted 8 lanes hour by hour from 2023-04-04 to 2023-06-07 15:00, 46560 hourly
+# values on 2026-10-25. The file is a closed pilot's static dump, so the pipeline runs once.
+#
+# A day is the sum of its 24 hours in Helsinki time (+03:00 the whole pilot); the last, partial day
+# is not written, since its sum would undercount. The camera's classes become Smart Data Models
+# vehicleType: car, bus, tram, motorcycle, bicycle, and truck as lorry. Pedestrians and e-scooters
+# are no vehicleType the model knows, so their counts are left out, counted in the run's log line.
+# The lane's name says its direction: etelään is south, pohjoiseen north.
+#
+# Decided (worker-t5669, owner may override): a day per entity, not an hour per entity, as the
+# traffic-volumes mapping does and for the same reason (one run of 46560 hour entities needs the
+# shared runner's memory in hundreds of MiB); options: an hour per entity.
+#
+# Plausibility (owner 2026-10-22): a lane without a numeric id or a position in Helsinki and a
+# kilometre around it (the space's area) is left out; an hour that is not an ISO time or a count that
+# is not a whole number from 0 to 20000 leaves its day incomplete, and an incomplete day is not
+# written; an hour named twice for one class keeps its later count; each is counted by its reason
+# in the run's log line. A file that is not the lane list or that yields no day fails the run, which writes nothing.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 8388608 { throw("the vision count file is %d bytes, more than the 8 MiB read".format(content().length())) } else if this.type() != "array" { throw("the vision count file is not a list of lanes") } else { this }
+        - mapping: |
+            let box = { "w": 24.76, "s": 59.91, "e": 25.29, "n": 60.31 }
+            let classes = { "car": "car", "bus": "bus", "tram": "tram", "motorcycle": "motorcycle", "bicycle": "bicycle", "truck": "lorry" }
+            let lanes = this.map_each(l -> l.assign({ "reason": if l.id.type() != "number" { "noId" } else if l.longitude.type() != "number" || l.latitude.type() != "number" { "noLocation" } else if !(l.longitude >= $box.w && l.longitude <= $box.e && l.latitude >= $box.s && l.latitude <= $box.n) { "outsideHelsinki" } else { "" } }))
+            let kept = $lanes.filter(l -> l.reason == "")
+            let streams = $kept.map_each(l -> l.counts.or({}).key_values().map_each(c -> { "lane": l.without("counts", "reason"), "class": c.key, "rows": c.value.or([]) })).flatten()
+            let vehicles = $streams.filter(s -> $classes.exists(s.class))
+            let hours = $vehicles.map_each(s -> s.assign({ "hours": s.rows.map_each(r -> { "at": r.time_window_start.or("").string(), "value": r.value }).map_each(r -> r.assign({ "reason": if !r.at.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:00:00\\+03:00$") { "badTime" } else if r.value.type() != "number" || r.value < 0 || r.value > 20000 || r.value.floor() != r.value { "badCount" } else { "" } })) }))
+            let days = $hours.map_each(s -> s.assign({ "days": s.hours.filter(h -> h.reason == "").fold({}, t -> t.value.at.slice(0, 10).(d -> t.tally.assign({ (d): t.tally.get(d).or({}).assign({ (t.value.at.slice(11, 13)): t.value.value }) }))) }))
+            let whole = $days.map_each(s -> s.days.key_values().filter(d -> d.value.keys().length() == 24).map_each(d -> { "lane": s.lane, "class": $classes.get(s.class), "day": d.key, "count": d.value.values().sum().int64() })).flatten()
+            let all = $days.map_each(s -> s.days.keys().length()).sum()
+            root = if $whole.length() == 0 { throw("the vision count file has no whole day of a vehicle class in Helsinki") } else { {
+              "days": $whole,
+              "dropped": {
+                "laneNoId": $lanes.filter(l -> l.reason == "noId").length(),
+                "laneNoLocation": $lanes.filter(l -> l.reason == "noLocation").length(),
+                "laneOutsideHelsinki": $lanes.filter(l -> l.reason == "outsideHelsinki").length(),
+                "notAVehicle": $streams.length() - $vehicles.length(),
+                "hourBadTime": $hours.map_each(s -> s.hours.filter(h -> h.reason == "badTime").length()).sum(),
+                "hourBadCount": $hours.map_each(s -> s.hours.filter(h -> h.reason == "badCount").length()).sum(),
+                "hourRepeated": $hours.map_each(s -> s.hours.filter(h -> h.reason == "").length()).sum() - $days.map_each(s -> s.days.values().map_each(d -> d.keys().length()).sum()).sum(),
+                "dayIncomplete": $all - $whole.length()
+              }
+            } }
+        - log:
+            level: INFO
+            message: 'vision-counts: ${! json("days").length() } lane-class-days written, left out by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: |
+            root = this.days.map_each(d -> d.day.ts_parse("2006-01-02").ts_unix().(midnight -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:vision-%v-%v-%v".format("TrafficFlowObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), d.lane.id.int64(), d.class, d.day.replace_all("-", "")),
+              "type": "TrafficFlowObserved",
+              "name": { "type": "LanguageProperty", "languageMap": { "fi": d.lane.name.string().trim() } },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [d.lane.longitude, d.lane.latitude] } },
+              "dateObserved": { "type": "Property", "value": (midnight + 75600).ts_format("2006-01-02T15:04:05Z", "UTC") },
+              "dateObservedFrom": { "type": "Property", "value": (midnight - 10800).ts_format("2006-01-02T15:04:05Z", "UTC") },
+              "dateObservedTo": { "type": "Property", "value": (midnight + 75600).ts_format("2006-01-02T15:04:05Z", "UTC") },
+              "intensity": { "type": "Property", "value": d.count, "observedAt": (midnight + 75600).ts_format("2006-01-02T15:04:05Z", "UTC") },
+              "vehicleType": { "type": "Property", "value": d.class },
+              "trafficDirection": if d.lane.name.string().lowercase().has_suffix("etelään") { { "type": "Property", "value": "south" } } else if d.lane.name.string().lowercase().has_suffix("pohjoiseen") { { "type": "Property", "value": "north" } } else { deleted() },
+              "dataProvider": { "type": "Property", "value": "Forum Virium Helsinki, machine vision counting pilot (Wapice Oy, spring 2023)" },
+              "source": { "type": "Property", "value": "https://dl.fvh.fi/sbox_public/liidi2/Wapice_traffic_counts/wapice_traffic_counts.json" }
+            }))
+        - unarchive: { format: json_array }

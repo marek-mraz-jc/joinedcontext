@@ -1,0 +1,19 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Resources (requests and limits) -> PL-11
+# - [x] Larger Storage -> stateless stream runner
+# - [x] 2+ Replicas or HorizontalPodAutoscaler -> 1 replica per runner pool
+# - [x] Rolling updates maxUnavailable: 0, maxSurge: 1 -> default in workload chart
+# - [ ] PodDisruptionBudget
+
+# ponytail: replicaCount remains 1 because horizontal scaling is per-project runner pools (PL-12), not replicas of one pool
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1024Mi

@@ -1,0 +1,20 @@
+# One FloodZone per record of the IPR layer Záplavové území (Vltava, Berounka) into the city space (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-flood-vltava
+  namespace: praha
+  title:
+    en: Flood area of the Vltava and Berounka
+    cs: Záplavové území (Vltava, Berounka)
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '25 2 * * 4'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-flood-vltava }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: FloodZone, mode: upsert }
+  # 1534091 bytes on 2026-10-24.
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

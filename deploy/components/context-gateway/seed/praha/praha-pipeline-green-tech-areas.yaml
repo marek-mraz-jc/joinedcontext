@@ -1,0 +1,19 @@
+# One GreenAsset per place of the IPR layer Sdílená data o zeleni – technické prvky – plochy into the city space (T-5682).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: green-tech-areas
+  namespace: praha
+  title:
+    en: 'Shared green register: technical elements, areas'
+    cs: Sdílená data o zeleni – technické prvky – plochy
+spec:
+  class: auto
+  # IPR republishes its layers a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '40 3 * * 4'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-green-tech-areas }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: GreenAsset, mode: upsert }
+  quotas: { maxMemoryMb: 384, cpuMillicores: 100 }

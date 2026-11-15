@@ -1,0 +1,20 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  name: helsinki-mobility
+  namespace: org
+  title: { en: Mobility analytics, sk: Analytika mobility }
+spec:
+  organizationRef: hel
+  # Owner, 2026-09-25 (T-2873): no demo work and no city dataset is refused by a quota, so every
+  # project allows 100 of each countable kind and runtime ceilings nobody reaches (PF-73). The
+  # quota stays as the mechanism; what the node holds is the operator's bounds file (PF-97).
+  quotas:
+    contextSpaces: 100
+    residentPipelines: 100
+    publicEndpoints: 100
+    apps: 100
+    ingestEventsPerSecond: 500
+    agentRunsPerDay: 2000
+    entitiesPerSpace: 1000000
+    requestsPerMinute: 6000

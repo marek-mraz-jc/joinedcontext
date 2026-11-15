@@ -1,0 +1,132 @@
+# The mapping of the groundwater pipeline (PL-03, T-5263): one PhreaticObserved per piezometer or
+# well the city reads, with its newest reading. The source is Open Data BCN's piezometres_detall.csv
+# (dataset piezometres_detall, one resource the city rewrites about once a month, its readings
+# taken by hand and published some months late): one row per reading, the day in Data_Mesura, the
+# well's Catalan water agency (ACA) code, the depth from the surface to the water (Fondaria_Aigua,
+# m) and the water's height above sea level (Cota_Nivell_Piezometric, m, below 0 near the sea).
+# The wells' names and places are not in it; they are listed here, read from the dataset
+# piezometres_equipaments (piezometres_equipaments.csv, 2026-10-23, 54 wells, each with readings).
+# Written: waterTable (the depth to the water, Smart Data Models' name), investigationDepth (the
+# well's depth), piezometricLevel (a property of this model) and measurementType depth. The file
+# gives the day only: dateObserved is that day at 12:00 UTC, the same date in every European zone.
+#
+# Plausibility (owner 2026-10-22): a well not listed, a value that is no number, a depth to the
+# water below 0 or below the well's own depth, a level outside -50..200 m, a day more than a day
+# ahead, and a second row for one well and day are each dropped and counted by reason in
+# `dropped`, which the next step logs. A well whose newest reading is more than five years old
+# is no longer read and is left out, counted as `noReadingInFiveYears`. A file with no valid
+# reading, or whose newest reading is more than 270 days old (the city's months of delay plus
+# three monthly updates), fails the run and leaves the entities as they were.
+
+pipeline:
+  processors:
+    - mapping: |
+        let text = if content().length() > 2097152 { throw("the readings file is %d bytes, more than the 2 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿") }
+        # The run's clock; a test sets bcn_now to read a recorded file as of its own day.
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        let wells = {
+          "08019-0179": { "name": "Piezòmetre - 36 Barcelona-1 (Mou 3)", "place": "C. Cristóbal de Moura 1 (Piezòmetre 36 BCN1)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 55.5, "barri": "Provençals del Poblenou", "district": "Sant Martí", "coordinates": [2.2075819, 41.4120394] },
+          "08019-0180": { "name": "Piezòmetre - 36 Barcelona-2 (Mou 4)", "place": "C. Cristóbal de Moura 2 (Piezòmetre 36 BCN2)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 23.5, "barri": "Provençals del Poblenou", "district": "Sant Martí", "coordinates": [2.2075641, 41.4120321] },
+          "08019-1305": { "name": "Piezòmetre - 36 Barcelona-3", "place": "C. Puigcerdà / Cristóbal Moura (Piezòmetre 36 BCN3)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 20, "barri": "el Besòs i el Maresme", "district": "Sant Martí", "coordinates": [2.2105961, 41.414291] },
+          "08019-1157": { "name": "Piezòmetre - 39 Barcelona-3 (Pz1 Port De Ningbó)", "place": "Moll de l’Energia (Piezòmetre 39 BCN3 Pz2)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 36, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1604749, 41.3308859] },
+          "08019-1158": { "name": "Piezòmetre - 39 Barcelona-4 (Pz2 Port De Ningbó)", "place": "Moll de l’Energia (Piezòmetre 39 BCN4 Pz2)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 72, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1613227, 41.3327953] },
+          "08019-0146": { "name": "Piezòmetre - A-10'-A", "place": "Moll de l’Energia (Piezòmetre A-10'-A)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 13, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.14967, 41.3286402] },
+          "08019-0147": { "name": "Piezòmetre - A-10'-B", "place": "Moll de l’Energia (Piezòmetre A-10'-B)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 38, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1496702, 41.3286222] },
+          "08019-0068": { "name": "Piezòmetre - A-10'-C", "place": "Moll de l’Energia (Piezòmetre A-10'-C)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 63.5, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1496587, 41.3285951] },
+          "08019-0148": { "name": "Piezòmetre - A-10'-D", "place": "Moll de l’Energia (Piezòmetre A-10'-D)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 120, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1496699, 41.3286492] },
+          "08019-0149": { "name": "Piezòmetre - A-11'-A", "place": "Moll de l’Energia (Piezòmetre A-11'-A)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 9.5, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1582042, 41.3414757] },
+          "08019-0150": { "name": "Piezòmetre - A-11'-B", "place": "Moll de l’Energia (Piezòmetre A-11'-B)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 37, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1582402, 41.341467] },
+          "08019-0151": { "name": "Piezòmetre - A-11'-C", "place": "Moll de l’Energia (Piezòmetre A-11'-C)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 47.5, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1582761, 41.3414582] },
+          "08019-0067": { "name": "Piezòmetre - A-11'-D", "place": "Moll de l’Energia (Piezòmetre A-11'-D)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 109.5, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1583121, 41.3414495] },
+          "08019-0154": { "name": "Piezòmetre - B-7-1-A", "place": "Zona Franca - Carrer 3 (Piezòmetre B-7-1-A)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 20, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.137929, 41.3327504] },
+          "08019-0168": { "name": "Piezòmetre - B-7-1-B", "place": "Zona Franca - Carrer 3 (Piezòmetre B-7-1-B)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 35, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1379527, 41.3327106] },
+          "08019-0155": { "name": "Piezòmetre - B-7-1-C", "place": "Zona Franca - Carrer 3 (Piezòmetre B-7-1-C)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 54.7, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1379288, 41.3327594] },
+          "08019-0152": { "name": "Piezòmetre - B-7-2-A", "place": "Zona Franca - Carrer 3 (Piezòmetre B-7-2-A)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 29, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.142992, 41.3421741] },
+          "08019-0077": { "name": "Piezòmetre - B-7-2-B", "place": "Zona Franca - Carrer 2 (Piezòmetre B-7-2-B)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 54.4, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1430039, 41.3421742] },
+          "08019-0141": { "name": "Piezòmetre - B-8'-A (Barcelona)", "place": "Zona Franca - Carrer 60 (Piezòmetre B-8'-A)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 16, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1452411, 41.3474963] },
+          "08019-0076": { "name": "Piezòmetre - B-8'-C", "place": "Zona Franca - Carrer 62 (Piezòmetre B-8'-C)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 60, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1449186, 41.3474759] },
+          "08019-0142": { "name": "Piezòmetre - C-7'-A (Barcelona)", "place": "Zona Franca - Carrer E (Piezòmetre C-7'-A)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 18, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1298228, 41.3356724] },
+          "08019-0143": { "name": "Piezòmetre - C-7'-B", "place": "Zona Franca - Carrer E (Piezòmetre C-7'-B)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 36.6, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1297502, 41.3356494] },
+          "08019-0144": { "name": "Piezòmetre - C-7'-C (Barcelona)", "place": "Zona Franca - Carrer 3 (Piezòmetre C-7'-C)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 53, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1297997, 41.3356617] },
+          "08019-0145": { "name": "Piezòmetre - C-7'-D", "place": "Zona Franca - Carrer E (Piezòmetre C-7'-D)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 60, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1297044, 41.335643] },
+          "08019-0570": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp10", "place": "Zona Franca - Ronda Litoral (Piezòmetre Bh-Pp10)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 72, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1358944, 41.3447772] },
+          "08019-0571": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp14", "place": "Zona Franca - Rda. del Port (Piezòmetre Bh-Pp14)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 64, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1493634, 41.3466488] },
+          "08019-0940": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp14 A (Superficial)", "place": "Zona Franca - Rda. del Port (Piezòmetre Bh-Pp14A)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 36, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1493401, 41.3466529] },
+          "08019-0572": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp15", "place": "Zona Franca - Carrer A (Piezòmetre Bh-Pp15)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 65, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1417564, 41.3369672] },
+          "08019-0939": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp15 A (Superficial)", "place": "Zona Franca - Carrer A (Piezòmetre Bh-Pp15A)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 15, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1417575, 41.3369675] },
+          "08019-0573": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp16", "place": "Zona Franca - Carrer C (Piezòmetre Bh-Pp10)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 64, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1344239, 41.3340514] },
+          "08019-0574": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp17", "place": "Zona Franca - Carrer 60 (Piezòmetre Bh-Pp17)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 69, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1428864, 41.3433534] },
+          "08019-0565": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp4", "place": "Zona Franca - Carrer 2 (Piezòmetre Bh-Pp4)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 71, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1437163, 41.3415491] },
+          "08019-0566": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp5", "place": "Zona Franca - Carrer A (Piezòmetre Bh-Pp5)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 73, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1326509, 41.3236535] },
+          "08019-0567": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp6", "place": "Zona Franca - Carrer 3 (Piezòmetre Bh-Pp6)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 75, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1379717, 41.3323035] },
+          "08019-0568": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp7", "place": "Zona Franca - Carrer A (Piezòmetre Bh-Pp7)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 72, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1355466, 41.3283188] },
+          "08019-0569": { "name": "Piezòmetre - Piezòmetre Barrera Hidràulica Bh-Pp9", "place": "Zona Franca - Carrer 5 (Piezòmetre Bh-Pp9)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 68, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1266582, 41.3256901] },
+          "08019-1239": { "name": "Piezòmetre - Piezòmetre Poble Sec Psp10", "place": "Carrer Calàbria (Piezòmetre Psp10)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 26.1, "barri": "Sant Antoni", "district": "Eixample", "coordinates": [2.1600419, 41.3761052] },
+          "08019-0269": { "name": "Piezòmetre - Port 1", "place": "Port Logístic (Piezòmetre Port 1)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 65.5, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1460052, 41.3217607] },
+          "08019-0241": { "name": "Piezòmetre - Port 2a", "place": "Moll de l’Energia (Piezòmetre Port 2 A)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 24.5, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1528648, 41.335012] },
+          "08019-0242": { "name": "Piezòmetre - Port 2b", "place": "Moll de l’Energia (Piezòmetre Port 2b)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 58.5, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1528762, 41.3350372] },
+          "08019-0188": { "name": "Piezòmetre - Port-1-Nou", "place": "Port Logístic (Piezòmetre Port 1 Nou)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 73.6, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1457444, 41.32172] },
+          "08019-0189": { "name": "Piezòmetre - Port-2b-Nou", "place": "Moll de l’Energia (Piezòmetre Port 2 Nou)", "aquifer": "Vall baixa i Delta del Llobregat", "wellDepth": 66.32, "barri": "la Marina del Prat Vermell", "district": "Sants - Montjuïc", "coordinates": [2.1529057, 41.3350653] },
+          "08019-0294": { "name": "QLSub - Ajmt Bcn P5 - Pou C. Mestres", "place": "C. Mestres (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 11.9, "barri": "la Marina del Port", "district": "Sants - Montjuïc", "coordinates": [2.1447678, 41.359785] },
+          "08019-0302": { "name": "QLSub - Ajmt Bcn S5 - Pou Torre De Les Aigües", "place": "Torre de les Aigües (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 40, "barri": "la Dreta de l'Eixample", "district": "Eixample", "coordinates": [2.1697478, 41.3932687] },
+          "08019-1300": { "name": "QLSub - Ordu (Ajuntament Barcelona)", "place": "C. Orduña (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 23, "barri": "el Turó de la Peira", "district": "Nou Barris", "coordinates": [2.1728002, 41.4337554] },
+          "08019-0129": { "name": "QLSub - Pou 1 Antonio Puig Sa", "place": "C. de Potosí (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 29.4, "barri": "el Bon Pastor", "district": "Sant Andreu", "coordinates": [2.2042917, 41.4434804] },
+          "08019-0014": { "name": "QLSub - Pou 3 Sant Andreu Central Besòs", "place": "Trinitat Vella - Besòs (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 25.1, "barri": "la Trinitat Vella", "district": "Sant Andreu", "coordinates": [2.1899711, 41.4572338] },
+          "08019-0104": { "name": "QLSub - Pou Barcelona (Inst.Catala De La Salut Generalitat Catalunya (Ics 3a Admi))", "place": "C. Manso - ICS (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 24.15, "barri": "Sant Antoni", "district": "Eixample", "coordinates": [2.1593898, 41.3755569] },
+          "08019-0010": { "name": "QLSub - Pou Barcelona (Residencia De La Inmaculada)", "place": "Res. De la Immaculada (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 14, "barri": "Horta", "district": "Horta - Guinardó", "coordinates": [2.156903, 41.4346443] },
+          "08019-0411": { "name": "QLSub - Pou Montsolís Sgab", "place": "C. Santander / Fra Juniper Serra (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 34.5, "barri": "el Bon Pastor", "district": "Sant Andreu", "coordinates": [2.2052907, 41.4321433] },
+          "08019-0024": { "name": "QLSub - Pou Reial Club De Tennis Barcelona 1889", "place": "Club de Tennis Barcelona (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 20, "barri": "Pedralbes", "district": "les Corts", "coordinates": [2.1171731, 41.3926435] },
+          "08019-0021": { "name": "QLSub - Pou Temple Sagrada Familia", "place": "Temple Sagrada Família (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 29, "barri": "la Sagrada Família", "district": "Eixample", "coordinates": [2.1741711, 41.4039686] },
+          "08019-0082": { "name": "QLSub - Pozo Floridablanca", "place": "C. de Floridablanca (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 8, "barri": "Sant Antoni", "district": "Eixample", "coordinates": [2.1626761, 41.3814388] },
+          "08019-1301": { "name": "QLSub - Trme (Ajuntament De Barcelona)", "place": "C. Trinxant (Pou QLSub)", "aquifer": "Baix Besòs i Pla de Barcelona", "wellDepth": 15, "barri": "el Camp de l’Arpa del Clot", "district": "Sant Martí", "coordinates": [2.1865961, 41.4139743] }
+        }
+        let rows = $text.parse_csv(true, ",").map_each(r -> {
+          "well": r.Codi_Estacio_ACA.or("").trim(),
+          "day": r.Data_Mesura.or("").trim(),
+          "depth": r.Fondaria_Aigua.or("").trim().number().catch(null),
+          "level": r.Cota_Nivell_Piezometric.or("").trim().number().catch(null)
+        })
+        let known = $rows.filter(r -> $wells.exists(r.well))
+        # One row per well and day; a repeated row is a duplicate, its first stands.
+        let keyed = $known.enumerated().map_each(e -> e.value.assign({ "key": e.value.well + "|" + e.value.day, "position": e.index }))
+        let first = $keyed.fold({}, item -> if item.tally.exists(item.value.key) { item.tally } else { item.tally.assign({ item.value.key: item.value.position }) })
+        let unique = $keyed.filter(r -> $first.get(r.key) == r.position)
+        let dated = $unique.map_each(r -> r.assign({ "instant": (r.day + "T12:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_unix().catch(null) })).filter(r -> r.instant != null)
+        let numeric = $dated.filter(r -> r.depth != null && r.level != null)
+        let ranged = $numeric.filter(r -> r.depth >= 0 && r.depth <= $wells.get(r.well).wellDepth.or(150) && r.level >= -50 && r.level <= 200)
+        let valid = $ranged.filter(r -> r.instant <= $now + 86400)
+        let newest = $valid.map_each(r -> r.instant).sort().index(-1).catch(null)
+        let latest = if $newest == null { throw("the readings file holds no valid reading of a known well") } else if $newest < $now - 270 * 86400 { throw("the newest reading of the readings file is of %v, more than 270 days old".format($newest.ts_format("2006-01-02", "UTC"))) } else {
+          $valid.sort_by(r -> r.instant).fold({}, item -> item.tally.assign({ item.value.well: item.value })).values()
+        }
+        let current = $latest.filter(r -> r.instant >= $now - 1826 * 86400)
+        root.dropped = {
+          "unknownWell": $rows.length() - $known.length(),
+          "duplicateRow": $known.length() - $unique.length(),
+          "notADate": $unique.length() - $dated.length(),
+          "notANumber": $dated.length() - $numeric.length(),
+          "outOfRange": $numeric.length() - $ranged.length(),
+          "inTheFuture": $ranged.length() - $valid.length(),
+          "noReadingInFiveYears": $latest.length() - $current.length()
+        }
+        root.entities = $current.sort_by(r -> r.well).map_each(r -> $wells.get(r.well).assign({ "code": r.well, "reading": r })).map_each(w -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:aca-%v".format("PhreaticObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), w.code),
+          "type": "PhreaticObserved",
+          "name": { "type": "Property", "value": w.name },
+          "stationCode": { "type": "Property", "value": w.code },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": w.coordinates } },
+          "address": { "type": "Property", "value": { "streetAddress": w.place, "addressLocality": "Barcelona", "district": w.district, "addressCountry": "ES" } },
+          "areaServed": { "type": "Property", "value": w.barri },
+          "aquifer": { "type": "Property", "value": w.aquifer },
+          "measurementType": { "type": "Property", "value": ["depth"] },
+          "investigationDepth": if w.wellDepth == null { deleted() } else { { "type": "Property", "value": w.wellDepth } },
+          "waterTable": { "type": "Property", "value": w.reading.depth, "unitCode": "MTR", "observedAt": w.reading.instant.ts_format("2006-01-02T15:04:05Z", "UTC") },
+          "piezometricLevel": { "type": "Property", "value": w.reading.level, "unitCode": "MTR", "observedAt": w.reading.instant.ts_format("2006-01-02T15:04:05Z", "UTC") },
+          "dateObserved": { "type": "Property", "value": w.reading.instant.ts_format("2006-01-02T15:04:05Z", "UTC") },
+          "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/piezometres_detall" }
+        })
+    - log:
+        level: INFO
+        message: 'groundwater: ${! json("entities").length() } wells written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.entities

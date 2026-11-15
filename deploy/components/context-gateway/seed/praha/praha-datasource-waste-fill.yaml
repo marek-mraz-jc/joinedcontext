@@ -1,0 +1,27 @@
+# Golemio's sorted-waste collection points with their containers and, for the sensor-monitored ones,
+# the last fill-level reading (Sensority sensors, served by Operátor ICT): 3456 points and 7529
+# monitored containers on 2026-09-25, about 7 MB. The key travels as the X-Access-Token header from
+# the secret `golemio`, never as a value here (CC-06, MF-35).
+#
+# Terms, read 2026-09-25 (T-2792): Golemio's public OpenAPI (api.golemio.cz/docs/static/output-gateway/
+# openapi-public.json) marks this endpoint "Open Data" and names no licence and no attribution text;
+# a key is limited to 20 requests per 8 seconds and 10 000 rows per answer. Credited as
+# "Golemio, Operátor ICT".
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: golemio-waste-containers
+  namespace: praha
+  title:
+    en: Waste container fill levels (Golemio)
+    cs: Zaplněnost kontejnerů na tříděný odpad (Golemio)
+spec:
+  type: http
+  http:
+    url: https://api.golemio.cz/v2/sortedwastestations?onlyMonitored=true
+    verb: GET
+    headers: { Accept: application/json }
+    authorization:
+      header: X-Access-Token
+      headerRef: { name: golemio, key: token }
+    timeout: 60s

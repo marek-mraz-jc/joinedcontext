@@ -1,0 +1,9 @@
+---
+# The broker-only profile (T-4856) as CI renders it: the NGSI-LD broker on its CloudNativePG
+# database, the generated secrets and the NetworkPolicies. No edge and no identity provider:
+# nothing outside the cluster reaches the broker, and nothing in it authenticates a request.
+componentProfile: broker-only
+global:
+  domain: joinedcontext.test
+  profile: development
+  instanceSlug: brokeronly

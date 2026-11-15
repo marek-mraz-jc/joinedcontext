@@ -1,0 +1,21 @@
+# The one model of the indicator space (DM-61): the indicator contract the regions' KPI spaces
+# publish, so a write of any other type into this space is refused, and a write of this type is
+# checked against it (DM-27). Regenerate: see README.md in ../bbsk (the same generators).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: helsinki-kpi
+  namespace: helsinki
+  title: { en: Indicator }
+spec:
+  contextSpaceRef: helsinki-kpi
+  linkml: ./helsinki-kpi.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [KeyPerformanceIndicator]
+  # A published model commits all four artifacts (DM-02); the gateway serves schema/v1 from them.
+  artifacts:
+    jsonSchema: ./helsinki-kpi.v1.schema.json
+    context: ./helsinki-kpi.v1.context.jsonld
+    docs: ./helsinki-kpi.v1.md
+    example: ./helsinki-kpi.v1.example.jsonld

@@ -1,0 +1,230 @@
+{
+  "@context": {
+    "@vocab": "https://smartdatamodels.org/",
+    "AirQualityObserved": {
+      "@id": "sdm:AirQualityObserved"
+    },
+    "CadastralParcel": {
+      "@id": "jc:CadastralParcel"
+    },
+    "EVChargingStation": {
+      "@id": "sdm:EVChargingStation"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "Event": {
+      "@id": "schema:Event"
+    },
+    "Organization": {
+      "@id": "sdm-org:Organization"
+    },
+    "PointOfInterest": {
+      "@id": "sdm:PointOfInterest"
+    },
+    "PostalAddress": {
+      "@id": "schema:PostalAddress"
+    },
+    "WeatherObserved": {
+      "@id": "sdm:WeatherObserved"
+    },
+    "address": {
+      "@id": "schema:address"
+    },
+    "addressCountry": {
+      "@id": "schema:addressCountry"
+    },
+    "addressLocality": {
+      "@id": "schema:addressLocality"
+    },
+    "allowedVehicleType": {
+      "@id": "sdm-transport:allowedVehicleType"
+    },
+    "annualBudget": {
+      "@id": "jc:annualBudget",
+      "@type": "xsd:float"
+    },
+    "areaValue": {
+      "@id": "jc:areaValue",
+      "@type": "xsd:float"
+    },
+    "atmosphericPressure": {
+      "@id": "sdm:atmosphericPressure",
+      "@type": "xsd:float"
+    },
+    "budgetYear": {
+      "@id": "jc:budgetYear",
+      "@type": "xsd:integer"
+    },
+    "cadastralAreaCode": {
+      "@id": "jc:cadastralAreaCode"
+    },
+    "cadastralAreaName": {
+      "@id": "jc:cadastralAreaName"
+    },
+    "capacity": {
+      "@id": "sdm-transport:capacity",
+      "@type": "xsd:integer"
+    },
+    "category": {
+      "@id": "sdm-poi:category"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dateModified": {
+      "@id": "sdm:dateModified",
+      "@type": "xsd:dateTime"
+    },
+    "dateObserved": {
+      "@id": "sdm:dateObserved",
+      "@type": "xsd:dateTime"
+    },
+    "endDate": {
+      "@id": "schema:endDate",
+      "@type": "xsd:dateTime"
+    },
+    "endTime": {
+      "@id": "jc:endTime"
+    },
+    "eventCategory": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:eventCategory"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@container": "@language",
+      "@id": "schema:name"
+    },
+    "nationalCadastralReference": {
+      "@id": "jc:nationalCadastralReference"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "no2": {
+      "@id": "sdm:no2",
+      "@type": "xsd:float"
+    },
+    "nonTeachingStaff": {
+      "@id": "jc:nonTeachingStaff",
+      "@type": "xsd:float"
+    },
+    "o3": {
+      "@id": "sdm:o3",
+      "@type": "xsd:float"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "openingHours": {
+      "@id": "schema:openingHours"
+    },
+    "operator": {
+      "@id": "sdm-transport:operator"
+    },
+    "parcelNumber": {
+      "@id": "jc:parcelNumber"
+    },
+    "pm10": {
+      "@id": "sdm:pm10",
+      "@type": "xsd:float"
+    },
+    "pm25": {
+      "@id": "sdm:pm25",
+      "@type": "xsd:float"
+    },
+    "postalCode": {
+      "@id": "schema:postalCode"
+    },
+    "precipitation": {
+      "@id": "sdm:precipitation",
+      "@type": "xsd:float"
+    },
+    "pupilCount": {
+      "@id": "jc:pupilCount",
+      "@type": "xsd:integer"
+    },
+    "register": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:register"
+    },
+    "relativeHumidity": {
+      "@id": "sdm:relativeHumidity",
+      "@type": "xsd:float"
+    },
+    "schema": "http://schema.org/",
+    "schoolCode": {
+      "@id": "jc:schoolCode"
+    },
+    "sdm": "https://smartdatamodels.org/",
+    "sdm-org": "https://smartdatamodels.org/dataModel.Organization/",
+    "sdm-parks": "https://smartdatamodels.org/dataModel.ParksAndGardens/",
+    "sdm-poi": "https://smartdatamodels.org/dataModel.PointOfInterest/",
+    "sdm-transport": "https://smartdatamodels.org/dataModel.Transportation/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "socketType": {
+      "@id": "sdm-transport:socketType"
+    },
+    "soilTemperature": {
+      "@id": "sdm-parks:soilTemperature",
+      "@type": "xsd:float"
+    },
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "startDate": {
+      "@id": "schema:startDate",
+      "@type": "xsd:dateTime"
+    },
+    "startTime": {
+      "@id": "jc:startTime"
+    },
+    "stationCode": {
+      "@id": "jc:stationCode"
+    },
+    "streetAddress": {
+      "@id": "schema:streetAddress"
+    },
+    "teachingLanguage": {
+      "@id": "jc:teachingLanguage"
+    },
+    "teachingStaff": {
+      "@id": "jc:teachingStaff",
+      "@type": "xsd:float"
+    },
+    "temperature": {
+      "@id": "sdm:temperature",
+      "@type": "xsd:float"
+    },
+    "type": "@type",
+    "url": {
+      "@id": "schema:url"
+    },
+    "windDirection": {
+      "@id": "sdm:windDirection",
+      "@type": "xsd:float"
+    },
+    "windSpeed": {
+      "@id": "sdm:windSpeed",
+      "@type": "xsd:float"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

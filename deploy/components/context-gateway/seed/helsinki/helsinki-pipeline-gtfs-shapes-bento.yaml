@@ -1,0 +1,45 @@
+# The mapping of the gtfs-shapes pipeline (PL-03, T-3890): HSL's GTFS `shapes.txt`, as the
+# archive read of `hsl-gtfs-shapes` leaves it (one message holding the member's text, PL-72). One
+# GtfsShape per shape, the line a vehicle draws on the map, with the distance travelled at each
+# point it keeps.
+#
+# The file is 22 MB of about 460 000 points, so it is never parsed whole (T-3889 load budget): the
+# text is cut into one piece per shape where a row's shape_pt_sequence is 1, and only one shape's
+# rows are split at a time. Each shape keeps about 200 points, every n-th in file order and its
+# last, sorted by shape_pt_sequence. HSL draws a point every few metres; 200 keep the longest line
+# within a street of its course. A file whose columns are not the five HSL writes, a piece holding
+# two shapes (a shape not starting at 1 or its points apart) or a shape named twice fails the run
+# rather than writing a wrong line.
+
+pipeline:
+  processors:
+    - mapping: |
+        # `this` is one shape's rows as text, its first row the one of sequence 1.
+        map shape {
+          let lines = this.split("\n").map_each(l -> l.trim()).filter(l -> l != "")
+          let id = $lines.index(0).slice(0, $lines.index(0).index_of(","))
+          let n = $lines.length()
+          let step = ($n / 200).ceil()
+          let points = if !$lines.all(l -> l.has_prefix($id + ",")) || $lines.index(0).split(",").index(3) != "1" { throw("shapes.txt: the points of shape %v are not together, or another shape does not start at sequence 1".format($id)) } else { $lines }.enumerated().filter(e -> e.index % $step == 0 || e.index == $n - 1).map_each(e -> e.value.split(",")).map_each(c -> {
+            "seq": c.index(3).number().catch(null),
+            "lat": c.index(1).number().catch(null),
+            "lon": c.index(2).number().catch(null),
+            "km": c.index(4).number().catch(null)
+          }).filter(p -> p.seq != null && p.lat != null && p.lon != null && p.lat >= -90 && p.lat <= 90 && p.lon >= -180 && p.lon <= 180).sort_by(p -> p.seq)
+          root = if $points.length() < 2 { deleted() } else { {
+            "id": "urn:ngsi-ld:%v:%v:%v:%v".format("GtfsShape", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $id.re_replace_all("[^A-Za-z0-9._-]", "-")),
+            "type": "GtfsShape",
+            "name": { "type": "LanguageProperty", "languageMap": { "fi": $id } },
+            "location": { "type": "GeoProperty", "value": { "type": "LineString", "coordinates": $points.map_each(p -> [p.lon, p.lat]) } },
+            "distanceTravelled": if $points.all(p -> p.km != null && p.km >= 0) { { "type": "Property", "value": $points.map_each(p -> p.km) } },
+            "dataProvider": { "type": "Property", "value": "Helsinki Region Transport (HSL), GTFS" },
+            "source": { "type": "Property", "value": "https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip" }
+          }.filter(entry -> entry.value != null) }
+        }
+        let text = if @archive_filename.or("") != "shapes.txt" { "" } else { content().string().trim_prefix("\ufeff") }
+        let header = "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled"
+        let body = if $text == "" { "" } else if $text.slice(0, $text.index_of("\n")).trim() != $header { throw("shapes.txt does not start with the columns %v".format($header.trim())) } else { $text.slice($text.index_of("\n") + 1) }
+        # A record separator (U+001E) before every row of sequence 1 cuts the text into shapes.
+        let pieces = $body.re_replace_all("(^|\n)([^,\n]*,[^,\n]*,[^,\n]*,1,)", "\u001e$2").split("\u001e").filter(p -> p.trim() != "")
+        let shapes = $pieces.map_each(p -> p.apply("shape"))
+        root = if $shapes.length() != $shapes.map_each(s -> s.id).unique().length() { throw("shapes.txt names a shape twice") } else { $shapes }

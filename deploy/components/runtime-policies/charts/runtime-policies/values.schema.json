@@ -1,0 +1,126 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of runtime-policies (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "operators": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "cnpgOperatorNamespace": {
+      "type": "string"
+    },
+    "linkerd": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "failureAction": {
+      "type": "string"
+    },
+    "podSecurity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "namespaces": {
+          "type": "array"
+        },
+        "policies": {
+          "type": "array"
+        },
+        "staged": {
+          "type": "array"
+        }
+      }
+    },
+    "imageSignatures": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "failureAction": {
+          "type": "string"
+        },
+        "references": {
+          "type": "array"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "subjectRegExp": {
+          "type": "string"
+        },
+        "production": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespaces": {"type": "array", "items": {"type": "string"}},
+            "failureAction": {"enum": ["Audit", "Enforce"]},
+            "subjectRegExp": {"type": "string", "pattern": "^\\^https://github\\\\.com/.*@refs/heads/main\\$$"}
+          }
+        },
+        "productionTier": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            },
+            "attestationType": {
+              "type": "string"
+            },
+            "subjectRegExp": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "agentReader": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "driftReader": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "secretNamespaces": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          }
+        }
+      }
+    },
+    "global": {
+      "type": "object"
+    }
+  }
+}

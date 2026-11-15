@@ -1,0 +1,4 @@
+---
+component: networkpolicies
+parts:
+  - name: networkpolicies

@@ -1,0 +1,34 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-air-quality
+  namespace: helsinki
+  title: { en: 'Public read: air quality' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: role, id: public }
+  # Discovery beside the reads (T-4258, EP-116): which types and attributes the Endpoint holds,
+  # narrowed to this grant (EP-26), so an anonymous MCP client finds them before it queries.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # Its type keeps history (P30D in the space): anyone reads it, as far back as the space keeps it (T-4372, T-5259).
+  temporalQ: timerel=after;timeAt=P-30D
+  # FMI's live stations only: the street-cleaning pilot's 2023 readings of the same type are their
+  # own dataset (T-5255), so this one never mixes old readings with today's.
+  information:
+    - entities:
+        - type: AirQualityObserved
+          idPattern: ^urn:ngsi-ld:AirQualityObserved:[a-z0-9.-]+:helsinki:fmi-[a-z0-9-]+$

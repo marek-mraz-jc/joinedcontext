@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of people (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "image": {
+      "type": "string"
+    },
+    "keycloakUrl": {
+      "type": "string"
+    },
+    "realm": {
+      "type": "string"
+    },
+    "serviceAccount": {
+      "type": "string"
+    },
+    "admin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "existingSecretKey": {
+          "type": "string"
+        }
+      }
+    },
+    "securityDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "podSecurityContext": {
+          "type": "object"
+        },
+        "securityContext": {
+          "type": "object"
+        }
+      }
+    },
+    "global": {
+      "type": "object"
+    },
+    "users": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "username"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "username": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._@+-]+$"
+          },
+          "recreate": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,194 @@
+/* The App's own layout over token variables the SDK sets from design-tokens.json. */
+
+html,
+body {
+  background: var(--jc-color-surface, #ffffff);
+  color: var(--jc-color-ink, #1a1a1a);
+  color-scheme: light dark;
+}
+
+.app-note {
+  color: var(--jc-color-muted, #64748b);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  align-self: center;
+}
+
+.app-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--jc-space-3, 0.75rem);
+}
+
+.app-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+  min-width: 14rem;
+}
+
+.app-filter-field select,
+.app-filter-field input {
+  font: inherit;
+  font-size: var(--jc-font-size-md, 0.875rem);
+  padding: var(--jc-space-2, 0.5rem);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-card, #ffffff);
+  color: var(--jc-color-ink, #0f172a);
+}
+
+.app-legend-text {
+  margin: var(--jc-space-2, 0.5rem) 0 0;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+}
+
+.app-weather-effect {
+  margin: var(--jc-space-3, 0.75rem) 0 var(--jc-space-1, 0.25rem);
+  font-size: var(--jc-font-size-md, 0.875rem);
+  font-weight: 600;
+  color: var(--jc-color-ink, #0f172a);
+}
+
+.app-weather-assumption {
+  margin: 0 0 var(--jc-space-2, 0.5rem);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+}
+
+.app-heat-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-surface, #ffffff);
+}
+
+.app-heat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  text-align: center;
+}
+
+.app-heat-table th {
+  padding: var(--jc-space-1, 0.25rem) var(--jc-space-2, 0.5rem);
+  background: var(--jc-color-card, #f8fafc);
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+  border-right: 1px solid var(--jc-color-line, #e2e8f0);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.app-heat-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  text-align: left;
+}
+
+.app-heat-table td {
+  padding: var(--jc-space-1, 0.25rem) var(--jc-space-2, 0.5rem);
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+  border-right: 1px solid var(--jc-color-line, #e2e8f0);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.app-heat-empty {
+  background: var(--jc-color-card, #f8fafc);
+  color: var(--jc-color-muted, #64748b);
+}
+
+.app-heat-0 {
+  background: var(--jc-color-card, #f8fafc);
+  color: var(--jc-color-ink, #0f172a);
+}
+
+.app-heat-1 {
+  background: color-mix(in srgb, var(--jc-color-accent, #0000bf) 20%, var(--jc-color-card, #f8fafc));
+  color: var(--jc-color-ink, #0f172a);
+}
+
+.app-heat-2 {
+  background: color-mix(in srgb, var(--jc-color-accent, #0000bf) 40%, var(--jc-color-card, #f8fafc));
+  color: var(--jc-color-ink, #0f172a);
+}
+
+.app-heat-3 {
+  background: color-mix(in srgb, var(--jc-color-accent, #0000bf) 60%, var(--jc-color-card, #f8fafc));
+  color: var(--jc-color-surface, #ffffff);
+}
+
+.app-heat-4 {
+  background: color-mix(in srgb, var(--jc-color-accent, #0000bf) 80%, var(--jc-color-card, #f8fafc));
+  color: var(--jc-color-surface, #ffffff);
+}
+
+.app-heat-5 {
+  background: var(--jc-color-accent, #0000bf);
+  color: var(--jc-color-surface, #ffffff);
+}
+
+/* Roles and edits (T-3827). */
+.app-role {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: 999px;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+.app-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.app-inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+.app-inputs > .app-note,
+.app-inputs > .app-error,
+.app-inputs-actions {
+  grid-column: 1 / -1;
+}
+.app-inputs label {
+  display: grid;
+  gap: 0.25rem;
+}
+.app-inputs input,
+.app-inputs select {
+  min-width: 0;
+}
+.app-inputs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.app-error {
+  color: var(--jc-color-danger, #b91c1c);
+}
+.app-quote {
+  margin: 0 0 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--jc-color-line, #cbd5e1);
+  overflow-wrap: anywhere;
+}
+.app-history {
+  width: 100%;
+  border-collapse: collapse;
+}
+.app-history th,
+.app-history td {
+  padding: 0.375rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,20 @@
+# The City of Helsinki's feedback system, Open311 GeoReport v2 (HRI: helsingin-kaupungin-palauterajapinta,
+# CC BY 4.0, interface described in Open311_rajapintakuvaus_011025.pdf). This source is its services
+# list: five sectors (2805 Education ... 2809), whose names the feedback-requests pipeline gives each
+# report, since a published report carries only the code. The pipeline reads the reports themselves
+# from the same host by date window. No key. T-5257.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-feedback
+  namespace: helsinki
+  title:
+    en: City of Helsinki feedback (Open311 Issue Reporting API)
+    fi: Helsingin kaupungin palautteet (Open311-palauterajapinta)
+spec:
+  type: http
+  http:
+    url: https://palautteet.hel.fi/public-api/open311-public-service/v1/services.json?locale=en
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

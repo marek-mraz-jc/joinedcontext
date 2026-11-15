@@ -1,0 +1,9 @@
+---
+helmDefaults:
+  wait: true
+  waitForJobs: true
+  timeout: 300
+  # T-5113: three revisions, not helm's ten. 314 releases x 10 were 3,125 release Secrets
+  # (133 MiB) on dev, every one held by the k3s datastore and the API server's watch cache;
+  # a rollback needs only the previous revision.
+  historyMax: 3

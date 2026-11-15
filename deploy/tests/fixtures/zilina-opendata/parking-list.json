@@ -1,0 +1,386 @@
+[
+ {
+  "id": "67b5e8c335c59400017efe4b",
+  "name": "Antona Bernoláka",
+  "provider": {
+   "name": "Mesto Žilina"
+  },
+  "lat": 49.21805180522654,
+  "lng": 18.74079667765875,
+  "area": {
+   "type": "Polygon",
+   "coordinates": [
+    [
+     [
+      18.740720628549184,
+      49.21711505344604
+     ],
+     [
+      18.741154048032854,
+      49.21714336415812
+     ],
+     [
+      18.740974488532657,
+      49.218704472606305
+     ],
+     [
+      18.740924954877926,
+      49.218805578966624
+     ],
+     [
+      18.74082588756727,
+      49.21884602145258
+     ],
+     [
+      18.74072682025664,
+      49.218862198437535
+     ],
+     [
+      18.740640136359616,
+      49.21883793295811
+     ],
+     [
+      18.74056583587634,
+      49.21879749046511
+     ],
+     [
+      18.74054726075522,
+      49.21871660538068
+     ],
+     [
+      18.740720628549184,
+      49.21711505344604
+     ]
+    ]
+   ]
+  },
+  "parkingLots": [],
+  "type": "offstreet",
+  "paid": true,
+  "occupancy": {
+   "overall": {
+    "total": 62,
+    "free": 52
+   },
+   "grouped": [
+    {
+     "permit": "DisabledPermit",
+     "total": 2,
+     "free": 2
+    },
+    {
+     "permit": "MotoPermit",
+     "total": 9,
+     "free": 9
+    }
+   ]
+  },
+  "payments": [
+   "Card",
+   "Sms",
+   "Mobile"
+  ],
+  "accessibility": {
+   "lpg": true
+  },
+  "capacity": {
+   "total": 62
+  },
+  "history": {
+   "last24": [
+    {
+     "hour": 15,
+     "value": 17
+    },
+    {
+     "hour": 16,
+     "value": 18
+    },
+    {
+     "hour": 17,
+     "value": 18
+    },
+    {
+     "hour": 18,
+     "value": 16
+    },
+    {
+     "hour": 19,
+     "value": 16
+    },
+    {
+     "hour": 20,
+     "value": 16
+    },
+    {
+     "hour": 21,
+     "value": 16
+    },
+    {
+     "hour": 22,
+     "value": 16
+    },
+    {
+     "hour": 23,
+     "value": 16
+    },
+    {
+     "hour": 0,
+     "value": 16
+    },
+    {
+     "hour": 1,
+     "value": 16
+    },
+    {
+     "hour": 2,
+     "value": 16
+    },
+    {
+     "hour": 3,
+     "value": 16
+    },
+    {
+     "hour": 4,
+     "value": 16
+    },
+    {
+     "hour": 5,
+     "value": 16
+    },
+    {
+     "hour": 6,
+     "value": 15
+    },
+    {
+     "hour": 7,
+     "value": 16
+    },
+    {
+     "hour": 8,
+     "value": 17
+    },
+    {
+     "hour": 9,
+     "value": 17
+    },
+    {
+     "hour": 10,
+     "value": 17
+    },
+    {
+     "hour": 11,
+     "value": 17
+    },
+    {
+     "hour": 12,
+     "value": 17
+    },
+    {
+     "hour": 13,
+     "value": 19
+    },
+    {
+     "hour": 14,
+     "value": 19
+    }
+   ],
+   "workingDays": [
+    {
+     "hour": 0,
+     "value": 18
+    },
+    {
+     "hour": 1,
+     "value": 18
+    },
+    {
+     "hour": 2,
+     "value": 18
+    },
+    {
+     "hour": 3,
+     "value": 18
+    },
+    {
+     "hour": 4,
+     "value": 19
+    },
+    {
+     "hour": 5,
+     "value": 18
+    },
+    {
+     "hour": 6,
+     "value": 22
+    },
+    {
+     "hour": 7,
+     "value": 29
+    },
+    {
+     "hour": 8,
+     "value": 35
+    },
+    {
+     "hour": 9,
+     "value": 35
+    },
+    {
+     "hour": 10,
+     "value": 34
+    },
+    {
+     "hour": 11,
+     "value": 35
+    },
+    {
+     "hour": 12,
+     "value": 34
+    },
+    {
+     "hour": 13,
+     "value": 33
+    },
+    {
+     "hour": 14,
+     "value": 33
+    },
+    {
+     "hour": 15,
+     "value": 34
+    },
+    {
+     "hour": 16,
+     "value": 33
+    },
+    {
+     "hour": 17,
+     "value": 32
+    },
+    {
+     "hour": 18,
+     "value": 30
+    },
+    {
+     "hour": 19,
+     "value": 27
+    },
+    {
+     "hour": 20,
+     "value": 25
+    },
+    {
+     "hour": 21,
+     "value": 23
+    },
+    {
+     "hour": 22,
+     "value": 20
+    },
+    {
+     "hour": 23,
+     "value": 20
+    }
+   ],
+   "nonWorkingDays": [
+    {
+     "hour": 0,
+     "value": 18
+    },
+    {
+     "hour": 1,
+     "value": 18
+    },
+    {
+     "hour": 2,
+     "value": 18
+    },
+    {
+     "hour": 3,
+     "value": 17
+    },
+    {
+     "hour": 4,
+     "value": 18
+    },
+    {
+     "hour": 5,
+     "value": 18
+    },
+    {
+     "hour": 6,
+     "value": 23
+    },
+    {
+     "hour": 7,
+     "value": 27
+    },
+    {
+     "hour": 8,
+     "value": 35
+    },
+    {
+     "hour": 9,
+     "value": 36
+    },
+    {
+     "hour": 10,
+     "value": 35
+    },
+    {
+     "hour": 11,
+     "value": 35
+    },
+    {
+     "hour": 12,
+     "value": 34
+    },
+    {
+     "hour": 13,
+     "value": 31
+    },
+    {
+     "hour": 14,
+     "value": 34
+    },
+    {
+     "hour": 15,
+     "value": 34
+    },
+    {
+     "hour": 16,
+     "value": 35
+    },
+    {
+     "hour": 17,
+     "value": 33
+    },
+    {
+     "hour": 18,
+     "value": 33
+    },
+    {
+     "hour": 19,
+     "value": 29
+    },
+    {
+     "hour": 20,
+     "value": 28
+    },
+    {
+     "hour": 21,
+     "value": 27
+    },
+    {
+     "hour": 22,
+     "value": 24
+    },
+    {
+     "hour": 23,
+     "value": 20
+    }
+   ]
+  }
+ }
+]

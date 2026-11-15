@@ -1,0 +1,40 @@
+{{- range .Values.serviceMonitors }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "monitoring.labels" $ | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- toYaml .selector | nindent 6 }}
+  # The monitor lives beside its Service, so the namespace selector names exactly one namespace:
+  # a monitor that could select a same-named Service somewhere else would scrape the wrong
+  # instance the moment a second instance exists on this cluster.
+  namespaceSelector:
+    matchNames:
+      - {{ .namespace }}
+  endpoints:
+    - port: {{ .port }}
+      path: {{ .path | default "/metrics" }}
+      # Metrics stay inside the cluster: the port is never published through APISIX, and the
+      # scrape is plain HTTP over the mesh rather than a route through the edge.
+      scheme: http
+      interval: {{ $.Values.interval }}
+      scrapeTimeout: {{ $.Values.scrapeTimeout }}
+      {{- with .metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .bearerTokenSecret }}
+      # A target behind a token: the Secret beside the monitor, read by the operator, never in values.
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ .name }}
+          key: {{ .key }}
+      {{- end }}
+{{- end }}

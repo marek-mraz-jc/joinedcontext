@@ -1,0 +1,40 @@
+# Primary schools in Bratislava: one public dataset of the hub (T-5444), item f1aeacee4f5d47778cebe21be0cb18dd, written by the places pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-zakladne-skoly
+  namespace: bratislava
+  title: { sk: Základné školy v Bratislave, en: Primary schools in Bratislava }
+  description:
+    sk: 'Základné školy v roku 2025 s adresou, mestskou časťou a webom. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'Primary schools in 2025 with address, city district and website. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: rembopfl5fen2nii6vblbqhoqknhhmly
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-zakladne-skoly
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: WEEKLY
+    source:
+      - url: https://data.bratislava.sk/datasets/f1aeacee4f5d47778cebe21be0cb18dd
+        title: { sk: Základné školy v Bratislave, en: Primary schools in Bratislava }
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Základné školy v Bratislave. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Primary schools in Bratislava. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: places }

@@ -1,0 +1,5 @@
+# The hold switch (docs Deployment/15-gitops.md §5, OPS-56). `hold: true` with a reason stops
+# every automatic sync of the platform's Applications until it is false again; a manual sync
+# stays open to the deployer. Merged to main like any change.
+hold: false
+reason: ""

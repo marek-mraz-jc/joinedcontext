@@ -1,0 +1,17 @@
+# Prague's open datasets for its public assistant (T-4281): the CKAN at data.dev holds five
+# bodies' catalogues; this source lists the organization `praha` alone, anonymously, so no other
+# body's dataset and no private one reaches the index. Read once a night.
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: data-portal
+  namespace: praha
+  title: { cs: Otevřená data hlavního města Prahy, en: Prague's open datasets }
+spec:
+  source: ckan
+  ckanInstanceRef: praha
+  organizations: [praha]
+  schedule: '50 3 * * *'
+  maxPages: 500
+  languages: [cs, en]
+  visibility: public

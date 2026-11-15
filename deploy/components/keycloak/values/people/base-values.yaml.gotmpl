@@ -1,0 +1,33 @@
+---
+{{- $global := .Values.global }}
+{{- $config := .Values.keycloak.config }}
+# The Keycloak image itself: its kcadm.sh is all the Job runs, so it adds no image to pin.
+{{- with .Values.images.keycloak.app }}
+image: {{ .repository }}:{{ .tag }}@{{ .digest }}
+{{- end }}
+keycloakUrl: http://keycloak-app-keycloakx-http.{{ .Values.keycloak.app.namespace }}.svc.cluster.local:80{{ .Values.keycloak.app.pathPrefix | trimSuffix "/" }}
+realm: "{{ $global.instanceSlug }}"
+admin:
+  username: "{{ .Values.keycloak.app.admin.username }}"
+  existingSecret: {{ .Values.keycloak.app.admin.secret.name }}
+  existingSecretKey: {{ .Values.keycloak.app.admin.secret.passwordKey }}
+# The people the seeds name by id (PF-126): the demo people of the development profile, whom the
+# Job may create again under their id, and a production realm's owner, whom it never deletes.
+users:
+  {{- range $name, $user := $config.demoUsers | default dict }}
+  - id: {{ required (printf "components/keycloak/demo-users.yaml: %s has no id" $name) $user.id | quote }}
+    username: "{{ $name }}@{{ $global.orgDomain }}"
+    {{- /* The presenter is no demo person: the Job never deletes it (T-6542). */}}
+    recreate: {{ ne $name "presenter" }}
+  {{- end }}
+  {{- with $config.initialUser }}
+  - id: {{ required "global.initialUserId" .id | quote }}
+    username: {{ .email | quote }}
+    recreate: false
+  {{- end }}
+  {{- if not (or ($config.demoUsers | default dict) $config.initialUser) }} []{{ end }}
+securityDefaults:
+  podSecurityContext:
+    {{- .Values.securityDefaults.podSecurityContext | toYaml | nindent 4 }}
+  securityContext:
+    {{- .Values.securityDefaults.securityContext | toYaml | nindent 4 }}

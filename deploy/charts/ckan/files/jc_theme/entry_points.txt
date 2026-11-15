@@ -1,0 +1,5 @@
+[ckan.plugins]
+jc_theme = ckanext_jc_theme.plugin:JcThemePlugin
+
+[ckan.rdf.profiles]
+jc_dcat_ap = ckanext_jc_theme.dcat_profile:JcDcatApProfile

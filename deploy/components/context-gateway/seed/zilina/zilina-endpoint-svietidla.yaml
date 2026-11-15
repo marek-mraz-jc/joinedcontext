@@ -1,0 +1,49 @@
+# One Smart Data Model type per catalogue dataset (T-4344): Streetlight of the space zilina-doprava,
+# read through its own Policy. The publisher is Mesto Žilina by its registry IRI, as the
+# Project's spec.catalog names it (T-4596); the data is the city's under ODbL, credited "Mesto Žilina" (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-svietidla
+  namespace: zilina
+  title: { sk: Pouličné svietidlá — Žilina, en: Street lights — Žilina }
+  description:
+    sk: 'Pouličné svietidlá mesta Žilina s číslom a polohou, obnovované denne. Zdroj: Mesto Žilina, opendata.zilina.sk, ODbL.'
+    en: "The City of Žilina's street lights with their number and place, refreshed daily. Source: City of Žilina, opendata.zilina.sk, ODbL."
+spec:
+  contextSpaceRef: zilina-doprava
+  slug: yghs6jiqxzndccysws4m5enia5i56ezl
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:svietidla-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: zilina }
+      license: odc-odbl
+  catalog:
+    # Public facilities, counts and vehicle positions: no record names a person.
+    personalData: does-not-contain
+    publisher:
+      name: { sk: Mesto Žilina, en: City of Žilina }
+      uri: https://data.gov.sk/id/legal-subject/00321796
+    license: ODC_ODBL
+    attribution:
+      sk: 'Zdroj: Mesto Žilina, otvorené dáta opendata.zilina.sk, ODbL'
+      en: 'Source: City of Žilina (Mesto Žilina), open data opendata.zilina.sk, ODbL'
+    themes: [TRAN]
+    keywords:
+      sk: [verejné osvetlenie, svietidlá, Žilina]
+      en: [street lighting, street lights, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: DAILY
+    source:
+      - url: https://opendata.zilina.sk/sk/dataset-list/detail/102
+        title:
+          sk: Zoznam pouličných svietidiel (opendata.zilina.sk)
+          en: Street lights (opendata.zilina.sk)
+        description:
+          sk: Mesto Žilina, platforma Invipo, POST https://opendata.zilina.sk/api/datasets/v2/street-lights/items, ODbL.
+          en: City of Žilina, Invipo platform, POST https://opendata.zilina.sk/api/datasets/v2/street-lights/items, ODbL.
+    pipelineRef: { kind: Pipeline, name: svietidla }

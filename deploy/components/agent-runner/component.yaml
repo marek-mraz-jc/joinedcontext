@@ -1,0 +1,8 @@
+---
+component: agent-runner
+parts:
+  # The credential proxy (AG-49, AG-50): the one address a builder run speaks to for data,
+  # model, forge and its own events. The workspace namespace and the runner Jobs of T-0540
+  # are not here yet: a `static` run is built by the Portal itself (AP-56…AP-60) and needs
+  # only the proxy.
+  - name: proxy

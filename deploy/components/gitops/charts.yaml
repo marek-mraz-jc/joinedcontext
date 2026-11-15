@@ -1,0 +1,10 @@
+---
+gitops:
+  # Argo CD v3.5.4 (2026-10-09); 10.10.3 and later were younger than the 7-day cooldown. No line
+  # between chart and version: Renovate's charts.yaml regex reads them as neighbours.
+  argocd:
+    repository: https://argoproj.github.io/argo-helm
+    chart: argo/argo-cd
+    version: '10.10.2'
+  root:
+    chart: charts/root

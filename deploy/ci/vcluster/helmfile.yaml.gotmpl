@@ -1,0 +1,23 @@
+# Helmfile for vcluster deployment
+# Usage: helmfile -f vcluster/helmfile.yaml apply
+#
+# Each vCluster gets its own release and namespace for isolation.
+# To add a new vCluster, add another release block with its own name,
+# namespace, and values file.
+
+repositories:
+  - name: loft
+    url: https://charts.loft.sh
+
+
+releases:
+  # PIPELINE_SLUG is injected by the GitLab job:
+  #   * Branch pipelines: $CI_COMMIT_REF_SLUG
+  #   * MR pipelines:     mr-$CI_MERGE_REQUEST_IID
+  - name: smoke-test-{{ requiredEnv "PIPELINE_SLUG" }}
+    namespace: smoke-test-{{ requiredEnv "PIPELINE_SLUG" }}
+    createNamespace: true
+    chart: loft/vcluster
+    version: 0.32.0
+    values:
+      - values/smoke-test.yaml.gotmpl

@@ -1,0 +1,45 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-pietni-mista
+  namespace: praha
+  title: { cs: Pietní místa a válečné hroby — Praha, en: Memorials and war graves — Prague }
+  description:
+    cs: 'Pietní místa a válečné hroby jako body: druh a poloha; vrstva nepublikuje název ani adresu. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'Memorials and war graves as points: kind and location; the layer publishes no name or address. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: rotk73gfshn45cvewfsocjiwn6k4knat
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-pietni-mista
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Places only: the layer names no buried person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [SOCI, EDUC]
+    keywords:
+      cs: [Praha, pietní místa, válečné hroby, památníky]
+      en: [Prague, memorials, war graves, monuments]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/URK_CUR_URK_VALHROBPIETMIST_B/FeatureServer/0?f=json
+        title:
+          cs: Pietní místa a válečné hroby (IPR Praha)
+          en: Memorials and war graves (IPR Praha)
+        description:
+          cs: Pietní místa a válečné hroby z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Memorials and war graves from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+    pipelineRef: { kind: Pipeline, name: point-war-graves }

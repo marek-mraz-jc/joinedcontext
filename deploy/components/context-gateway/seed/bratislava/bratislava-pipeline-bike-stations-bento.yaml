@@ -1,0 +1,55 @@
+# The mapping of the bike-stations pipeline (PL-03, T-5273): one BikeHireDockingStation per station
+# of nextbike's Bratislava system, which runs the city's Slovnaft BAjk (GBFS 2.3
+# `station_information`, CC0 1.0), its name and position. What a station holds right now is the
+# bike-availability pipeline's, written onto the same entity. The stations are virtual (a marked
+# area, no docks): the feed names no capacity, so totalSlotNumber is written only where it does.
+#
+# Plausibility (owner 2026-10-22): a station is left out, its reason counted in one WARN line,
+# when it has no id or position, lies outside Bratislava and a kilometre around it (swapped
+# coordinates among them) or repeats an earlier station (the same id, or the same name within
+# 20 m). A feed older than three of its own `ttl` periods (at least 15 minutes) or one that keeps
+# no station fails the run, so the space keeps the last stations instead of none.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = if content().length() > 4194304 { throw("the station list is %d bytes, more than the 4 MiB read".format(content().length())) } else { this }
+    - mapping: |
+        let box = { "w": 16.93, "s": 47.99, "e": 17.3, "n": 48.28 }
+        let age = now().ts_unix() - this.last_updated.or(0).number().catch(0)
+        let all = this.data.stations.or([]).map_each(s -> {
+          "id": s.station_id.or("").string(), "name": s.name.or("").string().trim(),
+          "lon": s.lon.or(null), "lat": s.lat.or(null), "capacity": s.capacity.or(null)
+        })
+        let judged = $all.enumerated().map_each(e -> e.value.assign({ "reason":
+          if !e.value.id.re_match("^[0-9]+$") { "noId" }
+          else if e.value.lon.type() != "number" || e.value.lat.type() != "number" { "noLocation" }
+          else if !(e.value.lon >= $box.w && e.value.lon <= $box.e && e.value.lat >= $box.s && e.value.lat <= $box.n) {
+            if e.value.lat >= $box.w && e.value.lat <= $box.e && e.value.lon >= $box.s && e.value.lon <= $box.n { "swappedCoordinates" } else { "outsideBratislava" }
+          }
+          else if $all.slice(0, e.index).any(o -> o.id == e.value.id || (o.name == e.value.name && o.lon.type() == "number" && o.lat.type() == "number" && ((o.lon - e.value.lon) * 74400).pow(2) + ((o.lat - e.value.lat) * 111320).pow(2) < 400)) { "duplicate" }
+          else { null }
+        }))
+        let kept = $judged.filter(s -> s.reason == null)
+        let dropped = $judged.filter(s -> s.reason != null).fold({}, t -> t.tally.assign({ t.value.reason: t.tally.get(t.value.reason).or(0) + 1 }))
+        meta dropped = if $dropped.keys().length() > 0 { $dropped.format_json(no_indent: true) } else { "" }
+        meta problem = if $age > [this.ttl.or(60).number().catch(60) * 3, 900].max() { "the station list is %v s old".format($age) } else if $kept.length() == 0 { "no station of the answer lies in Bratislava" } else { "" }
+        root = $kept.map_each(s -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:nextbike-%v".format("BikeHireDockingStation", env("JC_ORG_DOMAIN"), env("JC_SPACE"), s.id),
+          "type": "BikeHireDockingStation",
+          "name": if s.name == "" { null } else { { "type": "Property", "value": s.name } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [s.lon, s.lat] } },
+          "totalSlotNumber": if s.capacity.type() != "number" || s.capacity < 0 { null } else { { "type": "Property", "value": s.capacity } },
+          "dataProvider": { "type": "Property", "value": "nextbike Czech Republic, Slovnaft BAjk (CC0 1.0)" },
+          "source": { "type": "Property", "value": "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bi/gbfs.json" }
+        }.filter(entry -> entry.value != null))
+    - switch:
+        - check: '@dropped != ""'
+          processors:
+            - log: { level: WARN, message: 'bike stations left out: ${! @dropped }' }
+    # A thrown message keeps its content: [] first, so nothing is written.
+    - mapping: |
+        root = if @problem != "" { [] } else { this }
+    - mapping: |
+        root = if @problem != "" { throw(@problem) } else { this }
+    - unarchive: { format: json_array }
