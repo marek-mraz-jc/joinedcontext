@@ -247,3 +247,14 @@ def test_a_result_file_is_named_by_its_dir_so_every_shard_names_it_alike(tmp_pat
     assert names(["restore", "multiorg@path"]) == ["results.restore.endpoints/results.json",
                                                    "results.multiorg@path.endpoints/results.json"]
     assert names(["multiorg@path", "restore"]) == list(reversed(names(["restore", "multiorg@path"])))
+
+
+def test_a_suite_window_is_named_by_its_place_under_the_run_dir_in_any_order(tmp_path):
+    # T-6954: `activity.endpoints.11` counted windows, so a shard's logs named restore's inner
+    # endpoints run `activity.endpoints.1` and the merged rows could not keep one id.
+    for rel in ("endpoints", "restore", "restore/before/endpoints"):
+        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel / "results.json").write_text(json.dumps({"suite": rel.rsplit("/", 1)[-1], "seconds": 1, "checks": []}))
+    names = lambda dirs: sorted(w["name"] for w in suite.suite_windows([tmp_path / d for d in dirs]))  # noqa: E731
+    assert names(["endpoints", "restore"]) == names(["restore", "endpoints"]) == [
+        "endpoints", "restore", "restore/before/endpoints"]
