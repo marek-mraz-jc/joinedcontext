@@ -61,7 +61,34 @@ async fn own_database(shared: &str) -> String {
     }
     admin.close().await;
     let (base, _) = shared.rsplit_once('/').expect("a database URL");
-    format!("{base}/{name}")
+    let url = format!("{base}/{name}");
+    migrated_once(&url).await;
+    url
+}
+
+/// Migrates `url` one process at a time, behind advisory lock 6952 taken with
+/// no lock timeout. nextest runs each test as a process of its own, and each
+/// test's `pg::connect` migrates: on the fresh database the first one applies
+/// every migration for seconds while the others wait on sqlx's migration lock
+/// under the broker's 5 s `lock_timeout`, and three panicked with 55P03 (ci
+/// 43666862057, T-6952). Waiting here instead, a test's own connect finds
+/// nothing left to apply; the broker's lock timeout stays as it is.
+async fn migrated_once(url: &str) {
+    use sqlx::Connection as _;
+    let mut gate = sqlx::PgConnection::connect(url).await.expect("connect");
+    // A session lock, no transaction: nothing here holds a snapshot a
+    // migration could wait on.
+    sqlx::query("SET lock_timeout = 0")
+        .execute(&mut gate)
+        .await
+        .expect("no lock timeout: the first migration holds the lock for seconds");
+    sqlx::query("SELECT pg_advisory_lock(6952)")
+        .execute(&mut gate)
+        .await
+        .expect("lock");
+    pg::connect(url, 1).await.expect("migrate").close().await;
+    // Closing the session releases the lock.
+    gate.close().await.expect("unlock");
 }
 
 /// The plan the broker's role gets: `antares_app` (created and granted as
