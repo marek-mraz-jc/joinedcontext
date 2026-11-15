@@ -23,8 +23,8 @@
 # module's door admits that client's token for its own audience alone (bins/jc/src/door.rs,
 # tests/split_role.rs). No secret reaches argv: the client secret, the NATS password and the
 # database passwords stay in 0600 files; the NATS URL with its password is in core's environment.
-# Ports (loopback): core <pg_port>+300.., modules +310.., their admin listeners +200.. and +210..,
-# NATS +500.
+# Ports (loopback): core <pg_port>+400.., modules +410.., their admin listeners +200.. and +210..,
+# NATS +500 (prometheus.sh holds +300 and +301).
 
 split=$home/split
 mkdir -p "$split"
@@ -47,7 +47,7 @@ core_roles=kaisatsu,antares,gateway,portal,model-tools,assistant,viz
 declare -A slug=([shako]=git [daiya]=dashboards [dataroom]=opendata [ekiben]=streams)
 declare -A mport
 i=0
-for m in "${remote_modules[@]}"; do mport[$m]=$((pg_port + 310 + i)); i=$((i + 1)); done
+for m in "${remote_modules[@]}"; do mport[$m]=$((pg_port + 410 + i)); i=$((i + 1)); done
 
 # NATS, JetStream on, loopback only, one user.
 nats_image=${REHEARSAL_NATS_IMAGE:-nats:2.10-alpine@sha256:b83efabe3e7def1e0a4a31ec6e078999bb17c80363f881df35edc70fcb6bb927}
@@ -135,7 +135,7 @@ front_image=${REHEARSAL_FRONT_IMAGE:-nginx:1.27-alpine@sha256:65645c7bb6a0661892
   printf '  proxy_http_version 1.1;\n  proxy_buffering off;\n  proxy_request_buffering off;\n  proxy_read_timeout 600s;\n'
   printf '  map $http_upgrade $connection_upgrade { default upgrade; "" close; }\n'
   printf '  upstream core {\n'
-  for r in $(seq "$replicas"); do printf '    server 127.0.0.1:%s;\n' $((pg_port + 299 + r)); done
+  for r in $(seq "$replicas"); do printf '    server 127.0.0.1:%s;\n' $((pg_port + 399 + r)); done
   printf '    keepalive 32;\n  }\n'
   printf '  server {\n    listen %s:%s;\n    proxy_set_header Host $http_host;\n' "$bind" "$port"
   printf '    proxy_set_header Upgrade $http_upgrade;\n    proxy_set_header Connection $connection_upgrade;\n'
@@ -158,7 +158,7 @@ core_args=(--state-dir "$home/state" --kaisatsu-import-dir "$home/state/realms"
 for r in $(seq "$replicas"); do
   if [ "$r" = 1 ]; then log=$home/jc.log pid_file=$home/jc.pid; else log=$split/core-$r.log pid_file=$split/core-$r.pid; fi
   ANTARES_BUS=nats ANTARES_NATS_URL=$nats_url JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 99 + r)) \
-    start_jc "core-$r" "$core_roles" "$split/core.toml" $((pg_port + 299 + r)) $((pg_port + 199 + r)) \
+    start_jc "core-$r" "$core_roles" "$split/core.toml" $((pg_port + 399 + r)) $((pg_port + 199 + r)) \
     "$log" "$pid_file" "${core_args[@]}"
   # One replica at a time: the first start makes the state dir's generated secrets the next reads.
   "$here/wait-jc.sh" "$(cat "$pid_file")" "$log" || exit 1
