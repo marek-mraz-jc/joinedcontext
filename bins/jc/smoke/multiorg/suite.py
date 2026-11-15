@@ -42,7 +42,17 @@ and their projects and objects, and every read row runs on them.
 Inside one Organization with two projects P1, P2 (live: ctl-a and ctl-b only), persona `mo-O-project`
 (role viewer, scope project P1) reads nothing of P2 (`crossproject` rows, the admin's 200 on P2 as
 control). `names` rows: an Organization's admin opening a project named like another
-Organization's gets 409 "not available" naming nothing of it (PF-67)."""
+Organization's gets 409 "not available" naming nothing of it (PF-67). The member of P1 also reads
+no P2 entity through P2's Endpoints, gets no P2 object from MCP, and a connector scoped to P1
+answers nothing of P2.
+
+Same names (`same` rows, T-6973): each project of ctl-a and ctl-b holds a Space, DataModel,
+Endpoint and Policy named as in ISO and the entity ISO_URN whose `check` is its project's name.
+On a local jc the run makes two such projects per Organization (`{org}-iso`, `{org}-iso2`; forge
+commits as for the Dashboards) and removes them after the checks; live they are the fixtures the
+approved Change made. Each Organization's admin, member and connector lists one of each name and
+reads its own value only; a write to its own changes nothing of the other's (read back from both);
+MCP search and the readable catalogue answer per Organization."""
 import argparse
 import base64
 import hashlib
@@ -70,6 +80,10 @@ LIVE_OFF = ("ui", "connectors", "operators", "portals")  # a browser, or writes 
 PORTAL_PATH = "multiorg"  # the further Portal setup commits for each Organization (check_portals)
 BOUND = Path(__file__).resolve().parent / "skip-bound.json"
 MCP_CLIENT = "mcp-local"  # the realm's public client for a local MCP client
+# The same-name fixtures (check_same_names): in each project of ctl-a and ctl-b one object of each
+# kind under these names, and one entity of the same URN holding its project's name.
+ISO = {"spaces": "iso-space", "endpoints": "iso", "policies": "iso-access", "datamodels": "iso-check"}
+ISO_TYPE, ISO_URN = "IsoCheck", "urn:ngsi-ld:IsoCheck:1"
 # Project-scoped reads every Organization's people use; each is checked both ways.
 PROJECT_READS = ["", "/spaces", "/endpoints", "/pipelines", "/apps", "/datamodels", "/datasources",
                  "/changes", "/dashboards", "/policies", "/rolebindings", "/ckaninstances",
@@ -244,6 +258,8 @@ class Suite:
         self.export = Path(a.export)
         self.people: dict[str, dict] = {}
         self.dashboards: dict[str, tuple[str, str]] = {}
+        self.iso: dict[str, dict[str, str]] = {}  # org -> {project: slug of its Endpoint iso}
+        self.iso_made = False  # the run made the fixtures (a local jc): it removes them
         self.exchange_ok = False  # an own control exchange succeeded: a foreign refusal then counts  # org -> (project, name) the suite committed
         self.hosts = organization_hosts(Path(a.jc_config)) if a.jc_config else {}
         self.live = bool(getattr(a, "live", False))
@@ -435,7 +451,9 @@ class Suite:
             self.personas_from(Path(self.a.personas))
             self.guard.fixtures = {p for o in FIXTURES for p in self.exp.get(o, {}).get("projects", {})}
             self.guard.personas = {v["id"] for v in self.people.values()}
+            self.iso = self.fixtures_live()
             return self.synced()
+        self.plan_fixtures()
         h = self.client()
         tok = R.admin_token(h, self.state)
         names = {"platform": ["/platform-admins"]}
@@ -475,6 +493,7 @@ class Suite:
                           f"  maxExpiry: P30D\n  projects: [{', '.join(sorted(e['projects']))}]\n"
                           f"  segments: [data-read, context]\n  subjects:\n{subjects}  writes: false\n"))
         self.commit(files, "multiorg smoke: test persons' RoleBindings and DelegationPolicies")
+        self.make_fixtures()
         # One organization-wide Dashboard per Organization, in its first project with an Endpoint
         # (the exports hold Dashboards only for helsinki).
         for org, e in self.exp.items():
@@ -537,6 +556,118 @@ class Suite:
                  "every admin lists its projects; DelegationPolicy, Dashboard and {org}_bound group synced",
                  f"not yet: {[f'{o} ({why.get(o)})' for o in sorted(pending)]}" if pending else "all",
                  not pending)
+
+    # ---- same-name fixtures (T-6973)
+    def plan_fixtures(self):
+        """A local run: two projects per fixture Organization, in the expectations before the
+        persons are made (so every read row and the crossproject rows judge them too), each with a
+        fresh Endpoint slug."""
+        for org in FIXTURES:
+            if org not in self.exp:
+                continue
+            for project in (f"{org}-iso", f"{org}-iso2"):
+                slug = base64.b32encode(secrets.token_bytes(20)).decode().lower()
+                self.iso.setdefault(org, {})[project] = slug
+                self.exp[org]["projects"][project] = {
+                    "Endpoint": [ISO["endpoints"]], "Pipeline": [], "CkanInstance": [], "Dashboard": [],
+                    "ckanOrgs": [], "closed": {slug: (ISO["endpoints"], "organization")}, "readable": [slug],
+                    "spaces": [ISO["spaces"]], "history": {}}
+
+    @staticmethod
+    def fixture_files(org: str, project: str, slug: str, admin_id: str) -> tuple[list, list]:
+        """(the project repository's files, the configuration repository's) of one fixture project:
+        the ISO objects; the Policy grants the Organization's members the reads and its admin the
+        writes of ISO_TYPE."""
+        def head(kind, name, ns):
+            return f"apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: {ns}\n"
+        sp, dm, ent = f"spaces/{ISO['spaces']}", ISO["datamodels"], f"      information:\n        - entities:\n            - type: {ISO_TYPE}\n"
+        linkml = (f"id: https://joinedcontext.com/models/smoke/{dm}\nname: {dm}\ntitle: multiorg smoke same-name check\n"
+                  "license: https://joinedcontext.com/licenses/cc-by-4.0\nprefixes:\n  linkml: https://w3id.org/linkml/\n"
+                  "  jc: https://joinedcontext.com/models/\n  ngsi-ld: https://uri.etsi.org/ngsi-ld/\ndefault_prefix: jc\n"
+                  f"default_range: string\nimports:\n  - linkml:types\n  - ngsi-ld-core\nclasses:\n  {ISO_TYPE}:\n"
+                  "    is_a: Entity\n    description: One entity per fixture project, holding the project's name.\n"
+                  "    slots: [check]\nslots:\n  check:\n    description: The name of the project the entity belongs to.\n"
+                  "    annotations: { ngsi_ld_kind: Property }\n")
+        repo = [
+            ("project.yaml", head("Project", project, "org") + f"spec:\n  organizationRef: {org}\n"),
+            (f"{sp}/space.yaml", head("ContextSpace", ISO["spaces"], project)
+             + f"spec:\n  isSandbox: false\n  defaultLocale: en\n  dataModelRef: {{ kind: DataModel, name: {dm} }}\n"),
+            (f"{sp}/datamodels/{dm}.yaml", head("DataModel", dm, project)
+             + f"spec:\n  contextSpaceRef: {ISO['spaces']}\n  linkml: ./{dm}.linkml.yaml\n  version: 0.1.0\n"
+             f"  lifecycle: draft\n  classes: [{ISO_TYPE}]\n"),
+            (f"{sp}/datamodels/{dm}.linkml.yaml", linkml),
+            (f"{sp}/endpoints/{ISO['endpoints']}.yaml", head("Endpoint", ISO["endpoints"], project)
+             + f"spec:\n  contextSpaceRef: {ISO['spaces']}\n  slug: {slug}\n  audience: organization\n"
+             "  enabledRepresentations: [ngsi-ld, mcp]\n"),
+            (f"{sp}/policies/{ISO['policies']}.yaml", head("Policy", ISO["policies"], project)
+             + f"spec:\n  contextSpaceRef: {{ kind: ContextSpace, name: {ISO['spaces']} }}\n"
+             "  assigner: did:web:{orgDomain}\n  rules:\n"
+             "    - assignee: { kind: organization }\n      operations: [retrieveOps]\n" + ent
+             + f"    - assignee: {{ kind: user, id: {admin_id} }}\n      operations: [upsertBatch, queryBatch]\n" + ent),
+        ]
+        config = [(f"projects/{project}.yaml", head("Project", project, "org")
+                   + f"spec:\n  organizationRef: {org}\n  repository:\n    name: {project}\n  ref: main\n")]
+        return repo, config
+
+    def make_fixtures(self):
+        """A local run: the planned fixture projects' repositories and their configuration entries
+        (forge commits the Portal syncs, as for the RoleBindings)."""
+        if not self.iso:
+            return
+        h = self.client()
+        auth = {"Authorization": f"token {R.read_secret(self.state, 'shako-token')}"}
+        self.iso_made = True
+        config = []
+        for org, projects in sorted(self.iso.items()):
+            for project, slug in sorted(projects.items()):
+                st, body = h.json("POST", f"/git/api/v1/orgs/{CONFIG[0]}/repos", headers=auth, body={
+                    "name": project, "private": True, "auto_init": True, "default_branch": "main"})
+                if st not in (201, 409):
+                    raise RuntimeError(f"POST /git/api/v1/orgs/{CONFIG[0]}/repos {project}: {st} {str(body)[:200]}")
+                repo, conf = self.fixture_files(org, project, slug, self.people[f"{org}-admin"]["id"])
+                self.commit(repo, f"multiorg smoke: same-name fixture {project}", repo=(CONFIG[0], project))
+                config += conf
+        self.commit(config, "multiorg smoke: the same-name fixture projects")
+
+    def remove_fixtures(self):
+        """After a local run, also a failed one: the fixture projects out of the configuration and
+        their repositories deleted; what is left is a failed row naming it."""
+        if not self.iso_made:
+            return
+        h = self.client()
+        auth = {"Authorization": f"token {R.read_secret(self.state, 'shako-token')}"}
+        projects = sorted(p for ps in self.iso.values() for p in ps)
+        ops = []
+        for project in projects:
+            path = f"projects/{project}.yaml"
+            st, cur = h.json("GET", f"/git/api/v1/repos/{CONFIG[0]}/{CONFIG[1]}/contents/{path}?ref=main", headers=auth)
+            if st == 200 and isinstance(cur, dict):
+                ops.append({"operation": "delete", "path": path, "sha": cur["sha"]})
+        left = []
+        try:
+            if ops:
+                R.merge_change(lambda m, p, body: h.json(m, f"/git/api/v1{p}", headers=auth, body=body),
+                               *CONFIG, ops, "multiorg smoke: the same-name fixture projects removed")
+        except RuntimeError as ex:
+            left.append(f"configuration ({str(ex)[:120]})")
+        for project in projects:
+            st, _, _ = h.call("DELETE", f"/git/api/v1/repos/{CONFIG[0]}/{project}", headers=auth)
+            if st not in (204, 404):
+                left.append(f"{project} ({st})")
+        self.iso_made = False
+        self.row("same.cleanup", ",".join(sorted(self.iso)), "remove the fixture projects and repositories",
+                 "none left", f"{len(left)} left {left[:4]}", not left)
+
+    def fixtures_live(self) -> dict:
+        """--live: the projects of ctl-a and ctl-b holding the Endpoint `iso` (the approved Change
+        made them), org -> {project: slug}."""
+        found: dict[str, dict[str, str]] = {}
+        for org in FIXTURES:
+            for project, objs in sorted(self.exp.get(org, {}).get("projects", {}).items()):
+                slug = next((s for s, (n, _) in objs.get("closed", {}).items() if n == ISO["endpoints"]), None)
+                if slug:
+                    found.setdefault(org, {})[project] = slug
+        return found
 
     def bound(self, org) -> set:
         """Usernames in the reconciler's group `{org}_bound` (jc_org of org-scoped bindings)."""
@@ -700,6 +831,7 @@ class Suite:
                 self.row(rid, org, f"GET {call} as mo-{key}", "403/404 naming nothing of it (control 200)",
                          f"{st} {raw[:120]!r}" if st not in DENIED or named else f"{st}, names {named[:3]}",
                          st in DENIED and not named)
+            self.cross_project_more(org, p1, p2)
 
     def check_names(self):
         """Project names are unique in the installation: an Organization's admin opening a project
@@ -728,6 +860,254 @@ class Suite:
                          f"{st} {text[:160]}" + (f", names {named[:3]}" if named else ""),
                          not named and "already exists" not in text and (
                              (st == 409 and f"project name '{project}' is not available" in text) or st == 403))
+
+    def tool(self, key, name, args, path="/api/v1/mcp", token=None):
+        """(status, JSON-RPC answer) of one MCP tools/call as persona `key` (its mcp:portal token,
+        or `token`); (None, why) without a token or, live, for a tool not annotated read-only."""
+        tok = token or self.bearer(key)
+        if not tok:
+            return None, "no bearer token for the person"
+        if self.live and name not in self.guard.read_only:
+            return None, f"{name} is not read-only: a live run never calls it"
+        return self.client(self.home(key)).json("POST", path, headers={
+            "Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream"}, body={
+            "jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": name, "arguments": args}})
+
+    @staticmethod
+    def refused(st, res) -> bool:
+        r = (res or {}).get("result") or {} if isinstance(res, dict) else {}
+        return st in (401, *DENIED) or (isinstance(res, dict) and "error" in res) or bool(r.get("isError"))
+
+    @staticmethod
+    def names_in(text: str, marks) -> list:
+        return sorted(m for m in marks if re.search(rf"(?<![\w-]){re.escape(m)}(?![\w-])", text))
+
+    def entity(self, key, slug, token=None):
+        """(how it went, the `check` of ISO_URN by id, the `check` of each ISO_TYPE the query
+        answers) on Endpoint `slug`, with the person's exchanged token for it (or `token`)."""
+        if not token:
+            st, token = self.exchange(key, slug)
+            if not token:
+                return f"exchange {st}", None, None
+        api, auth = self.client(self.home(key), "api"), {"Authorization": f"Bearer {token}"}
+        base = f"/api/endpoint/{slug}/ngsi-ld/v1/entities"
+        st1, ent = api.json("GET", f"{base}/{urllib.parse.quote(ISO_URN, safe='')}", headers=auth)
+        st2, found = api.json("GET", f"{base}?type={ISO_TYPE}&limit=100", headers=auth)
+
+        def check(e):
+            return ((e or {}).get("check") or {}).get("value") if isinstance(e, dict) else None
+        return (f"{st1}/{st2}", check(ent) if st1 == 200 else None,
+                [check(e) for e in found] if st2 == 200 and isinstance(found, list) else None)
+
+    def write_entity(self, key, slug, value):
+        """The admin's upsert of ISO_URN with `check` = value through the own Endpoint (status, answer)."""
+        st, tok = self.exchange(key, slug)
+        if not tok:
+            return st or 0, b"exchange refused"
+        st, _, raw = self.client(self.home(key), "api").call(
+            "POST", f"/api/endpoint/{slug}/ngsi-ld/v1/entityOperations/upsert?options=update",
+            headers={"Authorization": f"Bearer {tok}"},
+            body=[{"id": ISO_URN, "type": ISO_TYPE, "check": {"type": "Property", "value": value}}])
+        return st, raw
+
+    def check_same_names(self):
+        """Same names in two Organizations (module docstring, `same` rows)."""
+        orgs = sorted(self.iso)
+        if len(orgs) < 2:
+            self.row("same.fixtures", ",".join(FIXTURES), "the same-name fixture projects",
+                     "a project with Endpoint iso in ctl-a and in ctl-b", f"found in {orgs}", None,
+                     "live: the approved fixtures Change (T-6851) made none" if self.live
+                     else "the bundle has no Organizations ctl-a and ctl-b")
+            return
+        slugs = {(o, p): s for o in orgs for p, s in self.iso[o].items()}
+        # one of each name in each project, for the Organization's admin and member
+        for org in orgs:
+            for kind in ("admin", "member"):
+                key = f"{org}-{kind}"
+                for project in sorted(self.iso[org]):
+                    for plural, name in ISO.items():
+                        st, body = self.session(key).json("GET", f"/api/v1/projects/{project}/{plural}")
+                        items = body.get("items", []) if st == 200 and isinstance(body, dict) else []
+                        n = sum(1 for i in items if (i.get("metadata") or {}).get("name") == name)
+                        self.row(f"same.{key}.{project}.{plural}", org, f"GET /api/v1/projects/{project}/{plural} as mo-{key}",
+                                 f"200, one {name}", f"{st}, {n} named {name} of {len(items)}", st == 200 and n == 1)
+        self.same_catalogue(orgs, slugs)
+        if not self.state:
+            self.row("same.entities", ",".join(orgs), f"read and write {ISO_URN}", "own value only", "-", None,
+                     "the Endpoint token exchange needs the Portal's client secret of a local jc (--state)")
+            return
+        value = {k: k[1] for k in slugs}
+        for (org, project), slug in sorted(slugs.items()):
+            st, raw = self.write_entity(f"{org}-admin", slug, value[(org, project)])
+            self.row(f"same.{org}-admin.{project}.write", org, f"upsert {ISO_URN} through {project}/iso",
+                     "200/201/204", f"{st} {raw[:160]!r}", st in (200, 201, 204))
+        self.same_reads(orgs, slugs, value)
+        # A write to the own entity changes nothing of the other Organization's: read back from both.
+        a, b = orgs[:2]
+        pa = sorted(self.iso[a])[0]
+        value[(a, pa)] = f"{pa}-changed"
+        st, raw = self.write_entity(f"{a}-admin", slugs[(a, pa)], value[(a, pa)])
+        how, got, _ = self.entity(f"{a}-admin", slugs[(a, pa)])
+        self.row(f"same.{a}-admin.{pa}.rewrite", a, f"upsert {ISO_URN} check={value[(a, pa)]}, read it back",
+                 f"{value[(a, pa)]}", f"write {st}, read {how} {got!r}", st in (200, 201, 204) and got == value[(a, pa)])
+        for pb in sorted(self.iso[b]):
+            how, got, _ = self.entity(f"{b}-admin", slugs[(b, pb)])
+            self.row(f"same.{b}-admin.{pb}.after-{a}-write", f"{a}->{b}", f"GET {ISO_URN} on {pb}/iso after {a}'s write",
+                     f"{value[(b, pb)]}, unchanged", f"{how} {got!r}", got == value[(b, pb)])
+        if not self.live:
+            self.same_connectors(orgs, slugs, value)
+
+    def same_catalogue(self, orgs, slugs):
+        """The readable catalogue lists the own iso Endpoints and none of another Organization's;
+        MCP search for `iso` names nothing of another Organization's fixtures."""
+        for org in orgs:
+            own = {s for (o, _), s in slugs.items() if o == org}
+            foreign = {s for (o, _), s in slugs.items() if o != org}
+            projects = {p for (o, p) in slugs if o != org}
+            for kind in ("admin", "member"):
+                key = f"{org}-{kind}"
+                st, body = self.session(key).json("GET", "/api/v1/catalogue/readable")
+                listed = {d.get("slug") for d in body.get("datasets", [])} if st == 200 and isinstance(body, dict) else set()
+                self.row(f"same.{key}.catalogue", org, "GET /api/v1/catalogue/readable",
+                         f"its {len(own)} iso Endpoints, none of another Organization's",
+                         f"{st}, own {len(own & listed)}, foreign {len(foreign & listed)}",
+                         st == 200 and own <= listed and not foreign & listed)
+                st, res = self.tool(key, "jc_catalog_search", {"q": "iso"})
+                if st is None:
+                    self.row(f"same.{key}.mcp-search", org, "tools/call jc_catalog_search iso", "-", "-", None, res)
+                    continue
+                text = json.dumps(res, ensure_ascii=False)
+                found = sorted({s for s in foreign if s in text}) + self.names_in(text, projects)
+                self.row(f"same.{key}.mcp-search", org, "tools/call jc_catalog_search {q: iso}",
+                         "answers, names nothing of another Organization's fixtures",
+                         f"{st}, foreign {found[:4]}", st == 200 and not found)
+
+    def same_reads(self, orgs, slugs, value):
+        """Each admin and member reads its own value by id and by query; its token on another
+        Organization's Endpoint of the same name, and an exchange for it, get nothing."""
+        for org in orgs:
+            for kind in ("admin", "member"):
+                key = f"{org}-{kind}"
+                for project in sorted(self.iso[org]):
+                    slug = slugs[(org, project)]
+                    st, tok = self.exchange(key, slug)
+                    how, got, listed = self.entity(key, slug, tok) if tok else (f"exchange {st}", None, None)
+                    want = value[(org, project)]
+                    self.row(f"same.{key}.{project}.read", org, f"GET {ISO_URN} and ?type={ISO_TYPE} on {project}/iso",
+                             f"{want} by id, exactly [{want}] by query", f"{how} {got!r} {listed!r}",
+                             got == want and listed == [want])
+                    for (other, op), oslug in sorted(slugs.items()):
+                        if other == org:
+                            continue
+                        how, got, listed = self.entity(key, oslug, tok) if tok else ("no own token", None, None)
+                        self.row(f"same.{key}.{project}.token-on.{op}", f"{org}->{other}",
+                                 f"GET {ISO_URN} on {op}/iso with the token for {project}/iso",
+                                 "401/403/404, no value", f"{how} {got!r} {listed!r}",
+                                 (bool(re.fullmatch(r"(401|403|404)/(401|403|404)", how)) and got is None) if tok else None,
+                                 "" if tok else "no own token: no control")
+                        st_x, tok_x = self.exchange(key, oslug)
+                        how, got, listed = self.entity(key, oslug, tok_x) if tok_x else (f"exchange {st_x}", None, None)
+                        self.row(f"same.{key}.{project}.exchange-for.{op}", f"{org}->{other}",
+                                 f"exchange endpoint:{oslug} ({op}/iso), GET {ISO_URN}",
+                                 "exchange refused or 401/403/404", f"{how} {got!r}",
+                                 got is None and (not tok_x or bool(re.fullmatch(r"(401|403|404)/(401|403|404)", how))))
+
+    def same_connectors(self, orgs, slugs, value):
+        """Each admin's connector scoped to its first fixture project reads that project's value
+        from the Endpoint `iso`, never another project's of the same name."""
+        expires = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 86400))
+        for org in orgs:
+            p1 = sorted(self.iso[org])[0]
+            h = self.session(f"{org}-admin")
+            st, body = h.json("POST", "/api/v1/connectors", body={
+                "name": f"mo-{org}-iso-{int(time.time())}", "segments": ["data-read", "context"],
+                "expiresAt": expires, "scope": [{"project": p1, "access": "read"}]})
+            cid = body.get("id") if isinstance(body, dict) else None
+            if not cid:
+                self.row(f"same.{org}-connector.create", org, "POST /api/v1/connectors", "201 with id",
+                         f"{st} {str(body)[:160]}", False)
+                continue
+            try:
+                tok = self.bearer(f"{org}-admin", f"connector:{cid}")
+                st, res = self.tool(f"{org}-admin", "jc_data_query", {"endpoint": ISO["endpoints"], "id": ISO_URN},
+                                    path=f"/c/{cid}", token=tok) if tok else (None, "no connector token")
+                text = json.dumps(res, ensure_ascii=False)
+                others = [v for k, v in value.items() if k != (org, p1)]
+                self.row(f"same.{org}-connector.read", org, f"POST /c/{cid} jc_data_query iso {ISO_URN}",
+                         f"{value[(org, p1)]}, no other project's value",
+                         f"{st}, own {bool(self.names_in(text, [value[(org, p1)]]))}, other {self.names_in(text, others)[:3]}",
+                         (st == 200 and bool(self.names_in(text, [value[(org, p1)]])) and not self.names_in(text, others))
+                         if st is not None else None, "" if st is not None else str(res))
+            finally:
+                h.call("DELETE", f"/api/v1/connectors/{cid}")
+
+    def cross_project_more(self, org, p1, p2):
+        """The crossproject rows past the Portal reads: the member of P1 reads no P2 entity through
+        P2's Endpoints (control: the admin's read), MCP answers nothing of P2, and the admin's
+        connector scoped to P1 answers nothing of P2."""
+        key = f"{org}-project"
+        objs = self.exp[org]["projects"][p2]
+        marks = {m for m in (*objs["Endpoint"], *objs["Pipeline"], *objs.get("spaces", []), *objs["Dashboard"])
+                 if len(m) > 3} - set(self.exp[org]["projects"][p1].get("Endpoint", []))
+        if self.state:
+            own = sorted(self.exp[org]["projects"][p1].get("closed", {}))[:1]
+            _, own_tok = self.exchange(key, own[0]) if own else (None, None)
+            for slug in sorted(objs.get("closed", {}))[:2]:
+                name = objs["closed"][slug][0]
+                how_c, _, _ = self.entity(f"{org}-admin", slug)
+                st, tok = self.exchange(key, slug)
+                how, got, listed = self.entity(key, slug, tok) if tok else (f"exchange {st}", None, None)
+                denied = got is None and not listed and (not tok or bool(re.fullmatch(r"(401|403|404)/(401|403|404)", how)))
+                control = how_c.startswith("200") or how_c.endswith("/200")
+                self.row(f"crossproject.{org}-project.ngsi-ld.{p2}/{name}", org,
+                         f"exchange endpoint:{slug} as mo-{key}, GET entities by id and by type",
+                         "exchange refused or 401/403/404 (control: the admin reads it)",
+                         f"control {how_c}, member {how}", denied if control else None,
+                         "" if control else "no control: the Organization admin read nothing either")
+                if own_tok:
+                    how, got, listed = self.entity(key, slug, own_tok)
+                    self.row(f"crossproject.{org}-project.ngsi-ld.{p2}/{name}.p1-token", org,
+                             f"GET {p2}/{name} entities with the token for {p1}", "401/403/404", how,
+                             bool(re.fullmatch(r"(401|403|404)/(401|403|404)", how)))
+        tok = self.bearer(key)
+        if tok:
+            st, lst = self.client(self.home(key)).json("POST", "/api/v1/mcp", headers={
+                "Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream"},
+                body={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            named = self.names_in(json.dumps(lst, ensure_ascii=False), marks | {p2})
+            self.row(f"crossproject.{org}-project.mcp.tools-list", org, f"tools/list as mo-{key}",
+                     f"200, names nothing of {p2}", f"{st}, names {named[:3]}", st == 200 and not named)
+        for name, args in (("jc_project_get", {"project": p2}), ("jc_resource_list", {"project": p2, "kind": "Endpoint"})):
+            st, res = self.tool(key, name, args)
+            if st is None:
+                self.row(f"crossproject.{org}-project.mcp.{name}", org, f"tools/call {name} {p2}", "-", "-", None, res)
+                continue
+            named = self.names_in(json.dumps(res, ensure_ascii=False), marks)
+            self.row(f"crossproject.{org}-project.mcp.{name}", org, f"tools/call {name} {json.dumps(args)} as mo-{key}",
+                     "refused, names nothing of it", f"{st}, refused {self.refused(st, res)}, names {named[:3]}",
+                     self.refused(st, res) and not named)
+        if self.live:
+            return
+        h = self.session(f"{org}-admin")
+        st, body = h.json("POST", "/api/v1/connectors", body={
+            "name": f"mo-{org}-p1-{int(time.time())}", "segments": ["data-read", "context"],
+            "expiresAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 86400)),
+            "scope": [{"project": p1, "access": "read"}]})
+        cid = body.get("id") if isinstance(body, dict) else None
+        if not cid:
+            self.row(f"crossproject.{org}-connector.create", org, f"POST /api/v1/connectors scope {p1}", "201 with id",
+                     f"{st} {str(body)[:160]}", False)
+            return
+        try:
+            ctok = self.bearer(f"{org}-admin", f"connector:{cid}")
+            for name, args in (("jc_project_get", {"project": p2}), ("jc_resource_list", {"project": p2, "kind": "Endpoint"})):
+                st, res = self.tool(f"{org}-admin", name, args, path=f"/c/{cid}", token=ctok) if ctok else (None, "no connector token")
+                named = self.names_in(json.dumps(res, ensure_ascii=False), marks) if st is not None else []
+                self.row(f"crossproject.{org}-connector.{name}", org, f"POST /c/{cid} {name} {json.dumps(args)} (scope {p1})",
+                         "refused, names nothing of it", f"{st}, refused {self.refused(st, res) if st else '-'}, names {named[:3]}",
+                         (self.refused(st, res) and not named) if st is not None else None, "" if st is not None else str(res))
+        finally:
+            h.call("DELETE", f"/api/v1/connectors/{cid}")
 
     def check_project_reads(self):
         """Every project read both ways: A's admin and member get 403/404 on B, B's admin 200."""
@@ -1877,18 +2257,21 @@ class Suite:
             return
         steps = (self.check_projects, self.check_hosts, self.check_project_reads, self.check_cross_project,
                  self.check_names, self.check_writes, self.check_people,
-                 self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_portals,
+                 self.check_mcp, self.check_connectors, self.check_data, self.check_same_names, self.check_catalogue, self.check_portals,
                  self.check_dashboards, self.check_global, self.check_operators, self.check_forged)
         if self.a.shots:
             steps += (self.check_ui,)
-        for step in steps:
-            group = step.__name__.removeprefix("check_")
-            if (self.a.only and group not in self.a.only.split(",")) or (self.live and group in LIVE_OFF):
-                continue
-            try:
-                step()
-            except Exception as ex:  # noqa: BLE001
-                self.row(f"{step.__name__}.crashed", "all", step.__name__, "runs", repr(ex)[:300], False)
+        try:
+            for step in steps:
+                group = step.__name__.removeprefix("check_")
+                if (self.a.only and group not in self.a.only.split(",")) or (self.live and group in LIVE_OFF):
+                    continue
+                try:
+                    step()
+                except Exception as ex:  # noqa: BLE001
+                    self.row(f"{step.__name__}.crashed", "all", step.__name__, "runs", repr(ex)[:300], False)
+        finally:
+            self.remove_fixtures()
 
     def write(self, out: Path):
         out.mkdir(parents=True, exist_ok=True)
@@ -1922,7 +2305,7 @@ def main(argv):
     ap.add_argument("--state", help="the rehearsal's state dir (realm admin client, forge token)")
     ap.add_argument("--admin-token-file", help="unused: persons are made through --state")
     ap.add_argument("--person-token-file", help="unused: persons are made through --state")
-    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,cross_project,names,writes,people,mcp,connectors,data,catalogue,portals,dashboards,global,operators,forged,ui")
+    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,cross_project,names,writes,people,mcp,connectors,data,same_names,catalogue,portals,dashboards,global,operators,forged,ui")
     ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
     ap.add_argument("--composed", action="store_true",
