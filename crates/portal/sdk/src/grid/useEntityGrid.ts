@@ -44,9 +44,9 @@ export interface GridLabels {
   datasetId: string;
   empty: string;
   /** Under the empty state when the person's own filters left no row, beside a one-click clear (T-7063). */
-  filtersMatchNothing?: string;
+  filtersMatchNothing: string;
   /** Before the source's sentence on a refused write in the review: "not saved" (T-7063). */
-  notSaved?: string;
+  notSaved: string;
   loading: string;
   /** Said over the dimmed rows while a narrowed question is read again (T-5623). */
   filtering: string;
@@ -118,7 +118,7 @@ export interface GridLabels {
   /** In place of the source's own words when its answer timed out (408, 504). */
   timedOut: string;
   /** In place of the source's own words when it could not be reached at all (status 0, T-7063). */
-  unreachable?: string;
+  unreachable: string;
   /** What the footer calls the endpoint's own count of matching entities: a word after the number, or a
    *  text holding `{n}` where the number goes, for a language whose word agrees with it (sk "Vyhovuje: {n}"). */
   matching: string;
@@ -706,7 +706,7 @@ export function failureOf(
   const said = err instanceof Error ? err.message : String(err);
   if (!(err instanceof SourceError)) return { error: said, detail: null };
   // No answer at all (a dropped connection, a blocked request): the transport's own words go under the disclosure.
-  if (err.status === 0) return { error: labels.unreachable ?? DEFAULT_LABELS.unreachable ?? said, detail: said };
+  if (err.status === 0) return { error: labels.unreachable ?? DEFAULT_LABELS.unreachable, detail: said };
   if (err.status === 429 || err.status === 503) return { error: labels.busy, detail: said };
   if (err.status === 408 || err.status === 504) return { error: labels.timedOut, detail: said };
   return { error: said, detail: null };

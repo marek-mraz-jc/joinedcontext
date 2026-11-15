@@ -5839,6 +5839,8 @@
     "unit": "Unit",
     "datasetId": "Dataset",
     "empty": "No entities here.",
+    "filtersMatchNothing": "None of the rows match your filters.",
+    "notSaved": "not saved",
     "loading": "Loading…",
     "filtering": "Filtering…",
     "previous": "Previous",
@@ -5849,6 +5851,7 @@
     "retry": "Try again",
     "busy": "the data source is busy right now",
     "timedOut": "the data source took too long to answer",
+    "unreachable": "the data source could not be reached; check your connection and try again",
     "filter": "Filter",
     "noFilter": "Any",
     "ops": {

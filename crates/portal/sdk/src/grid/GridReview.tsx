@@ -5,7 +5,6 @@ import { CellView, targetName } from "./cells";
 import type { CellLabels } from "./cells";
 import type { RichCell } from "./model";
 import { NGSI_LD_NULL } from "./RelationPicker";
-import { DEFAULT_LABELS } from "./useEntityGrid";
 import type { GridView } from "./useGridView";
 
 function reviewValue(change: AttributeChange, value: unknown, locale: string, labels: CellLabels): React.ReactNode {
@@ -121,7 +120,7 @@ export function GridReview({ view }: { view: GridView }): React.JSX.Element | nu
         const name = row ? rowName(row) : targetName(one.id).name;
         return (
           <p key={one.id} className="jc-grid-error" role="alert">
-            {`${name} — ${labels.notSaved ?? DEFAULT_LABELS.notSaved}: ${one.detail}`}
+            {`${name} — ${labels.notSaved}: ${one.detail}`}
           </p>
         );
       })}

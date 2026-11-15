@@ -5839,6 +5839,8 @@
     "unit": "Einheit",
     "datasetId": "Datensatz",
     "empty": "Keine Entitäten.",
+    "filtersMatchNothing": "Keine Zeile passt zu Ihren Filtern.",
+    "notSaved": "nicht gespeichert",
     "loading": "Lädt…",
     "filtering": "Filtert…",
     "previous": "Zurück",
@@ -5849,6 +5851,7 @@
     "retry": "Erneut versuchen",
     "busy": "die Datenquelle ist gerade ausgelastet",
     "timedOut": "die Datenquelle hat zu lange nicht geantwortet",
+    "unreachable": "die Datenquelle ist nicht erreichbar; prüfen Sie Ihre Verbindung und versuchen Sie es erneut",
     "filter": "Filter",
     "noFilter": "Beliebig",
     "ops": {

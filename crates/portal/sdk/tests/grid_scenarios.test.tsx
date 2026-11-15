@@ -52,11 +52,11 @@ describe("finding the rows (T-7063)", () => {
     await screen.findByRole("button", { name: "Open: Station 1" });
     fireEvent.change(screen.getByLabelText("Filter: Name"), { target: { value: "contains" } });
     fireEvent.change(screen.getByLabelText("Value: Name"), { target: { value: "zzz" } });
-    expect(await screen.findByText(DEFAULT_LABELS.filtersMatchNothing!)).toBeInTheDocument();
+    expect(await screen.findByText(DEFAULT_LABELS.filtersMatchNothing)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: DEFAULT_LABELS.clearFilters }));
     await screen.findByRole("button", { name: "Open: Station 1" });
     expect(screen.getByLabelText("Filter: Name")).toHaveValue("");
-    expect(screen.queryByText(DEFAULT_LABELS.filtersMatchNothing!)).toBeNull();
+    expect(screen.queryByText(DEFAULT_LABELS.filtersMatchNothing)).toBeNull();
   });
 
   it("a city analyst combines two filters, reads both as a summary and clears them at once", async () => {
@@ -76,6 +76,21 @@ describe("finding the rows (T-7063)", () => {
     fireEvent.click(within(summary).getByRole("button", { name: DEFAULT_LABELS.clearFilters }));
     await waitFor(() => expect(asked.at(-1)).toBeUndefined());
     expect(screen.queryByRole("list", { name: DEFAULT_LABELS.activeFilters })).toBeNull();
+  });
+
+  it("two filters that match nothing offer one way to clear them, not two", async () => {
+    const inner = fixtureSource([station(1, { bikes: p(5), status: p("open") })]);
+    const source: EntitySource = { ...inner, query: (q, page) => (q.q ? Promise.resolve({ rows: [], total: 0 }) : inner.query(q, page)) };
+    render(<EntityGrid config={configOf([...NAME_BIKES, { attr: "status", label: "Status" }])} source={source} />);
+    await screen.findByRole("button", { name: "Open: Station 1" });
+    fireEvent.change(screen.getByLabelText("Filter: Bikes"), { target: { value: "gt" } });
+    fireEvent.change(screen.getByLabelText("Value: Bikes"), { target: { value: "9" } });
+    fireEvent.change(screen.getByLabelText("Filter: Status"), { target: { value: "equals" } });
+    fireEvent.change(screen.getByLabelText("Value: Status"), { target: { value: "closed" } });
+    expect(await screen.findByText(DEFAULT_LABELS.filtersMatchNothing)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: DEFAULT_LABELS.clearFilters })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: DEFAULT_LABELS.clearFilters }));
+    await screen.findByRole("button", { name: "Open: Station 1" });
   });
 });
 
@@ -168,7 +183,7 @@ describe("a slow or failing broker (T-7063)", () => {
     const { container } = render(<EntityGrid config={configOf([{ attr: "name", label: "Name" }])} source={source} />);
     const retry = await screen.findByRole("button", { name: DEFAULT_LABELS.retry });
     const line = container.querySelector(".jc-grid-error")!;
-    expect(line).toHaveTextContent(DEFAULT_LABELS.unreachable!);
+    expect(line).toHaveTextContent(DEFAULT_LABELS.unreachable);
     // The raw sentence is kept, but behind the disclosure, not in the line a person reads first.
     expect(line.querySelector("details")).toHaveTextContent("Failed to fetch");
     fail = false;

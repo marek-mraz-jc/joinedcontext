@@ -5839,6 +5839,8 @@
     "unit": "Jednotka",
     "datasetId": "Dataset",
     "empty": "Žiadne entity.",
+    "filtersMatchNothing": "Vašim filtrom nezodpovedá žiadny riadok.",
+    "notSaved": "neuložené",
     "loading": "Načítavam…",
     "filtering": "Filtrujem…",
     "previous": "Predchádzajúca",
@@ -5849,6 +5851,7 @@
     "retry": "Skúsiť znova",
     "busy": "zdroj údajov je práve zaneprázdnený",
     "timedOut": "zdroj údajov neodpovedal včas",
+    "unreachable": "zdroj údajov je nedostupný; skontrolujte pripojenie a skúste to znova",
     "filter": "Filter",
     "noFilter": "Ľubovoľné",
     "ops": {
