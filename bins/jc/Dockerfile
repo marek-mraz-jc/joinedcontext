@@ -20,6 +20,9 @@ COPY crates/portal/sdk/ ./sdk/
 COPY crates/portal/ui/ ./ui/
 # `tsc -b` type-checks ui/tests, which read the Portal's builder fixture as ../../tests/fixtures/.
 COPY crates/portal/tests/fixtures/grafana-builder/ ./tests/fixtures/grafana-builder/
+# panels/palette.ts and two ui/tests read the shared chart theme as ../../(../)shared/jc-chart/src/theme.json,
+# which resolves to /shared from /work/ui.
+COPY crates/shared/jc-chart/src/theme.json /shared/jc-chart/src/theme.json
 # An empty dist embeds as nothing and the Portal serves its placeholder page silently: fail here.
 RUN cd ui && pnpm build && test -s dist/index.html && ls dist/assets/*.js >/dev/null
 RUN cd sdk && pnpm build && test -s dist/kit.js && test -s dist/kit.css && test -s dist/kit-worker.js \
