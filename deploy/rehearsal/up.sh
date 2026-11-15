@@ -89,8 +89,9 @@ SQL
   role "${m}_rh_migrate" "$(secret "${m}-migrate-pw")" >/dev/null
   sql -c "GRANT ${m}_app TO ${m}_rh" -c "GRANT ${m}_migrate TO ${m}_rh_migrate" >/dev/null
   database "$m" "${m}_rh_migrate" >/dev/null
-  # A [dataroom] section must name its organization and catalogue: jc's defaults.
-  [ "$m" = dataroom ] && printf '\n[dataroom]\norg_id = "00000000-0000-7000-8000-000000000001"\ncatalogue_id = "00000000-0000-7000-8000-000000000010"\n'
+  # A [dataroom] section must name its organization and catalogue: jc's defaults. Its harvest
+  # allow-list (ODP-10) holds every host prod's two sources read (bins/jc/docs/default-portal.yaml).
+  [ "$m" = dataroom ] && printf '\n[dataroom]\norg_id = "00000000-0000-7000-8000-000000000001"\ncatalogue_id = "00000000-0000-7000-8000-000000000010"\nharvest_allowed_hosts = [%s]\n' "$harvest_hosts"
   # jc reads [<m>.database] (bins/jc/src/pg.rs): the URLs name role, host and database and carry
   # no password (jc refuses one); each password stays in its 0600 file.
   printf '\n[%s.database]\nurl = "postgres://%s_rh@127.0.0.1:%s/%s"\npassword_file = "%s"\n' \
@@ -98,6 +99,7 @@ SQL
   printf 'migrate_url = "postgres://%s_rh_migrate@127.0.0.1:%s/%s"\nmigrate_password_file = "%s"\n' \
     "$m" "$pg_port" "$m" "$(secret "${m}-migrate-pw")"
 }
+harvest_hosts='"data.slovensko.sk", "egov.banskabystrica.sk", "dtm-banskabystrica.tmapserver.sk", "www.banskabystrica.sk", "opendata.bbsk.sk", "services-eu1.arcgis.com", "www.arcgis.com"'
 # Each module's sections apart (part[m]): the split layout gives each to its own jc.toml.
 declare -A part
 for m in shako daiya dataroom ekiben; do part[$m]=$(module_db "$m"); done
@@ -321,10 +323,10 @@ dataroom_tail() { # dataroom_tail <dir of the toml>
   # prod's publish-gate hidden list ([dataroom.hidden]): dataroom leaves those datasets out of search
   # and DCAT as prod's catalogue does (jc-catalogue-parity).
   cat "$here/../../bins/jc/docs/catalogue-hidden.toml"
-  # prod's two catalogue harvests ([[dataroom.harvest]], jc-catalogue-17): hub-bbsk and
-  # nkod-banskabystrica run once at start, then on their schedules; each keeps the datasets prod
-  # converted, from od-datasets.json, which the toml names relative to jc.toml.
-  cat "$here/../../bins/jc/docs/harvest-sources.toml"
+  # prod's two catalogue harvests (jc-catalogue-17): hub-bbsk and nkod-banskabystrica are sources of
+  # the installation Organization's default Portal (ODP-11), portals/<organization>-default.yaml in the
+  # imported organization repository; each keeps the datasets prod converted, from od-datasets.json,
+  # which the manifest's convertedFile names beside the toml.
   install -m 644 "$here/../../bins/jc/docs/od-datasets.json" "$1/od-datasets.json"
   # prod's publisher badges and words ([dataroom.publishers], the CKAN chart's `organizations`).
   cat "$here/../../bins/jc/docs/dataroom-publishers.toml"

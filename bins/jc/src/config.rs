@@ -343,9 +343,6 @@ pub struct DataroomSection {
     /// `[dataroom.aliases]`: `old = "new"` per renamed dataset (evidence/jc-dev/RENAMES.md); a
     /// read of the old name answers the new dataset.
     pub aliases: BTreeMap<String, String>,
-    /// `[[dataroom.harvest]]`: the harvest sources held from the start, each run on its
-    /// `schedule` by dataroom's harvest scheduler (prod's CKAN harvest CronJobs).
-    pub harvest: Vec<HarvestSeed>,
     /// `[dataroom.hidden]`: `name = "reason"` per dataset the publish gate hides (prod's CKAN chart
     /// value `hidden`, T-4318; bins/jc/docs/catalogue-hidden.toml), written over the default
     /// catalogue's list on every start. Left out, the stored list stays.
@@ -360,8 +357,7 @@ pub struct DataroomSection {
     /// The most Portals all Organizations of the deployment hold together, each `default`
     /// included (ODP-09); left out, three per `[[organizations]]` entry (at least three).
     pub portals_max: Option<usize>,
-    /// The deployment's harvest allow-list (ODP-10): every host a Portal source may read,
-    /// beside the hosts the `[[dataroom.harvest]]` seeds read.
+    /// The deployment's harvest allow-list (ODP-10): every host a Portal source may read.
     pub harvest_allowed_hosts: Vec<String>,
     /// The directory of jc.toml, where a Portal source's `convertedFile` is read; not a key.
     #[serde(skip)]
@@ -375,12 +371,10 @@ impl DataroomSection {
         self.portals_max.unwrap_or(3 * organizations.max(1))
     }
 
-    /// [`Self::harvest_allowed_hosts`] and every host a seed reads, lower-cased, once each.
+    /// [`Self::harvest_allowed_hosts`], lower-cased, once each.
     #[must_use]
     pub fn harvest_hosts(&self) -> Vec<String> {
-        let all = self.harvest_allowed_hosts.iter();
-        let mut hosts: Vec<String> = all
-            .chain(self.harvest.iter().flat_map(|seed| &seed.allowed_hosts))
+        let mut hosts: Vec<String> = (self.harvest_allowed_hosts.iter())
             .map(|h| h.trim().to_ascii_lowercase())
             .collect();
         hosts.sort();
@@ -414,67 +408,6 @@ pub struct DataroomBranding {
     /// The installation's logo as SVG text, served as `/logo.svg`; it must pass the logo
     /// upload's checks (no script, event handler or external reference).
     pub logo_svg: Option<String>,
-}
-
-/// One `[[dataroom.harvest]]` source, written over the stored one on every start: prod's
-/// `harvest.sources` entry (deployment `components/ckan/values/catalogue/*.yaml.gotmpl`).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HarvestSeed {
-    pub name: String,
-    /// `nkod-sparql` (the SPARQL endpoint), `arcgis-hub` (the Hub's base), `ckan-action`, `dcat-ap`.
-    pub kind: String,
-    pub url: String,
-    /// The CKAN organisation the datasets land in; created with the next three when missing.
-    pub publisher: String,
-    pub publisher_title: String,
-    /// The publisher's IRI: the one NKOD lists the datasets under, and the publisher's `uri`.
-    pub publisher_uri: String,
-    #[serde(default)]
-    pub publisher_description: Option<String>,
-    /// An `[[organizations]]` name: the source belongs to that Organization's catalogue; none,
-    /// the `[dataroom]` default catalogue.
-    #[serde(default)]
-    pub organization: Option<String>,
-    #[serde(default)]
-    pub spatial_uri: Option<String>,
-    #[serde(default)]
-    pub name_prefix: String,
-    /// Every host a run may fetch from, the `url`'s own included (dataroom's outbound guard).
-    pub allowed_hosts: Vec<String>,
-    #[serde(default)]
-    pub rewrite_hosts: BTreeMap<String, String>,
-    /// Items left out (title, IRI or item id) with the reason the run log gives.
-    #[serde(default)]
-    pub skip: BTreeMap<String, String>,
-    #[serde(default)]
-    pub titles: BTreeMap<String, String>,
-    #[serde(default)]
-    pub spelling: BTreeMap<String, String>,
-    #[serde(default)]
-    pub require_column: BTreeMap<String, String>,
-    /// Five-field cron, UTC (prod: `23 3 * * *`).
-    #[serde(default = "default_harvest_schedule")]
-    pub schedule: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    /// prod's `od-datasets.json` (deployment `charts/ckan/files/`, bins/jc/docs/od-datasets.json):
-    /// the converted datasets by name, a relative path read beside jc.toml. Set: only those are
-    /// listed, with their Endpoint's distributions on `gateway`.
-    #[serde(default)]
-    pub converted_file: Option<PathBuf>,
-    /// The catalogue base the file's `dataset` URLs name, replaced by this catalogue's own
-    /// (prod's `harvest.datasetsBase`).
-    #[serde(default)]
-    pub datasets_base: Option<String>,
-    /// The public base the Endpoints answer under (prod's `harvest.gateway`); its host must be
-    /// in `allowed_hosts`. Unset: this instance's own gateway.
-    #[serde(default)]
-    pub gateway: Option<String>,
-}
-
-fn default_harvest_schedule() -> String {
-    "23 3 * * *".into()
 }
 
 /// `[dataroom.addresses]`: the bases (`http(s)://host[:port][/path]`) the dataset pages frame,
@@ -518,7 +451,6 @@ impl Default for DataroomSection {
             database: None,
             addresses: DataroomAddresses::default(),
             aliases: BTreeMap::new(),
-            harvest: Vec::new(),
             hidden: None,
             publishers: BTreeMap::new(),
             branding: DataroomBranding::default(),
@@ -1237,8 +1169,7 @@ impl Config {
     /// Default directory of the generated secrets.
     pub const DEFAULT_STATE_DIR: &'static str = "jc-state";
 
-    /// Reads and parses a TOML config file. A relative `converted_file` is read beside it, and so
-    /// is a Portal source's `convertedFile`.
+    /// Reads and parses a TOML config file. A Portal source's `convertedFile` is read beside it.
     pub fn read_file(path: &Path) -> Result<FileConfig, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
             path: path.to_path_buf(),
@@ -1249,20 +1180,22 @@ impl Config {
         if let Some(dataroom) = file.dataroom.as_mut() {
             dataroom.config_dir = Some(dir.to_path_buf());
         }
-        for seed in file.dataroom.iter_mut().flat_map(|d| d.harvest.iter_mut()) {
-            if let Some(f) = seed.converted_file.as_mut().filter(|f| f.is_relative()) {
-                *f = dir.join(&*f);
-            }
-        }
         Ok(file)
     }
 
-    /// Parses TOML text as a config file (`path` only names it in errors).
+    /// Parses TOML text as a config file (`path` only names it in errors). `[[dataroom.harvest]]`
+    /// is refused (ODP-11): its sources live in the default Portal manifest since T-6880.
     pub fn parse_file(path: &Path, text: &str) -> Result<FileConfig, ConfigError> {
-        toml::from_str(text).map_err(|e| ConfigError::Parse {
+        let refused = |message: String| ConfigError::Parse {
             path: path.to_path_buf(),
-            message: e.message().to_owned(),
-        })
+            message,
+        };
+        let seeds = toml::from_str::<toml::Table>(text)
+            .is_ok_and(|t| t.get("dataroom").and_then(|d| d.get("harvest")).is_some());
+        if seeds {
+            return Err(refused(HARVEST_REFUSED.to_owned()));
+        }
+        toml::from_str(text).map_err(|e| refused(e.message().to_owned()))
     }
 
     /// Resolves the command line (already merged with `JCBIN_*` by clap) over the file.
@@ -1934,9 +1867,11 @@ pub(crate) fn valid_host(host: &str) -> bool {
         && port.is_none_or(|p| p.parse::<u16>().is_ok())
 }
 
-fn default_true() -> bool {
-    true
-}
+/// Why `[[dataroom.harvest]]` no longer starts jc, and what to do instead.
+const HARVEST_REFUSED: &str = "[[dataroom.harvest]] is refused (ODP-11): harvest sources are \
+    sources of the Organization's default Portal, portals/<organization>-default.yaml in the \
+    Portal's repository, which the previous jc release wrote from this block; remove the block \
+    and list every host its sources read in [dataroom] harvest_allowed_hosts";
 
 #[cfg(test)]
 mod tests {
@@ -2094,6 +2029,31 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         let err = Config::parse_file(Path::new("jc.toml"), "[mounts.dataroom]\nprefix = \"/x\"\n")
             .unwrap_err();
         assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
+    }
+
+    /// ODP-11: the seeds moved into the default Portal manifest once (T-6880); the block is
+    /// refused from then on, naming the rule and the manifest, so a config still holding it
+    /// stops at start instead of keeping a second copy of the sources.
+    #[test]
+    fn the_seed_block_is_refused_after_migration() {
+        let block = "[dataroom]\norg_id = \"00000000-0000-7000-8000-000000000001\"\n\
+            catalogue_id = \"00000000-0000-7000-8000-000000000010\"\n\n\
+            [[dataroom.harvest]]\nname = \"hub-bbsk\"\nkind = \"arcgis-hub\"\n\
+            url = \"https://opendata.bbsk.sk\"\n";
+        let err = Config::parse_file(Path::new("jc.toml"), block).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
+        let text = err.to_string();
+        for named in [
+            "jc.toml",
+            "ODP-11",
+            "portals/<organization>-default.yaml",
+            "harvest_allowed_hosts",
+        ] {
+            assert!(text.contains(named), "{named}: {text}");
+        }
+        let hosts = "[dataroom]\nharvest_allowed_hosts = [\"opendata.bbsk.sk\"]\n";
+        let file = Config::parse_file(Path::new("jc.toml"), hosts).expect("no block, no refusal");
+        assert_eq!(file.dataroom.unwrap().harvest_hosts(), ["opendata.bbsk.sk"]);
     }
 
     #[test]
