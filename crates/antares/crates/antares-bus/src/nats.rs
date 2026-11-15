@@ -484,22 +484,24 @@ mod tests {
     #[tokio::test]
     async fn the_urls_user_and_password_reach_the_server() {
         use std::io::{BufRead, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("test setup");
+        let port = listener.local_addr().expect("test setup").port();
         let server = std::thread::spawn(move || {
-            let (mut sock, _) = listener.accept().unwrap();
+            let (mut sock, _) = listener.accept().expect("test setup");
             sock.write_all(
                 b"INFO {\"server_id\":\"t\",\"version\":\"2.10.0\",\"proto\":1,\"max_payload\":1048576,\"auth_required\":true}\r\n",
             )
-            .unwrap();
+            .expect("test setup");
             let mut line = String::new();
-            std::io::BufReader::new(sock).read_line(&mut line).unwrap();
+            std::io::BufReader::new(sock)
+                .read_line(&mut line)
+                .expect("test setup");
             line
         });
         let url = format!("nats://jc:p%40ss@127.0.0.1:{port}");
         let _ =
             tokio::time::timeout(std::time::Duration::from_secs(5), NatsBus::connect(&url)).await;
-        let connect = server.join().unwrap();
+        let connect = server.join().expect("test setup");
         assert!(
             connect.contains(r#""user":"jc""#) && connect.contains(r#""pass":"p@ss""#),
             "{connect}"
@@ -508,12 +510,14 @@ mod tests {
 
     #[test]
     fn a_url_without_a_user_names_none_and_a_list_takes_the_one_with_a_user() {
-        assert!(url_credentials("nats://127.0.0.1:4222").unwrap().is_none());
+        assert!(url_credentials("nats://127.0.0.1:4222")
+            .expect("test setup")
+            .is_none());
         assert_eq!(
-            url_credentials("nats://a:4222, nats://u:pw@b:4222").unwrap(),
+            url_credentials("nats://a:4222, nats://u:pw@b:4222").expect("test setup"),
             Some(("u".into(), "pw".into()))
         );
-        let e = url_credentials("::not a url").unwrap_err().0;
+        let e = url_credentials("::not a url").expect_err("refused").0;
         assert!(
             !e.contains("not a url"),
             "the error names no part of the URL: {e}"
