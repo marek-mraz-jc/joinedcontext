@@ -978,16 +978,7 @@ impl PolicySpec {
         }
 
         self.validate_assignee()?;
-        // Every caller holds the role `public`, anonymous or signed in, so a grant to it that
-        // changes data lets anyone change it (EP-187, T-6972). It may create only, the public
-        // form of EP-97; a prohibition takes, never gives.
-        let changes = |op: &&OperationRef| {
-            op.writes_entities() && **op != OperationRef::Single(Operation::CreateEntity)
-        };
-        let public_write = (self.is_public() && !self.effect.is_prohibition())
-            .then(|| self.operations.iter().find(changes))
-            .flatten();
-        if let Some(op) = public_write {
+        if let Some(op) = self.public_write() {
             return Err(Error::Name {
                 field: "spec.operations",
                 value: op.as_str().to_owned(),
@@ -1255,6 +1246,19 @@ impl PolicySpec {
     /// Whether this Policy is assigned the role `public`, which every caller holds (ODP-02).
     pub fn is_public(&self) -> bool {
         self.assignee.kind == PrincipalKind::Role && self.assignee.id == "public"
+    }
+
+    /// The first operation of a grant to the role `public` that changes data, or `None`
+    /// (EP-187, T-6972): every caller holds `public`, anonymous or signed in, so such a grant
+    /// lets anyone change it. It may create only, the public form of EP-97; a prohibition takes,
+    /// never gives. [`Self::validate`] refuses it and the gateway leaves a stored one out.
+    pub fn public_write(&self) -> Option<&OperationRef> {
+        if !self.is_public() || self.effect.is_prohibition() {
+            return None;
+        }
+        self.operations.iter().find(|op| {
+            op.writes_entities() && **op != OperationRef::Single(Operation::CreateEntity)
+        })
     }
 
     /// The first operation of this grant that writes context data (an entity, an attribute or

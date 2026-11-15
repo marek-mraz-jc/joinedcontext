@@ -66,14 +66,22 @@ fn repo(test: &str) -> PathBuf {
          assigner: did:web:hel.fi\n  assignee: { kind: role, id: public }\n  \
          operations: [retrieveOps]\n  information:\n    - entities:\n        - type: Feedback\n",
     );
-    // The writes these tests send anonymously. The fixture granted none, so the decision point
-    // refuses them since an ungranted write stops at the gateway (403); Portal compiles a view's
-    // writes from the same Policies, so prod's broker would refuse them as well.
+    // The writes these tests send. An ungranted write stops at the gateway (403); Portal compiles
+    // a view's writes from the same Policies, so prod's broker would refuse them as well. Anyone
+    // may create through a form (EP-97); the changes are the editors' (EP-187), whose token
+    // [`app`] sends.
     write(
-        "writes.yaml",
-        "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: public-writes\n  \
+        "creates.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: public-creates\n  \
          namespace: helsinki\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: helsinki }\n  \
          assigner: did:web:hel.fi\n  assignee: { kind: role, id: public }\n  \
+         operations: [createEntity]\n  information:\n    - entities:\n        - type: Feedback\n",
+    );
+    write(
+        "writes.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: editor-writes\n  \
+         namespace: helsinki\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: helsinki }\n  \
+         assigner: did:web:hel.fi\n  assignee: { kind: group, id: editors }\n  \
          operations: [createEntity, mergeEntity, replaceEntity, deleteEntity, updateAttrs, \
          replaceAttrs, deleteAttrs]\n  information:\n    - entities:\n        - type: Feedback\n",
     );
@@ -168,7 +176,40 @@ async fn broker() -> (String, Hops) {
     (url, hops)
 }
 
+/// The gateway, each request sent as a member of the group `editors` unless it carries a token
+/// of its own.
 fn app(dir: &Path, upstream: &str, realm: &common::Realm) -> Router {
+    let bearer: header::HeaderValue = format!("Bearer {}", editor(realm))
+        .parse()
+        .expect("a header");
+    anonymous(dir, upstream, realm).layer(axum::middleware::map_request(
+        move |mut request: Request<Body>| {
+            let bearer = bearer.clone();
+            async move {
+                let headers = request.headers_mut();
+                if !headers.contains_key(header::AUTHORIZATION) {
+                    headers.insert(header::AUTHORIZATION, bearer);
+                }
+                request
+            }
+        },
+    ))
+}
+
+fn editor(realm: &common::Realm) -> String {
+    realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "sub-editor",
+        "aud": "context-gateway",
+        "preferred_username": "editor",
+        "groups": ["editors"],
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+    }))
+}
+
+/// The gateway as an anonymous caller meets it.
+fn anonymous(dir: &Path, upstream: &str, realm: &common::Realm) -> Router {
     let (endpoints, ..) = store::load(dir).expect("the repository loads");
     router(Arc::new(
         Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), "hel.fi")
@@ -299,6 +340,64 @@ async fn a_form_mints_the_key_and_counts_the_days_creates() {
         1,
         "the refused create never reached the broker"
     );
+}
+
+/// T-6998: a public grant that changes data, stored before validation refused it (EP-187), is
+/// left out of a public form's table: an anonymous change answers 403 and never reaches the
+/// broker, while anyone still creates through the form and the editors still change it.
+#[tokio::test]
+async fn a_stored_public_write_grant_changes_nothing_on_a_form() {
+    let realm = common::Realm::new();
+    let (upstream, hops) = broker().await;
+    let dir = repo("legacy");
+    std::fs::write(
+        dir.join("legacy.yaml"),
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: legacy\n  \
+         namespace: helsinki\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: helsinki }\n  \
+         assigner: did:web:hel.fi\n  assignee: { kind: role, id: public }\n  \
+         operations: [retrieveEntity, updateAttrs, mergeEntity, deleteEntity]\n  \
+         information:\n    - entities:\n        - type: Feedback\n",
+    )
+    .expect("write");
+    let stranger = anonymous(&dir, &upstream, &realm);
+    for (method, body) in [
+        (Method::PATCH, Some(json!({"text": "t"}))),
+        (Method::DELETE, None),
+    ] {
+        let (status, _, answer) =
+            send(&stranger, method.clone(), FORM, "/Feedback('x')", body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method}: {answer}");
+    }
+    assert!(writes(&hops).is_empty(), "{:?}", writes(&hops));
+
+    let (status, _, answer) = send(
+        &stranger,
+        Method::POST,
+        FORM,
+        "/Feedback",
+        Some(json!({"text": "hi"})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "a public form creates: {answer}"
+    );
+    let editors = app(&dir, &upstream, &realm);
+    let (status, _, answer) = send(
+        &editors,
+        Method::PATCH,
+        FORM,
+        "/Feedback('x')",
+        Some(json!({"text": "t"})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "the editors change it: {answer}"
+    );
+    assert_eq!(writes(&hops).len(), 2, "{:?}", writes(&hops));
 }
 
 /// A create the broker refuses gives its place in the day back.
