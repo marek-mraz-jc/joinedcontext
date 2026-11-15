@@ -8,6 +8,7 @@ Subcommands (EXPORT.md has the bundle format, REHEARSAL.md the order):
   import   shako repositories, Antares entities and history, daiya dashboards into a running jc
   retain   delete Antares temporal instances older than 24 h from the rehearsal's database
   smoke    sign in as a test person and check every module; a report per check
+  doors    the files that move an export's writes off its open-data Endpoints (EP-187), for Changes
 
 Nothing here writes to dev or prod: every write goes to the jc given by --base, and the importer
 refuses a --base that is not a loopback address. Secrets are read from files, never printed.
@@ -20,6 +21,7 @@ import argparse
 import base64
 import datetime as dt
 import hashlib
+import hmac
 import html
 import ipaddress
 import json
@@ -1476,6 +1478,156 @@ def jcctl_refusals(jcctl_bin: str, prepared: list) -> list[str]:
     return lines or [f"jcctl validate exited {r.returncode} and said nothing"]
 
 
+# The operations that change context data, as jc-core's OperationRef::writes_entities reads them
+# (Operation::is_write less the subscription operations, plus the groups updateOps and
+# redirectionOps). jcctl validate judges the result again, so a name missing here refuses the import.
+ENTITY_WRITES = frozenset((
+    "createEntity updateEntity appendAttrs updateAttrs deleteAttrs deleteEntity createBatch upsertBatch "
+    "updateBatch deleteBatch upsertTemporal appendAttrsTemporal deleteAttrsTemporal updateAttrInstanceTemporal "
+    "deleteAttrInstanceTemporal deleteTemporal mergeEntity replaceEntity replaceAttrs mergeBatch purgeEntity "
+    "updateOps redirectionOps").split())
+# jcctl's finding on an open-data Endpoint that serves a write or a Pipeline's output (EP-187).
+_OPEN_DATA_WRITE = re.compile(r"^projects/([^/]+)/(\S+\.ya?ml):\d+ \(document \d+\): Endpoint ([^:\s]+): "
+                              r"an open-data Endpoint is read-only \(EP-187\)")
+
+
+def _space_of(spec: dict) -> str | None:
+    ref = spec.get("contextSpaceRef")
+    return ref.get("name") if isinstance(ref, dict) else ref
+
+
+def _writes(spec: dict) -> bool:
+    """Whether a Policy spec grants a write of context data in itself or in any of its rules; a
+    prohibition grants nothing."""
+    rules = spec.get("rules") or [spec]
+    return any((r.get("effect") or "permission") != "prohibition"
+               and any(op in ENTITY_WRITES for op in r.get("operations") or []) for r in rules)
+
+
+def write_doors(prepared: list, refused: list[str], key: str) -> list[dict]:
+    """An export taken before EP-187 (T-6972) maps onto write doors, as T-6980 moved the
+    deployment's seeds: each open-data Endpoint `refused` names gets an internal Endpoint
+    `<name>-write` beside it (audience organization, the Policies it served, a fresh slug), every
+    Pipeline output of its project aimed at it aims at the door, and the open-data Endpoint keeps
+    only the Policies that write nothing. No entity, Policy or Pipeline is removed and nobody's
+    access changes: the writers write through the door, readers read as before. The slug is an
+    HMAC of the door under `key` (the import's forge token), unguessable and the same on a rerun.
+    Returns one row per door made; `prepared` is changed in place."""
+    import yaml
+    flagged = {(m.group(1), m.group(2), m.group(3)) for m in map(_OPEN_DATA_WRITE.match, refused) if m}
+    moved = []
+    for _, owner, project, _, files in prepared:
+        if owner == APPS_OWNER:
+            continue
+        docs = {}
+        for rel, data in files.items():
+            if rel.endswith((".yaml", ".yml")) and re.search(rb"^kind:\s*(Policy|Pipeline)\s*$", data, re.M):
+                try:
+                    docs[rel] = [d for d in yaml.safe_load_all(data) if isinstance(d, dict)]
+                except yaml.YAMLError:
+                    continue  # jcctl refuses it by itself
+        spaces = {}
+        for rel, data in files.items():
+            if m := re.fullmatch(r"spaces/([^/]+)/space\.ya?ml", rel):
+                try:
+                    spaces[m.group(1)] = [d for d in yaml.safe_load_all(data) if isinstance(d, dict)]
+                except yaml.YAMLError:
+                    continue
+        policies = [(d["metadata"]["name"], d.get("spec") or {}) for ds in docs.values() for d in ds
+                    if d.get("kind") == "Policy" and (d.get("metadata") or {}).get("name")]
+        for fproject, rel, name in sorted(flagged):
+            if fproject != project or rel not in files:
+                continue
+            endpoint = yaml.safe_load(files[rel])
+            spec, space = endpoint["spec"], _space_of(endpoint["spec"])
+            served = spec.get("policyRefs") or ([spec["policyRef"]] if spec.get("policyRef") else None)
+            served_names = {u.rsplit(":", 1)[-1] for u in served} if served else \
+                {n for n, s in policies if _space_of(s) == space}
+            # The URN names the space by its segment (urnSegment, else its name) under the
+            # organization's domain, which the reconciler fills in for {orgDomain} (CC-74).
+            segment = next((d.get("spec", {}).get("urnSegment") for d in spaces.get(space, [])), None) or space
+            ref = f"urn:ngsi-ld:Policy:{{orgDomain}}:{segment}:"
+            reads = sorted(n for n, s in policies if n in served_names and _space_of(s) == space and not _writes(s))
+            door = f"{name}-write"
+            slug = base64.b32encode(hmac.new(key.encode(), f"{project}/{space}/{door}".encode(),
+                                             hashlib.sha256).digest()[:20]).decode().lower()
+            door_rel = f"{rel.rsplit('/', 1)[0]}/{door}.yaml"
+            files[door_rel] = (
+                f"# The write door of {name} (EP-187, T-6972): made by the rehearsal import from an\n"
+                f"# export older than the rule; the writes {name} served go through it.\n"
+                + yaml.safe_dump({
+                    "apiVersion": endpoint["apiVersion"], "kind": "Endpoint",
+                    "metadata": {"name": door, "namespace": project,
+                                 "title": {"en": f"{name}: writes"}},
+                    "spec": {"contextSpaceRef": space, "policyRefs": [ref + n for n in sorted(served_names)],
+                             "slug": slug, "audience": "organization",
+                             "enabledRepresentations": ["ngsi-ld", "websocket", "ogc-features", "mcp"]}},
+                    sort_keys=False, allow_unicode=True)).encode()
+            files[rel] = _bind_policies(files[rel], [ref + n for n in reads])
+            target = re.compile(r"^(\s*-?\s*targetEndpoint:\s*['\"]?)(urn:ngsi-ld:Endpoint:[^:\s]+:"
+                                + re.escape(space) + ":)?" + re.escape(name) + r"(['\"]?\s*)$", re.M)
+            aimed = []
+            for prel in sorted(docs):
+                text = files[prel].decode()
+                if any(d.get("kind") == "Pipeline" for d in docs[prel]) and target.search(text):
+                    files[prel] = target.sub(lambda m, door=door: m.group(1) + (m.group(2) or "") + door + m.group(3),
+                                             text).encode()
+                    aimed.append(prel)
+            moved.append({"endpoint": f"{project}/{name}", "door": f"{project}/{door}", "reads": reads,
+                          "writers": sorted(served_names - set(reads)), "pipelines": aimed})
+    return moved
+
+
+def _bind_policies(data: bytes, refs: list[str]) -> bytes:
+    """The Endpoint manifest `data` with spec.policyRef / spec.policyRefs replaced by `refs`, every
+    other line, comment included, kept."""
+    lines = data.decode().splitlines(keepends=True)
+    out, skip = [], False
+    for line in lines:
+        if skip and re.match(r"^\s{4,}- |^\s*#", line):
+            continue
+        skip = False
+        if re.match(r"^  policyRefs?:", line):
+            skip = not re.match(r"^  policyRefs?:\s*\S", line)
+            continue
+        out.append(line)
+        if re.match(r"^spec:\s*$", line):
+            out.append("  policyRefs:\n" + "".join(f"    - {r}\n" for r in refs) if refs else "  policyRefs: []\n")
+    return "".join(out).encode()
+
+
+def cmd_doors(a):
+    """The move `write_doors` makes on import, for a live environment (T-6972): reads the export's
+    repositories as they are (none of the import's own rewrites), and writes under --out only the
+    files the move adds or changes, as <owner>/<repo>/<path>, with doors.json (EP-187 findings
+    before and after, one row per door). Each repository's files are one Change in the Portal;
+    nothing is written anywhere else. The door slugs are keyed by a fresh random key."""
+    export, out = Path(a.export), Path(a.out)
+    if out.exists() and any(out.iterdir()):
+        raise SystemExit(f"not writing: {out} holds files")
+    prepared = []
+    for r in json.loads((export / "gitea" / "repos.json").read_text()):
+        root = export / "gitea" / "files" / r["owner"] / r["name"]
+        files = {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*"))
+                 if p.is_file() and not p.is_symlink()}
+        prepared.append((r, r["owner"], r["name"], r.get("defaultBranch") or "main", files))
+    before = {(owner, name): dict(files) for _, owner, name, _, files in prepared}
+    found = jcctl_refusals(a.jcctl_bin, prepared)
+    doors = write_doors(prepared, found, secrets.token_hex(32))
+    left = jcctl_refusals(a.jcctl_bin, prepared) if doors else found
+    for _, owner, name, _, files in prepared:
+        for rel, data in files.items():
+            if before[owner, name].get(rel) != data:
+                (out / owner / name / rel).parent.mkdir(parents=True, exist_ok=True)
+                (out / owner / name / rel).write_bytes(data)
+    ep187 = lambda lines: sum(1 for line in lines if _OPEN_DATA_WRITE.match(line))
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "doors.json").write_text(json.dumps({"before": ep187(found), "after": ep187(left), "refusalsAfter": [
+        line for line in left if not line.startswith("warning:")], "doors": doors}, indent=1))
+    print(f"EP-187 findings: {ep187(found)} before, {ep187(left)} after; {len(doors)} door(s) in {out}")
+    return 0 if ep187(left) == 0 else 1
+
+
 def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE,
                  *, validate):
     """Creates each repository of the export and commits its files, after `validate` (the
@@ -1518,6 +1670,10 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
             report["reader"] = f"{owner}/{name}/{READER_BINDING}"
         prepared.append((r, owner, name, branch, files))
     refused = validate(prepared)
+    doors = write_doors(prepared, refused, token) if refused else []
+    if doors:
+        report["writeDoors"] = doors
+        refused = validate(prepared)
     if refused:
         report["manifestRefusals"] = refused
         report.setdefault("problems", []).append(
@@ -2868,6 +3024,8 @@ def main(argv=None):
     s.add_argument("--env", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("synth"); s.add_argument("--render", required=True)
     s.add_argument("--env", required=True); s.add_argument("--out", required=True)
+    s = sub.add_parser("doors"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
+    s.add_argument("--jcctl-bin", required=True)
     s = sub.add_parser("realms"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
     s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
     s.add_argument("--public-base", help="the rehearsal's own address: a twin of each client URL on the source host")
@@ -2912,7 +3070,7 @@ def main(argv=None):
     s = sub.add_parser("hub-sources"); s.add_argument("--deployment", required=True)
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"provisioning": cmd_provisioning, "prometheus-config": cmd_prometheus_config, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "digest": cmd_digest, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
+    return {"provisioning": cmd_provisioning, "prometheus-config": cmd_prometheus_config, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "doors": cmd_doors, "realms": cmd_realms, "import": cmd_import, "digest": cmd_digest, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
             "retain": cmd_retain, "smoke": cmd_smoke, "import-runlog": cmd_import_runlog}[a.cmd](a) or 0
 
 
