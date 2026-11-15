@@ -413,9 +413,15 @@ async fn run(
         let picture = match request {
             Request::Query(spec, query) => {
                 let source = json!({ "endpoint": query.endpoint, "type": query.entity_type, "temporal": query.temporal.is_some() });
-                let read = data_query::run(caller, state, project, *query).await?;
-                let entities = read["entities"].as_array().cloned().unwrap_or_default();
-                let rows = rows_of(&entities);
+                let mut read = data_query::run(caller, state, project, *query).await?;
+                let entities = match read["entities"].take() {
+                    Value::Array(entities) => entities,
+                    _ => Vec::new(),
+                };
+                // An 8 MiB history is ~150 ms of rows: off the async thread (P-1-01).
+                let rows = tokio::task::spawn_blocking(move || rows_of(&entities))
+                    .await
+                    .map_err(|err| ApiError::Internal(format!("the render stopped: {err}")))?;
                 let count = rows.len();
                 let prepared = prepare(&spec, rows).await?;
                 Picture {
