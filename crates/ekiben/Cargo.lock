@@ -1203,6 +1203,7 @@ dependencies = [
  "bytes",
  "ekiben-bloblang",
  "ekiben-core",
+ "ekiben-io-file",
  "ekiben-processors",
  "futures",
  "hex",

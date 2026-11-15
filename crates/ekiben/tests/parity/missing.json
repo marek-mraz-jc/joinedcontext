@@ -126,7 +126,6 @@
   "inputs/redis_streams",
   "inputs/s2",
   "inputs/sftp",
-  "inputs/socket",
   "inputs/socket_server",
   "inputs/subprocess",
   "inputs/twitter_search",

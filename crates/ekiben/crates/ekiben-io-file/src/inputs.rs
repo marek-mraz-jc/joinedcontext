@@ -520,6 +520,20 @@ impl Scanner {
     pub fn scan(&self, raw: Vec<u8>) -> Result<Vec<Part>, CoreError> {
         scan_parts(raw, self.0.clone())
     }
+
+    /// The scanner given when `obj` names none, for the stream inputs whose Bento default is
+    /// `lines` (socket).
+    pub fn lines_by_default(obj: &serde_json::Map<String, JsonValue>) -> Result<Self, CoreError> {
+        match obj.get("scanner").and_then(JsonValue::as_object) {
+            Some(s) => parse_scanner(s).map(Self),
+            None => Ok(Self(FileScannerKind::Lines)),
+        }
+    }
+
+    /// Whether this is `lines`, which a stream input splits as bytes arrive.
+    pub fn is_lines(&self) -> bool {
+        matches!(self.0, FileScannerKind::Lines)
+    }
 }
 
 fn parse_scanner_config(
