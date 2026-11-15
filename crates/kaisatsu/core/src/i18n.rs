@@ -6,12 +6,16 @@
 //! string. A key missing in a language falls back to English, as Keycloak's bundles do.
 
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
+
+static EN: LazyLock<BTreeMap<&'static str, &'static str>> =
+    LazyLock::new(|| parse_properties(EN_PROPERTIES));
 
 pub const SUPPORTED_LOCALES: [&str; 5] = ["en", "sk", "cs", "de", "hu"];
 
 pub struct Bundle {
     pub locale: &'static str,
-    messages: BTreeMap<&'static str, &'static str>,
+    messages: &'static BTreeMap<&'static str, &'static str>,
 }
 
 const EN_PROPERTIES: &str = r#"
@@ -1166,34 +1170,24 @@ fn parse_properties(raw: &'static str) -> BTreeMap<&'static str, &'static str> {
 impl Bundle {
     #[must_use]
     pub fn for_locale(locale: &str) -> Self {
-        match locale {
-            "sk" => Self {
-                locale: "sk",
-                messages: parse_properties(SK_PROPERTIES),
-            },
-            "cs" => Self {
-                locale: "cs",
-                messages: parse_properties(CS_PROPERTIES),
-            },
-            "de" => Self {
-                locale: "de",
-                messages: parse_properties(DE_PROPERTIES),
-            },
-            "hu" => Self {
-                locale: "hu",
-                messages: parse_properties(HU_PROPERTIES),
-            },
-            _ => Self {
-                locale: "en",
-                messages: parse_properties(EN_PROPERTIES),
-            },
-        }
+        type Map = BTreeMap<&'static str, &'static str>;
+        // Parsed once per process, not per render (P-4-07).
+        static SK: LazyLock<Map> = LazyLock::new(|| parse_properties(SK_PROPERTIES));
+        static CS: LazyLock<Map> = LazyLock::new(|| parse_properties(CS_PROPERTIES));
+        static DE: LazyLock<Map> = LazyLock::new(|| parse_properties(DE_PROPERTIES));
+        static HU: LazyLock<Map> = LazyLock::new(|| parse_properties(HU_PROPERTIES));
+        let (locale, messages): (&'static str, &'static Map) = match locale {
+            "sk" => ("sk", &SK),
+            "cs" => ("cs", &CS),
+            "de" => ("de", &DE),
+            "hu" => ("hu", &HU),
+            _ => ("en", &EN),
+        };
+        Self { locale, messages }
     }
 
     #[must_use]
     pub fn get<'a>(&'a self, key: &'a str) -> &'a str {
-        static EN: std::sync::LazyLock<BTreeMap<&'static str, &'static str>> =
-            std::sync::LazyLock::new(|| parse_properties(EN_PROPERTIES));
         self.messages
             .get(key)
             .or_else(|| EN.get(key))
@@ -1336,6 +1330,17 @@ pub fn negotiate_locale(
 
 #[cfg(test)]
 mod tests {
+
+    /// P-4-07: a page render borrows the locale's parsed messages instead of reparsing them.
+    #[test]
+    fn for_locale_borrows_one_parsed_map_per_locale() {
+        for locale in SUPPORTED_LOCALES {
+            let (a, b) = (Bundle::for_locale(locale), Bundle::for_locale(locale));
+            assert!(std::ptr::eq(a.messages, b.messages), "{locale}");
+            assert_eq!(a.locale, locale);
+        }
+        assert!(std::ptr::eq(Bundle::for_locale("xx").messages, &*EN));
+    }
 
     #[test]
     fn format_fills_each_placeholder_once() {

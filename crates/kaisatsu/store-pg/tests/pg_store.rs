@@ -737,6 +737,50 @@ async fn concurrent_code_redemption_has_exactly_one_winner() {
     db.drop_db().await;
 }
 
+/// P-4-02: once a realm has its active keys, reading them (every /token, /certs and admin call)
+/// takes no realm key lock, so a key rotation in progress never stalls a token mint.
+#[tokio::test]
+async fn reading_present_signing_keys_takes_no_realm_key_lock() {
+    let Some(db) = common::test_db("reading_present_signing_keys").await else {
+        return;
+    };
+    let store = db.store(Kek::generate_for_tests()).await;
+    store
+        .upsert_realm(RealmConfig {
+            id: "dev".into(),
+            realm: "dev".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("realm");
+    let first = store.list_signing_keys("dev").await.expect("keys");
+    let start = std::time::Instant::now();
+    for _ in 0..200 {
+        store.list_signing_keys("dev").await.expect("keys");
+    }
+    println!("200 list_signing_keys: {:?}", start.elapsed());
+
+    let mut holder = db.migrate_pool.begin().await.expect("begin");
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('kaisatsu.keys:' || $1, 0))")
+        .bind("dev")
+        .execute(&mut *holder)
+        .await
+        .expect("lock");
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        store.list_signing_keys("dev"),
+    )
+    .await
+    .expect("list_signing_keys waited for the realm key lock")
+    .expect("keys");
+    assert_eq!(
+        read.iter().map(|k| &k.kid).collect::<Vec<_>>(),
+        first.iter().map(|k| &k.kid).collect::<Vec<_>>()
+    );
+    holder.rollback().await.expect("rollback");
+    db.drop_db().await;
+}
+
 #[tokio::test]
 async fn sweeper_and_change_notifications() {
     let Some(db) = common::test_db("sweeper_and_change_notifications").await else {

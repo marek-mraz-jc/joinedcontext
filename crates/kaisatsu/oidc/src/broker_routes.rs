@@ -78,20 +78,7 @@ pub fn broker_router() -> Router<OidcState> {
 }
 
 fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    let target = mount.cookie_name("auth");
-    for val in headers.get_all(header::COOKIE) {
-        if let Ok(s) = val.to_str() {
-            for part in s.split(';').map(str::trim) {
-                if let Some((name, v)) = part.split_once('=')
-                    && name == target
-                    && !v.is_empty()
-                {
-                    return Some(v.to_owned());
-                }
-            }
-        }
-    }
-    None
+    crate::handlers::read_cookie(headers, &mount.cookie_name("auth"))
 }
 
 fn verify_auth_cookie(
@@ -507,7 +494,12 @@ async fn broker_endpoint_confirm_post(
         let bf = crate::brute_force::BruteForceProtector::new(state.store.clone());
         let ip = client_ip.as_deref();
         let locked = bf.is_locked(&realm, Some(&existing.id), ip).await?;
-        let valid = verify_and_maybe_rehash(submitted, pw_cred)?.valid && !locked;
+        let outcome = {
+            let (submitted, pw_cred) = (submitted.to_owned(), pw_cred.clone());
+            crate::handlers::password_work(move || verify_and_maybe_rehash(&submitted, &pw_cred))
+                .await??
+        };
+        let valid = outcome.valid && !locked;
         if !valid {
             if !locked {
                 bf.record_failure(&realm, Some(&existing.id), ip).await?;
