@@ -11,11 +11,11 @@ use dataroom_core::{
     text_in_lang, Catalogue, DataroomError, Dataset, Publisher, RecordState, RequestCtx, Result,
     Visibility,
 };
+use dataroom_rdf::rdfxml::xml_escape as escape_xml;
 use dataroom_rdf::{
     negotiate_profile, negotiate_rdf_format, serialize_catalogue, DcatProfileKind, HydraPageInfo,
     RdfFormat,
 };
-use dataroom_rdf::rdfxml::xml_escape as escape_xml;
 use dataroom_shacl::validate_graph_against_shapes;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -604,7 +604,6 @@ fn render_atom_xml(
         .into_response()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{escape_xml, paging_first, FeedConformance};
@@ -616,7 +615,10 @@ mod tests {
     /// XML cannot carry becomes U+FFFD, so one record never makes the whole feed unreadable.
     #[test]
     fn feed_text_carries_only_xml_characters() {
-        assert_eq!(escape_xml("a\u{1}b\u{FFFE}<c>"), "a\u{FFFD}b\u{FFFD}&lt;c&gt;");
+        assert_eq!(
+            escape_xml("a\u{1}b\u{FFFE}<c>"),
+            "a\u{FFFD}b\u{FFFD}&lt;c&gt;"
+        );
     }
 
     #[test]

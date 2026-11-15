@@ -725,26 +725,26 @@ async fn strictest_of_two_organizations_wins() {
 async fn single_sign_on_compares_consent_with_the_resolved_scope() {
     let (app, store) = app().await;
     let realm = store.get_realm("dev").await.unwrap().unwrap();
-    let mut phone = store
-        .list_client_scopes(&realm.id)
+    store
+        .upsert_client_scope(ClientScopeRepresentation {
+            id: "hub-scope".into(),
+            realm_id: realm.id.clone(),
+            name: "hub".into(),
+            attributes: [("include.in.token.scope".to_owned(), "false".to_owned())].into(),
+            ..Default::default()
+        })
         .await
-        .unwrap()
-        .into_iter()
-        .find(|s| s.name == "phone")
-        .expect("the realm's phone scope");
-    phone
-        .attributes
-        .insert("include.in.token.scope".into(), "false".into());
-    store.upsert_client_scope(phone).await.unwrap();
+        .unwrap();
     let mut edge = store
         .get_client_by_client_id("dev", "edge")
         .await
         .unwrap()
         .unwrap();
     edge.consent_required = true;
+    edge.optional_client_scopes.push("hub".into());
     store.upsert_client(edge).await.unwrap();
 
-    let a = start(&app, "&scope=openid%20phone").await;
+    let a = start(&app, "&scope=openid%20hub").await;
     let (st, _, html) = a.password(&app, MEMBER, MEMBER_PW).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(page_id(&html), "consent", "{html}");
@@ -759,7 +759,7 @@ async fn single_sign_on_compares_consent_with_the_resolved_scope() {
         .expect("sso cookie");
 
     let again = format!(
-        "{AUTH}?client_id=edge&redirect_uri={}&response_type=code&scope=openid%20phone&state=st&code_challenge={}&code_challenge_method=S256",
+        "{AUTH}?client_id=edge&redirect_uri={}&response_type=code&scope=openid%20hub&state=st&code_challenge={}&code_challenge_method=S256",
         url::form_urlencoded::byte_serialize(CALLBACK.as_bytes()).collect::<String>(),
         sha256_base64url(VERIFIER),
     );
