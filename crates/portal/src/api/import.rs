@@ -2040,7 +2040,38 @@ pub(crate) fn authorize_manifest(
         &envelope.kind,
         &envelope.metadata.name,
     )?;
-    crate::groups::check(state, identity, &envelope.kind, &envelope.metadata)
+    crate::groups::check(state, identity, &envelope.kind, &envelope.metadata)?;
+    // S-5-08: what the proposer binds or admits they read, and retention is the space owner's
+    // (DM-85, T-4948). The policyRefs requirement (T-6740) stays at the single door until legacy
+    // bundles carry policyRefs.
+    crate::spaces::check_retention(
+        state,
+        identity,
+        project,
+        &envelope.kind,
+        &envelope.metadata.name,
+        &envelope.spec,
+    )?;
+    crate::api::mutate::check_admitted_projects(
+        state,
+        identity,
+        project,
+        &envelope.kind,
+        envelope,
+    )?;
+    let references = (envelope.kind == "Endpoint")
+        .then(|| serde_json::from_value::<jc_core::kinds::EndpointSpec>(envelope.spec.clone()).ok())
+        .flatten();
+    match references.as_ref().and_then(|spec| spec.policy_refs()) {
+        Some(references) => crate::api::mutate::check_policy_refs_readable(
+            state,
+            identity,
+            project,
+            &envelope.metadata.name,
+            references,
+        ),
+        None => Ok(()),
+    }
 }
 
 /// The kind's own parse and invariants, for every manifest the bundle carries (T-2253, CC-08).
