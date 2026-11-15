@@ -300,8 +300,18 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                     .await
                     .map_err(|e| format!("failed to bind ingest listener {addr}: {e}"))?;
                 ekiben_io_http::ingest::activate();
+                // Subscription-triggered pipelines (PL-51) receive their Notifications here.
+                #[cfg(feature = "ngsild")]
+                let router = ekiben_io_ngsild::notification::ingest_router();
+                #[cfg(not(feature = "ngsild"))]
+                let router = ekiben_io_http::ingest::router();
                 tokio::spawn(async move {
-                    if let Err(e) = ekiben_io_http::ingest::serve(listener).await {
+                    let served = axum::serve(
+                        listener,
+                        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                    )
+                    .await;
+                    if let Err(e) = served {
                         tracing::error!("ingest listener: {e}");
                     }
                 });

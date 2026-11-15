@@ -22,7 +22,7 @@ use utoipa::ToSchema;
 
 use crate::api::internal::pipeline_rejected::{problems_of, reason_of};
 use crate::api::pipeline_test::{
-    harnessed, outcome_of, run_stream_gathering, with_lifetime, Gathered,
+    attributes_of, harnessed, outcome_of, run_stream_gathering, with_lifetime, Gathered,
 };
 use crate::api::pipelines::{group_views, readable_pipeline, RejectedGroupView};
 use crate::auth::CurrentUser;
@@ -235,6 +235,7 @@ fn whole_source(
     state: &AppState,
     project: &str,
     spec: &PipelineSpec,
+    attributes: Option<Value>,
     source_name: &str,
     source: &DataSourceSpec,
     capture: &str,
@@ -246,7 +247,7 @@ fn whole_source(
         records: None,
     };
     let mut config = harnessed(&state.mirror, project, spec, &sample, capture, RECORDS)?;
-    with_lifetime(&mut config, spec)?;
+    with_lifetime(&mut config, spec, attributes)?;
     let (input, mut read) =
         crate::api::datasource_test::source_read(source_name, project, "source_check", source)?;
     // The read's own error is kept where the envelope reports it first, as a test's fetch.
@@ -331,11 +332,22 @@ pub async fn check_source(
     let spec: PipelineSpec = serde_json::from_value(pipeline.spec.clone())
         .map_err(|e| ApiError::Conflict(format!("pipeline '{name}' does not parse: {e}")))?;
     let (source_name, source) = read_source(&state, &project, &spec)?;
+    let attributes = attributes_of(&state, &project, &spec, &name)?;
     let check = |record: &Value| problems_of(&state, &project, &pipeline.spec, record);
     let mut tally = run_stream_gathering(
         &state,
         &project,
-        |capture| whole_source(&state, &project, &spec, &source_name, &source, capture),
+        |capture| {
+            whole_source(
+                &state,
+                &project,
+                &spec,
+                attributes.clone(),
+                &source_name,
+                &source,
+                capture,
+            )
+        },
         async |receiver| gather(receiver, check).await,
     )
     .await?;

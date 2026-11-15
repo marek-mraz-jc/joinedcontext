@@ -2626,7 +2626,16 @@
       "modeChoice": {
         "upsert": "Anlegen oder zusammenführen",
         "replace": "Ganze Entität ersetzen",
-        "update-attrs": "Nur Attribute aktualisieren"
+        "update-attrs": "Nur Attribute aktualisieren",
+        "merge": "In Teile von Attributen zusammenführen",
+        "backfill": "Nur zur Historie hinzufügen"
+      },
+      "modeHint": {
+        "upsert": "Legt die Entität an oder aktualisiert die Attribute, die der Datensatz nennt; die übrigen Attribute bleiben.",
+        "replace": "Die Entität wird genau der Datensatz: Attribute, die er nicht nennt, werden entfernt. Nur wenn allein diese Pipeline die Entität schreibt.",
+        "update-attrs": "Aktualisiert an der Entität die Attribute, die der Datensatz nennt; die übrigen Attribute bleiben.",
+        "merge": "Führt den Datensatz tief zusammen, sodass zwei Pipelines je einen Teil eines Attributs schreiben, zum Beispiel address.streetAddress und address.postalCode.",
+        "backfill": "Fügt vergangene Messwerte nur der Historie hinzu; der aktuelle Wert bleibt. Braucht die Operation zum Anfügen an die Historie in der Policy des Endpunkts."
       },
       "lastRun": "Letzter Lauf"
     },
@@ -5872,7 +5881,10 @@
     "observedAt": "Beobachtet",
     "unit": "Einheit",
     "datasetId": "Datensatz",
-    "empty": "Keine Entitäten.",
+    "empty": "Hier gibt es noch keine Entitäten. Daten kommen über eine Datenquelle, einen Import oder eine Pipeline.",
+    "filtersMatchNothing": "Keine Zeile passt zu Ihren Filtern.",
+    "notSaved": "nicht gespeichert",
+    "refusedNext": "Verwerfen Sie die Änderungen, um den gespeicherten Wert zu behalten. Wenn der Grund sagt, dass Sie hier nicht schreiben dürfen, bitten Sie den Eigentümer des Kontextraums um Zugriff.",
     "loading": "Lädt…",
     "filtering": "Filtert…",
     "previous": "Zurück",
@@ -5883,6 +5895,7 @@
     "retry": "Erneut versuchen",
     "busy": "die Datenquelle ist gerade ausgelastet",
     "timedOut": "die Datenquelle hat zu lange nicht geantwortet",
+    "unreachable": "die Datenquelle ist nicht erreichbar",
     "filter": "Filter",
     "noFilter": "Beliebig",
     "ops": {

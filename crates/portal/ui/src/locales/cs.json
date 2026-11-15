@@ -2626,7 +2626,16 @@
       "modeChoice": {
         "upsert": "Vytvořit nebo sloučit",
         "replace": "Nahradit celou entitu",
-        "update-attrs": "Pouze aktualizovat atributy"
+        "update-attrs": "Pouze aktualizovat atributy",
+        "merge": "Sloučit do částí atributů",
+        "backfill": "Pouze přidat do historie"
+      },
+      "modeHint": {
+        "upsert": "Vytvoří entitu nebo aktualizuje atributy, které záznam uvádí; ostatní atributy zůstanou.",
+        "replace": "Entita bude přesně záznam: atributy, které neuvádí, se odstraní. Jen když entitu zapisuje pouze tato pipeline.",
+        "update-attrs": "Aktualizuje na entitě atributy, které záznam uvádí; ostatní atributy zůstanou.",
+        "merge": "Hluboce sloučí záznam, takže dvě pipeline mohou zapisovat každá část jednoho atributu, například address.streetAddress a address.postalCode.",
+        "backfill": "Přidá minulá měření pouze do historie; aktuální hodnota zůstane. Vyžaduje operaci připojení historie v Policy koncového bodu."
       },
       "lastRun": "Poslední běh"
     },
@@ -5872,7 +5881,10 @@
     "observedAt": "Pozorováno",
     "unit": "Jednotka",
     "datasetId": "Dataset",
-    "empty": "Žádné entity.",
+    "empty": "Zatím tu nejsou žádné entity. Data přicházejí přes zdroj dat, import nebo pipeline.",
+    "filtersMatchNothing": "Vašim filtrům neodpovídá žádný řádek.",
+    "notSaved": "neuloženo",
+    "refusedNext": "Zahoďte změny a ponechte uloženou hodnotu. Pokud důvod říká, že sem nesmíte zapisovat, požádejte vlastníka kontextového prostoru o přístup.",
     "loading": "Načítám…",
     "filtering": "Filtruji…",
     "previous": "Předchozí",
@@ -5883,6 +5895,7 @@
     "retry": "Zkusit znovu",
     "busy": "zdroj dat je právě zaneprázdněný",
     "timedOut": "zdroj dat neodpověděl včas",
+    "unreachable": "zdroj dat je nedostupný",
     "filter": "Filtr",
     "noFilter": "Libovolné",
     "ops": {

@@ -1348,7 +1348,7 @@ pub async fn retry_rejected(
         "{}/internal/pipelines/{project}/{name}/rejected",
         internal.trim_end_matches('/')
     );
-    let mut config = replay_stream(&records, &project, &slug);
+    let mut config = replay_stream(&records, &project, &slug, replay_mode(&pipeline.spec));
     let linkml = state.model_schemas.stage_linkml(&project, &space);
     crate::pipeline_validation::insert_stage(&mut config, &schema, linkml.as_deref(), &sink);
     // What the replay writes is a line of the pipeline's log like any run's (PL-62).
@@ -1425,6 +1425,15 @@ pub async fn retry_rejected(
     Ok((axum::http::StatusCode::ACCEPTED, Json(answer)))
 }
 
+/// The mode the pipeline's first output writes in, the one [`replay_target`] names; absent or
+/// unreadable is `upsert`, as the render's.
+fn replay_mode(spec: &Value) -> jc_core::kinds::OutputMode {
+    serde_json::from_value::<jc_core::kinds::pipeline::PipelineSpec>(spec.clone())
+        .ok()
+        .and_then(|spec| spec.outputs().into_iter().next()?.mode)
+        .unwrap_or(jc_core::kinds::OutputMode::Upsert)
+}
+
 /// The space and the Endpoint slug the pipeline's first output writes through.
 fn replay_target(state: &AppState, project: &str, spec: &Value) -> Option<(String, String)> {
     let spec: jc_core::kinds::pipeline::PipelineSpec = serde_json::from_value(spec.clone()).ok()?;
@@ -1454,7 +1463,12 @@ fn may_pipeline(
 
 /// One message holding the records, split into one per record, and the pipeline's own write
 /// in gateway-sized batches: the stage is put in before the split by the caller.
-fn replay_stream(records: &[Value], project: &str, slug: &str) -> Value {
+fn replay_stream(
+    records: &[Value],
+    project: &str,
+    slug: &str,
+    mode: jc_core::kinds::OutputMode,
+) -> Value {
     use base64::Engine;
     let encoded =
         base64::engine::general_purpose::STANDARD.encode(Value::from(records.to_vec()).to_string());
@@ -1469,7 +1483,7 @@ fn replay_stream(records: &[Value], project: &str, slug: &str) -> Value {
             { "split": { "size": 1000 } },
             { "archive": { "format": "json_array" } },
         ]},
-        "output": crate::reconciler::streams::gateway_output(project, slug),
+        "output": crate::reconciler::streams::replay_output(project, slug, mode),
     })
 }
 

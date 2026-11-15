@@ -1921,7 +1921,11 @@ export function OutputBlock({ project, output, targets, locale, onChange, onRemo
               ))}
           </Select>
         </Field>
-        <Field id="flow-output-mode" label={t("pipelines.field.outputMode")}>
+        <Field
+          id="flow-output-mode"
+          label={t("pipelines.field.outputMode")}
+          help={t(`pipelines.field.modeHint.${output.mode ?? "upsert"}`)}
+        >
           <Select
             id="flow-output-mode"
             value={output.mode ?? "upsert"}

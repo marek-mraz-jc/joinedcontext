@@ -2703,10 +2703,23 @@ mod tests {
         let bus = json!({"id": "urn:ngsi-ld:Bus:7", "type": "Bus",
             "speed": {"type": "Property", "value": 41, "expiresAt": "2026-10-21T00:00:00Z"},
             "expiresAt": "2026-10-21T00:00:00Z"});
-        assert!(crate::record_check::judge_view(&view, "air-public", "Bus", &bus).is_empty());
+        assert!(crate::record_check::judge_view(
+            &view,
+            jc_core::kinds::Operation::UpsertBatch,
+            "air-public",
+            "Bus",
+            &bus
+        )
+        .is_empty());
         let mut stray = bus.clone();
         stray["pm25"] = json!({"type": "Property", "value": 3});
-        let findings = crate::record_check::judge_view(&view, "air-public", "Bus", &stray);
+        let findings = crate::record_check::judge_view(
+            &view,
+            jc_core::kinds::Operation::UpsertBatch,
+            "air-public",
+            "Bus",
+            &stray,
+        );
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].field, "pm25");
         assert!(findings[0]
@@ -2714,7 +2727,14 @@ mod tests {
             .starts_with("not writable through air-public"));
         let car = json!({"id": "urn:ngsi-ld:Car:1", "type": "Car", "speed": {"type": "Property", "value": 1}});
         assert_eq!(
-            crate::record_check::judge_view(&view, "air-public", "Car", &car)[0].field,
+            crate::record_check::judge_view(
+                &view,
+                jc_core::kinds::Operation::UpsertBatch,
+                "air-public",
+                "Car",
+                &car
+            )[0]
+            .field,
             "type",
             "the draft writes no Car any more"
         );
