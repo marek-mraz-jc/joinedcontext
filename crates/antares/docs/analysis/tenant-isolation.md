@@ -79,7 +79,7 @@ Row-level security covers every Tenant-bearing table (`tests/rls_covers_every_ta
 
 | Driver | Test | Pairs |
 |---|---|---|
-| memory | `antares-sql/tests/contract.rs::the_memory_store_keeps_tenants_apart` | `iso_b`/`isoxb` both ways, `iso`/`isox`, `isonamed`/default |
+| memory | `antares-sql/tests/contract.rs::the_memory_store_keeps_tenants_apart` | `iso_b`/`isoxb` both ways, `iso`/`isox`, `isonamed`/default; `sk_a__x` beside `skxa__x`, `sk_a__x-y` and `sk_ab__x`, a 128-character `{organization}__{segment}` (T-7036) |
 | file (redb) | `…::the_file_store_keeps_tenants_apart` | the same |
 | Postgres | `antares-sql/tests/pg.rs::the_postgres_store_keeps_tenants_apart` | the same shapes with a run suffix |
 
