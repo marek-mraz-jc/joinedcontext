@@ -63,6 +63,7 @@ impl World {
             validator: None,
             harvester: None,
             sources_by_portal: false,
+            branding: None,
         }
     }
     async fn run(&self, ctx: &RequestCtx, op: &str, input: Value) -> Result<Value> {
@@ -862,6 +863,39 @@ async fn publisher_operations_and_no_self_granted_editing() {
         .run(&w.dept_editor(), "publisher.propose", dept_grant)
         .await;
     assert!(is_forbidden(&r), "editor changing editor grants: {r:?}");
+    // Withdrawing, merging or re-declaring a publisher keeps its own permission
+    // (`publisher.withdraw` Delete, `publisher.merge` Admin): an editor by editor grant (Propose
+    // only) changes none of them.
+    let team = w.ctx(Subject::authenticated(
+        "teamie",
+        vec![w.org],
+        vec!["dept-team".into()],
+    ));
+    for (field, value) in [
+        ("state", json!("withdrawn")),
+        ("mergedInto", json!("pub-city")),
+        ("declaredByInstance", json!("other-instance")),
+    ] {
+        let mut proposal = json!({"publisher": {"id": "pub-dept", "name": "dept",
+            "title": {"sk": "Odbor"}, "description": {}, "uri": "https://example.org/dept",
+            "state": "active"}});
+        proposal["publisher"][field] = value;
+        let r = w.run(&team, "publisher.propose", proposal).await;
+        assert!(is_forbidden(&r), "editor changing {field}: {r:?}");
+    }
+    // The same proposal without those fields saves: the editor grant itself still works.
+    let keep = json!({"publisher": {"id": "pub-dept", "name": "dept",
+        "title": {"sk": "Odbor"}, "description": {}, "uri": "https://example.org/dept",
+        "state": "active"}});
+    assert!(w.run(&team, "publisher.propose", keep).await.is_ok());
+    let dept = w
+        .store
+        .get_publisher(&w.admin(), "dept")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(dept.state, dataroom_core::RecordState::Active);
+    assert_eq!((dept.merged_into, dept.declared_by_instance), (None, None));
 
     // The catalogue admin creates publishers and sets their editors.
     let created = w
@@ -1560,6 +1594,7 @@ async fn allowed_answers_like_the_call() {
         validator: None,
         harvester: None,
         sources_by_portal: false,
+        branding: None,
     };
     let dept_admin = w.ctx(Subject::authenticated(
         "dept-admin",
