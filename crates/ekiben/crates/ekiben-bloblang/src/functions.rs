@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
-use std::sync::atomic::Ordering;
+use std::sync::{Mutex, PoisonError};
 
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -61,6 +61,7 @@ pub fn known_functions() -> HashSet<String> {
         "flow_id",
         "ulid",
         "uuid_v4",
+        "uuid_v7",
         "var",
         "cosine_similarity",
         "fake",
@@ -122,18 +123,28 @@ pub(crate) fn eval_function(
             clock().timestamp_nanos_opt().unwrap_or_default(),
         )),
         "uuid_v4" => Ok(Value::String(Uuid::new_v4().to_string())),
+        "uuid_v7" => Ok(Value::String(Uuid::now_v7().to_string())),
         "pi" => Ok(Value::Float(std::f64::consts::PI)),
         "hostname" => Ok(Value::String(
             std::env::var("HOSTNAME").unwrap_or_else(|_| "ekiben".to_string()),
         )),
-        "tracing_id" | "flow_id" => Ok(Value::String(String::new())),
-        "tracing_span" => Ok(Value::Null),
+        // ekiben runs without a tracer, so these answer what Bento answers with tracing off.
+        "tracing_id" => Ok(Value::String("0".repeat(32))),
+        "flow_id" => Ok(Value::String(String::new())),
+        "tracing_span" => Ok(Value::Object(Default::default())),
         "throw" => {
             let why = eval_single_string_arg(args, "why", None, ctx)?;
             Err(why)
         }
         "env" => {
-            let var_name = eval_single_string_arg(args, "name", None, ctx)?;
+            // `no_cache` changes nothing here: ekiben reads the injected variables on every call.
+            let var_name = match args {
+                ArgList::Positional(v) if v.len() == 2 => {
+                    ctx.eval_expr(&v[1])?.get_bool()?;
+                    ctx.eval_expr(&v[0])?.get_string()?
+                }
+                _ => eval_single_string_arg(args, "name", None, ctx)?,
+            };
             match ctx.env.lookup_env(&var_name) {
                 Some(v) => Ok(Value::String(v)),
                 None => Ok(Value::Null),
@@ -233,7 +244,9 @@ pub(crate) fn eval_function(
         "counter" => eval_counter_fn(args, state_id, ctx),
         "random_int" => eval_random_int_fn(args, state_id, ctx),
         "nanoid" => eval_nanoid_fn(args, ctx),
-        "ksuid" | "ulid" | "snowflake_id" => Ok(Value::String(Uuid::new_v4().simple().to_string())),
+        "ksuid" => Ok(Value::String(ksuid())),
+        "ulid" => eval_ulid_fn(args, ctx),
+        "snowflake_id" => eval_snowflake_fn(args, ctx),
         "var" => {
             let vname = eval_single_string_arg(args, "name", None, ctx)?;
             ctx.vars
@@ -411,13 +424,17 @@ fn eval_counter_fn(
 
 fn eval_random_int_fn(
     args: &ArgList,
-    _state_id: usize,
+    state_id: usize,
     ctx: &mut EvalContext<'_, '_>,
 ) -> Result<Value, String> {
+    // Bento: `seed` defaults to `timestamp_unix_nano()` and is resolved once per call site, the
+    // generator is Go's math/rand, and the number is `Int63n(max - min + 1) + min`.
+    let mut seed_expr: Option<&Expr> = None;
     let mut min_val = 0i64;
     let mut max_val = i64::MAX - 1;
     match args {
         ArgList::Positional(v) => {
+            seed_expr = v.first();
             if let Some(e) = v.get(1) {
                 min_val = ctx.eval_expr(e)?.get_int()?;
             }
@@ -428,9 +445,7 @@ fn eval_random_int_fn(
         ArgList::Named(v) => {
             for (k, e) in v {
                 match k.as_str() {
-                    "seed" => {
-                        let _ = ctx.eval_expr(e)?;
-                    }
+                    "seed" => seed_expr = Some(e),
                     "min" => min_val = ctx.eval_expr(e)?.get_int()?,
                     "max" => max_val = ctx.eval_expr(e)?.get_int()?,
                     other => return Err(format!("unknown parameter {other}")),
@@ -446,13 +461,39 @@ fn eval_random_int_fn(
             "min ({min_val}) must be smaller or equal than max ({max_val})"
         ));
     }
-    let span = (max_val - min_val).saturating_add(1) as u64;
-    let step = ctx.rng_counter.fetch_add(1, Ordering::Relaxed);
-    let mixed = step
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    let offset = if span == 0 { 0 } else { (mixed % span) as i64 };
-    Ok(Value::Int(min_val + offset))
+    if max_val == i64::MAX {
+        return Err(format!(
+            "max must be smaller than the max allowed for an int64 ({})",
+            i64::MAX
+        ));
+    }
+    let seeded = ctx
+        .rng_states
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains_key(&state_id);
+    if !seeded {
+        let seed = match seed_expr {
+            Some(e) => ctx
+                .eval_expr(e)?
+                .get_int()
+                .map_err(|e| format!("failed to seed random number generator: {e}"))?,
+            None => clock().timestamp_nanos_opt().unwrap_or_default(),
+        };
+        ctx.rng_states
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(state_id)
+            .or_insert_with(|| crate::gorand::GoRand::new(seed));
+    }
+    let mut states = ctx
+        .rng_states
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let rng = states
+        .get_mut(&state_id)
+        .ok_or("random_int: the generator was not seeded")?;
+    Ok(Value::Int(rng.int63n(max_val - min_val + 1) + min_val))
 }
 
 /// Longest id `nanoid` builds; the length is allocated up front.
@@ -564,5 +605,252 @@ fn meta_get(ctx: &EvalContext<'_, '_>, key: &str) -> Option<Value> {
     match ctx.new_meta.as_deref() {
         Some(meta) if ctx.meta_in_place => meta.meta_get(key),
         _ => ctx.batch.part_meta_get(ctx.index, key),
+    }
+}
+
+const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const BASE62: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+/// segmentio/ksuid's epoch (seconds).
+const KSUID_EPOCH: i64 = 1_400_000_000;
+/// bwmarrin/snowflake's default epoch (milliseconds).
+const SNOWFLAKE_EPOCH_MS: i64 = 1_288_834_974_657;
+
+/// Last ULID handed out: (milliseconds, 80-bit entropy), so ids within one ms stay sorted.
+static ULID_STATE: Mutex<(u64, u128)> = Mutex::new((0, 0));
+/// Last snowflake: (milliseconds since its epoch, step).
+static SNOWFLAKE_STATE: Mutex<(i64, i64)> = Mutex::new((i64::MIN, 0));
+
+/// 12 random bytes: a v4 UUID's bytes without its version and variant bits.
+fn random12() -> [u8; 12] {
+    let b = *Uuid::new_v4().as_bytes();
+    let mut out = [0u8; 12];
+    out[..6].copy_from_slice(&b[..6]);
+    out[6..].copy_from_slice(&b[10..]);
+    out
+}
+
+/// Bento's `ulid(encoding: "crockford"|"hex", random_source: "secure_random"|"fast_random")`;
+/// both random sources draw from the OS generator here.
+fn eval_ulid_fn(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Value, String> {
+    let mut arg = |name: &str, pos: usize, default: &str| -> Result<String, String> {
+        match crate::methods::get_optional_arg(args, name, pos) {
+            Some(e) => ctx.eval_expr(e)?.get_string(),
+            None => Ok(default.to_string()),
+        }
+    };
+    let encoding = arg("encoding", 0, "crockford")?;
+    let source = arg("random_source", 1, "secure_random")?;
+    if !matches!(source.as_str(), "secure_random" | "fast_random") {
+        return Err(format!(
+            "invalid ulid random source: {source}, expected secure_random or fast_random"
+        ));
+    }
+    let v = ulid()?;
+    match encoding.as_str() {
+        "crockford" => Ok(Value::String(crockford(v))),
+        "hex" => Ok(Value::String(format!("{v:032x}"))),
+        other => Err(format!(
+            "invalid ulid encoding: {other}, expected crockford or hex"
+        )),
+    }
+}
+
+fn crockford(v: u128) -> String {
+    (0..26usize)
+        .map(|i| CROCKFORD[((v >> (125 - 5 * i)) & 31) as usize] as char)
+        .collect()
+}
+
+/// oklog/ulid: 48-bit milliseconds and 80 random bits, 26 Crockford base32 characters; within
+/// one millisecond (or a clock that went back) the entropy grows by one, so ids keep their order.
+fn ulid() -> Result<u128, String> {
+    const ENTROPY_MAX: u128 = (1 << 80) - 1;
+    let ms = u64::try_from(clock().timestamp_millis()).unwrap_or(0) & ((1 << 48) - 1);
+    let mut st = ULID_STATE.lock().unwrap_or_else(PoisonError::into_inner);
+    if ms > st.0 {
+        let entropy = random12()[..10]
+            .iter()
+            .fold(0u128, |acc, b| (acc << 8) | u128::from(*b));
+        *st = (ms, entropy);
+    } else if st.1 == ENTROPY_MAX {
+        return Err("ulid: monotonic entropy exhausted within one millisecond".to_string());
+    } else {
+        st.1 += 1;
+    }
+    Ok((u128::from(st.0) << 80) | st.1)
+}
+
+/// segmentio/ksuid: 4-byte seconds since its epoch and 16 random bytes, 27 base62 characters.
+fn ksuid() -> String {
+    let ts = u32::try_from(clock().timestamp() - KSUID_EPOCH).unwrap_or(0);
+    let mut num = [0u8; 20];
+    num[..4].copy_from_slice(&ts.to_be_bytes());
+    num[4..16].copy_from_slice(&random12());
+    num[16..].copy_from_slice(&random12()[..4]);
+    let mut out = [b'0'; 27];
+    for slot in out.iter_mut().rev() {
+        let mut rem = 0u32;
+        for b in num.iter_mut() {
+            let acc = rem * 256 + u32::from(*b);
+            *b = (acc / 62) as u8;
+            rem = acc % 62;
+        }
+        *slot = BASE62[rem as usize];
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// bwmarrin/snowflake: 41-bit milliseconds since its epoch, 10-bit node, 12-bit step, as decimal.
+fn eval_snowflake_fn(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Value, String> {
+    let node = match crate::methods::get_optional_arg(args, "node_id", 0) {
+        Some(e) => ctx.eval_expr(e)?.get_int()?,
+        None => 1,
+    };
+    if !(0..=1023).contains(&node) {
+        return Err(format!("node_id {node} must be between 0 and 1023"));
+    }
+    let now = clock().timestamp_millis() - SNOWFLAKE_EPOCH_MS;
+    let mut st = SNOWFLAKE_STATE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if now > st.0 {
+        *st = (now, 0);
+    } else {
+        st.1 = (st.1 + 1) & 4095;
+        if st.1 == 0 {
+            // The step ran out within one millisecond: move on to the next one.
+            st.0 += 1;
+        }
+    }
+    Ok(Value::String(
+        ((st.0 << 22) | (node << 12) | st.1).to_string(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::value::Value;
+    use crate::Environment;
+
+    fn run(env: &Environment, mapping: &str) -> Value {
+        env.compile_mapping(mapping)
+            .expect("parses")
+            .exec_on_value(Value::Null)
+            .expect("runs")
+    }
+
+    fn text(v: Value) -> String {
+        match v {
+            Value::String(s) => s,
+            other => panic!("expected a string, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn random_int_with_a_seed_gives_bentos_numbers() {
+        // `bento blobl` 1.22.0 on three messages.
+        let env = Environment::new();
+        let m = env
+            .compile_mapping("root = random_int(seed: 1)")
+            .expect("parses");
+        let got: Vec<Value> = (0..3)
+            .map(|_| m.exec_on_value(Value::Null).expect("runs"))
+            .collect();
+        assert!(matches!(
+            got[..],
+            [
+                Value::Int(5577006791947779410),
+                Value::Int(8674665223082153551),
+                Value::Int(6129484611666145821)
+            ]
+        ));
+        let ranged = env
+            .compile_mapping("root = random_int(1, 0, 100)")
+            .expect("parses");
+        assert!(matches!(
+            ranged.exec_on_value(Value::Null),
+            Ok(Value::Int(76))
+        ));
+        let unseeded = env
+            .compile_mapping("root = random_int(max: 10)")
+            .expect("parses");
+        assert!(matches!(
+            unseeded.exec_on_value(Value::Null),
+            Ok(Value::Int(0..=10))
+        ));
+    }
+
+    #[test]
+    fn ulids_are_crockford_and_sorted() {
+        let env = Environment::new();
+        let ids: Vec<String> = (0..200).map(|_| text(run(&env, "root = ulid()"))).collect();
+        for id in &ids {
+            assert_eq!(id.len(), 26, "{id}");
+            assert!(id.bytes().all(|b| super::CROCKFORD.contains(&b)), "{id}");
+        }
+        assert!(ids.windows(2).all(|w| w[0] < w[1]), "{ids:?}");
+        let hex = text(run(&env, r#"root = ulid("hex", "fast_random")"#));
+        assert!(
+            hex.len() == 32 && hex.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{hex}"
+        );
+        assert!(env
+            .compile_mapping(r#"root = ulid("base64")"#)
+            .expect("parses")
+            .exec_on_value(Value::Null)
+            .is_err());
+    }
+
+    #[test]
+    fn ksuids_are_27_base62() {
+        let id = text(run(&Environment::new(), "root = ksuid()"));
+        assert_eq!(id.len(), 27);
+        assert!(id.bytes().all(|b| b.is_ascii_alphanumeric()), "{id}");
+    }
+
+    #[test]
+    fn snowflakes_grow_and_carry_their_node() {
+        let env = Environment::new();
+        let ids: Vec<i64> = (0..50)
+            .map(|_| {
+                text(run(&env, "root = snowflake_id(5)"))
+                    .parse()
+                    .expect("a number")
+            })
+            .collect();
+        assert!(ids.windows(2).all(|w| w[0] < w[1]));
+        assert!(ids.iter().all(|id| (id >> 12) & 1023 == 5));
+        assert!(env
+            .compile_mapping("root = snowflake_id(2000)")
+            .expect("parses")
+            .exec_on_value(Value::Null)
+            .is_err());
+    }
+
+    #[test]
+    fn uuid_v7_is_version_7() {
+        let id = text(run(&Environment::new(), "root = uuid_v7()"));
+        assert_eq!(
+            uuid::Uuid::parse_str(&id)
+                .expect("a uuid")
+                .get_version_num(),
+            7
+        );
+    }
+
+    #[test]
+    fn tracing_off_answers_and_env_no_cache() {
+        let env = Environment::new();
+        assert_eq!(text(run(&env, "root = tracing_id()")), "0".repeat(32));
+        assert!(matches!(run(&env, "root = tracing_span()"), Value::Object(m) if m.is_empty()));
+        assert!(env.compile_mapping("root = timestamp_utc()").is_err());
+        let env = Environment::new().with_env_vars(HashMap::from([("A".into(), "b".into())]));
+        assert_eq!(text(run(&env, r#"root = env("A", true)"#)), "b");
+        assert_eq!(
+            text(run(&env, r#"root = env(name: "A", no_cache: true)"#)),
+            "b"
+        );
     }
 }

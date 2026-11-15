@@ -38,6 +38,11 @@ pub fn register_all(registry: &Registry) {
             processor_group_by_value::GroupByValueProcessor::from_config(conf, ctx)?,
         ))
     });
+    registry.register_buffer("memory", |conf, ctx| {
+        Ok(std::sync::Arc::new(
+            ekiben_core::buffer::MemoryBuffer::from_config(conf, ctx)?,
+        ))
+    });
     registry.register_buffer("system_window", |conf, ctx| {
         Ok(std::sync::Arc::new(
             buffer_system_window::SystemWindowBuffer::from_config(conf, ctx)?,

@@ -524,6 +524,20 @@ fn parse_scanner_config(
     }
 }
 
+/// Every scanner [`parse_scanner`] builds, as `ekiben list` prints them.
+pub const SCANNERS: &[&str] = &[
+    "chunker",
+    "csv",
+    "decompress",
+    "json_documents",
+    "lines",
+    "re_match",
+    "skip_bom",
+    "tar",
+    "to_the_end",
+    "xml_documents",
+];
+
 /// One scanner object (`{<name>: {..}}`), nested ones (`into`) included.
 fn parse_scanner(
     scanner_obj: &serde_json::Map<String, JsonValue>,
@@ -1081,6 +1095,21 @@ mod scanner_config_tests {
 
     fn scanner(conf: serde_json::Value) -> Result<FileScannerKind, CoreError> {
         parse_scanner_config(conf.as_object().expect("an object"))
+    }
+
+    #[test]
+    fn every_listed_scanner_is_built() {
+        let minimal = |name: &str| match name {
+            "chunker" => serde_json::json!({"size": 4}),
+            "decompress" => serde_json::json!({"algorithm": "gzip"}),
+            "re_match" => serde_json::json!({"pattern": "^x"}),
+            "xml_documents" => serde_json::json!({"operator": "to_json"}),
+            _ => serde_json::json!({}),
+        };
+        for name in SCANNERS {
+            let conf = serde_json::json!({ "scanner": { *name: minimal(name) } });
+            assert!(scanner(conf).is_ok(), "{name}");
+        }
     }
 
     #[test]
