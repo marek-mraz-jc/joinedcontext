@@ -6794,6 +6794,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/scripts/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Script Test
+         * @description Runs a Script version's tests on the project's runner, in the sandbox the live stream uses, without writing.
+         */
+        post: operations["test_script"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/secrets": {
         parameters: {
             query?: never;
@@ -13169,6 +13189,35 @@ export interface components {
         ScopedResource: {
             kind: string;
             name: string;
+        };
+        /** @description Every test's result, in the order the tests were sent. */
+        ScriptTestAnswer: {
+            results: components["schemas"]["ScriptTestResult"][];
+        };
+        /** @description What a Script test runs: the code of one version, its limits and its tests. */
+        ScriptTestRequest: {
+            /** @description The version's source, at most 64 KiB. */
+            code: string;
+            /** @description Time and memory per message; absent, the runner's defaults. */
+            limits?: Record<string, never>;
+            /** @description One to 20 tests, each `{name, input, expected}`. */
+            tests: Record<string, never>[];
+        };
+        /** @description One test's result. */
+        ScriptTestResult: {
+            /** @description Why the script failed on the input (a throw, the time or memory limit). */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description The run on the runner, stream start to answer, in milliseconds.
+             */
+            millis: number;
+            /** @description The test's name. */
+            name: string;
+            /** @description Whether the script made exactly `expected` of `input`. */
+            ok: boolean;
+            /** @description What the script made of the input, when it made something. */
+            output?: unknown;
         };
         /** @description The project's secrets, by name. */
         SecretList: {
@@ -37114,7 +37163,7 @@ export interface operations {
                      * @example Pipeline
                      * @enum {string}
                      */
-                    kind: "Organization" | "Project" | "ContextSpace" | "DataModel" | "Mapping" | "Policy" | "ScopeDefinition" | "Endpoint" | "ModelProjection" | "SharedSpaceReference" | "ContextSourceRegistration" | "Subscription" | "ServiceAccount" | "Pipeline" | "DataSource" | "App" | "CkanInstance" | "KnowledgeSource" | "AssistantDeployment" | "McpServer" | "MqttBroker" | "Blueprint" | "AgentProfile" | "DataSpaceParticipant" | "DataOffer" | "DataAgreement" | "SyncSource" | "Bundle" | "UiSchema" | "Role" | "RoleBinding" | "Group" | "DelegationPolicy" | "ContextBroker" | "Environment" | "Dashboard" | "Layer" | "Portal";
+                    kind: "Organization" | "Project" | "ContextSpace" | "DataModel" | "Mapping" | "Policy" | "ScopeDefinition" | "Endpoint" | "ModelProjection" | "SharedSpaceReference" | "ContextSourceRegistration" | "Subscription" | "ServiceAccount" | "Pipeline" | "DataSource" | "App" | "CkanInstance" | "KnowledgeSource" | "AssistantDeployment" | "McpServer" | "MqttBroker" | "Blueprint" | "AgentProfile" | "DataSpaceParticipant" | "DataOffer" | "DataAgreement" | "SyncSource" | "Bundle" | "UiSchema" | "Role" | "RoleBinding" | "Group" | "DelegationPolicy" | "ContextBroker" | "Environment" | "Dashboard" | "Layer" | "Portal" | "Script";
                     /** @description JSON pointer */
                     path?: string;
                 };
@@ -40373,6 +40422,105 @@ export interface operations {
                 };
             };
             /** @description No repository configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_script: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        /** @description `code`: the version's source. `limits`: `timeoutMs` and `memoryMb`. `tests`: 1 to 20 `{name, input, expected}`. */
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "code": "let m = bento.v0_msg_as_structured(); m.ok = true; bento.v0_msg_set_structured(m);",
+                 *       "tests": [
+                 *         {
+                 *           "expected": {
+                 *             "id": 1,
+                 *             "ok": true
+                 *           },
+                 *           "input": {
+                 *             "id": 1
+                 *           },
+                 *           "name": "flags-one"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["ScriptTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Each test's result, in the order sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScriptTestAnswer"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a Script in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The code, a limit or a test is outside its bounds, naming the field */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
             503: {
                 headers: {
                     [name: string]: unknown;

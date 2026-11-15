@@ -34702,7 +34702,8 @@
                       "Environment",
                       "Dashboard",
                       "Layer",
-                      "Portal"
+                      "Portal",
+                      "Script"
                     ],
                     "examples": [
                       "Pipeline"
@@ -39678,6 +39679,125 @@
           },
           "503": {
             "description": "No repository configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/scripts/test": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Script Test",
+        "description": "Runs a Script version's tests on the project's runner, in the sandbox the live stream uses, without writing.",
+        "operationId": "test_script",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "`code`: the version's source. `limits`: `timeoutMs` and `memoryMb`. `tests`: 1 to 20 `{name, input, expected}`.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptTestRequest"
+              },
+              "example": {
+                "code": "let m = bento.v0_msg_as_structured(); m.ok = true; bento.v0_msg_set_structured(m);",
+                "tests": [
+                  {
+                    "expected": {
+                      "id": 1,
+                      "ok": true
+                    },
+                    "input": {
+                      "id": 1
+                    },
+                    "name": "flags-one"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Each test's result, in the order sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptTestAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant proposes a Script in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A test of this project is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The code, a limit or a test is outside its bounds, naming the field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No pipeline runner is configured, or it did not answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -59751,6 +59871,82 @@
           }
         },
         "additionalProperties": false
+      },
+      "ScriptTestAnswer": {
+        "type": "object",
+        "description": "Every test's result, in the order the tests were sent.",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptTestResult"
+            }
+          }
+        }
+      },
+      "ScriptTestRequest": {
+        "type": "object",
+        "description": "What a Script test runs: the code of one version, its limits and its tests.",
+        "required": [
+          "code",
+          "tests"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The version's source, at most 64 KiB."
+          },
+          "limits": {
+            "type": "object",
+            "description": "Time and memory per message; absent, the runner's defaults."
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "One to 20 tests, each `{name, input, expected}`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScriptTestResult": {
+        "type": "object",
+        "description": "One test's result.",
+        "required": [
+          "name",
+          "ok",
+          "millis"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the script failed on the input (a throw, the time or memory limit)."
+          },
+          "millis": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The run on the runner, stream start to answer, in milliseconds.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The test's name."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Whether the script made exactly `expected` of `input`."
+          },
+          "output": {
+            "description": "What the script made of the input, when it made something."
+          }
+        }
       },
       "SecretList": {
         "type": "object",
