@@ -167,7 +167,16 @@ async fn public_entities(gateway: &Gateway, reach: &[(Arc<Endpoint>, Subject)]) 
         return Arc::clone(entities);
     }
     let anonymous = crate::auth::subject::anonymous_on(endpoint);
-    let read = match read_public(gateway, endpoint, &anonymous).await {
+    // A broker that does not answer holds this caller and every one waiting on READING for one
+    // member call's deadline at most, never its own 120 s per page.
+    let reading = tokio::time::timeout(
+        super::server::MEMBER_DEADLINE,
+        read_public(gateway, endpoint, &anonymous),
+    );
+    let read = match reading
+        .await
+        .unwrap_or_else(|_| Err("no answer within ten seconds".to_owned()))
+    {
         Ok(entities) => Arc::new(entities),
         Err(why) => {
             tracing::warn!(slug = %endpoint.slug, %why, "the public catalogue did not read");
@@ -795,6 +804,40 @@ pub(crate) mod tests {
             r#"searchText~="banska \D+";name=="Žilina""#
         );
         assert_eq!(folded_search("pm10>40"), "pm10>40");
+    }
+
+    /// A catalogue read that the broker never answers ends at one member call's deadline, and
+    /// the caller is answered the list it had (none here) instead of waiting on the broker.
+    #[tokio::test(start_paused = true)]
+    async fn a_public_catalogue_read_ends_at_the_member_deadline() {
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = silent.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = silent.accept().await {
+                held.push(socket);
+            }
+        });
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new(format!("http://{address}")),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        let mut endpoint = fixture();
+        endpoint.slug = "silentcatalogueaaaaaaaaaaa".to_owned();
+        endpoint.space = NAME.to_owned();
+        endpoint.audience = Audience::Public;
+        let reach = vec![(Arc::new(endpoint), Subject::anonymous())];
+        let asked = tokio::time::Instant::now();
+        let read = public_entities(&gateway, &reach).await;
+        assert!(read.is_empty());
+        assert!(
+            asked.elapsed() <= super::super::server::MEMBER_DEADLINE + Duration::from_secs(1),
+            "{:?}",
+            asked.elapsed()
+        );
     }
 
     #[test]
