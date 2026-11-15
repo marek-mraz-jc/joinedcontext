@@ -815,7 +815,7 @@ pub async fn list_people(
     post,
     path = "/api/v1/organization/people",
     summary = "Create Person",
-    description = "Creates a person and sends the sign-up e-mail. When a grant the caller cannot change already names the address, the account opens by that e-mail alone: without mail 403 and nothing is created, never a temporary password (PF-93).",
+    description = "Creates a person and sends the sign-up e-mail.",
     tag = "people",
     request_body(content = CreatePerson, example = json!({ "email": "jana.kovacova@example.org", "firstName": "Jana", "lastName": "Kováčová", "locale": "sk", "project": "helsinki" })),
     responses(
