@@ -13190,18 +13190,39 @@ export interface components {
             kind: string;
             name: string;
         };
+        /** @description jc-core's `ScriptLimits` as the document publishes it (PL-118). */
+        ScriptLimitsBody: {
+            /**
+             * Format: int32
+             * @description MiB per message, 1 to 64, e.g. `32`.
+             */
+            memoryMb?: number | null;
+            /**
+             * Format: int32
+             * @description Milliseconds per message, 1 to 200, e.g. `50`.
+             */
+            timeoutMs?: number | null;
+        };
         /** @description Every test's result, in the order the tests were sent. */
         ScriptTestAnswer: {
             results: components["schemas"]["ScriptTestResult"][];
+        };
+        /** @description jc-core's `ScriptTest` as the document publishes it (PL-118); only the schema reads it. */
+        ScriptTestBody: {
+            /** @description The message the script must produce, as JSON. */
+            expected: unknown;
+            /** @description The input message, as JSON. */
+            input: unknown;
+            /** @description A short name, e.g. `converts-one-point`. */
+            name: string;
         };
         /** @description What a Script test runs: the code of one version, its limits and its tests. */
         ScriptTestRequest: {
             /** @description The version's source, at most 64 KiB. */
             code: string;
-            /** @description Time and memory per message; absent, the runner's defaults. */
-            limits?: Record<string, never>;
+            limits?: null | components["schemas"]["ScriptLimitsBody"];
             /** @description One to 20 tests, each `{name, input, expected}`. */
-            tests: Record<string, never>[];
+            tests: components["schemas"]["ScriptTestBody"][];
         };
         /** @description One test's result. */
         ScriptTestResult: {

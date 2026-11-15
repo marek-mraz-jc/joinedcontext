@@ -35,12 +35,45 @@ pub struct ScriptTestRequest {
     /// The version's source, at most 64 KiB.
     pub code: String,
     /// Time and memory per message; absent, the runner's defaults.
-    #[serde(default)]
-    #[schema(value_type = Object)]
+    #[serde(default, deserialize_with = "limits_of_request")]
+    #[schema(value_type = Option<ScriptLimitsBody>)]
     pub limits: Option<ScriptLimits>,
     /// One to 20 tests, each `{name, input, expected}`.
-    #[schema(value_type = Vec<Object>)]
+    #[schema(value_type = Vec<ScriptTestBody>)]
     pub tests: Vec<ScriptTest>,
+}
+
+/// jc-core's `ScriptLimits` as the document publishes it (PL-118).
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScriptLimitsBody {
+    /// Milliseconds per message, 1 to 200, e.g. `50`.
+    timeout_ms: Option<u32>,
+    /// MiB per message, 1 to 64, e.g. `32`.
+    memory_mb: Option<u32>,
+}
+
+fn limits_of_request<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ScriptLimits>, D::Error> {
+    Option::<ScriptLimitsBody>::deserialize(deserializer).map(|body| {
+        body.map(|b| ScriptLimits {
+            timeout_ms: b.timeout_ms,
+            memory_mb: b.memory_mb,
+        })
+    })
+}
+
+/// jc-core's `ScriptTest` as the document publishes it (PL-118); only the schema reads it.
+#[derive(ToSchema)]
+#[schema(as = ScriptTestBody)]
+pub struct ScriptTestBody {
+    /// A short name, e.g. `converts-one-point`.
+    pub name: String,
+    /// The input message, as JSON.
+    pub input: Value,
+    /// The message the script must produce, as JSON.
+    pub expected: Value,
 }
 
 /// One test's result.

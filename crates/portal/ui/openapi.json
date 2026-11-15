@@ -59872,6 +59872,31 @@
         },
         "additionalProperties": false
       },
+      "ScriptLimitsBody": {
+        "type": "object",
+        "description": "jc-core's `ScriptLimits` as the document publishes it (PL-118).",
+        "properties": {
+          "memoryMb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "MiB per message, 1 to 64, e.g. `32`.",
+            "minimum": 0
+          },
+          "timeoutMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Milliseconds per message, 1 to 200, e.g. `50`.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "ScriptTestAnswer": {
         "type": "object",
         "description": "Every test's result, in the order the tests were sent.",
@@ -59884,6 +59909,27 @@
             "items": {
               "$ref": "#/components/schemas/ScriptTestResult"
             }
+          }
+        }
+      },
+      "ScriptTestBody": {
+        "type": "object",
+        "description": "jc-core's `ScriptTest` as the document publishes it (PL-118); only the schema reads it.",
+        "required": [
+          "name",
+          "input",
+          "expected"
+        ],
+        "properties": {
+          "expected": {
+            "description": "The message the script must produce, as JSON."
+          },
+          "input": {
+            "description": "The input message, as JSON."
+          },
+          "name": {
+            "type": "string",
+            "description": "A short name, e.g. `converts-one-point`."
           }
         }
       },
@@ -59900,13 +59946,20 @@
             "description": "The version's source, at most 64 KiB."
           },
           "limits": {
-            "type": "object",
-            "description": "Time and memory per message; absent, the runner's defaults."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScriptLimitsBody",
+                "description": "Time and memory per message; absent, the runner's defaults."
+              }
+            ]
           },
           "tests": {
             "type": "array",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/ScriptTestBody"
             },
             "description": "One to 20 tests, each `{name, input, expected}`."
           }

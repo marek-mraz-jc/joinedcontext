@@ -536,6 +536,43 @@ async fn a_caller_without_the_propose_verb_is_403_and_without_a_runner_it_is_503
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
 }
 
+/// T-7084: the script test needs a session (401) and `propose` on Script (403): a pipeline author
+/// without it is refused before the runner is asked; one with it reaches the runner (503 here).
+#[tokio::test]
+async fn a_script_test_needs_a_session_and_the_propose_verb_on_script() {
+    let body = json!({ "code": "bento.v0_msg_set_string('x')",
+                       "tests": [{ "name": "a", "input": {}, "expected": {} }] });
+    let uri = "/api/v1/projects/naantali/scripts/test";
+    let state = AppState::new(config(None), None).with_mirror(mirror("naantali"));
+    let (status, answer) = send(&state, "dev@hel.fi", uri, &body).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+
+    let anonymous = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::COOKIE, format!("{CSRF_COOKIE}={CSRF}"))
+                .header(CSRF_HEADER, CSRF)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).expect("json")))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+    let scripts = mirror("naantali");
+    scripts.upsert(org(
+        "Role",
+        "pipeline-author",
+        json!({ "rules": [{ "kinds": ["Pipeline", "Script"], "verbs": ["propose"] }] }),
+    ));
+    let state = AppState::new(config(None), None).with_mirror(scripts);
+    let (status, answer) = send(&state, "dev@hel.fi", uri, &body).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+}
+
 #[tokio::test]
 async fn endpoint_sourced_candidate_with_sample_json_array_returns_trace() {
     let runner = common::runner().await;

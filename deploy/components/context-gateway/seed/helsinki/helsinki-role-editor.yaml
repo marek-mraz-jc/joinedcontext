@@ -32,6 +32,7 @@ spec:
         - Endpoint
         - ModelProjection
         - Pipeline
+        - Script
         - DataSource
         # T-6516: a Grafana visualization (Portal /projects/{p}/grafana) is saved on check(Dashboard,
         # propose); without it no TOTP-free demo person can save one and the film cannot be made.
