@@ -19,7 +19,7 @@
 //! `JC_ASSISTANT_ENDPOINT_URL` (the public origin `/api/endpoint/{slug}` is served under, which a
 //! `catalogue` source's pages cite when the Endpoint publishes no CKAN dataset, AG-116) and
 //! `JC_ASSISTANT_PORTAL_URL` (`https://portal.{domain}`, which a `guide` source's sections link
-//! into, AG-118) and `JC_ASSISTANT_VIZ_URL` (`https://viz.{domain}`, the renderer a data answer's
+//! into, AG-118) and `JC_ASSISTANT_VIZ_URL` (`https://embed.{domain}`, the renderer a data answer's
 //! maps and charts are drawn on, T-4657; none without it).
 
 use std::process::ExitCode;
