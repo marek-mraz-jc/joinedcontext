@@ -490,12 +490,16 @@ pub async fn reap_expired_entity_batch(pool: &PgPool, limit: i64) -> Result<u64,
         .execute(&mut *tx)
         .await?;
     let ids: Vec<String> = sqlx::query_scalar(
-        "DELETE FROM entities WHERE tenant_id = $1 AND (tenant_id, id) IN (
-           SELECT tenant_id, id FROM entities
+        // MATERIALIZED: the batch is chosen once; a semi-join may rescan a
+        // LIMIT … SKIP LOCKED subquery and delete more than the batch.
+        "WITH doomed AS MATERIALIZED (
+           SELECT id FROM entities
             WHERE tenant_id = $1 AND expires_at IS NOT NULL AND expires_at < now()
             ORDER BY expires_at LIMIT $2
             FOR UPDATE SKIP LOCKED)
-         RETURNING id",
+         DELETE FROM entities e USING doomed d
+          WHERE e.tenant_id = $1 AND e.id = d.id
+         RETURNING e.id",
     )
     .bind(&tenant)
     .bind(limit)
