@@ -123,15 +123,9 @@ test.describe("footer", () => {
     await expect(page.locator("body")).toHaveClass(/(^|\s)jc-corner-aside(\s|$)/);
     const summary = page.locator(".jc-assistant > summary");
     if (await summary.count()) await expect(summary).toHaveCSS("opacity", "0");
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.locator(".jc-page-body ul").first().evaluate((el) => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - 40));
-    await expect.poll(async () => page.evaluate(() => {
-      const c = document.querySelector(".jc-corner")!.getBoundingClientRect();
-      return Array.from(document.querySelectorAll(".jc-connect, .jc-code")).some((el) => {
-        const r = el.getBoundingClientRect();
-        return r.left < c.right && c.left < r.right && r.top < c.bottom && c.top < r.bottom;
-      }) === document.body.classList.contains("jc-corner-aside");
-    })).toBe(true);
+    // At the page's end it has its own row above the footer and shows again.
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await expect(page.locator("body")).not.toHaveClass(/(^|\s)jc-corner-aside(\s|$)/);
   });
 
   for (const id of ["claude", "chatgpt", "grok", "other"]) {
