@@ -7,7 +7,7 @@
 {% if chrome.has_mcp || !chrome.assistant_widget_url.is_empty() %}
 <div class="jc-corner">
   {% if chrome.has_mcp %}
-  <a class="jc-assistants-link" href="{{ chrome.lang_prefix }}/assistants" aria-label="{{ labels.assistants_label }}"><span class="jc-seg jc-seg-claude">{% include "jc/brand-claude.svg" %}</span><span class="jc-seg jc-seg-chatgpt">{% include "jc/brand-chatgpt.svg" %}</span><span class="jc-seg jc-seg-mcp">{% include "jc/brand-mcp.svg" %}</span></a>
+  <a class="jc-assistants-link" href="{{ chrome.lang_prefix }}/connector#assistants" aria-label="{{ labels.assistants_label }}"><span class="jc-seg jc-seg-claude">{% include "jc/brand-claude.svg" %}</span><span class="jc-seg jc-seg-chatgpt">{% include "jc/brand-chatgpt.svg" %}</span><span class="jc-seg jc-seg-mcp">{% include "jc/brand-mcp.svg" %}</span></a>
   {% endif %}
   {% if !chrome.assistant_widget_url.is_empty() %}
   <details class="jc-assistant" id="jc-assistant">

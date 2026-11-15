@@ -392,11 +392,11 @@ fn jc_examples_match_plugin_commands_per_kind() {
     assert_eq!(ex[1].code.as_deref(), Some(ep("ogc/features/").as_str()));
 
     let ex = codes(&ep("mcp"), json!({}));
-    assert_eq!(ex.len(), 3);
-    assert_eq!(ex[0].steps.len(), 2);
-    assert_eq!(ex[1].steps, vec![jc_t("ex_chatgpt", "en")]);
+    // T-7030: one example for every assistant, which points at the connector page's clicks.
+    assert_eq!(ex.len(), 2);
+    assert_eq!(ex[0].steps, vec![jc_t("ex_mcp_steps", "en")]);
     assert_eq!(
-        ex[2].code.as_deref(),
+        ex[1].code.as_deref(),
         Some(
             format!(
                 "claude mcp add --transport http joinedcontext {}",
@@ -465,7 +465,7 @@ fn jc_examples_keep_a_hostile_address_one_shell_argument() {
     assert_eq!(words.len(), 1, "{words:?}");
     let mcp = ep("mcp?x=';echo INJECTED;'");
     let ex = codes(&mcp, json!({}));
-    let claude = ex[2].code.clone().expect("code");
+    let claude = ex[1].code.clone().expect("code");
     let words = shell_words(claude.strip_prefix("claude").expect("claude"));
     assert_eq!(words.last(), Some(&mcp));
     assert!(!words.contains(&"INJECTED".to_owned()));
@@ -1350,19 +1350,19 @@ fn jc_page_serves_five_pages_in_slovak_and_english() {
         let de = jc_page(name, &b, "de").expect(name);
         assert_ne!(sk.title, en.title, "{name}");
         assert_eq!(de.title, en.title, "{name}: other languages read English");
-        assert!(!sk.sections.is_empty());
+        assert!(!sk.html.is_empty() && !sk.html.contains("<h1"), "{name}");
         assert_eq!(en.other_pages.len(), 4);
         assert!(en.other_pages.iter().all(|(p, _)| p != name));
         assert_eq!(en.email, "");
     }
     let connector = jc_page("connector", &b, "en").expect("connector");
-    assert!(connector.sections[0].1[0].contains(&format!("https://api.{DOMAIN}/api/mcp")));
+    assert!(connector.html.contains("<code>query_entities</code>"));
+    let privacy = jc_page("privacy", &b, "en").expect("privacy");
+    assert!(privacy
+        .html
+        .contains(&format!("https://api.{DOMAIN}/api/mcp")));
     let terms = jc_page("terms", &b, "sk").expect("terms");
-    assert!(terms
-        .sections
-        .iter()
-        .flat_map(|s| &s.1)
-        .any(|p| p.contains(DOMAIN)));
+    assert!(terms.html.contains(DOMAIN));
     let mut with_mail = branding();
     with_mail.apply_override_json(&json!({ "contactEmail": "data@city.example" }));
     assert_eq!(
@@ -1404,6 +1404,20 @@ fn jc_assistant_guide_has_three_guides_in_two_languages() {
         assert_eq!(en.prompt, en.example);
         assert!(!en.trouble.is_empty() && !en.who.is_empty());
     }
+    // T-7030: any other MCP client has the same parts, checked against the MCP specification.
+    let other = jc_assistant_guide("other", &b, "en").expect("other");
+    assert_eq!(other.paste_index, 1);
+    assert!(other.steps.len() > 1 && !other.trouble.is_empty() && !other.who.is_empty());
+    assert!(other.steps[0].contains("Streamable HTTP"));
+    assert!(
+        other.checked.contains("MCP specification"),
+        "{}",
+        other.checked
+    );
+    assert_ne!(
+        jc_assistant_guide("other", &b, "sk").expect("sk").steps,
+        other.steps
+    );
 }
 
 // ---- sitemap, robots, publisher card ----

@@ -31,3 +31,45 @@
     });
   } catch (e) { /* storage off: the panel opens closed */ }
 })();
+// T-6748, T-6758, T-7030: the closed assistant corner never covers what a visitor came for. While
+// it would sit over a connect card, a code block, a form control, an open Subscribe menu or, on a
+// phone, a live data frame, it steps aside (jc-theme.css): the launcher fades, a keyboard still
+// reaches it, and it is back once that scrolls past. Its area is measured while it shows, so the
+// bar going does not shrink the area and flicker it back.
+window.jcCornerAside = (function () {
+  var phone = window.matchMedia("(max-width: 40rem)");
+  var under = ".jc-connect, .jc-code, .jc-copy, .jc-address, input:not([type=hidden]), select, textarea, .jc-subscribe[open] > .jc-subscribe-menu";
+  var size = null;
+  var queued = false;
+  function check() {
+    queued = false;
+    var corner = document.querySelector(".jc-corner");
+    var body = document.body;
+    if (!corner || !body || corner.querySelector(".jc-assistant[open]")) {
+      if (body) body.classList.remove("jc-corner-aside");
+      return;
+    }
+    var c = corner.getBoundingClientRect();
+    if (!body.classList.contains("jc-corner-aside") || size === null) {
+      size = { width: c.width, height: c.height };
+    }
+    var zone = { left: c.right - size.width, right: c.right, top: c.bottom - size.height, bottom: c.bottom };
+    var over = Array.prototype.some.call(document.querySelectorAll(under + (phone.matches ? ", iframe[data-jc-viz]" : "")), function (el) {
+      if (corner.contains(el)) return false;
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.left < zone.right && zone.left < r.right && r.top < zone.bottom && zone.top < r.bottom;
+    });
+    body.classList.toggle("jc-corner-aside", over);
+  }
+  function soon() {
+    if (queued) return;
+    queued = true;
+    window.requestAnimationFrame(check);
+  }
+  window.addEventListener("scroll", soon, { passive: true, capture: true });
+  window.addEventListener("resize", soon);
+  // The assistant or a Subscribe menu opening or closing; `toggle` does not bubble.
+  document.addEventListener("toggle", soon, true);
+  document.addEventListener("DOMContentLoaded", soon);
+  return soon;
+})();

@@ -29,6 +29,7 @@ pub mod logs;
 pub mod mqtt;
 pub mod names;
 pub mod ngsi_catalog;
+pub mod opendata_pages;
 #[cfg(feature = "outbound")]
 pub mod outbound;
 pub mod personal;
