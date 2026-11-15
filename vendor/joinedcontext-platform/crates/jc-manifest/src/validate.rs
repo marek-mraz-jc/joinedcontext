@@ -1297,6 +1297,8 @@ fn output_field(spec: &jc_core::kinds::PipelineSpec, index: usize) -> String {
 struct WriteBindings<'a> {
     repo: &'a Repository,
     org_domain: Option<&'a str>,
+    /// Each project's own domains, as the gateway binds a Policy URN (T-6502).
+    domains: BTreeMap<String, std::collections::BTreeSet<String>>,
     endpoints: BTreeMap<(String, String), jc_core::kinds::EndpointSpec>,
 }
 
@@ -1314,6 +1316,7 @@ impl<'a> WriteBindings<'a> {
         Self {
             repo,
             org_domain: repo.org_domain(),
+            domains: repo.policy_ref_domains(),
             endpoints,
         }
     }
@@ -1343,10 +1346,23 @@ impl<'a> WriteBindings<'a> {
         // (P-18, T-6736): `door` is that grant on that Endpoint.
         if let Some(refs) = spec.policy_refs().filter(|_| !door) {
             let segment = self.repo.space_segment(project, space);
+            // The gateway's rule (bound_policies): the project's own domains, else the
+            // installation's.
+            let domains = self.domains.get(project.as_str());
+            let domain = domains
+                .and_then(|domains| domains.first())
+                .map(String::as_str)
+                .or(self.org_domain);
             let ours = |reference: &jc_core::Urn| {
-                self.org_domain
-                    .is_none_or(|domain| reference.org_domain() == Some(domain))
-                    && reference.space() == Some(segment.as_str())
+                let domain_ok = match domains {
+                    Some(domains) => reference
+                        .org_domain()
+                        .is_some_and(|domain| domains.contains(domain)),
+                    None => self
+                        .org_domain
+                        .is_none_or(|domain| reference.org_domain() == Some(domain)),
+                };
+                domain_ok && reference.space() == Some(segment.as_str())
             };
             let named: Vec<_> = refs.iter().filter(|r| r.local_id() == name).collect();
             if named.is_empty() {
@@ -1358,7 +1374,7 @@ impl<'a> WriteBindings<'a> {
                     "names it as {}, which binds nothing: write \
                      urn:ngsi-ld:Policy:{}:{segment}:{name}",
                     named[0],
-                    self.org_domain.unwrap_or("{orgDomain}")
+                    domain.unwrap_or("{orgDomain}")
                 ));
             }
         }

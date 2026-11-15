@@ -2491,6 +2491,52 @@ fn a_write_policy_listed_in_policy_refs_passes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// T-6972, T-6502: a project of another Organization than the installation's binds a Policy URN
+/// under its own domain, as the gateway does; the installation's domain binds nothing there, and
+/// the finding names the URN to write.
+#[test]
+fn a_policy_ref_binds_under_the_projects_own_organization_domain() {
+    let dir = valid_repo("adr57-policy-refs-other-org");
+    write(
+        &dir,
+        "organizations/zilina.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: zilina\n  \
+         namespace: org\nspec:\n  domain: zilina.sk\n  locales: [\"sk\"]\n  defaultLocale: sk\n",
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: ovzdusie\n  \
+         namespace: org\nspec:\n  organizationRef: zilina\n",
+    );
+    space_policy(
+        &dir,
+        "sensors-write",
+        "{ kind: serviceAccount, id: sensors }",
+        "[upsertBatch]",
+    );
+    let under = |domain: &str| {
+        format!(
+            "{ENDPOINT}  policyRefs:\n    - urn:ngsi-ld:Policy:{domain}:ovzdusie-ovzdusie:sensors-write\n"
+        )
+    };
+    write(&dir, ENDPOINT_PATH, &under("zilina.sk"));
+    let report = validate::run(&dir);
+    assert_eq!(citing(&report, "ADR-N-057"), Vec::<&str>::new());
+
+    write(&dir, ENDPOINT_PATH, &under("banskabystrica.sk"));
+    let report = validate::run(&dir);
+    let found = citing(&report, "ADR-N-057");
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0].contains("write urn:ngsi-ld:Policy:zilina.sk:ovzdusie-ovzdusie:sensors-write"),
+        "{}",
+        found[0]
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// T-5872, ADR-N-048 §2.13: a binding names a broker role the project declares; one naming a
 /// broker or role nobody declares is a finding. The deprecated list and two roles granting one
 /// filter are warnings, never findings.
