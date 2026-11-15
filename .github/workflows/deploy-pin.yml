@@ -1,15 +1,17 @@
 name: deploy-pin
 # After a green ci of a push to main: pins the jc image that run promoted (built, smoke-tested,
-# scanned, signed) in the deployment repository's components/jc/images.yaml, on a branch
-# `pin/jc-<sha>`, and opens a pull request for the deployer. dev only: nothing here applies a
+# scanned, signed) in this repository's deploy/components/jc/images.yaml (the deployment code moved
+# here, T-6986), on a branch `pin/jc-<sha>`, and opens a pull request against jc-portal-1 for the
+# deployer. A pin-only change runs no image build (changes.sh: ship=false), so a pin never pins again. dev only: nothing here applies a
 # cluster, and prod stays the deployer's manual pin. ship-proof/** pushes (pipeline measurements)
 # push their pin branch `pin-proof/jc-<sha>` and open no pull request.
 #
 # The pin is written only for a digest that carries this repository's image.yml signature and the
 # image-scan.yml vuln-scan attestation of the same ref, checked here with cosign, not taken from
-# the ci run's word. Writing to the deployment repository needs the secret DEPLOY_PIN_TOKEN: a
-# fine-grained token for marek-mraz-jc/joinedcontext-deployment only, Contents and Pull requests
-# read/write. Without it the run fails and its summary holds the pin to apply by hand.
+# the ci run's word. The pin branch and pull request need the secret DEPLOY_PIN_TOKEN: a fine-grained
+# token for this repository only, Contents and Pull requests read/write (a pull request opened with
+# GITHUB_TOKEN would start no ci run). Without it the run fails and its summary holds the pin to
+# apply by hand.
 on:
   workflow_run: { workflows: [ci], types: [completed], branches: [main, "ship-proof/**"] }
 permissions: { contents: read, packages: read }
@@ -26,9 +28,10 @@ jobs:
       SHA: ${{ github.event.workflow_run.head_sha }}
       BRANCH: ${{ github.event.workflow_run.head_branch }}
       IMAGE: ghcr.io/${{ github.repository_owner }}/jc
-      DEPLOYMENT: marek-mraz-jc/joinedcontext-deployment
-      # The deployment branch the pin goes on top of (components/jc lives on main once jc-ship merged).
-      DEPLOY_BASE: ${{ vars.DEPLOY_PIN_BASE || 'main' }}
+      DEPLOYMENT: ${{ github.repository }}
+      # The branch the pin goes on top of: the merge branch every change lands on.
+      DEPLOY_BASE: ${{ vars.DEPLOY_PIN_BASE || 'jc-portal-1' }}
+      PIN_PATH: deploy/components/jc/images.yaml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { ref: "${{ github.event.workflow_run.head_sha }}" }

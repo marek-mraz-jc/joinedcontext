@@ -15,7 +15,7 @@ environments they render, or the full set.
                                of the scoped set's measured time
 
 The per-push set (owner 2026-10-30: push to dev under 5 minutes) runs the tests that read a changed
-file and renders `dev` plus the environments a change names. The whole set (every test file, every
+file and renders `production` plus the environments a change names. The whole set (every test file, every
 environment, the demo) runs in the weekly sweep and in the release gate (.github/workflows/sweep.yml),
 and here whenever the range cannot be judged: an unreadable range (a new branch's all-zero base, a
 force-pushed base), an empty diff, a file every render or test reads (FULL), or a file no test names
@@ -41,6 +41,8 @@ PIN = re.compile(r"^components/([a-z0-9-]+)/images\.yaml$")
 # components/<c>/images.yaml, or "components" / "<c>" / "images.yaml" as pathlib spells it
 NAMED = re.compile(r'components/([a-z0-9-]+)/images\.yaml|"components" */ *"([a-z0-9-]+)" */ *"images\.yaml"')
 ENVS_FILE = "ci/golden/ENVIRONMENTS"
+# Rendered on every push: the hosted public example (the private dev renders on the host only).
+BASE_ENV = "production"
 # Every render and every test reads these: any change to one runs the whole set.
 FULL = ("tests/conftest.py", "tests/pyproject.toml", "tests/uv.lock", "defaults/", "helmfile-root.yaml.gotmpl",
         "helmfile-components.yaml.gotmpl", "component.schema.json", "tools.env", ".github/actions/",
@@ -100,7 +102,7 @@ def scope(files: list[str] | None, tests: dict[str, str], environments: list[str
     whole = {"full": True, "tests": [], "envs": environments, "pins": True, "demo": True}
     if not files or any(f.startswith(FULL) or f == p for f in files for p in FULL):
         return whole
-    chosen, envs = set(), {"dev"}
+    chosen, envs = set(), {BASE_ENV}
     for f in files:
         if f.startswith("tests/") and f in tests:
             chosen.add(f)
@@ -127,7 +129,8 @@ def shards(s: dict, weights: dict[str, float]) -> int:
 def changed(base: str, head: str) -> list[str] | None:
     if not re.fullmatch(r"[0-9a-f]{7,40}", base or "") or set(base) == {"0"}:
         return None
-    done = subprocess.run(["git", "diff", "--name-only", "--no-renames", base, head],
+    # --relative: the paths under the working directory (deploy/ of jc), relative to it
+    done = subprocess.run(["git", "diff", "--name-only", "--relative", "--no-renames", base, head],
                           capture_output=True, text=True, check=False)
     return done.stdout.split() if done.returncode == 0 else None
 
@@ -142,7 +145,7 @@ def main(argv: list[str]) -> int:
     print(f"pins_only={'true' if short else 'false'}")
     if short:
         print(f"pin_tests={' '.join(pin_tests(files, tests))}")
-    environments = Path(ENVS_FILE).read_text(encoding="utf-8").split() if Path(ENVS_FILE).exists() else ["dev"]
+    environments = Path(ENVS_FILE).read_text(encoding="utf-8").split() if Path(ENVS_FILE).exists() else [BASE_ENV]
     s = scope(files, tests, environments)
     if short:
         s["tests"] = pin_tests(files, tests)
