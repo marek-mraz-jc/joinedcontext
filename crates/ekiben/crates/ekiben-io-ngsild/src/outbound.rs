@@ -3,7 +3,9 @@
 //! addresses the guard kept, so no second lookup can slip in), a literal address judged before
 //! the first request, no redirects, connect and request timeouts, and a body cap.
 //!
-//! An address passes when it is public, or when the URL's host is one of the organization's
+//! An address passes when it is public, when the URL is the hosting process's own door
+//! ([`ekiben_core::HostTarget`]: an exact loopback address and port under an admitted path), or
+//! when the URL's host is one of the organization's
 //! `private_hosts` and the address lies in a private range (RFC 1918, CGNAT, ULA). Loopback,
 //! link-local, multicast, unspecified, reserved and the cloud metadata addresses never pass. An
 //! organization with `allow_private_ips` (tests, a person's own `ekiben run`) skips the check.
@@ -131,6 +133,12 @@ pub fn check_url(url: &Url, org: &OrgContext) -> Result<(), CoreError> {
         )));
     };
     org.check_http_host(host)?;
+    // The hosting process's own door (jc's gateway `/api/endpoint` on its loopback listener,
+    // [`ekiben_core::HostTarget`]), as ekiben-io-http admits it: a literal address, so no
+    // lookup follows, and the client follows no redirect off it.
+    if org.host_target().is_some_and(|target| target.admits(url)) {
+        return Ok(());
+    }
     let bare = host.trim_matches(|c| c == '[' || c == ']');
     if let Ok(ip) = bare.parse::<IpAddr>() {
         if !admits(org, bare, ip) {
@@ -318,6 +326,36 @@ mod tests {
         assert!(!admits(&org, gw, ip("fd00:ec2::254")));
         assert!(!admits(&org, "other.svc.cluster.local", ip("10.96.0.12")));
         assert!(admits(&org, "other.example", ip("8.8.8.8")));
+    }
+
+    /// G-06: the host's own door passes exactly (its address, port and path prefix); another
+    /// port, path or loopback name of the same listener stays refused.
+    #[test]
+    fn the_host_door_passes_and_nothing_else_of_its_listener() {
+        let org = OrgContext::with_host_target(
+            OrgId::new("o"),
+            OrgQuotas::default(),
+            Some(Arc::new(ekiben_core::HostTarget {
+                addr: "127.0.0.1:8443".parse().expect("addr"),
+                path_prefixes: vec!["/api/endpoint".into()],
+                late: None,
+            })),
+        );
+        let url = |u: &str| Url::parse(u).expect("url");
+        assert!(check_url(
+            &url("http://127.0.0.1:8443/api/endpoint/abc/ngsi-ld/v1/entityOperations/merge"),
+            &org
+        )
+        .is_ok());
+        for refused in [
+            "http://127.0.0.1:8444/api/endpoint/abc/ngsi-ld/v1",
+            "http://127.0.0.1:8443/internal/pipelines",
+            "http://127.0.0.1:8443/api/endpointx/abc",
+            "http://localhost:8443/api/endpoint/abc/ngsi-ld/v1",
+            "https://127.0.0.1:8443/api/endpoint/abc/ngsi-ld/v1",
+        ] {
+            assert!(check_url(&url(refused), &org).is_err(), "{refused}");
+        }
     }
 
     #[test]

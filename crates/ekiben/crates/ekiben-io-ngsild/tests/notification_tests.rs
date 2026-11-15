@@ -383,3 +383,44 @@ async fn the_router_serves_a_route_over_http() {
     ack.ack();
     assert_eq!(call.await.expect("joined").expect("answered"), 204);
 }
+
+/// G-06: the shared ingest listener serves a registered Notification route (here without its
+/// bearer: 401, from the Notification door) and hands every other path, and a GET of the
+/// registered one, to the `http_server` ingest, which answers 404 for a route it does not hold.
+#[tokio::test]
+async fn the_ingest_listener_serves_notifications_beside_http_server_inputs() {
+    let (_i, sctx, _stop) = listening("org-n11", json!({})).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            ekiben_io_ngsild::notification::ingest_router()
+                .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await;
+    });
+    let base = format!("http://{addr}/{}/{}", sctx.org.org_id.0, sctx.stream_id);
+    let client = reqwest::Client::new();
+    let unauthorized = client
+        .post(format!("{base}/notify"))
+        .header("content-type", "application/json")
+        .body(notification("urn:n:11", 1))
+        .send()
+        .await
+        .expect("answered");
+    assert_eq!(unauthorized.status().as_u16(), 401);
+    for request in [
+        client.post(format!("{base}/other")),
+        client.get(format!("{base}/notify")),
+    ] {
+        let answer = request.send().await.expect("answered");
+        assert_eq!(answer.status().as_u16(), 404);
+        assert_eq!(
+            answer.text().await.expect("text").trim_end(),
+            "404 page not found"
+        );
+    }
+}

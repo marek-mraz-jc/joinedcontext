@@ -326,6 +326,52 @@ pub fn check(state: &AppState, project: &str, kind: &str, spec: &Value) -> Resul
     })
 }
 
+/// The model check of G-15 at admission: each `spec.attributes` type a class of every space it
+/// is written to, each name a slot, each `observedAt` slot a date-time, each `unitCode` the
+/// slot's own unit, and the source dates' slots declared.
+pub fn check_attributes(
+    state: &AppState,
+    project: &str,
+    kind: &str,
+    spec: &Value,
+) -> Result<(), ApiError> {
+    if kind != "Pipeline" {
+        return Ok(());
+    }
+    let Ok(pipeline) = serde_json::from_value::<PipelineSpec>(spec.clone()) else {
+        return Ok(());
+    };
+    let mut errors = Vec::new();
+    for (index, entry) in pipeline.attributes.iter().enumerate() {
+        let alone = PipelineSpec {
+            attributes: vec![entry.clone()],
+            ..pipeline.clone()
+        };
+        for space in spaces_of(&state.mirror, project, &pipeline, &entry.entity_type) {
+            let Some(model) = state.model_schemas.get(project, &space) else {
+                continue;
+            };
+            if let Err(jc_core::error::Error::Invalid { field, reason }) =
+                jcctl::attributes::check(&alone, &model)
+            {
+                let field = field.replacen(
+                    "spec.attributes[0]",
+                    &format!("spec.attributes[{index}]"),
+                    1,
+                );
+                errors.push(format!("{field}: {reason} in space {space}"));
+            }
+        }
+    }
+    if errors.is_empty() {
+        return Ok(());
+    }
+    Err(ApiError::Invalid {
+        detail: "the pipeline's attribute rules do not fit the spaces it writes (G-15)".to_owned(),
+        errors,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,5 +642,88 @@ mod tests {
         // Another kind, or a pipeline that writes no modelled space, is not judged here.
         assert!(check(&state, "helsinki", "DataSource", &spec(misfit.clone())).is_ok());
         assert!(check(&state, "oulu", "Pipeline", &spec(misfit)).is_ok());
+    }
+
+    /// G-15: a rule whose fixed unitCode is not the model's, a name the model lacks or a
+    /// `sourceDates` slot the class does not declare is refused at admission naming its path and
+    /// the space; `unitCode: model` on a slot with a unit, and an observedAt from a date-time
+    /// slot, are admitted.
+    #[test]
+    fn admission_names_each_attribute_rule_that_does_not_fit_a_space_it_writes() {
+        use crate::config::Config;
+        use crate::pipeline_validation::ModelSchema;
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: ObjectMeta::new("ep-air", "helsinki"),
+            spec: json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "air" } }),
+            status: None,
+        });
+        let model = ModelSchema::compile(
+            "weather",
+            "1.0.0",
+            &json!({ "definitions": { "WeatherObserved": { "properties": {
+                "id": { "type": "string" },
+                "temperature": { "type": ["number", "null"], "x-ngsi-ld-kind": "Property",
+                                 "x-unit": { "ucumCode": "Cel", "exactMappings": ["ucefact:CEL"] } },
+                "dateObserved": { "type": ["string", "null"], "format": "date-time" }
+            } } } }),
+            &["WeatherObserved".to_owned()],
+            false,
+        );
+        state.model_schemas.replace(HashMap::from([(
+            ("helsinki".to_owned(), "air".to_owned()),
+            Arc::new(model),
+        )]));
+        let spec = |rules: Value| {
+            json!({
+                "class": "resident",
+                "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+                "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:ep-air" }],
+                "attributes": [{ "type": "WeatherObserved", "rules": rules }],
+            })
+        };
+        let fits = json!([{ "names": ["temperature"], "unitCode": "model", "observedAt": "dateObserved" }]);
+        assert!(check_attributes(&state, "helsinki", "Pipeline", &spec(fits)).is_ok());
+        for (rules, at) in [
+            (
+                json!([{ "names": ["temperature"], "unitCode": "FAH" }]),
+                "spec.attributes[0].rules[0].unitCode",
+            ),
+            (
+                json!([{ "names": ["colour"], "unitCode": "model" }]),
+                "spec.attributes[0].rules[0].names",
+            ),
+            (
+                json!([{ "names": ["temperature"], "observedAt": "temperature" }]),
+                "spec.attributes[0].rules[0].observedAt",
+            ),
+        ] {
+            match check_attributes(&state, "helsinki", "Pipeline", &spec(rules.clone())) {
+                Err(ApiError::Invalid { errors, .. }) => {
+                    assert_eq!(errors.len(), 1, "{errors:?}");
+                    assert!(errors[0].starts_with(at), "{errors:?}");
+                    assert!(errors[0].ends_with("in space air"), "{errors:?}");
+                }
+                other => panic!("{rules}: not refused: {other:?}"),
+            }
+        }
+        let mut dates = spec(json!([]));
+        dates["attributes"][0] =
+            json!({ "type": "WeatherObserved", "sourceDates": { "created": "createdAt" } });
+        match check_attributes(&state, "helsinki", "Pipeline", &dates) {
+            Err(ApiError::Invalid { errors, .. }) => {
+                assert!(
+                    errors[0].starts_with("spec.attributes[0].sourceDates.created"),
+                    "{errors:?}"
+                );
+            }
+            other => panic!("not refused: {other:?}"),
+        }
     }
 }

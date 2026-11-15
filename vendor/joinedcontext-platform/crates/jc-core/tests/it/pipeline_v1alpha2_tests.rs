@@ -256,6 +256,8 @@ fn an_output_mode_is_upsert_replace_or_update_attrs() {
         (OutputMode::Upsert, "upsert"),
         (OutputMode::Replace, "replace"),
         (OutputMode::UpdateAttrs, "update-attrs"),
+        (OutputMode::Merge, "merge"),
+        (OutputMode::Backfill, "backfill"),
     ] {
         assert_eq!(mode.as_str(), wire);
         let written = serde_norway::to_string(&mode).expect("serializes");

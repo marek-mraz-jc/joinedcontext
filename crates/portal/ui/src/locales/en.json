@@ -2700,7 +2700,16 @@
       "modeChoice": {
         "upsert": "Create or merge",
         "replace": "Replace the whole entity",
-        "update-attrs": "Update attributes only"
+        "update-attrs": "Update attributes only",
+        "merge": "Merge into parts of attributes",
+        "backfill": "Add to history only"
+      },
+      "modeHint": {
+        "upsert": "Creates the entity or updates the attributes the record names; the other attributes stay.",
+        "replace": "The entity becomes exactly the record: attributes it does not name are removed. Use it only when this pipeline alone writes the entity.",
+        "update-attrs": "Updates the attributes the record names on the entity; the other attributes stay.",
+        "merge": "Deep-merges the record, so two pipelines can each write part of one attribute, for example address.streetAddress and address.postalCode.",
+        "backfill": "Adds past readings to the history only; the current value stays. Needs the temporal append operation in the Endpoint's Policy."
       },
       "lastRun": "Last run"
     },
