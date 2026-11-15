@@ -587,6 +587,148 @@ def test_a_live_run_deletes_its_personas_and_their_credentials_also_after_a_cras
     assert all(line.split()[-1] in ("read", "sign-in", "cleanup") for line in (a.out / "requests.log").read_text().splitlines())
 
 
+def test_a_live_run_asks_a_taken_name_of_a_fixture_project_and_nothing_else(tmp_path, monkeypatch):
+    g = live_allowlist(tmp_path)
+    sent = []
+    monkeypatch.setattr(suite.R.Http, "call", lambda self, m, p, *a, **k: sent.append((m, p)) or (409, {}, b"{}"))
+    h = g.guard(suite.R.Http(B))
+    for body in ({"name": "a-new-project"}, {"name": "helsinki"}, b"not json", None):
+        with pytest.raises(suite.Refused):
+            h.call("POST", "/api/v1/projects", body=body)
+    h.call("POST", "/api/v1/projects", body={"name": "ctl-a-fixture", "organization": "ctl-b"})
+    assert sent == [("POST", "/api/v1/projects")]
+
+
+class LiveJc:
+    """A deployment's own Portal as the platform persona reads it: ctl-a with two projects, ctl-b
+    with one, the installation bbsk with none."""
+
+    ORGS = {"items": [{"metadata": {"name": "bbsk"}, "spec": {"installation": True}},
+                      {"metadata": {"name": "ctl-a"}, "spec": {}}, {"metadata": {"name": "ctl-b"}, "spec": {}}]}
+    PROJECTS = {"items": [{"name": "iso-a1", "organization": "ctl-a"}, {"name": "iso-a2", "organization": "ctl-a"},
+                          {"name": "iso-b", "organization": "ctl-b"}]}
+
+    def json(self, method, path):
+        if path == "/api/v1/projects/org/organizations":
+            return 200, self.ORGS
+        if path == "/api/v1/projects":
+            return 200, self.PROJECTS
+        if path.endswith("/endpoints"):
+            project = path.split("/")[4]
+            return 200, {"items": [{"metadata": {"name": f"{project}-air"},
+                                    "spec": {"slug": "abcd", "audience": "organization"}}]}
+        return 200, {"items": []}
+
+
+def test_a_live_run_without_a_composed_bundle_reads_the_deployments_organizations(tmp_path):
+    # T-6968: the jc-dev smoke skipped multiorg (one installation's export); live it judges the
+    # Organizations the deployment holds, and a fixture with two projects gets a project member.
+    a = args(tmp_path)
+    d = tmp_path / "personas"
+    d.mkdir(mode=0o700)
+    creds = d / "p.json"
+    keys = ["platform", *(f"{o}-{k}" for o in ("bbsk", "ctl-a", "ctl-b") for k in ("admin", "member")), "ctl-a-project"]
+    creds.write_text(json.dumps({k: {"username": f"mo-{k}", "id": f"id-{k}", "password": "x"} for k in keys}))
+    creds.chmod(0o600)
+    a.live, a.personas, a.out = True, str(creds), tmp_path / "out"
+    s = suite.Suite(a)
+    s.session = lambda key, on=None: LiveJc()
+    exp = s.expectations_live()
+    assert sorted(exp) == ["bbsk", "ctl-a", "ctl-b"] and s.installation == "bbsk"
+    assert sorted(exp["ctl-a"]["projects"]) == ["iso-a1", "iso-a2"] and exp["bbsk"]["projects"] == {}
+    assert exp["ctl-b"]["projects"]["iso-b"]["Endpoint"] == ["iso-b-air"]
+    assert exp["ctl-b"]["projects"]["iso-b"]["closed"] == {"abcd": ("iso-b-air", "organization")}
+    assert s.cross_project() == {"ctl-a": ("iso-a1", "iso-a2")}
+    s.personas_from(creds)  # the file names exactly the keys of these expectations
+    creds.write_text(json.dumps({k: {"username": k, "id": k, "password": "x"} for k in keys[:-1]}))
+    with pytest.raises(RuntimeError, match="ctl-a-project"):
+        s.personas_from(creds)
+
+    calls = []
+    a.export = str(tmp_path / "export")  # its manifest.json names no multiorg block
+    s = suite.Suite(a)
+    s.expectations_live = lambda: calls.append("live") or {}
+    s.checks = lambda: calls.append("checks")
+    s.cleanup = lambda: calls.append("cleanup")
+    s.run()
+    assert calls == ["live", "checks", "cleanup"] and not [r for r in s.rows if r["id"] == "setup"]
+
+
+class CrossProjectJc:
+    """ctl-a with projects iso-a1, iso-a2; mo-ctl-a-project is viewer of iso-a1. `leak` names what
+    the member wrongly gets of iso-a2."""
+
+    def __init__(self, leak=None):
+        self.leak = leak
+
+    def session(self, key, on=None):
+        jc = self
+
+        class S:
+            def json(self, method, path):
+                st, _, raw = self.call(method, path)
+                return st, json.loads(raw)
+
+            def call(self, method, path):
+                if key != "ctl-a-project":
+                    return 200, {}, b'{"items": [{"name": "iso-a1"}, {"name": "iso-a2"}]}'
+                if path == "/api/v1/projects":
+                    names = ["iso-a1", "iso-a2"] if jc.leak == "list" else ["iso-a1"]
+                    return 200, {}, json.dumps({"items": [{"name": n} for n in names]}).encode()
+                if "iso-a1" in path:
+                    return 200, {}, b"{}"
+                if jc.leak == "read" and path.endswith("/endpoints"):
+                    return 200, {}, b'{"items": [{"metadata": {"name": "iso-a2-air"}}]}'
+                if jc.leak == "named" and path.endswith("/drafts"):
+                    return 404, {}, b'{"detail": "not found; see iso-a2-air"}'
+                return 404, {}, b'{"detail": "not found"}'
+        return S()
+
+
+@pytest.mark.parametrize("leak", [None, "list", "read", "named"])
+def test_a_member_of_one_project_reads_nothing_of_another_project_of_its_organization(tmp_path, leak):
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"ctl-a": {"projects": {"iso-a1": EMPTY, "iso-a2": EMPTY | {"Endpoint": ["iso-a2-air"]}}}}
+    s.session = CrossProjectJc(leak).session
+    s.check_cross_project()
+    failed = sorted(r["id"] for r in s.rows if r["result"] != "pass")
+    assert len(s.rows) == 2 + len(s.project_calls("iso-a2", s.exp["ctl-a"]["projects"]["iso-a2"]))
+    assert failed == {None: [], "list": ["crossproject.ctl-a-project.list"],
+                      "read": ["crossproject.ctl-a-project.iso-a2/endpoints"],
+                      "named": ["crossproject.ctl-a-project.iso-a2/drafts"]}[leak]
+
+
+@pytest.mark.parametrize("answer,ok", [
+    ((409, "project name 'iso-b' is not available (PF-67)"), True),
+    ((403, "the organization does not let you open a project"), True),
+    ((409, "project 'iso-b' already exists (PF-67)"), False),  # tells a foreign name from a free one apart from the own
+    ((409, "project name 'iso-b' is not available (PF-67); ctl-b holds iso-b2"), False),
+    ((202, "{}"), False),
+])
+def test_opening_a_project_named_like_another_organizations_is_not_available_and_names_nothing(tmp_path, answer, ok):
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"ctl-a": {"projects": {"iso-a": EMPTY}}, "ctl-b": {"projects": {"iso-b": EMPTY, "iso-b2": EMPTY}}}
+    asked = []
+
+    class S:
+        def __init__(self, key):
+            self.key = key
+
+        def call(self, method, path, body=None):
+            asked.append((self.key, method, path, body["name"]))
+            own = (self.key == "ctl-a-admin") == (body["name"] == "iso-a")
+            st, text = (409, f"project '{body['name']}' already exists (PF-67)") if own else answer
+            return st, {}, text.encode()
+
+    s.session = lambda key, on=None: S(key)
+    s.check_names()
+    got = {r["id"]: (r["result"], r["target"]) for r in s.rows}
+    assert got["names.ctl-a-admin.own"] == ("pass", "ctl-a") and got["names.ctl-b-admin.own"] == ("pass", "ctl-b")
+    want = "pass" if ok else "fail"
+    assert got["names.ctl-a-admin.project-of-ctl-b"] == (want, "ctl-a->ctl-b")
+    assert all(m == "POST" and p == "/api/v1/projects" for _, m, p, _ in asked)
+
+
 def test_a_personas_file_others_can_read_is_refused(tmp_path):
     s = suite.Suite(args(tmp_path))
     s.exp = {"ctl-a": {"projects": {}}}

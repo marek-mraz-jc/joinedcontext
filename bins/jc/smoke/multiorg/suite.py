@@ -34,7 +34,15 @@ DELETE of the run's own personas. A request outside is refused before it is sent
 come from --personas (the file the owner-approved Operator Change made; `--make-personas FILE`
 writes it on a local jc); no ui, connectors or operators rows; after the run, also a failed one,
 the personas are deleted (--state on a local jc) or listed in <out>/cleanup.json for the
-operator's cleanup Change, and the credentials file is removed."""
+operator's cleanup Change, and the credentials file is removed. Without a composed bundle (the
+deployment's own export, `--export` naming no `multiorg` block) a --live run reads its expectations
+from the deployment: the platform persona lists the Organizations (`/api/v1/projects/org/organizations`)
+and their projects and objects, and every read row runs on them.
+
+Inside one Organization with two projects P1, P2 (live: ctl-a and ctl-b only), persona `mo-O-project`
+(role viewer, scope project P1) reads nothing of P2 (`crossproject` rows, the admin's 200 on P2 as
+control). `names` rows: an Organization's admin opening a project named like another
+Organization's gets 409 "not available" naming nothing of it (PF-67)."""
 import argparse
 import base64
 import hashlib
@@ -153,6 +161,12 @@ class Allowlist:
             return None
         if self.SIGN_IN.fullmatch(path):
             return "sign-in"
+        if path == "/api/v1/projects":  # a fixture project's own name: refused as taken before any write
+            try:
+                ask = json.loads(body) if isinstance(body, bytes) else body
+            except ValueError:
+                return None
+            return "taken name" if isinstance(ask, dict) and ask.get("name") in self.fixtures else None
         if path.endswith("/ngsi-ld/v1/entityOperations/query"):
             return "query"
         if self.MCP.fullmatch(path):
@@ -309,6 +323,41 @@ class Suite:
                                   if re.search(r"^\s*installation:\s*true", f.read_text(), re.M)), None)
         return exp
 
+    def expectations_live(self):
+        """--live without a composed bundle: the Organizations, projects and objects the platform
+        persona reads on the deployment. A project's history and CKAN rows need the bundle and
+        are left out (`history`, `readable` and `ckanOrgs` empty)."""
+        self.personas_from(Path(self.a.personas), match=False)
+        first = next(iter(self.hosts), None)
+        st, body = self.session("platform", first).json("GET", "/api/v1/projects/org/organizations")
+        items = (body or {}).get("items", []) if st == 200 and isinstance(body, dict) else None
+        if not items:
+            raise RuntimeError(f"GET /api/v1/projects/org/organizations as the platform persona: {st}, none listed")
+
+        def names(listed):
+            return sorted(n for i in (listed or {}).get("items", []) if (n := i.get("metadata", {}).get("name")))
+
+        exp = {i["metadata"]["name"]: {"projects": {}} for i in items}
+        self.installation = next((i["metadata"]["name"] for i in items if (i.get("spec") or {}).get("installation")), None)
+        for org in exp:
+            h = self.session("platform", org if self.hosts else None)
+            st, listed = h.json("GET", "/api/v1/projects")
+            if st != 200:
+                raise RuntimeError(f"GET /api/v1/projects as the platform persona{f' on {org}' if self.hosts else ''}: {st}")
+            for project in sorted(i["name"] for i in listed.get("items", []) if i.get("organization") == org):
+                got = {}
+                for kind, plural in (("Endpoint", "endpoints"), ("Pipeline", "pipelines"), ("CkanInstance", "ckaninstances"),
+                                     ("Dashboard", "dashboards"), ("spaces", "spaces")):
+                    st, b = h.json("GET", f"/api/v1/projects/{project}/{plural}")
+                    got[kind] = names(b) if st == 200 and isinstance(b, dict) else []
+                    if plural == "endpoints" and st == 200 and isinstance(b, dict):  # slug -> (name, audience)
+                        got["closed"] = {e["spec"]["slug"]: (e["metadata"]["name"], e["spec"]["audience"])
+                                         for e in b.get("items", []) if isinstance(e.get("spec"), dict)
+                                         and e["spec"].get("slug") and e["spec"].get("audience") not in (None, "public")}
+                exp[org]["projects"][project] = {"closed": {}} | got | {"ckanOrgs": [], "readable": [], "history": {}}
+        self.exp = exp
+        return exp
+
     # ---- personas
     def client(self, org: str | None = None, kind: str = "portal") -> R.Http:
         """Path mode: the base. Host mode: `org`'s `kind` host (the base without an org)."""
@@ -326,15 +375,26 @@ class Suite:
             return None
         return self.installation if key == "platform" else key.rsplit("-", 1)[0]
 
-    def personas_from(self, file: Path) -> None:
+    def cross_project(self) -> dict:
+        """org -> (P1, P2), its first two projects: the Organizations whose persona `{org}-project`
+        (viewer of P1 alone) is checked against P2; on a live run the fixtures' only."""
+        return {o: tuple(sorted(e["projects"])[:2]) for o, e in self.exp.items()
+                if len(e["projects"]) >= 2 and (not self.live or o in FIXTURES)}
+
+    def persona_keys(self) -> set:
+        return {"platform", *(f"{o}-{k}" for o in self.exp for k in ("admin", "member")),
+                *(f"{o}-project" for o in self.cross_project())}
+
+    def personas_from(self, file: Path, match: bool = True) -> None:
         """--personas: the run's people as the owner-approved Operator Change made them, in a file
-        only its owner reads (0600, in a 0700 directory)."""
+        only its owner reads (0600, in a 0700 directory). `match`: exactly the persona keys of the
+        expectations (a live source reads them after the platform persona signed in)."""
         for f, mode in ((file, 0o600), (file.parent, 0o700)):
             if f.stat().st_mode & 0o777 & ~mode:
                 raise RuntimeError(f"{f.name} is readable by others (mode {f.stat().st_mode & 0o777:o}); want {mode:o}")
         people = json.loads(file.read_text())
-        want = {"platform", *(f"{o}-{k}" for o in self.exp for k in ("admin", "member"))}
-        if set(people) != want:
+        want = self.persona_keys()
+        if match and set(people) != want:
             raise RuntimeError(f"--personas names {sorted(set(people) ^ want)[:6]} unlike the bundle's Organizations")
         self.people = {k: {"username": v["username"], "id": v["id"], "password": v["password"]} for k, v in people.items()}
 
@@ -382,6 +442,8 @@ class Suite:
         for org in self.exp:
             names[f"{org}-admin"] = []
             names[f"{org}-member"] = []
+        for org in self.cross_project():
+            names[f"{org}-project"] = []
         for key, groups in names.items():
             uid, pw = R.make_person(h, tok, self.realm, f"mo-{key}", groups=groups)
             self.people[key] = {"username": f"mo-{key}", "id": uid, "password": pw}
@@ -396,6 +458,13 @@ class Suite:
                               f"  name: multiorg-{org}-{kind}\n  namespace: org\nspec:\n  subjects:\n"
                               f"    - user: {p['id']} # {p['username']}\n  role: {role}\n"
                               f"  scope: {{ organization: {org} }}\n"))
+        for org, (p1, _) in self.cross_project().items():
+            p = self.people[f"{org}-project"]
+            files.append((f"users/assignments/multiorg-{org}-project.yaml",
+                          "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n"
+                          f"  name: multiorg-{org}-project\n  namespace: org\nspec:\n  subjects:\n"
+                          f"    - user: {p['id']} # {p['username']}\n  role: viewer\n"
+                          f"  scope: {{ project: {p1} }}\n"))
         for org, e in self.exp.items():
             if not e["projects"]:  # a DelegationPolicy names projects: an empty control has none
                 continue
@@ -445,13 +514,17 @@ class Suite:
                     if self.exp[org]["projects"] and not self.live else 200
                 dash = self.dashboards.get(org)
                 st_b = self.session("platform", org if self.hosts else None).json("GET", f"/api/v1/projects/{dash[0]}/dashboards/{dash[1]}")[0] if dash else 200
-                if st == 200 and st_d == 200 and st_b == 200 and \
+                p1 = self.cross_project().get(org, (None,))[0]
+                st_p, mine = self.session(f"{org}-project").json("GET", "/api/v1/projects") if p1 else (200, None)
+                if p1 and st_p == 200 and p1 not in {i["name"] for i in (mine or {}).get("items", [])}:
+                    st_p = 0
+                if st == 200 and st_d == 200 and st_b == 200 and st_p == 200 and \
                         (not self.state or not self.exp[org]["projects"]  # {org}_bound: Organizations with a project
                          or self.bound(org) >= {f"mo-{org}-admin", f"mo-{org}-member"}) and \
                         set(self.exp[org]["projects"]) <= {i["name"] for i in body.get("items", [])}:
                     pending.discard(org)
                 else:
-                    why[org] = f"projects {st}, delegation {st_d}, dashboard {st_b}" + \
+                    why[org] = f"projects {st}, delegation {st_d}, dashboard {st_b}, project member {st_p}" + \
                         (f", bound {sorted(self.bound(org))}" if self.state else "")
             if pending:
                 time.sleep(5)
@@ -582,18 +655,85 @@ class Suite:
                 self.row(f"projects.{org}-{kind}.no-foreign", org, "GET /api/v1/projects",
                          "no project of another org", f"foreign {foreign} {wrong_org}", st == 200 and not foreign and not wrong_org)
 
+    @staticmethod
+    def project_calls(project: str, objs: dict) -> list:
+        """The reads of one project every isolation row asks."""
+        calls = [f"/api/v1/projects/{project}{suffix}" for suffix in PROJECT_READS]
+        calls += [f"/api/v1/projects/{project}/endpoints/{n}" for n in objs["Endpoint"][:2]]
+        calls += [f"/api/v1/projects/{project}/pipelines/{n}" for n in objs["Pipeline"][:2]]
+        # the audit feed of each space (temporal-audit), as the activity feed is above
+        calls += [f"/api/v1/projects/{project}/spaces/{n}/temporal-audit" for n in objs.get("spaces", [])[:2]]
+        # the export of named manifests stays with the project's readers (a whole project is
+        # the installation administrators', UI-87)
+        calls += [f"/api/v1/projects/{project}/export?names={n}" for n in objs["Endpoint"][:1]]
+        return calls
+
+    def check_cross_project(self):
+        """Inside one Organization: the member of project P1 alone gets 403/404 naming nothing of
+        P2 on every read of P2 (control: the Organization admin's 200), lists P1 and not P2, and
+        reads P1 (200)."""
+        for org, (p1, p2) in self.cross_project().items():
+            key = f"{org}-project"
+            st, body = self.session(key).json("GET", "/api/v1/projects")
+            seen = {i["name"] for i in (body or {}).get("items", [])} if st == 200 else set()
+            self.row(f"crossproject.{org}-project.list", org, f"GET /api/v1/projects as mo-{key}",
+                     f"{p1}, not {p2}", f"{st}, {sorted(seen)[:6]}", st == 200 and p1 in seen and p2 not in seen)
+            st, _, _ = self.session(key).call("GET", f"/api/v1/projects/{p1}")
+            self.row(f"crossproject.{org}-project.own", org, f"GET /api/v1/projects/{p1} as mo-{key}", "200",
+                     str(st), st == 200)
+            objs = self.exp[org]["projects"][p2]
+            marks = {p2, *objs["Endpoint"], *objs["Pipeline"], *objs.get("spaces", []), *objs["Dashboard"]}
+            for call in self.project_calls(p2, objs):
+                st_own, _, _ = self.session(f"{org}-admin").call("GET", call)
+                if st_own != 200:
+                    st_own, _, _ = self.session("platform", org if self.hosts else None).call("GET", call)
+                st, _, raw = self.session(key).call("GET", call)
+                text = raw.decode(errors="replace")
+                named = sorted(m for m in marks if len(m) > 3 and m not in call and re.search(
+                    rf"(?<![\w-]){re.escape(m)}(?![\w-])", text))
+                rid = f"crossproject.{org}-project.{p2}{call.split(p2, 1)[1] or '/'}"
+                if st_own != 200:
+                    self.row(rid, org, f"GET {call} as mo-{key}", "control 200, member of another project 403/404",
+                             f"control {st_own}, member {st}", False if st not in DENIED else None,
+                             f"no control: {org}-admin and the platform admin got {st_own}")
+                    continue
+                self.row(rid, org, f"GET {call} as mo-{key}", "403/404 naming nothing of it (control 200)",
+                         f"{st} {raw[:120]!r}" if st not in DENIED or named else f"{st}, names {named[:3]}",
+                         st in DENIED and not named)
+
+    def check_names(self):
+        """Project names are unique in the installation: an Organization's admin opening a project
+        named like another Organization's gets 409 "not available" (or 403, may open none) naming
+        nothing of the other Organization; the own name answers 409 "already exists" (PF-67). The
+        request is refused before anything is written; a live run asks with the fixtures' names only."""
+        orgs = [o for o in self.exp if not self.live or o in FIXTURES]
+        for a in orgs:
+            for b in orgs:
+                project = next(iter(sorted(self.exp[b]["projects"])), None)
+                if not project:
+                    continue
+                st, _, raw = self.session(f"{a}-admin").call("POST", "/api/v1/projects",
+                                                              body={"name": project, "organization": a})
+                text = raw.decode(errors="replace")
+                if a == b:
+                    self.row(f"names.{a}-admin.own", a, f"POST /api/v1/projects {{name: {project}}} as mo-{a}-admin",
+                             "409 already exists, or 403", f"{st} {text[:160]}",
+                             (st == 409 and "already exists" in text) or st == 403)
+                    continue
+                others = {b, *self.exp[b]["projects"]} - {project}
+                named = sorted(m for m in others if re.search(rf"(?<![\w-]){re.escape(m)}(?![\w-])", text))
+                self.row(f"names.{a}-admin.project-of-{b}", f"{a}->{b}",
+                         f"POST /api/v1/projects {{name: {project}}} as mo-{a}-admin",
+                         f"409 project name '{project}' is not available (PF-67), or 403; naming nothing of {b}",
+                         f"{st} {text[:160]}" + (f", names {named[:3]}" if named else ""),
+                         not named and "already exists" not in text and (
+                             (st == 409 and f"project name '{project}' is not available" in text) or st == 403))
+
     def check_project_reads(self):
         """Every project read both ways: A's admin and member get 403/404 on B, B's admin 200."""
         for owner, e in self.exp.items():
             for project, objs in e["projects"].items():
-                calls = [f"/api/v1/projects/{project}{suffix}" for suffix in PROJECT_READS]
-                calls += [f"/api/v1/projects/{project}/endpoints/{n}" for n in objs["Endpoint"][:2]]
-                calls += [f"/api/v1/projects/{project}/pipelines/{n}" for n in objs["Pipeline"][:2]]
-                # the audit feed of each space (temporal-audit), as the activity feed is above
-                calls += [f"/api/v1/projects/{project}/spaces/{n}/temporal-audit" for n in objs.get("spaces", [])[:2]]
-                # the export of named manifests stays with the project's readers (a whole project is
-                # the installation administrators', UI-87)
-                calls += [f"/api/v1/projects/{project}/export?names={n}" for n in objs["Endpoint"][:1]]
+                calls = self.project_calls(project, objs)
                 for call in calls:
                     st_own, _, _ = self.session(f"{owner}-admin").call("GET", call)
                     if st_own != 200:  # a read the Organization's admin lacks: the operator's 200 shows the route
@@ -1701,7 +1841,7 @@ class Suite:
     def run(self):
         file = self.export / "manifest.json"
         manifest = json.loads(file.read_text()) if file.is_file() else {}
-        if "multiorg" not in manifest:
+        if "multiorg" not in manifest and not self.live:
             # --composed (the smoke gate composed the bundle): a missing one is a failure, or the gate
             # would go green without judging a single Organization.
             self.row("setup", "all", f"read {file}", "a multiorg block (compose.py)",
@@ -1709,11 +1849,18 @@ class Suite:
                      "" if self.a.composed else
                      "not applicable: the export is one installation, not a composed multi-organization bundle")
             return
-        self.expectations()
-        if not self.state and not self.live:
-            self.row("setup", "all", "-", "--state", "none", None, "no --state: persons cannot be made")
-            return
+        if not self.live:
+            self.expectations()
+            if not self.state:
+                self.row("setup", "all", "-", "--state", "none", None, "no --state: persons cannot be made")
+                return
         try:
+            if self.live:
+                try:
+                    self.expectations() if "multiorg" in manifest else self.expectations_live()
+                except Exception as ex:  # noqa: BLE001 - no expectations: one failed row, cleanup still runs
+                    self.row("setup.live-source", "all", "read the deployment's Organizations", "listed", str(ex)[:300], False)
+                    return
             self.checks()
         finally:
             if self.live:
@@ -1728,7 +1875,8 @@ class Suite:
         if getattr(self.a, "make_personas", None):
             self.save_personas(Path(self.a.make_personas))
             return
-        steps = (self.check_projects, self.check_hosts, self.check_project_reads, self.check_writes, self.check_people,
+        steps = (self.check_projects, self.check_hosts, self.check_project_reads, self.check_cross_project,
+                 self.check_names, self.check_writes, self.check_people,
                  self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_portals,
                  self.check_dashboards, self.check_global, self.check_operators, self.check_forged)
         if self.a.shots:
@@ -1774,7 +1922,7 @@ def main(argv):
     ap.add_argument("--state", help="the rehearsal's state dir (realm admin client, forge token)")
     ap.add_argument("--admin-token-file", help="unused: persons are made through --state")
     ap.add_argument("--person-token-file", help="unused: persons are made through --state")
-    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,portals,dashboards,global,operators,forged,ui")
+    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,cross_project,names,writes,people,mcp,connectors,data,catalogue,portals,dashboards,global,operators,forged,ui")
     ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
     ap.add_argument("--composed", action="store_true",
