@@ -1134,6 +1134,116 @@ def test_the_import_sends_the_broker_admin_token_and_fails_when_the_broker_refus
     assert any("0 of 3 exported entities" in p for p in r["problems"])
 
 
+def scripted_import(tmp_path, answers, *extra, secrets=("antares-admin-token",)):
+    """The importer against a stub broker that answers each entity write with the next of
+    `answers` (status, headers, body), the last one from then on; returns (rc or the SystemExit,
+    report or None, entity-write paths seen)."""
+    seen = []
+
+    class Broker(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if "entityOperations" in self.path:
+                seen.append(self.path)
+                st, hdrs, body = answers[min(len(seen), len(answers)) - 1]
+                body = json.dumps(body(sent) if callable(body) else body).encode() if body is not None else b""
+            else:
+                st, hdrs, body = 201, {}, b""
+            self.send_response(st)
+            for k, v in hdrs.items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Broker)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    export = tmp_path / "export"
+    (export / "antares").mkdir(parents=True)
+    (export / "antares" / "entities.jsonl").write_text("".join(json.dumps(
+        {"tenant": "t", "entity": {"id": f"urn:ngsi-ld:X:{i}", "type": "X"}}) + "\n" for i in range(3)))
+    (export / "antares" / "temporal.jsonl").write_text("")
+    (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))
+    rh.stamp_digests(export)
+    state = tmp_path / "state"
+    state.mkdir()
+    for name in secrets:
+        (state / name).write_text("the-admin-token\n")
+    report = tmp_path / "report.json"
+    try:
+        rc = rh.main(["import", "--export", str(export), "--base", f"http://127.0.0.1:{server.server_port}",
+                      "--state", str(state), "--report", str(report), "--now", rh.iso(NOW), *extra])
+    except SystemExit as e:
+        rc = e
+    finally:
+        server.shutdown()
+    return rc, (json.loads(report.read_text()) if report.exists() else None), seen
+
+
+BUSY = (503, {"Retry-After": "0"}, {"status": 503, "title": "Overloaded"})
+
+
+def test_a_batch_the_broker_turns_away_for_load_is_sent_again(tmp_path, monkeypatch):
+    """jc-dev's import 2026-11-11 lost one 500-entity helsinki batch to one refused call (T-7016):
+    a 503 Overloaded batch goes again after its Retry-After and lands."""
+    monkeypatch.setattr(rh, "DISK_RESERVE", 0)
+    rc, r, seen = scripted_import(tmp_path, [BUSY, BUSY, (204, {}, None)], "--only", "antares")
+    assert rc == 0 and r["problems"] == [] and r["antares"]["entities"] == 3, r
+    assert r["antares"]["retriedCalls"] == 2 and len(seen) == 3
+    # a broker that stays busy: the batch is refused after IMPORT_RETRIES more sends, the import fails
+    rc, r, seen = scripted_import(tmp_path / "busy", [BUSY], "--only", "antares")
+    assert rc == 1 and len(seen) == rh.IMPORT_RETRIES + 1
+    assert any("0 of 3 exported entities" in p for p in r["problems"]), r["problems"]
+    # a refusal that is no load is not sent again
+    rc, r, seen = scripted_import(tmp_path / "bad", [(400, {}, {"status": 400})], "--only", "antares")
+    assert rc == 1 and len(seen) == 1
+
+
+def test_create_only_writes_what_the_broker_lacks_and_counts_the_rest_as_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(rh, "DISK_RESERVE", 0)
+    exists = "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists"
+
+    def answer(kind):
+        return lambda batch: {"success": [batch[0]["id"]], "errors": [
+            {"entityId": e["id"], "error": {"type": kind, "status": 409}} for e in batch[1:]]}
+    rc, r, seen = scripted_import(tmp_path, [(207, {}, answer(exists))], "--only", "antares", "--create-only")
+    assert rc == 0 and r["problems"] == [], r
+    assert r["antares"]["entities"] == 3 and r["antares"]["alreadyPresent"] == 2
+    assert seen == ["/broker/ngsi-ld/v1/entityOperations/create"]
+    # any other member error stays a refusal
+    rc, r, _ = scripted_import(tmp_path / "bad", [(207, {}, answer("https://uri.etsi.org/ngsi-ld/errors/BadRequestData"))],
+                               "--only", "antares", "--create-only")
+    assert rc == 1 and r["antares"]["entities"] == 1 and r["antares"]["refusedCalls"][0]["entities"] == 2
+    # the repair mode is the Antares step's alone
+    rc, r, seen = scripted_import(tmp_path / "all", [(204, {}, None)], "--create-only")
+    assert isinstance(rc, SystemExit) and "--only antares" in str(rc) and not seen
+
+
+def test_a_step_without_its_secret_stops_the_import_before_any_write(tmp_path, monkeypatch):
+    """jc-dev 2026-11-11: shako and Antares wrote, then daiya found no dashboards-password and the
+    crash lost the whole report (T-7016). Now nothing is written and the message names the file."""
+    monkeypatch.setattr(rh, "DISK_RESERVE", 0)
+    rc, r, seen = scripted_import(tmp_path, [(204, {}, None)], "--only", "antares,daiya")
+    assert isinstance(rc, SystemExit) and "dashboards-password" in str(rc)
+    assert not seen and r is None
+
+
+def test_the_report_is_written_when_a_later_step_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(rh, "DISK_RESERVE", 0)
+
+    def boom(*a, **k):
+        raise RuntimeError("daiya fell over")
+    monkeypatch.setattr(rh, "import_daiya", boom)
+    with pytest.raises(RuntimeError, match="daiya fell over"):
+        scripted_import(tmp_path, [BUSY, (207, {}, {"success": ["urn:ngsi-ld:X:0"], "errors": []})],
+                        "--only", "antares,daiya", secrets=("antares-admin-token", "dashboards-password"))
+    r = json.loads((tmp_path / "report.json").read_text())
+    assert r["antares"]["entities"] == 1 and any("1 of 3 exported entities" in p for p in r["problems"]), r
+
+
 def test_import_sh_stops_the_allow_all_jc_when_the_import_fails(tmp_path):
     """import.sh with stand-ins: up.sh starts a 'jc' (sleep), rehearsal.py import fails; the
     script must fail and the allow-all jc must be gone."""
