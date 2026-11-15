@@ -1016,14 +1016,6 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Schritte",
         "Lépések",
     );
-    add(
-        "guide_try",
-        "Try it",
-        "Vyskúšajte",
-        "Vyzkoušejte",
-        "Probieren Sie es aus",
-        "Próbálja ki",
-    );
     add("connector_note", "Important: the assistant usually won't use the connector on its own. Ask for it in your question, for example:", "Dôležité: asistent konektor väčšinou sám nepoužije. Napíšte mu to v otázke, napríklad:", "Důležité: asistent konektor většinou sám nepoužije. Napište mu to v otázce, například:", "Wichtig: Der Assistent nutzt den Connector meist nicht von selbst. Bitten Sie in Ihrer Frage darum, zum Beispiel:", "Fontos: az asszisztens általában magától nem használja a csatlakozót. Kérje a kérdésében, például:");
     add("connector_why", "The assistant recognises the connector by the name you gave it when you added it.", "Asistent spozná konektor podľa mena, ktoré ste mu dali pri pridaní.", "Asistent pozná konektor podle jména, které jste mu dali při přidání.", "Der Assistent erkennt den Connector an dem Namen, den Sie ihm beim Hinzufügen gegeben haben.", "Az asszisztens arról a névről ismeri fel a csatlakozót, amelyet a hozzáadáskor adott neki.");
     add(

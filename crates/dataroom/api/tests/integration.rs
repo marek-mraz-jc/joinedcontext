@@ -2206,7 +2206,8 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
         "Joinedcontext Open Data",
         "https://api.dev.joinedcontext.com<wbr>/api<wbr>/mcp",
         "Použi Joinedcontext Open Data: Aká je teraz kvalita ovzdušia v Helsinkách?",
-        "Vyskúšajte",
+        // The example prompt shows once for every assistant, in the note under the guides.
+        "Napíšte mu to v otázke, napríklad:",
         "Ak to nejde",
         "id=\"claude\"",
     ] {
