@@ -9,6 +9,8 @@ pub mod cli;
 pub mod env;
 pub mod error;
 pub mod executor;
+pub mod fake;
+mod fake_data;
 pub mod functions;
 pub mod go_fmt;
 pub mod go_json;
@@ -25,6 +27,10 @@ pub mod methods_structured;
 pub mod methods_time;
 pub mod msgpack;
 pub mod ngsild;
+#[rustfmt::skip]
+mod params;
+#[cfg(test)]
+mod params_tests;
 pub mod parser;
 mod required_params;
 pub mod time_format;

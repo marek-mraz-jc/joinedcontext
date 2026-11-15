@@ -13,6 +13,7 @@ members = [
     "crates/ekiben-io-nats",
     "crates/ekiben-io-ngsild",
     "crates/ekiben-io-sql",
+    "crates/ekiben-io-s3",
     "crates/ekiben-server",
     "crates/ekiben-testkit",
 ]
@@ -55,6 +56,7 @@ ekiben-js = { path = "crates/ekiben-js" }
 ekiben-io-nats = { path = "crates/ekiben-io-nats" }
 ekiben-io-ngsild = { path = "crates/ekiben-io-ngsild" }
 ekiben-io-sql = { path = "crates/ekiben-io-sql" }
+ekiben-io-s3 = { path = "crates/ekiben-io-s3" }
 ekiben-testkit = { path = "crates/ekiben-testkit" }
 
 tokio = { version = "1.54", features = ["full", "test-util"] }

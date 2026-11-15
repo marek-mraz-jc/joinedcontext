@@ -1252,6 +1252,7 @@ dependencies = [
  "bytes",
  "ekiben-bloblang",
  "ekiben-core",
+ "ekiben-io-file",
  "ekiben-processors",
  "futures",
  "hex",
@@ -1323,6 +1324,28 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "ekiben-io-s3"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "ekiben-bloblang",
+ "ekiben-core",
+ "ekiben-io-file",
+ "ekiben-io-http",
+ "hex",
+ "hmac",
+ "reqwest",
+ "serde_json",
+ "sha2 0.11.1",
+ "tokio",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -1443,6 +1466,7 @@ dependencies = [
  "ekiben-io-http",
  "ekiben-io-nats",
  "ekiben-io-ngsild",
+ "ekiben-io-s3",
  "ekiben-io-sql",
  "ekiben-js",
  "ekiben-parquet",
