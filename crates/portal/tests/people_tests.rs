@@ -347,6 +347,64 @@ async fn without_smtp_a_temporary_password_is_answered_once_and_never_logged() {
     assert!(!read.text.contains(&password));
 }
 
+/// AG-133, PF-92: a token creating a person without SMTP gets the account but never its
+/// temporary password; a person hands that over in the Portal.
+#[tokio::test]
+async fn without_smtp_a_token_creating_a_person_never_receives_the_password() {
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let (kc, shako) = (realm(false).await, forge().await);
+    let mut state = state_with(&kc, &shako);
+    let mut config = (*state.config).clone();
+    config.oidc = joinedcontext_portal::config::Config::from_vars(|key| {
+        match key {
+            "JC_OIDC_ISSUER" => Some(common::REALM.issuer.as_str()),
+            "JC_PORTAL_COOKIE_KEY" => {
+                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001")
+            }
+            "JC_OIDC_CLIENT_ID" => Some("portal-api"),
+            "JC_OIDC_CLIENT_SECRET" => Some("secret"),
+            _ => None,
+        }
+        .map(str::to_owned)
+    })
+    .expect("a realm")
+    .oidc;
+    state.config = Arc::new(config);
+    let token = common::REALM.person_token_of("portal-api", "jcctl", "pia", &[]);
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri(PEOPLE)
+        .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(
+            json!({ "email": "new@example.org", "firstName": "Nora", "lastName": "Nová" })
+                .to_string(),
+        ))
+        .expect("a request");
+    let response = joinedcontext_portal::server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("a response");
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(status, StatusCode::CREATED, "{text}");
+    let set = received(&kc, "PUT", "/new-id/reset-password").await;
+    let credential: Value = serde_json::from_slice(&set[0].body).expect("a credential");
+    let password = credential["value"].as_str().expect("a password was set");
+    assert!(
+        !text.contains(password),
+        "the password reached a token: {text}"
+    );
+    assert!(!text.contains("temporaryPassword"), "{text}");
+}
+
 /// PF-93: an address a Policy the creator cannot change already names opens by the e-mail only;
 /// without mail nothing is created and no temporary password is answered. A platform admin
 /// still gets the password.
