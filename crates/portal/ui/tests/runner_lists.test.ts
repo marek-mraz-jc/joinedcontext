@@ -37,7 +37,7 @@ describe("runner lists (T-6825)", () => {
     expect(offered).toContain("mapping");
     expect(offered).toContain("jq");
     expect(offered.every((name) => RUNNER_PROCESSORS.has(name))).toBe(true);
-    for (const name of ["couchbase", "sql_select", "javascript", "python"]) {
+    for (const name of ["couchbase", "aws_lambda", "javascript", "python"]) {
       expect(offered).not.toContain(name);
     }
   });
