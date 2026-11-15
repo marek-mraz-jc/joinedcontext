@@ -46,7 +46,7 @@ const DNS1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 
 /** The address checked for the template; a CKAN dataset page is not a file the runner can read. */
 export function problemOf(template: Template, values: TemplateValues): TemplateProblem | undefined {
-  if (!DNS1123.test(values.name.trim()) || values.name.trim().length > 63) return "name";
+  // The address first: a name taken from a bad address is wrong only because the address is.
   let url: URL;
   try {
     url = new URL(values.url.trim());
@@ -54,6 +54,7 @@ export function problemOf(template: Template, values: TemplateValues): TemplateP
     return "url";
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return "url";
+  if (!DNS1123.test(values.name.trim()) || values.name.trim().length > 63) return "name";
   if (template.id === "ckan" && /\/dataset\/[^/]+\/?$/.test(url.pathname)) return "ckanDataset";
   if (template.asksLayer && !isGetFeature(url) && !(values.layer ?? "").trim()) return "layer";
   const records = (values.records ?? "").trim();

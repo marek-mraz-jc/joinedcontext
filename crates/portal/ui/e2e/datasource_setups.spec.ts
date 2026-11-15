@@ -140,8 +140,10 @@ test.describe("ready-made set-ups on Data sources", () => {
     const type = page.getByTestId("form-page").getByLabel("Type", { exact: true });
     await expect(type.locator('option[value="nats"]')).toHaveCount(1);
     const offered = await type.locator("option").evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
-    for (const name of ["kafka", "amqp_0_9", "sql_select", "aws_s3", "stdin", "http_server"]) expect(offered).not.toContain(name);
-    expect(offered).toEqual(expect.arrayContaining(["http_client", "nats", "nats_jetstream", "csv", "websocket"]));
+    // sql_select and aws_s3 joined once ekiben built them (T-7054, T-7079); ftp and imap are
+    // ekiben's own (T-7092).
+    for (const name of ["kafka", "amqp_0_9", "stdin", "http_server"]) expect(offered).not.toContain(name);
+    expect(offered).toEqual(expect.arrayContaining(["http_client", "nats", "nats_jetstream", "csv", "websocket", "sql_select", "aws_s3", "ftp", "imap"]));
     await type.selectOption("nats");
     await shot(page, "runner-input-nats");
   });
@@ -168,6 +170,7 @@ test.describe("ready-made set-ups on Data sources", () => {
                 kind: "DataSource",
                 metadata: { name: "exports", namespace: PROJECT },
                 plan: { fields: [{ path: "spec.type", to: "ftp" }, { path: "spec.input.address", to: "files.example.org:21" }, { path: "spec.input.path", to: "/exports/*.csv" }] },
+                verdict: { ok: true, findings: [], checkedAt: "2026-11-15T21:30:00Z", inputDigest: "sha256:7092" },
               }
             : { apiVersion: API, kind: "Change", metadata: { name: "chg-70920001", namespace: PROJECT }, status: { lane: "yellow", phase: "PendingApproval", plan: { create: 1 } } },
         ),
@@ -290,6 +293,7 @@ test.describe("ready-made set-ups on Data sources", () => {
               kind: "DataSource",
               metadata: { name: "kaupunginosat", namespace: PROJECT },
               plan: { fields: [{ path: "spec.http.url", to: "https://data.example.org/kartta/kaupunginosat.zip" }, { path: "spec.http.format", to: "shapefile" }] },
+              verdict: { ok: true, findings: [], checkedAt: "2026-11-15T21:30:00Z", inputDigest: "sha256:7092" },
             }),
           }),
     );
@@ -302,9 +306,12 @@ test.describe("ready-made set-ups on Data sources", () => {
     await shot(page, "shapefile-empty");
     await page.getByLabel("Address of the zip").fill("not an address");
     await page.getByRole("button", { name: "Fill the form and check" }).click();
-    await expect(gallery.getByRole("alert").or(gallery.locator("[id$='-error']")).first()).toBeVisible();
+    // The address is what is wrong, so the address says so; the name it derives is not blamed.
+    await expect(gallery.getByText("Give a full address starting with https:// or http://.")).toBeVisible();
+    await expect(gallery.getByText("Give a name of lowercase letters, digits and hyphens, at most 63 characters.")).toHaveCount(0);
     await shot(page, "shapefile-refused");
     await page.getByLabel("Address of the zip").fill("https://data.example.org/kartta/kaupunginosat.zip");
+    await expect(gallery.getByText("Give a full address starting with https:// or http://.")).toHaveCount(0);
     await shot(page, "shapefile-filled");
     await page.getByRole("button", { name: "Fill the form and check" }).click();
     const form = page.getByRole("group", { name: "HTTP endpoint" });
