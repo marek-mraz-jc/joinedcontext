@@ -250,8 +250,9 @@ fn resolve(
             let ref_pattern = new
                 .get(ref_key)
                 .ok_or_else(|| format!("no pattern found for %{{{ref_key}}}"))?;
-            // Go drops this error; the `add` below reports the same missing reference.
-            let _ = resolve(known, ref_key, ref_pattern, new, named_only, depth + 1);
+            // Go drops this error and retries the branch at every reference, which never ends
+            // on a set where one pattern names a cycle twice: stop at the first failure.
+            resolve(known, ref_key, ref_pattern, new, named_only, depth + 1)?;
         }
     }
     let p = new_pattern(pattern, known, named_only)?;

@@ -469,6 +469,22 @@ async fn test_grok_file_imports() {
     );
 }
 
+#[test]
+fn grok_refuses_a_fanning_cycle_in_bounded_time() {
+    // Two references per level: a resolver that retries each failed branch never returns.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let built =
+            build_yaml("grok:\n  expressions: ['%{A}']\n  pattern_definitions: {A: '%{A}%{A}'}\n");
+        let _ = tx.send(built.err().map(|e| e.to_string()));
+    });
+    let err = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("refused within 5 s")
+        .expect("cycle refused");
+    assert!(err.contains("failed to create grok compiler"), "{err}");
+}
+
 #[tokio::test]
 async fn grok_refuses_cycles_traversal_and_reports_no_match() {
     let err = build_yaml(
