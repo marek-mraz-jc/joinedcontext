@@ -2337,19 +2337,14 @@ async fn approve_every_file(
 /// Every file of an approved change meets the one judge again (P-2, CHG-03): the mirror, the
 /// operator's bounds (PF-97) and the public-app policy (PF-103) may have moved since the
 /// proposal, and the change's other files stand as the one bundle they merge as. Run after
-/// every check of who may approve, so a refusal never answers for someone who may not. A
-/// writer's branch never passed the propose door, so it meets every check, the spec's own
-/// included (`writer`, S-5-10).
+/// every check of who may approve, so a refusal never answers for someone who may not. Every
+/// check runs, the spec's own included: a writer's branch, an import, a restore and a flow never
+/// met the propose door's (S-5-10).
 fn judge_at_approval(
     state: &AppState,
     project: &str,
     judged: &[ResourceEnvelope],
-    writer: bool,
 ) -> Result<(), ApiError> {
-    let judge = match writer {
-        true => crate::judge::manifest,
-        false => crate::judge::manifest_at_approval,
-    };
     let ground = crate::judge::Ground::of(state);
     let bundle = judged
         .iter()
@@ -2358,7 +2353,8 @@ fn judge_at_approval(
     crate::references::BUNDLE.sync_scope(bundle, || {
         judged.iter().try_for_each(|e| {
             let project = e.metadata.namespace.as_deref().unwrap_or(project);
-            judge(&ground, project, e).map_err(|e| ApiError::Conflict(crate::judge::reason(&e)))?;
+            crate::judge::manifest(&ground, project, e)
+                .map_err(|e| ApiError::Conflict(crate::judge::reason(&e)))?;
             // A binding's scope names an Organization or project that is there, or one this
             // Change creates (T-6806).
             let manifest =
@@ -2692,7 +2688,7 @@ pub async fn approve_change_for(
             data.name
         )));
     }
-    judge_at_approval(state, project, &judged, !is_change_branch(&pr.head_branch))?;
+    judge_at_approval(state, project, &judged)?;
 
     // The Portal's forge token authored the pull request, and the forge refuses a review from the
     // author (422 "approve your own pull is not allowed"), so the approval is not a forge review:

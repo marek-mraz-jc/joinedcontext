@@ -3408,6 +3408,34 @@ const MODEL_BRANCH: &str = "portal/create-datamodel-air-00000042";
 const MODEL_PATH: &str = "projects/ovzdusie/spaces/ovzdusie/datamodels/air.yaml";
 const MODEL_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  linkml: ./air.linkml.yaml\n  version: 1.0.1\n  lifecycle: draft\n";
 
+/// S-5-10: an import, restore or flow opens its Change on a Portal branch without the
+/// one-data-model check of the propose door, so approval judges every check: a second model of
+/// a space is refused and never merged.
+#[tokio::test]
+async fn approval_refuses_a_portal_branch_carrying_a_second_model_of_a_space() {
+    let approver = json!([{ "kinds": ["DataModel"], "verbs": ["read", "approve"] }]);
+    let second = MODEL_YAML
+        .replace("name: air\n", "name: air-copy\n")
+        .replace("./air.linkml", "./air-copy.linkml");
+    let (server, state) = change_of_file_by(
+        "portal/import-bundle-00000042",
+        "projects/ovzdusie/spaces/ovzdusie/datamodels/air-copy.yaml",
+        &second,
+        approver,
+        "eva.other@banskabystrica.sk",
+    )
+    .await;
+    let held: Value = serde_norway::from_str(MODEL_YAML).expect("model");
+    state
+        .mirror
+        .upsert(serde_json::from_value(held).expect("envelope"));
+
+    let (status, body) = approve_endpoint(state, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("second model of space"), "{body}");
+    assert!(!merged_66(&server).await);
+}
+
 /// T-6535: the proposer withdraws their own DataModel change without `approve` (closed, never
 /// merged); a person who did not propose it still needs `approve`, and the proposer still never
 /// approves it, administrator or not (PF-58).
