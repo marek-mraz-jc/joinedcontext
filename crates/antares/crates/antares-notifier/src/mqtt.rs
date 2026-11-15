@@ -219,6 +219,8 @@ macro_rules! options {
         }
         if $ep.secure {
             opts.set_transport(rumqttc::Transport::Tls(shared_tls_config()?));
+            // the socket dials the checked address; the certificate is verified against the name
+            opts.set_tls_server_name($ep.host.clone());
         }
         opts
     }};
@@ -297,21 +299,15 @@ async fn checked_addr(
         .ok_or_else(denied)
 }
 
-/// What to hand rumqttc as the broker address. Plain MQTT dials the checked
-/// ADDRESS, which pins the resolution the policy judged (and makes the
-/// event loop's own re-dial after a dropped connection reuse it instead of
-/// resolving the name again, unchecked). mqtts keeps the host NAME: rumqttc
-/// verifies the server certificate against the string it is given, so an
-/// address there would demand an IP SAN and break certificate verification
-/// against every ordinary broker certificate. For mqtts the check above
-/// still gates the connect, and the certificate name check is what stops a
-/// changed answer from impersonating the endpoint.
-fn dial_host(ep: &MqttEndpoint, addr: std::net::SocketAddr) -> String {
-    if ep.secure {
-        ep.host.clone()
-    } else {
-        addr.ip().to_string()
-    }
+/// What to hand rumqttc as the broker address: the checked ADDRESS, for
+/// mqtt and mqtts alike. It pins the resolution the policy judged, so a
+/// second answer for the name (DNS rebinding) never reaches a socket, and the
+/// event loop's own re-dial after a dropped connection reuses it instead of
+/// resolving the name again, unchecked. mqtts verifies the certificate
+/// against the host NAME and sends it as SNI (`set_tls_server_name` in
+/// [`options!`]).
+fn dial_host(addr: std::net::SocketAddr) -> String {
+    addr.ip().to_string()
 }
 
 /// One pooled connection: the client plus its event-loop pump task.
@@ -475,7 +471,7 @@ impl MqttSink {
         // Egress policy first: resolve once, judge the answer, dial what was
         // judged. Nothing below opens a socket to an unchecked destination.
         let addr = checked_addr(&ep.host, ep.port, egress_policy(), self.timeout).await?;
-        let dial = dial_host(ep, addr);
+        let dial = dial_host(addr);
         if params.v5 {
             let opts = options!(rumqttc::v5::MqttOptions, id, dial, addr.port(), ep);
             let (client, mut eventloop) = rumqttc::v5::AsyncClient::new(opts, 16);
@@ -593,7 +589,7 @@ pub async fn listen(
     let opts = options!(
         rumqttc::v5::MqttOptions,
         id,
-        dial_host(ep, addr),
+        dial_host(addr),
         addr.port(),
         ep
     );
@@ -1065,22 +1061,74 @@ mod tests {
         );
     }
 
-    /// The address the policy judged is the address dialled — except for
-    /// mqtts, where the certificate is verified against the host NAME.
+    /// The address the policy judged is the address dialled, for mqtts too:
+    /// a second answer for the name never reaches a socket.
     #[test]
-    fn dial_host_pins_the_address_and_keeps_the_tls_name() {
-        let plain = MqttEndpoint::parse("mqtt://broker.example/t").expect("plain");
+    fn dial_host_pins_the_checked_address() {
         let addr = "203.0.113.7:1883".parse().expect("addr");
-        assert_eq!(dial_host(&plain, addr), "203.0.113.7");
-        let secure = MqttEndpoint::parse("mqtts://broker.example/t").expect("secure");
-        assert_eq!(
-            dial_host(&secure, addr),
-            "broker.example",
-            "mqtts must dial the name so the certificate name check still applies"
-        );
+        assert_eq!(dial_host(addr), "203.0.113.7");
         // IPv6 comes back unbracketed, which is what rumqttc resolves
         let v6 = "[2001:db8::1]:1883".parse().expect("v6 addr");
-        assert_eq!(dial_host(&plain, v6), "2001:db8::1");
+        assert_eq!(dial_host(v6), "2001:db8::1");
+    }
+
+    /// mqtts dials the checked address and verifies the certificate against
+    /// the endpoint's host name.
+    #[test]
+    fn mqtts_verifies_the_name_while_dialling_the_address() {
+        let mut opts = rumqttc::MqttOptions::new(
+            "t",
+            dial_host("203.0.113.7:8883".parse().expect("addr")),
+            8883,
+        );
+        opts.set_tls_server_name("broker.example");
+        assert_eq!(opts.broker_address(), ("203.0.113.7".to_owned(), 8883));
+        assert_eq!(opts.tls_server_name(), "broker.example");
+        let plain = rumqttc::v5::MqttOptions::new("t", "203.0.113.7", 1883);
+        assert_eq!(plain.tls_server_name(), "203.0.113.7");
+    }
+
+    /// The TLS handshake of an mqtts connect reaches the address it was
+    /// given and names the endpoint's host (SNI), so the certificate is
+    /// judged against the name the subscriber wrote.
+    #[tokio::test]
+    async fn an_mqtts_handshake_names_the_host_on_the_checked_address() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let ep = MqttEndpoint::parse(&format!("mqtts://broker.example:{port}/t")).expect("ep");
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let connect = async {
+            let opts = (|| -> Result<rumqttc::MqttOptions, NgsiError> {
+                Ok(options!(
+                    rumqttc::MqttOptions,
+                    "t",
+                    dial_host(addr),
+                    port,
+                    ep
+                ))
+            })()
+            .expect("options");
+            let (_client, mut eventloop) = rumqttc::AsyncClient::new(opts, 1);
+            let _ = eventloop.poll().await;
+        };
+        let hello = async {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 2048];
+            let n = socket.read(&mut buf).await.expect("read");
+            buf.truncate(n);
+            buf
+        };
+        let hello = tokio::select! {
+            hello = hello => hello,
+            () = connect => Vec::new(),
+        };
+        assert!(
+            hello.windows(14).any(|w| w == b"broker.example"),
+            "the ClientHello names the host"
+        );
     }
 
     #[test]

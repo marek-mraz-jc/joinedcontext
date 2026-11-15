@@ -109,3 +109,21 @@ async fn odata_errors_carry_no_hidden_name_and_no_inner_detail() {
         }
     }
 }
+
+/// ODA-04: an option that pages, orders or counts a collection is refused on one Entity,
+/// never dropped without a word.
+#[tokio::test(flavor = "multi_thread")]
+async fn options_over_a_collection_are_refused_on_one_entity() {
+    let (_b, app) = broker().await.expect("broker");
+    for option in [
+        "$top=1",
+        "$skip=1",
+        "$orderby=speed",
+        "$count=true",
+        "$skiptoken=x",
+    ] {
+        let (status, body) = send(&app, &format!("{ROOT}/Car('urn:ngsi-ld:Car:1')?{option}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{option}: {body}");
+        assert!(body.contains("apply to a collection"), "{option}: {body}");
+    }
+}

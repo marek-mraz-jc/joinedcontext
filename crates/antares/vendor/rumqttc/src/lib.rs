@@ -459,6 +459,8 @@ pub struct MqttOptions {
     broker_addr: String,
     /// broker port
     port: u16,
+    /// the name a TLS transport verifies the certificate against, when not `broker_addr`
+    tls_server_name: Option<String>,
     // What transport protocol to use
     transport: Transport,
     /// keep alive time to send pingreq to broker when the connection is idle
@@ -508,6 +510,7 @@ impl MqttOptions {
         MqttOptions {
             broker_addr: host.into(),
             port,
+            tls_server_name: None,
             transport: Transport::tcp(),
             keep_alive: Duration::from_secs(60),
             clean_session: true,
@@ -578,6 +581,18 @@ impl MqttOptions {
     pub fn set_client_id(&mut self, client_id: String) -> &mut Self {
         self.client_id = client_id;
         self
+    }
+
+    /// Verify the TLS certificate against `name` and send it as SNI, while the socket
+    /// dials `broker_addr` (an address the caller resolved and checked itself).
+    pub fn set_tls_server_name<S: Into<String>>(&mut self, name: S) -> &mut Self {
+        self.tls_server_name = Some(name.into());
+        self
+    }
+
+    /// The name a TLS transport verifies: [`Self::set_tls_server_name`], else the broker address.
+    pub fn tls_server_name(&self) -> &str {
+        self.tls_server_name.as_deref().unwrap_or(&self.broker_addr)
     }
 
     pub fn set_transport(&mut self, transport: Transport) -> &mut Self {

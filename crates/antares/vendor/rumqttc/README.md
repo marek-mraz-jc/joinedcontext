@@ -14,6 +14,13 @@ certificate or key still `NoValidCertInChain`/`NoValidKeyInChain`; the `tls::tes
 pins both. The 18 `use pretty_assertions::assert_eq;` test imports are gone too (the
 dev-dependency was removed), so `cargo test -p rumqttc --lib` runs from the workspace root.
 
+Third change (T-7049): `MqttOptions::set_tls_server_name` (v3 `src/lib.rs`, v5 `src/v5/mod.rs`)
+names the host a TLS transport verifies and sends as SNI, and both event loops
+(`src/eventloop.rs`, `src/v5/eventloop.rs`) pass `tls_server_name()` to `tls_connect`; it is the
+broker address when unset, as upstream. Antares dials the address its egress policy checked and
+verifies the certificate against the endpoint's name, so a second DNS answer never reaches a
+socket.
+
 Why: every rumqttc release and upstream main pin `rustls-webpki ^0.102.8`, which has
 RUSTSEC-2026-0049/-0098/-0099/-0104 and GHSA-82j2-j2ch-gfr8, fixed only in 0.103
 (upstream issues bytebeamio/rumqtt#1046 and #1067; PRs #1037, #1072 and #1073 unmerged).

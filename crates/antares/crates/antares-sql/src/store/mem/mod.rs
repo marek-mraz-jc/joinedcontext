@@ -1268,15 +1268,27 @@ impl Store {
             .inner
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        Self::map(&inner, kind)
-            .get(tenant.as_str())
-            .map(|m| {
-                (
-                    m.values().skip(offset).take(limit).cloned().collect(),
-                    m.len(),
-                )
+        let Some(m) = Self::map(&inner, kind).get(tenant.as_str()) else {
+            return (Vec::new(), 0);
+        };
+        if kind != Kind::Entity {
+            return (
+                m.values().skip(offset).take(limit).cloned().collect(),
+                m.len(),
+            );
+        }
+        // 4.22 at the read boundary, as `list_page` and the Postgres arm: an expired
+        // Entity is neither served nor counted, an expired instance not served
+        let now = crate::store::any::now_utc();
+        let live: Vec<Value> = m
+            .values()
+            .filter_map(|v| {
+                let mut v = v.clone();
+                (!crate::store::filter::strip_expired(&mut v, &now)).then_some(v)
             })
-            .unwrap_or_default()
+            .collect();
+        let total = live.len();
+        (live.into_iter().skip(offset).take(limit).collect(), total)
     }
 
     /// Read-modify-write on one document. Returns `None` when absent; the
