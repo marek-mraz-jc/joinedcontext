@@ -111,6 +111,31 @@ fn state_with(shako: &MockServer) -> AppState {
             "scope": { "project": MINE },
         }),
     ));
+    // PL-94: whoever approves a Pipeline reads the Entities of the space it writes.
+    state.mirror.upsert(common::envelope(
+        "Role",
+        "entity-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Entity"], "verbs": ["read"] }] }),
+    ));
+    state.mirror.upsert(common::envelope(
+        "RoleBinding",
+        "steward-reads-entities",
+        ORG_NAMESPACE,
+        json!({
+            "subjects": [{ "user": "steward@hel.fi" }],
+            "role": "entity-reader",
+            "scope": { "project": MINE },
+        }),
+    ));
+    // The Endpoint the Pipeline writes through (PL-111).
+    state.mirror.upsert(common::envelope(
+        "Endpoint",
+        "air",
+        MINE,
+        json!({ "contextSpaceRef": "ovzdusie", "slug": "mluyob4nz52lok3ssk7pgn5vwt",
+                "audience": "organization", "enabledRepresentations": ["ngsi-ld"] }),
+    ));
     state
 }
 
@@ -214,7 +239,7 @@ async fn a_bundle_inside_the_project_is_approved_and_merged() {
 async fn an_organization_file_still_travels_with_a_projects_change() {
     let binding = "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n  \
                    name: steward-of-ovzdusie\n  namespace: org\nspec:\n  subjects:\n  - user: \
-                   steward@hel.fi\n  role: pipelines-of-ovzdusie\n  scope:\n    project: \
+                   3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14\n  role: pipelines-of-ovzdusie\n  scope:\n    project: \
                    ovzdusie\n";
     let shako = forge_with(&[
         (

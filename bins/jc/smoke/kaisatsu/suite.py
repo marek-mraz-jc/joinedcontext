@@ -47,7 +47,8 @@ sys.path.insert(0, str(HERE.parent / "mcp"))
 sys.path.append(str(HERE.parent / "endpoints"))
 
 import common
-from common import SECOND_FACTOR, Http, Results, as_json, jwt_claims, loopback_only, read_token
+from common import (SECOND_FACTOR, Http, Results, as_json, issuer_of, jwt_claims, loopback_only,  # noqa: E402
+                    public_origin, read_token)
 from fetch_prod_identity import (
     CONNECTOR_ID,
     PROBES,
@@ -430,6 +431,9 @@ class Live:
     # ---------------------------------------------------------------------------- the checks
 
     def run(self, endpoints: list[str], other_realm: str | None) -> None:
+        # The issuer jc's discovery document names (its public address on jc-dev), never the base
+        # the suite happens to reach jc on.
+        self.issuer = issuer_of(self.http, self.realm) or f"{self.base}/id/realms/{self.realm}"
         self.make_person()
         b = self.Browser(self.base)
         try:
@@ -441,7 +445,7 @@ class Live:
         self.row("signin.code-pkce", PKCE_CLIENT, f"{self.kc}/auth (code + S256) -> login -> token",
                  "access, refresh and id token", ", ".join(have), len(have) == 3)
         at, idt = jwt_claims(tok.get("access_token")), jwt_claims(tok.get("id_token"))
-        issuer = f"{self.base}/id/realms/{self.realm}"
+        issuer = self.issuer
         self.row("signin.claims", PKCE_CLIENT, "the access and id token's claims",
                  f"iss {issuer}, sub the person, azp {PKCE_CLIENT}, id token nonce echoed",
                  f"iss {at.get('iss')}, sub {'the person' if at.get('sub') == self.uid else at.get('sub')}, "
@@ -733,7 +737,7 @@ class Live:
         cid = CONNECTOR_ID
         st, _, raw = self.http.call("GET", f"/c/{cid}/.well-known/oauth-protected-resource")
         doc = as_json(raw) or {}
-        issuer = f"{self.base}/id/realms/{self.realm}"
+        issuer = self.issuer
         self.row("connector.metadata", f"/c/{cid}", f"GET /c/{cid}/.well-known/oauth-protected-resource",
                  f"200, authorization server {issuer}, scope connector:{cid}",
                  f"{st}, {doc.get('authorization_servers')}, {doc.get('scopes_supported')}",
@@ -820,12 +824,15 @@ def run(a, res: Results) -> dict:
             res.check(f"gateway.{id}", "gateway", "GET /.well-known/oauth-authorization-server", want, got, ok, why)
 
     from personas import Browser, _follow
+    # A client's own address is the one its realm registers: jc's public origin where the suite
+    # reaches jc through a forward (jc-dev), the base otherwise.
+    site = public_origin(http, realm) or base
     for pid, (door, client, redirect, scope) in PROBES.items():
         url = (f"/id/realms/{realm}/protocol/openid-connect/auth" if door == "kc" else "/oauth/authorize")
-        q = authorize_query(client, redirect or base + "/", scope)
+        q = authorize_query(client, redirect or site + "/", scope)
         # A browser follows the realm's own redirects (kaisatsu answers 303 to its login page,
         # Keycloak the page at once); a redirect to the client's address is the answer itself.
-        at, st, raw = _follow(Browser(base), f"{url}?{q}", stop=(redirect or base + "/") + "?")
+        at, st, raw = _follow(Browser(base), f"{url}?{q}", stop=(redirect or site + "/") + "?")
         got = page_kind(st, {"location": at} if st in (301, 302, 303, 307, 308) else {}, raw)
         want = prod["authorize"][pid]
         call = f"GET {url} client_id={client}" + (f" scope={scope}" if scope else "")

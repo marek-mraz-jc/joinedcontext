@@ -93,26 +93,22 @@ pub fn manifest(
         .try_for_each(|(_, check)| check(ground, project, envelope))
 }
 
-/// What approval does not judge again, each refused before and after it: the spec's own parse
-/// (`spec`) reads the same bytes the propose door read, a write nobody can make
-/// (`unmade-writes`, PL-111) and a second model of a space (`one-data-model`, DM-61) are
-/// properties of the whole project once the change merged, read beside Endpoint and model
-/// rights the approval checks itself (PL-94, DM-77). The propose door refuses them before the
-/// Change exists and the reconciler's load refuses them on `main`. A writer's own branch of a
-/// layout 2 project repository never met the propose door, so its approval runs [`manifest`]
-/// whole (S-5-10).
-pub const NOT_AT_APPROVAL: [&str; 3] = ["spec", "unmade-writes", "one-data-model"];
-
-/// [`manifest`] at approval: every check but [`NOT_AT_APPROVAL`].
-pub fn manifest_at_approval(
+/// [`manifest`] for each of `envelopes`, written into `project` as one Change: each sees the
+/// others as [`crate::references::BUNDLE`].
+pub fn change(
     ground: &Ground<'_>,
     project: &str,
-    envelope: &ResourceEnvelope,
+    envelopes: &[ResourceEnvelope],
 ) -> Result<(), ApiError> {
-    CHECKS
+    let bundle = envelopes
         .iter()
-        .filter(|(name, _)| !NOT_AT_APPROVAL.contains(name))
-        .try_for_each(|(_, check)| check(ground, project, envelope))
+        .filter_map(|e| serde_json::to_value(e).ok())
+        .collect();
+    crate::references::BUNDLE.sync_scope(bundle, || {
+        envelopes
+            .iter()
+            .try_for_each(|envelope| manifest(ground, project, envelope))
+    })
 }
 
 /// The words of a refusal, without the HTTP status: what the reconciler and the offline
@@ -906,10 +902,7 @@ mod tests {
             );
         };
         said(&reason(
-            &manifest(&ground, "ovzdusie", &feed).expect_err("propose refuses it"),
-        ));
-        said(&reason(
-            &manifest_at_approval(&ground, "ovzdusie", &feed).expect_err("approval refuses it"),
+            &manifest(&ground, "ovzdusie", &feed).expect_err("propose and approval refuse it"),
         ));
         let refused = replay(&Mirror::new(), (&bounds, None, None), vec![feed]);
         assert_eq!(refused.len(), 1, "load refuses it: {refused:?}");

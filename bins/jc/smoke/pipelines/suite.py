@@ -518,7 +518,9 @@ def main(argv):
     st, h, raw = http.call("GET", "/streams/streams", ekiben_tok)
     listed = runner_list(h, raw)
     r.check("runner", "ekiben", "GET /streams/streams", "200 the runner's JSON stream list",
-            f"{st} {len(listed)} streams" if listed is not None else f"{st} {h.get('content-type')} {short(raw, 80)}",
+            f"{st} {len(listed)} streams" if listed is not None else f"{st} {h.get('content-type')} {short(raw, 80)}"
+            + ("" if ekiben_tok or listed is not None else
+               f"; asked without a token: no ekiben-token in --state {a.state} or its ../secrets (the runner lists to its admin only)"),
             st == 200 and listed is not None)
     admin = None
     if not a.state:

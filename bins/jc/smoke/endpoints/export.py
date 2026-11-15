@@ -23,6 +23,29 @@ TEMPORAL_OPS = {"queryTemporal", "retrieveTemporal"}
 DEFAULT_CONTEXT = "https://uri.etsi.org/ngsi-ld/default-context/"
 LOCATION = "https://uri.etsi.org/ngsi-ld/location"
 CLOSED = {"organization", "project-list"}
+# jc-core Representation::ALL in its order, and the ones an Endpoint serves only where it lists them.
+REPRESENTATIONS = ("ngsi-ld", "mcp", "csv", "ogc-features", "sta", "odata", "websocket", "ical", "feed")
+OPT_IN = {"sta", "ical", "feed"}
+
+
+def served(spec: dict) -> list:
+    """The representations an Endpoint serves, as jc-core EndpointSpec::served_representations
+    reads its spec (EP-104, EP-24, EP-10): the listed ones, or every one but the opt-in ones less
+    `disabledRepresentations`; then `ngsi-ld`, `mcp` unless `mcp: false`, and `feed` exactly when
+    it has feed outputs. An omitted list is not an empty one."""
+    listed = spec.get("enabledRepresentations")
+    mcp = spec.get("mcp") is not False
+    if listed is not None:
+        out = [str(r) for r in listed]
+    else:
+        off = {str(r) for r in spec.get("disabledRepresentations") or []}
+        out = [r for r in REPRESENTATIONS if r not in OPT_IN and r not in off and (r != "mcp" or mcp)]
+    out = [r for r in out if r != "feed"]
+    feed = bool((spec.get("representations") or {}).get("feed"))
+    for r, on in (("ngsi-ld", True), ("mcp", mcp), ("feed", feed)):
+        if on and r not in out:
+            out.append(r)
+    return out
 
 
 def short_type(t: str) -> str:
@@ -192,11 +215,13 @@ def load_endpoints(files: Path) -> list[Endpoint]:
             slices = [x["name"] for x in catalog.get("datasets") or [] if isinstance(x, dict) and x.get("name")]
             ckan = (s.get("publish") or {}).get("ckan")
             datasets = (slices or [ckan.get("name") or meta["name"]]) if isinstance(ckan, dict) else []
-            ical = {o["name"]: [x.get("type") for x in o.get("sources") or [] if isinstance(x, dict)]
+            reps = served(s)
+            # The iCalendar outputs count only where the Endpoint serves ical (ical_outputs).
+            ical = {} if "ical" not in reps else {o["name"]: [x.get("type") for x in o.get("sources") or [] if isinstance(x, dict)]
                     for o in (s.get("representations") or {}).get("ical") or [] if isinstance(o, dict) and o.get("name")}
             out.append(Endpoint(
                 project=project, name=meta["name"], space=space, tenant=tenant, slug=str(s.get("slug")),
-                audience=str(s.get("audience")), representations=list(s.get("enabledRepresentations") or []),
+                audience=str(s.get("audience")), representations=reps,
                 grants=bound, ical=list(ical), ical_types=ical,
                 datasets=datasets, slices=slices, file=str(f.relative_to(files)),
                 caller_role=bool(s.get("callerRole")), written=written.get((project, space), set())))
