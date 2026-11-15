@@ -590,9 +590,10 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
             id: "class",
             label: t("pipelines.field.class"),
             field: "class",
-            text: (pipeline) => t(`pipelines.class.${rowParts(pipeline).klass}`),
+            // Sort and search call text per comparison: the class alone, not the row's badges (P-8-05).
+            text: (pipeline) => t(`pipelines.class.${executionClass(pipeline.spec as PipelineSpec)}`),
             cell: (pipeline) => {
-              const { klass } = rowParts(pipeline);
+              const klass = executionClass(pipeline.spec as PipelineSpec);
               return (
                 <Badge tone={klass === "resident" ? "info" : "neutral"} title={t(`pipelines.class.${klass}Help`)}>
                   {t(`pipelines.class.${klass}`)}
