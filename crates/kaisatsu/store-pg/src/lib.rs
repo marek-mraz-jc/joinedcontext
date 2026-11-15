@@ -310,6 +310,20 @@ impl PgStore {
         Ok(tx)
     }
 
+    async fn read_signing_keys(&self, realm_id: &str) -> Result<Vec<SigningKeyRecord>> {
+        let mut tx = self.begin(realm_id, None).await?;
+        let rows: Vec<(Value, Vec<u8>)> = sqlx::query_as(
+            "SELECT doc, encrypted_private_key FROM kaisatsu.signing_keys
+             WHERE realm_id = $1 ORDER BY priority DESC, seq",
+        )
+        .bind(realm_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+        rows.into_iter().map(key_from_row).collect()
+    }
+
     /// Ensures a realm has active ES256 and RS256 signing keys (serialized per realm).
     pub async fn ensure_realm_keys(&self, realm_id: &str) -> Result<()> {
         self.ensure_keys(realm_id, &["ES256", "RS256"]).await
@@ -2253,18 +2267,17 @@ impl Store for PgStore {
         realm_id: &'a str,
     ) -> StoreFuture<'a, Vec<SigningKeyRecord>> {
         Box::pin(async move {
+            // Read first: the realm key lock is taken only when an active key is missing (P-4-02).
+            let keys = self.read_signing_keys(realm_id).await?;
+            let has = |alg: &str| {
+                keys.iter()
+                    .any(|k| k.algorithm == alg && k.status == "ACTIVE")
+            };
+            if has("ES256") && has("RS256") {
+                return Ok(keys);
+            }
             self.ensure_realm_keys(realm_id).await?;
-            let mut tx = self.begin(realm_id, None).await?;
-            let rows: Vec<(Value, Vec<u8>)> = sqlx::query_as(
-                "SELECT doc, encrypted_private_key FROM kaisatsu.signing_keys
-                 WHERE realm_id = $1 ORDER BY priority DESC, seq",
-            )
-            .bind(realm_id)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
-            rows.into_iter().map(key_from_row).collect()
+            self.read_signing_keys(realm_id).await
         })
     }
 
