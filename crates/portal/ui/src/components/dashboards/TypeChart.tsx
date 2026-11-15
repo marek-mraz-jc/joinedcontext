@@ -37,14 +37,14 @@ export function TypeChart({
     queryKey: ["type-chart", slug, entityType, property, q],
     retry: false,
     staleTime: 60_000,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       collect(
         async (offset, limit) => {
           // Normalized, so the attribute's unit comes with its values.
           const page = await fetchEntities(slug, { type: entityType, attrs: [property], q }, { limit, offset, keyValues: false, count: offset === 0 });
           return { rows: page.rows as Record<string, unknown>[], count: page.count };
         },
-        { max: CHART_MAX },
+        { max: CHART_MAX, signal },
       ),
   });
   const number = new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 2 });
