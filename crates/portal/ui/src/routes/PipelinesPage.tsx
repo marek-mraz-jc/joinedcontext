@@ -653,15 +653,20 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
                 }
                 primary={
                   // A phone card has room for it beside the menu (T-6115 review): Pause stays one tap away.
-                  <Button
-                    size="sm"
-                    className="whitespace-nowrap"
-                    disabled={toggle.isPending}
-                    onClick={() => toggle.mutate({ pipeline, run: !running })}
-                    title={t(running ? "pipelines.pauseHint" : "pipelines.resumeHint")}
-                  >
-                    {t(running ? "pipelines.pause" : "pipelines.resume")}
-                  </Button>
+                  // A write like Edit beside it: a role that may not propose reads why. Only the row
+                  // being toggled waits for its answer.
+                  <PermissionGuard project={project} kind="Pipeline" verb="propose">
+                    <Button
+                      size="sm"
+                      className="whitespace-nowrap"
+                      disabled={toggle.isPending && toggle.variables?.pipeline.metadata.name === pipeline.metadata.name}
+                      disabledReason={t("app.busyReason")}
+                      onClick={() => toggle.mutate({ pipeline, run: !running })}
+                      title={t(running ? "pipelines.pauseHint" : "pipelines.resumeHint")}
+                    >
+                      {t(running ? "pipelines.pause" : "pipelines.resume")}
+                    </Button>
+                  </PermissionGuard>
                 }
                 sourceUrl={pipeline.status?.sourceUrl}
               />
