@@ -762,6 +762,11 @@ fn collect_reachable_objects_for_check(
             commit_tips.push(r.oid);
         }
     }
+    // The callers only ask whether each want is in the set: a fetch of advertised tips (every
+    // clone and plain fetch) needs no history walk, which only adds objects.
+    if wants.iter().all(|w| reachable.contains(w)) {
+        return Ok(reachable);
+    }
 
     if !commit_tips.is_empty()
         && let Ok(walk) = repo.rev_walk(commit_tips).all()
@@ -1022,4 +1027,74 @@ pub fn build_pack_bytes(
     }
 
     Ok(pack_bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_reachable_objects_for_check;
+    use crate::repo::{
+        CommitAuthor, FileChangeOp, FileOpKind, commit_file_changes, init_bare_repo,
+    };
+    use gix_hash::ObjectId;
+    use shako_core::{InstanceId, RepoId};
+
+    /// P-6-02: the tip shortcut keeps the gate's answer: a tip and an older commit of a ref are
+    /// served, a commit no ref reaches is not, though it sits in the object store.
+    #[test]
+    fn the_want_gate_serves_reachable_commits_only() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(300),
+            "main",
+            true,
+            "Gate",
+        )
+        .expect("init");
+        let author = CommitAuthor {
+            name: "Alice".into(),
+            email: "alice@hel.fi".into(),
+        };
+        let commit = |name: &str| {
+            let sha = commit_file_changes(
+                &path,
+                "main",
+                name,
+                &author,
+                &author,
+                &[FileChangeOp {
+                    operation: FileOpKind::Create,
+                    path: name.into(),
+                    content: Some(b"x\n".to_vec()),
+                    sha: None,
+                }],
+            )
+            .expect("commit");
+            ObjectId::from_hex(sha.as_bytes()).expect("sha")
+        };
+        let older = commit("a.txt");
+        let tip = commit("b.txt");
+        let dangling = commit("c.txt");
+        let repo = gix::open(&path).expect("open");
+        repo.reference(
+            "refs/heads/main",
+            tip,
+            gix::refs::transaction::PreviousValue::Any,
+            "drop c.txt",
+        )
+        .expect("reset main");
+        assert!(repo.has_object(dangling));
+
+        let has = |want: ObjectId| {
+            collect_reachable_objects_for_check(&repo, &[want])
+                .expect("gate")
+                .contains(&want)
+        };
+        assert!(has(tip), "the tip");
+        assert!(has(older), "an older commit of main");
+        assert!(!has(dangling), "a commit no ref reaches");
+        let both = collect_reachable_objects_for_check(&repo, &[tip, dangling]).expect("gate");
+        assert!(both.contains(&tip) && !both.contains(&dangling));
+    }
 }
