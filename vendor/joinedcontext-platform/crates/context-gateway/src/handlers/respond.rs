@@ -75,18 +75,5 @@ pub(crate) fn read_only(status: StatusCode) -> Response<Body> {
 
 /// A JSON body, serialized once.
 pub(crate) fn json_response(payload: &Value) -> Response<Body> {
-    match serde_json::to_vec(payload) {
-        Ok(bytes) => (
-            [(
-                axum::http::header::CONTENT_TYPE,
-                HeaderValue::from_static("application/json"),
-            )],
-            bytes,
-        )
-            .into_response(),
-        Err(error) => {
-            tracing::error!(%error, "the answer does not serialize");
-            ProblemDetails::internal().into_response()
-        }
-    }
+    typed_json_response(payload, "application/json")
 }
