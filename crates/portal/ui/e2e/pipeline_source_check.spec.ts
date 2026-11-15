@@ -150,7 +150,7 @@ test.describe("the whole-source check in the pipeline workbench (G-21)", () => {
       await stubApi(page, { status: 200, body: CLEAN }, []);
       const section = await openCheck(page);
       await section.getByRole("button", { name: "Check whole source" }).click();
-      await expect(section).toContainText("No record breaks a rule");
+      await expect(section).toContainText("no record breaks a rule");
       await expect(section.getByRole("region", { name: "By rule" })).toHaveCount(0);
       await shot(page, `source-check-empty-${width}`);
     });

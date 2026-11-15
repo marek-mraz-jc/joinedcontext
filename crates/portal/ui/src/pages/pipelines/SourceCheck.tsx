@@ -63,7 +63,8 @@ export function SourceCheck({ project, pipeline }: { project: string; pipeline?:
         </p>
       ) : check.isError ? (
         <Alert role="alert" tone="danger" title={t("pipelines.workbench.sourceCheck.failed")}>
-          {check.error instanceof Error ? check.error.message : t("pipelines.workbench.failed")}
+          <p>{check.error instanceof Error ? check.error.message : t("pipelines.workbench.failed")}</p>
+          <p>{t("pipelines.workbench.sourceCheck.retry")}</p>
         </Alert>
       ) : answer ? (
         <SourceCheckAnswer answer={answer} />
@@ -76,7 +77,7 @@ function SourceCheckAnswer({ answer }: { answer: Checked }): JSX.Element {
   const { t } = useTranslation();
   const shown = answer.rows.slice(0, ROWS_SHOWN);
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex max-w-3xl flex-col gap-3">
       <Alert
         role="status"
         tone={answer.records === 0 || !answer.complete ? "warning" : answer.rejected === 0 ? "success" : "warning"}
@@ -86,9 +87,11 @@ function SourceCheckAnswer({ answer }: { answer: Checked }): JSX.Element {
           rejected: answer.rejected,
         })}
       >
-        {answer.complete
-          ? t("pipelines.workbench.sourceCheck.complete")
-          : t("pipelines.workbench.sourceCheck.partial")}
+        {!answer.complete
+          ? t("pipelines.workbench.sourceCheck.partial")
+          : answer.rejected === 0
+            ? t("pipelines.workbench.sourceCheck.completeClean")
+            : t("pipelines.workbench.sourceCheck.complete")}
       </Alert>
       {answer.errors.length > 0 ? (
         <ul className="flex flex-col gap-1">
@@ -105,8 +108,6 @@ function SourceCheckAnswer({ answer }: { answer: Checked }): JSX.Element {
           headingId="source-check-groups"
           lead={t("pipelines.workbench.sourceCheck.groupsLead")}
         />
-      ) : answer.records > 0 ? (
-        <p className="text-caption text-fg-subtle">{t("pipelines.workbench.sourceCheck.noneRejected")}</p>
       ) : null}
       {shown.length > 0 ? (
         <details className="rounded border border-border">

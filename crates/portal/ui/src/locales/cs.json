@@ -3108,11 +3108,12 @@
         "counts": "{count, plural, one {# záznam} few {# záznamy} other {# záznamů}}: přijato {accepted, number}, odmítnuto {rejected, number}",
         "complete": "Přečetla se každá stránka zdroje; ostrý běh by dal na seznam odmítnutých tytéž záznamy.",
         "partial": "Kontrola nepřečetla celý zdroj, takže počty pokrývají jen přečtenou část. Důvod je níže.",
-        "noneRejected": "Žádný záznam neporušuje pravidlo: ostrý běh by zapsal všechny.",
         "rows": "{count, plural, one {# odmítnutý záznam} few {První # odmítnuté záznamy} other {Prvních # odmítnutých záznamů}}",
         "place": "Záznam {place}",
         "more": "{count, plural, one {Další # záznam je započítán} few {Další # záznamy jsou započítány} other {Dalších # záznamů je započítáno}} ve skupinách výše.",
-        "groupsLead": "Každý záznam, který kontrola odmítla, spočítaný podle porušeného pravidla a atributu, největší skupina první. Opravte nejprve největší skupinu."
+        "groupsLead": "Každý záznam, který kontrola odmítla, spočítaný podle porušeného pravidla a atributu, největší skupina první. Opravte nejprve největší skupinu.",
+        "completeClean": "Přečetla se každá stránka zdroje a žádný záznam neporušuje pravidlo: ostrý běh by zapsal všechny.",
+        "retry": "Spusťte ji znovu, až bude důvod výše vyřešen."
       }
     },
     "mapper": {

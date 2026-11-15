@@ -3108,11 +3108,12 @@
         "counts": "{count, plural, one {# Datensatz} other {# Datensätze}}: {accepted, number} angenommen, {rejected, number} abgelehnt",
         "complete": "Jede Seite der Quelle wurde gelesen; ein echter Lauf würde dieselben Datensätze auf die Liste der abgelehnten setzen.",
         "partial": "Die Prüfung hat nicht die ganze Quelle gelesen, die Zahlen decken nur den gelesenen Teil. Der Grund steht unten.",
-        "noneRejected": "Kein Datensatz verletzt eine Regel: ein echter Lauf würde alle schreiben.",
         "rows": "{count, plural, one {# abgelehnter Datensatz} other {Die ersten # abgelehnten Datensätze}}",
         "place": "Datensatz {place}",
         "more": "{count, plural, one {# weiterer Datensatz ist} other {# weitere Datensätze sind}} in den Gruppen oben gezählt.",
-        "groupsLead": "Jeder Datensatz, den die Prüfung abgelehnt hat, nach verletzter Regel und Attribut gezählt, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe."
+        "groupsLead": "Jeder Datensatz, den die Prüfung abgelehnt hat, nach verletzter Regel und Attribut gezählt, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe.",
+        "completeClean": "Jede Seite der Quelle wurde gelesen und kein Datensatz verletzt eine Regel: ein echter Lauf würde alle schreiben.",
+        "retry": "Führen Sie sie erneut aus, sobald der Grund oben behoben ist."
       }
     },
     "mapper": {

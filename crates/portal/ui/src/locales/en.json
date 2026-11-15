@@ -3099,7 +3099,7 @@
       },
       "sourceCheck": {
         "title": "Check whole source",
-        "hint": "Runs the saved pipeline over every page of its source and counts what a live run would accept and reject, by rule. Nothing is written. It stops at 60 s or 50 000 records. Example: a CKAN source of 12 pages, 2 300 records.",
+        "hint": "Runs the saved pipeline over every page of its source and counts what a live run would accept and reject, by rule. Nothing is written. It stops at 60 s or 50,000 records. Example: a CKAN source of 12 pages, 2,300 records.",
         "run": "Check whole source",
         "again": "Check again",
         "running": "Reading every page of the source; this takes up to 60 s.",
@@ -3108,11 +3108,12 @@
         "counts": "{count, plural, one {# record} other {# records}}: {accepted, number} accepted, {rejected, number} rejected",
         "complete": "Every page of the source was read; a live run would put the same records on the rejected list.",
         "partial": "The check did not read the whole source, so the counts cover only the part it read. The reason is below.",
-        "noneRejected": "No record breaks a rule: a live run would write them all.",
         "rows": "{count, plural, one {# rejected record} other {First # rejected records}}",
         "place": "Record {place}",
         "more": "{count, plural, one {# more record is} other {# more records are}} counted in the groups above.",
-        "groupsLead": "Every record the check rejected, counted by the rule it broke and the attribute, the largest first. Fix the largest group first."
+        "groupsLead": "Every record the check rejected, counted by the rule it broke and the attribute, the largest first. Fix the largest group first.",
+        "completeClean": "Every page of the source was read and no record breaks a rule: a live run would write them all.",
+        "retry": "Run it again once the reason above is resolved."
       }
     },
     "mapper": {
