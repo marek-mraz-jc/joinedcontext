@@ -8662,6 +8662,34 @@
       "noMatchHint": "Leeren Sie den Filter oder wählen Sie Jeder Status, um auch widerrufene und abgelaufene Konnektoren zu sehen.",
       "callsPerDay": "Aufrufe, letzte 24 Stunden",
       "denialsPerDay": "Abgelehnt, letzte 24 Stunden"
+    },
+    "addresses": {
+      "title": "Adressen",
+      "lead": "Wo Menschen und Programme jede Organisation erreichen, so wie diese Installation sie leitet. Der Betreiber legt sie in jc.toml fest; hier wird nichts eingegeben.",
+      "empty": "Keine Organisationsadressen aufgeführt",
+      "emptyHint": "Diese Installation führt keine Organisationen mit eigenen Hosts. Der Betreiber trägt jede unter [[organizations]] in jc.toml ein (zum Beispiel portal = \"portal.bbsk.sk\"); bis dahin nutzen alle die eigene Adresse dieses Portals.",
+      "id": "Organisations-ID: {id}",
+      "noId": "Organisations-ID: noch nicht gesetzt. Der Betreiber vergibt sie aus der verifizierten Domain der Organisation (aus bbsk.sk wird sk_bbsk).",
+      "kind": {
+        "portal": "Portal",
+        "shared": "Pfad auf gemeinsamem Host",
+        "host": "Eigener Host",
+        "portal-site": "Weiteres Portal",
+        "opendata": "Offene Daten",
+        "api": "APIs",
+        "mcp": "MCP-Server",
+        "sign-in": "Anmeldung"
+      },
+      "hint": {
+        "portal": "Eigener Portal-Host: hier arbeiten Menschen in der Organisation.",
+        "shared": "Ihr Pfad auf dem Host, den Organisationen teilen, z. B. https://smartcity.sk/sk_bbsk/; das erste Segment ist die Organisations-ID.",
+        "host": "Ein eigener, an die Organisation gebundener Host, z. B. data.bbsk.sk.",
+        "portal-site": "Ein weiteres öffentliches Portal, das der Betreiber aufgeführt hat, z. B. mobility.bbsk.sk.",
+        "opendata": "Ihr Katalog offener Daten, lesbar ohne Anmeldung.",
+        "api": "Wo Programme ihre Endpoints aufrufen, z. B. …/api/endpoint/air-quality.",
+        "mcp": "Jeder MCP-Server antwortet unter dieser Adresse, gefolgt von seinem Projekt und Namen, z. B. …/api/mcp/doprava/cestovne-poriadky.",
+        "sign-in": "Der Identitätsanbieter, bei dem sich ihre Menschen anmelden; Passwörter und zweite Faktoren werden nur dort eingegeben."
+      }
     }
   },
   "projectDelete": {

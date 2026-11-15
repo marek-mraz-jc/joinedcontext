@@ -116,6 +116,85 @@ fn runner_reaches(config: &mut Config, addr: std::net::SocketAddr) {
     }
 }
 
+/// Every address of each `[[organizations]]` row as the host registry routes it (API/15 §2,
+/// T-7013), for the Organization page's Addresses: its own hosts, the `[[hosts]]` bound to it
+/// and, while the base host is shared, its `/{id}/` path there (its name until an id is set).
+/// Where its people sign in the Portal adds from its own issuer.
+fn organization_addresses(cfg: &crate::config::Config) -> serde_json::Value {
+    let scheme = &cfg.scheme;
+    let at = |kind: &str, host: &str, path: &str| serde_json::json!({ "kind": kind, "url": format!("{scheme}://{host}{path}") });
+    let bare = |host: &str| host.split(':').next().unwrap_or(host).to_owned();
+    let base = bare(&cfg.base_host);
+    let base_bound = cfg.hosts.iter().any(|row| bare(&row.host) == base)
+        || cfg.organizations.iter().any(|org| {
+            org.hosts
+                .by_module()
+                .iter()
+                .any(|m| m.bound && bare(m.host) == base)
+        });
+    let orgs: Vec<serde_json::Value> = cfg
+        .organizations
+        .iter()
+        .map(|org| {
+            let h = &org.hosts;
+            // The router's first segment on a shared host: the id once set, else the name.
+            let segment = org.id.as_ref().map_or(org.name.as_str(), |id| id.as_str());
+            let root = if h.shared {
+                format!("/{segment}/")
+            } else {
+                "/".to_owned()
+            };
+            let opendata = match &h.opendata {
+                Some(host) => at("opendata", host, &root),
+                None => at(
+                    "opendata",
+                    &h.portal,
+                    &format!("{}/", crate::config::DATAROOM_ON_WORKING_HOST),
+                ),
+            };
+            // Without an API host of its own the gateway answers on the working host's paths.
+            let (api_host, api_root, api_path) = match &h.api {
+                Some(host) => (host.as_str(), root.clone(), root.clone()),
+                None => (
+                    h.portal.as_str(),
+                    "/".to_owned(),
+                    "/api/endpoint/".to_owned(),
+                ),
+            };
+            let mcp = match h.mcp.as_deref().filter(|m| Some(*m) != h.api.as_deref()) {
+                Some(host) => at("mcp", host, "/api/mcp/"),
+                None => at("mcp", api_host, &format!("{api_root}api/mcp/")),
+            };
+            let api = at("api", api_host, &api_path);
+            let mut addresses = vec![at("portal", &h.portal, "/"), opendata, api, mcp];
+            addresses.extend(h.portals.iter().map(|p| at("portal-site", p, "/")));
+            addresses.extend(
+                cfg.hosts
+                    .iter()
+                    .filter(|row| row.organization == org.name)
+                    .map(|row| {
+                        let root = row.root.as_deref().unwrap_or("/");
+                        let root = if root.ends_with('/') {
+                            root.to_owned()
+                        } else {
+                            format!("{root}/")
+                        };
+                        at("host", &row.host, &root)
+                    }),
+            );
+            if !base_bound {
+                addresses.push(at("shared", &cfg.base_host, &format!("/{segment}/")));
+            }
+            serde_json::json!({
+                "organization": org.name,
+                "organizationId": org.id.as_ref().map(|id| id.as_str()),
+                "addresses": addresses,
+            })
+        })
+        .collect();
+    serde_json::Value::Array(orgs)
+}
+
 /// The Portal's settings for the `[[organizations]]` of `cfg`, each one's Portal host and own
 /// catalogue: `JC_PORTAL_ORGANIZATION_HOSTS` and, when dataroom runs here,
 /// `JC_PORTAL_ORGANIZATION_CATALOGUES` for every Organization that has a Portal token, called on
@@ -136,6 +215,10 @@ pub(crate) fn organization_vars(
         .map(|org| format!("{}={scheme}://{}", org.name, org.hosts.portal))
         .collect();
     out.insert("JC_PORTAL_ORGANIZATION_HOSTS".to_owned(), hosts.join(","));
+    out.insert(
+        "JC_PORTAL_ORGANIZATION_ADDRESSES".to_owned(),
+        organization_addresses(cfg).to_string(),
+    );
     // ODP-08, ODP-09: the hosts a Portal manifest may take, and the deployment's cap.
     let portal_hosts: Vec<String> = cfg
         .organizations
@@ -412,6 +495,84 @@ mod tests {
             std::path::PathBuf::from("/run/alpha-token")
         );
         assert!(!vars["JC_PORTAL_ORGANIZATION_CATALOGUES"].contains("beta"));
+        // T-7013: every address the Portal lists under Addresses, read back by its own parser.
+        let addresses = joinedcontext_portal::organization_host::parse_addresses(
+            &vars["JC_PORTAL_ORGANIZATION_ADDRESSES"],
+        )
+        .expect("the Portal reads the addresses");
+        let alpha: Vec<String> = addresses[0]
+            .addresses
+            .iter()
+            .map(|a| a.url.to_string())
+            .collect();
+        let s = &cfg.scheme;
+        assert_eq!(
+            alpha,
+            [
+                format!("{s}://portal.alpha.test/"),
+                format!("{s}://opendata.alpha.test/"),
+                format!("{s}://api.alpha.test/"),
+                format!("{s}://mcp.alpha.test/api/mcp/"),
+                format!("{s}://{}/alpha/", cfg.base_host),
+            ]
+        );
+        assert_eq!(addresses[1].organization, "beta");
+        // With an id the shared path is the id (EP-186).
+        let mut with_id = cfg.clone();
+        with_id.organizations[0].id =
+            Some(jc_core::names::OrganizationId::parse("test_alpha").expect("an id"));
+        let parsed = joinedcontext_portal::organization_host::parse_addresses(
+            &organization_addresses(&with_id).to_string(),
+        )
+        .expect("parses");
+        assert_eq!(parsed[0].organization_id.as_deref(), Some("test_alpha"));
+        assert!(
+            parsed[0].addresses[4].url.path() == "/test_alpha/",
+            "{:?}",
+            parsed[0].addresses
+        );
+        // `host = "auto"`: the shared open data and API hosts carry the id as the first segment;
+        // with the working host alone, the open data and the gateway are its paths.
+        let urls = |cfg: &crate::config::Config, i: usize| -> Vec<String> {
+            joinedcontext_portal::organization_host::parse_addresses(
+                &organization_addresses(cfg).to_string(),
+            )
+            .expect("parses")[i]
+                .addresses
+                .iter()
+                .take(4)
+                .map(|a| a.url.to_string())
+                .collect()
+        };
+        with_id.organizations[0].hosts = crate::config::OrganizationHosts {
+            portal: "alpha.base.test".into(),
+            opendata: Some("opendata.base.test".into()),
+            api: Some("api.base.test".into()),
+            shared: true,
+            ..crate::config::OrganizationHosts::default()
+        };
+        with_id.organizations[1].hosts = crate::config::OrganizationHosts {
+            portal: "portal.beta.test".into(),
+            ..crate::config::OrganizationHosts::default()
+        };
+        assert_eq!(
+            urls(&with_id, 0),
+            [
+                format!("{s}://alpha.base.test/"),
+                format!("{s}://opendata.base.test/test_alpha/"),
+                format!("{s}://api.base.test/test_alpha/"),
+                format!("{s}://api.base.test/test_alpha/api/mcp/"),
+            ]
+        );
+        assert_eq!(
+            urls(&with_id, 1),
+            [
+                format!("{s}://portal.beta.test/"),
+                format!("{s}://portal.beta.test/data/"),
+                format!("{s}://portal.beta.test/api/endpoint/"),
+                format!("{s}://portal.beta.test/api/mcp/"),
+            ]
+        );
         // Without dataroom here, the hosts alone; without Organizations, nothing.
         let mut portal_only = crate::config::Config::merge(cli("portal"), file).expect("config");
         portal_only.organizations[0].portal_token_file = Some("/run/alpha-token".into());

@@ -8662,6 +8662,34 @@
       "noMatchHint": "Clear the filter or pick Every state to see revoked and expired connectors.",
       "callsPerDay": "Calls, last 24 hours",
       "denialsPerDay": "Refused, last 24 hours"
+    },
+    "addresses": {
+      "title": "Addresses",
+      "lead": "Where people and programs reach each Organization, as this deployment routes it. The operator sets these in jc.toml; nothing here is typed in.",
+      "empty": "No Organization addresses are listed",
+      "emptyHint": "This deployment lists no Organizations of its own hosts. The operator adds each under [[organizations]] in jc.toml (for example portal = \"portal.bbsk.sk\"); until then everyone uses this Portal's own address.",
+      "id": "Organization id: {id}",
+      "noId": "Organization id: not set yet. The operator mints it from the Organization's verified domain (bbsk.sk gives sk_bbsk).",
+      "kind": {
+        "portal": "Portal",
+        "shared": "Shared host path",
+        "host": "Own host",
+        "portal-site": "Further portal",
+        "opendata": "Open data",
+        "api": "APIs",
+        "mcp": "MCP servers",
+        "sign-in": "Sign-in"
+      },
+      "hint": {
+        "portal": "Its own Portal host: people open this to work in the Organization.",
+        "shared": "Its path on the host Organizations share, e.g. https://smartcity.sk/sk_bbsk/; the Organization id is the first segment.",
+        "host": "A host of its own bound to the Organization, e.g. data.bbsk.sk.",
+        "portal-site": "A further public portal the operator listed, e.g. mobility.bbsk.sk.",
+        "opendata": "Its open data catalogue, readable without signing in.",
+        "api": "Where programs call its Endpoints, e.g. …/api/endpoint/air-quality.",
+        "mcp": "Each MCP server answers at this address followed by its project and its name, e.g. …/api/mcp/doprava/cestovne-poriadky.",
+        "sign-in": "The identity provider its people sign in at; passwords and second factors are typed only there."
+      }
     }
   },
   "projectDelete": {

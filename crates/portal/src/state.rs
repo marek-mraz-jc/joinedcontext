@@ -54,6 +54,9 @@ pub struct AppState {
     /// The preferences tier (UI-09). `None` without a database: the preferences routes answer
     /// 503 and nothing else notices.
     pub db: Option<sqlx::PgPool>,
+    /// What the Organization id mint asks for the `_joinedcontext.{domain}` TXT record (T-7012).
+    /// `None`: the pod's own resolver, built for each mint; a test sets canned records.
+    pub txt_records: Option<Arc<dyn crate::domain_verification::TxtRecords>>,
     /// The people of the realm, through the admin client (PF-90). `None` without that client:
     /// the people routes then answer 503.
     pub people: Option<Arc<crate::people::People>>,
@@ -234,6 +237,7 @@ impl AppState {
             syncer: None,
             sync: None,
             db: None,
+            txt_records: None,
             agents: Arc::new(AgentStore::new(None)),
             agent_events: Arc::new(AgentEventHub::new()),
             drafts,
@@ -318,6 +322,15 @@ impl AppState {
 
     pub fn with_syncer(mut self, syncer: Arc<Syncer>) -> Self {
         self.syncer = Some(syncer);
+        self
+    }
+
+    /// The TXT records the Organization id mint reads, as a test gives them (T-7012).
+    pub fn with_txt_records(
+        mut self,
+        records: Arc<dyn crate::domain_verification::TxtRecords>,
+    ) -> Self {
+        self.txt_records = Some(records);
         self
     }
 

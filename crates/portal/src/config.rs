@@ -59,6 +59,11 @@ pub struct Config {
     /// `[[organizations]]`): every Endpoint of that Organization's projects publishes there,
     /// into the CKAN organisation of the Organization's name.
     pub organization_catalogues: Vec<crate::organization_host::OrganizationCatalogue>,
+    /// Every address of each Organization (`JC_PORTAL_ORGANIZATION_ADDRESSES`, a JSON array of
+    /// `{organization, organizationId, addresses: [{kind, url}]}`; jc fills it from its
+    /// `[[organizations]]` and `[[hosts]]`, API/15 §2): what the Organization page lists under
+    /// Addresses (T-7013). Empty, the page says the deployment lists none.
+    pub organization_addresses: Vec<crate::organization_host::OrganizationAddresses>,
     /// The realm humans sign in against: `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_ID` and one proof of
     /// the client, `JC_OIDC_CLIENT_SECRET` (a secret) or `JC_OIDC_CLIENT_ASSERTION_FILE` (the
     /// pod's projected ServiceAccount token, PF-47), all together or none, plus the optional
@@ -1980,6 +1985,14 @@ impl Config {
             reason,
         })?;
 
+        let organization_addresses = crate::organization_host::parse_addresses(
+            &lookup("JC_PORTAL_ORGANIZATION_ADDRESSES").unwrap_or_default(),
+        )
+        .map_err(|reason| ConfigError::Invalid {
+            var: "JC_PORTAL_ORGANIZATION_ADDRESSES",
+            reason,
+        })?;
+
         let organization_catalogues = crate::organization_host::parse_catalogues(
             &lookup("JC_PORTAL_ORGANIZATION_CATALOGUES").unwrap_or_default(),
         )
@@ -2202,6 +2215,7 @@ impl Config {
             organization_hosts,
             portal_settings,
             organization_catalogues,
+            organization_addresses,
             oidc,
             trust_edge_token,
             connector_clients,
@@ -2291,6 +2305,7 @@ impl Config {
             organization_hosts: Vec::new(),
             portal_settings: crate::portals::PortalSettings::default(),
             organization_catalogues: Vec::new(),
+            organization_addresses: Vec::new(),
             oidc: None,
             trust_edge_token: false,
             connector_clients: connector_clients(None),

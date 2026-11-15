@@ -136,6 +136,17 @@
           "test": "a viewer is told who can see the members, and the list is never fetched for them"
         },
         "assistant": "jc_resource_propose"
+      },
+      "mint-id": {
+        "live": {
+          "spec": "organization-ids.spec.ts",
+          "test": "a person of no operators' group is refused the Organization id challenge and the mint"
+        },
+        "personOnly": "an Organization id is minted once and never reused (PF-78): only the installation's operator decides it, after the domain's TXT proof (EP-186, AG-11)",
+        "routes": [
+          "POST /api/v1/organization-ids/challenge",
+          "POST /api/v1/organization-ids"
+        ]
       }
     },
     "people": {

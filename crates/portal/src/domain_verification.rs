@@ -318,6 +318,24 @@ impl Lookup for NetLookup {
     }
 }
 
+/// The TXT half of [`Lookup`] as an object, so [`crate::state::AppState`] can hold one: the
+/// Organization id mint asks it (T-7012), a test hands it canned records.
+pub trait TxtRecords: Send + Sync {
+    fn txt<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<String>, Unanswered>>;
+}
+
+impl TxtRecords for NetLookup {
+    fn txt<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<String>, Unanswered>> {
+        Box::pin(Lookup::txt(self, name))
+    }
+}
+
 /// What the gateway decides a write on: one Organization, its domain and where it stands
 /// (`GET /internal/domain-verifications`, Architecture/03 §3). The challenge, the record and
 /// the reason stay with the Portal.
