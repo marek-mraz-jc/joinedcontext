@@ -343,6 +343,7 @@
       "older": "Show older changes",
       "empty": "No change has been merged or rejected yet.",
       "emptyHint": "A change lands here with who decided it once it is approved or rejected on the Open tab.",
+      "noneMatchHint": "Clear the filters, or widen the dates, to see more of the decided changes.",
       "noneOnPage": "None of these changes is one you may read. Older ones may be.",
       "restore": "Restore",
       "restoreOf": "Restore {name}",

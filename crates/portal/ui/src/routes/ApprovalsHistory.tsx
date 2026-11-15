@@ -177,7 +177,7 @@ export function ApprovalsHistory({
           <Button
             size="sm"
             variant="ghost"
-            className="mt-1"
+            className="mt-1 touch-size"
             aria-expanded={opened === change.metadata.name}
             onClick={() => setOpened(opened === change.metadata.name ? null : change.metadata.name)}
           >
@@ -369,7 +369,13 @@ export function ApprovalsHistory({
                   ? t("approvals.history.noneOnPage")
                   : t("approvals.history.empty")
             }
-            description={filtered || history.hasNextPage ? undefined : t("approvals.history.emptyHint")}
+            description={
+              filtered
+                ? t("approvals.history.noneMatchHint")
+                : history.hasNextPage
+                  ? undefined
+                  : t("approvals.history.emptyHint")
+            }
           />
         }
       />

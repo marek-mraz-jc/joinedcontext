@@ -343,6 +343,7 @@
       "older": "Ältere Änderungen zeigen",
       "empty": "Noch keine Änderung wurde zusammengeführt oder abgelehnt.",
       "emptyHint": "Eine Änderung erscheint hier mit der Person, die entschieden hat, sobald sie im Reiter Offen genehmigt oder abgelehnt wurde.",
+      "noneMatchHint": "Setzen Sie die Filter zurück oder erweitern Sie den Zeitraum, um mehr entschiedene Änderungen zu sehen.",
       "noneOnPage": "Keine dieser Änderungen dürfen Sie lesen. Ältere vielleicht schon.",
       "restore": "Wiederherstellen",
       "restoreOf": "{name} wiederherstellen",

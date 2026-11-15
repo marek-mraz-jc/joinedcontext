@@ -343,6 +343,7 @@
       "older": "Zobraziť staršie zmeny",
       "empty": "Zatiaľ nebola zlúčená ani zamietnutá žiadna zmena.",
       "emptyHint": "Zmena sa tu objaví aj s tým, kto o nej rozhodol, keď ju na karte Otvorené schválite alebo zamietnete.",
+      "noneMatchHint": "Zrušte filtre alebo rozšírte obdobie, aby ste videli viac rozhodnutých zmien.",
       "noneOnPage": "Žiadnu z týchto zmien nemáte právo čítať. Staršie možno áno.",
       "restore": "Obnoviť",
       "restoreOf": "Obnoviť {name}",

@@ -20,7 +20,19 @@ const MODEL = { name: "air-quality", level: "project", project: "helsinki", vers
 const JANA = { id: "jana-id", email: "jana@hel.fi", firstName: "Jana", lastName: "K", enabled: true, emailVerified: true };
 /** An editor of the project's Policies too, so the page offers New Policy. */
 const EDITOR = { role: "editor", binding: "editors", scope: "project:helsinki", rule: { kinds: ["Policy"], verbs: ["read", "propose"] } };
-const POLICY = { apiVersion: API, kind: "Policy", metadata: { name: "air-read", namespace: "helsinki" }, spec: { space: "air", grants: [] }, status: { phase: "Ready" } };
+const POLICY = {
+  apiVersion: API,
+  kind: "Policy",
+  metadata: { name: "air-read", namespace: "helsinki" },
+  spec: {
+    contextSpaceRef: { kind: "ContextSpace", name: "air" },
+    assigner: "did:web:hel.fi",
+    assignee: { kind: "person", id: "jana@hel.fi" },
+    operations: ["read"],
+    information: [{ entities: [{ type: "AirQualityObserved" }] }],
+  },
+  status: { phase: "Live" },
+};
 const ACCOUNT = { apiVersion: API, kind: "ServiceAccount", metadata: { name: "etl", namespace: "helsinki" }, spec: {} };
 const REACHED = {
   subject: { serviceAccount: "helsinki-etl", groups: [], roles: [] },
