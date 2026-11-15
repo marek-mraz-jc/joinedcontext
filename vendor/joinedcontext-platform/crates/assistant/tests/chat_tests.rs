@@ -2716,6 +2716,34 @@ async fn internal_chat_withholds_personal_slots_from_model_and_transcript() {
         let output = output.as_deref().unwrap_or_default();
         assert!(!output.contains("jana@example.org"), "{output}");
     }
+    // The broker serves the model as the person reads it: the next person's answer reads its own
+    // model, never the one kept from the first person's read.
+    script(
+        &w.proxy,
+        vec![
+            completion(
+                tool_call("c2", "query_entities", json!({"endpoint": "interne"})),
+                500,
+            ),
+            completion(
+                json!({"role": "assistant", "content": "Otvorené sú 3 [1]."}),
+                600,
+            ),
+        ],
+    )
+    .await;
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask_in_portal(
+            json!({"message": "Kto nahlásil otvorené záznamy?"}),
+            Some(PORTAL_TOKEN),
+            Some("jana"),
+            Some(PERSON_TOKEN),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{events:?}");
+    assert_eq!(tool_calls_of(&w.gateway, "describe_schema").await.len(), 2);
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 

@@ -56,6 +56,72 @@ output:
     )
 }
 
+/// One batch whose ack outcome lands in `outcome`, then the end of input.
+struct OneBatch {
+    sent: bool,
+    outcome: std::sync::Arc<std::sync::Mutex<Option<Option<ekiben_core::BatchError>>>>,
+}
+
+#[async_trait::async_trait]
+impl ekiben_core::Input for OneBatch {
+    fn input_type(&self) -> &'static str {
+        "one_batch"
+    }
+    async fn read_batch(
+        &mut self,
+        _ctx: &ekiben_core::StreamContext,
+    ) -> Result<(ekiben_core::Batch, ekiben_core::AckResponder), ekiben_core::CoreError> {
+        if std::mem::replace(&mut self.sent, true) {
+            return Err(ekiben_core::CoreError::EndOfInput);
+        }
+        let outcome = self.outcome.clone();
+        let ack = ekiben_core::AckResponder::from_fn(move |res| {
+            *outcome.lock().unwrap() = Some(res);
+        });
+        Ok((vec![ekiben_core::Part::new("x")], ack))
+    }
+}
+
+struct Panics;
+
+#[async_trait::async_trait]
+impl ekiben_core::Processor for Panics {
+    fn processor_type(&self) -> &'static str {
+        "panics"
+    }
+    async fn process_batch(
+        &self,
+        _ctx: &ekiben_core::ProcContext,
+        _batch: ekiben_core::Batch,
+    ) -> Result<Vec<ekiben_core::Batch>, ekiben_core::CoreError> {
+        panic!("processor bug");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_batch_whose_pipeline_worker_dies_is_nacked_not_acked() {
+    let outcome = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let reg = full_registry();
+    let shared = outcome.clone();
+    reg.register_input("one_batch", move |_, _| {
+        Ok(Box::new(OneBatch {
+            sent: false,
+            outcome: shared.clone(),
+        }))
+    });
+    reg.register_processor("panics", |_, _| Ok(std::sync::Arc::new(Panics)));
+    let conf = StreamConfig::from_yaml_or_json(
+        "input:\n  one_batch: {}\npipeline:\n  processors:\n    - panics: {}\noutput:\n  drop: {}\n",
+    )
+    .unwrap();
+    let summary = run_stream_once("job", conf, reg, ResourceManager::new(), None, false)
+        .await
+        .unwrap();
+    assert!(!summary.success, "{summary:?}");
+    let got = outcome.lock().unwrap().take();
+    assert!(matches!(got, Some(Some(_))), "the batch was acked: {got:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn messages_out_counts_the_lines_written_after_archive_and_unarchive() {
     let procs = "    - archive:\n        format: json_array\n    - unarchive:\n        format: json_array\n";

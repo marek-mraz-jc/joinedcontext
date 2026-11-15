@@ -572,6 +572,15 @@ async fn answer_ckan_action(
                 for (k, v) in patch_obj {
                     target_obj.insert(k.clone(), v.clone());
                 }
+                // `visibility` outranks `private` in `dataset_from_ckan`: a patch that sets only
+                // `private` drops the stored `visibility` it contradicts.
+                if !patch_obj.contains_key("visibility") {
+                    if let Some(private) = patch_obj.get("private").and_then(Value::as_bool) {
+                        if private == (existing.visibility == Visibility::Public) {
+                            target_obj.remove("visibility");
+                        }
+                    }
+                }
             }
             let op_ctx = state.op_context();
             match dataroom_core::ops::execute_operation(
@@ -628,7 +637,8 @@ async fn answer_ckan_action(
                 .ok()
                 .flatten();
             let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            let dec = state.authorizer.check(&ctx, Action::Delete, &target);
+            // A purge cannot be undone: it needs Admin, while Delete (a withdrawal) is an editor's.
+            let dec = state.authorizer.check(&ctx, Action::Admin, &target);
             if !dec.allowed {
                 return ckan_err(&base, &action, decision_error(dec));
             }
@@ -1261,18 +1271,17 @@ async fn answer_ckan_action(
             }
             if let Some(title) = payload.get("title").and_then(Value::as_str) {
                 // G2: an organization's title comes from the CkanInstance title, and one instance
-                // never renames another's organization.
-                let caller_instance = payload
-                    .get("instance_name")
-                    .and_then(Value::as_str)
-                    .or(ctx.subject.client_id.as_deref());
+                // never renames another's organization. The instance is the token's client, never
+                // a name the payload carries; a caller with no client renames no instance's title.
+                let caller_instance = ctx.subject.client_id.as_deref();
                 let can_rename = match (&existing.declared_by_instance, caller_instance) {
                     (Some(owner_inst), Some(caller_inst)) => owner_inst == caller_inst,
+                    (Some(_), None) => false,
                     (None, Some(caller_inst)) => {
                         existing.declared_by_instance = Some(caller_inst.to_owned());
                         true
                     }
-                    _ => true,
+                    (None, None) => true,
                 };
                 if can_rename {
                     existing

@@ -625,7 +625,10 @@ pub fn parse_dsn(
 }
 
 /// `sqlOpenWithReworks`: judges the target host by the organization's outbound rule, opens a
-/// pool with the settings' limits and, with `init_verify_conn`, pings it.
+/// pool with the settings' limits and, with `init_verify_conn`, pings it. The pool connects to
+/// the address the rule judged, so a name that resolves elsewhere later is never reached; only
+/// a TLS mode that verifies the certificate's host name keeps the name, which that check binds.
+/// A reconnect (a lost connection closes the pool) opens and judges again.
 pub async fn open(
     target: &Target,
     settings: &ConnSettings,
@@ -648,16 +651,28 @@ pub async fn open(
             opts: o,
             connect_timeout,
         }) => {
-            ekiben_io_http::outbound::resolve_host_checked(o.get_host(), o.get_port(), org).await?;
+            let checked =
+                ekiben_io_http::outbound::resolve_host_checked(o.get_host(), o.get_port(), org)
+                    .await?;
             let mut pool = pool!(PgPoolOptions);
             if let Some(t) = connect_timeout {
                 pool = pool.acquire_timeout(*t);
             }
-            Db::Postgres(pool.connect_lazy_with(o.clone()))
+            let o = match (o.get_ssl_mode(), checked.first()) {
+                (PgSslMode::VerifyFull, _) | (_, None) => o.clone(),
+                (_, Some(addr)) => o.clone().host(&addr.ip().to_string()),
+            };
+            Db::Postgres(pool.connect_lazy_with(o))
         }
         Target::MySql(o) => {
-            ekiben_io_http::outbound::resolve_host_checked(o.get_host(), o.get_port(), org).await?;
-            Db::MySql(pool!(MySqlPoolOptions).connect_lazy_with(o.clone()))
+            let checked =
+                ekiben_io_http::outbound::resolve_host_checked(o.get_host(), o.get_port(), org)
+                    .await?;
+            let o = match (o.get_ssl_mode(), checked.first()) {
+                (MySqlSslMode::VerifyIdentity, _) | (_, None) => o.clone(),
+                (_, Some(addr)) => o.clone().host(&addr.ip().to_string()),
+            };
+            Db::MySql(pool!(MySqlPoolOptions).connect_lazy_with(o))
         }
         Target::Sqlite(t) => Db::Sqlite(crate::sqlite::SqliteDb::open(t).map_err(|e| {
             CoreError::other(format!("could not establish connection to database: {e}"))
@@ -705,6 +720,37 @@ pub fn is_bad_conn(err: &crate::sqlx::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_pool_connects_to_the_address_the_outbound_rule_judged() {
+        let quotas = ekiben_core::OrgQuotas {
+            allow_private_ips: true,
+            ..Default::default()
+        };
+        let org = OrgContext::new(ekiben_core::OrgId::new("o"), quotas);
+        let settings = ConnSettings::from_config(&serde_json::Map::new(), None).unwrap();
+        for (driver, dsn, pinned) in [
+            (Driver::Postgres, "host=localhost user=u dbname=d", true),
+            (
+                Driver::Postgres,
+                "host=localhost user=u dbname=d sslmode=verify-full",
+                false,
+            ),
+            (Driver::MySql, "u@tcp(localhost:3306)/db", true),
+            (Driver::MySql, "u@tcp(localhost:3306)/db?tls=true", false),
+        ] {
+            let (target, _) = parse_dsn(driver, dsn, None).unwrap();
+            let db = open(&target, &settings, &org).await.unwrap();
+            let host = match &db {
+                Db::Postgres(p) => p.connect_options().get_host().to_string(),
+                Db::MySql(p) => p.connect_options().get_host().to_string(),
+                Db::Sqlite(_) => unreachable!(),
+            };
+            let ip = host.parse::<std::net::IpAddr>();
+            assert_eq!(ip.is_ok(), pinned, "{dsn}: {host}");
+            assert!(ip.map_or(true, |ip| ip.is_loopback()), "{dsn}: {host}");
+        }
+    }
 
     #[test]
     fn driver_lint_names_the_driver() {

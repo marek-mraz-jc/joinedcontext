@@ -383,7 +383,8 @@ async fn broker_endpoint_get(
         .create_user(UserRepresentation {
             id: uuid::Uuid::now_v7().to_string(),
             realm_id: realm.id.clone(),
-            org_id: idp.org_id.clone().or_else(|| auth_session.org_id.clone()),
+            // Only the upstream IdP's own Organization: the client signed into grants no membership.
+            org_id: idp.org_id.clone(),
             username: email.to_ascii_lowercase(),
             email: Some(email.to_ascii_lowercase()),
             first_name: claims.given_name.clone(),

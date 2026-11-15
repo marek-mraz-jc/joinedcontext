@@ -419,7 +419,7 @@ async fn network_connect(
         #[cfg(any(feature = "use-rustls-no-provider", feature = "use-native-tls"))]
         Transport::Tls(tls_config) => {
             let socket =
-                tls::tls_connect(&options.broker_addr, options.port, &tls_config, tcp_stream)
+                tls::tls_connect(options.tls_server_name(), options.port, &tls_config, tcp_stream)
                     .await?;
             Network::new(
                 socket,

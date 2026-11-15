@@ -83,6 +83,7 @@ pub(crate) async fn collection(
         aliases: &options.aliases,
         context: t.context,
         version,
+        nested: std::cell::Cell::new(0),
     };
     let none = Frame::Entities {
         docs: Vec::new(),
@@ -145,7 +146,14 @@ struct Cx<'a> {
     aliases: &'a [(String, Literal)],
     context: Map<String, Value>,
     version: ODataVersion,
+    /// How many `concat` this transformation runs inside: each keeps its input alive while
+    /// its sequences run over a copy.
+    nested: std::cell::Cell<usize>,
 }
+
+/// The `concat` that may run inside one another: each holds one copy of what the scan read
+/// while its sequences run, so a request holds at most this many copies beside the scan.
+const CONCAT_NESTING: usize = 2;
 
 /// The instances between two transformations.
 #[derive(Clone)]
@@ -223,6 +231,16 @@ fn run(
 fn one(step: &Transformation, frame: Frame, cx: &Cx<'_>) -> Result<Frame, ODataErrorResponse> {
     let step = match (step, &frame) {
         (Transformation::Concat(branches), _) => {
+            let nested = cx.nested.get().saturating_add(1);
+            if nested > CONCAT_NESTING {
+                return Err(ODataErrorResponse::new(
+                    StatusCode::BAD_REQUEST,
+                    "TooComplexQuery",
+                    &format!("concat nests at most {CONCAT_NESTING} deep"),
+                )
+                .with_version(cx.version));
+            }
+            cx.nested.set(nested);
             let computes = frame.computes().to_vec();
             // the branches together hold at most what one scan may read: a chain of `concat`
             // doubles the instances at each step and is refused before it outgrows that (T-4017)
@@ -236,6 +254,7 @@ fn one(step: &Transformation, frame: Frame, cx: &Cx<'_>) -> Result<Frame, ODataE
                 }
                 outs.push(out);
             }
+            cx.nested.set(nested.saturating_sub(1));
             return Ok(joined(outs, computes));
         }
         (Transformation::Compute(items), _) => return computed_into(items, frame, cx),

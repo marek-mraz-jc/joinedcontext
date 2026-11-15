@@ -18,8 +18,9 @@ use tower::ServiceExt;
 const CTX: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 const DEFAULT: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
 
-/// Each 5.6.11 question: its types, Attributes and whether a body came.
-type Asked = Arc<Mutex<Vec<(Vec<String>, Vec<String>, bool)>>>;
+/// Each 5.6.11 question: its types, Attributes, whether a body came and
+/// whether a stored evolution came.
+type Asked = Arc<Mutex<Vec<(Vec<String>, Vec<String>, bool, bool)>>>;
 
 struct Recorder(Asked);
 
@@ -33,6 +34,7 @@ impl PolicyEngine for Recorder {
                 op.types.to_vec(),
                 op.attrs.to_vec(),
                 op.body.is_some(),
+                op.stored.is_some(),
             ));
         }
         Box::pin(std::future::ready(Decision::Allow))
@@ -67,7 +69,47 @@ async fn the_engine_sees_the_types_attributes_and_body_of_a_temporal_upsert() {
         vec![(
             vec![format!("{DEFAULT}Vehicle")],
             vec![format!("{DEFAULT}speed")],
-            true
+            true,
+            false
         )]
+    );
+}
+
+async fn upsert(st: &AppState, ty: &str) -> StatusCode {
+    let body = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": ty, "@context": CTX,
+                      "speed": [{"type": "Property", "value": 1,
+                                 "observedAt": "2026-01-01T00:00:00Z"}]})
+    .to_string();
+    antares_api::router(st.clone())
+        .oneshot(
+            Request::post("/ngsi-ld/v1/temporal/entities")
+                .header("Content-Type", "application/ld+json")
+                .header("Content-Length", body.len())
+                .body(Body::from(body))
+                .expect("request"),
+        )
+        .await
+        .expect("response")
+        .status()
+}
+
+/// An upsert adds to the stored evolution, so the engine judges it as Batch
+/// Upsert is judged: with the stored evolution and its types beside the
+/// body's, never the body's types alone.
+#[tokio::test]
+async fn the_engine_sees_the_stored_evolution_a_temporal_upsert_adds_to() {
+    let asked: Asked = Arc::new(Mutex::new(Vec::new()));
+    let st = AppState::new("t".into()).with_policy(Arc::new(Recorder(asked.clone())));
+    assert_eq!(upsert(&st, "Vehicle").await, StatusCode::CREATED);
+    assert_eq!(upsert(&st, "Car").await, StatusCode::NO_CONTENT);
+    let asked = asked.lock().expect("lock").clone();
+    assert_eq!(
+        asked.get(1),
+        Some(&(
+            vec![format!("{DEFAULT}Vehicle"), format!("{DEFAULT}Car")],
+            vec![format!("{DEFAULT}speed")],
+            true,
+            true
+        ))
     );
 }

@@ -208,9 +208,14 @@ async fn contract_folders(store: &dyn DaiyaStore) {
         .unwrap_err();
     assert!(looped.to_string().contains("cyclic"), "{looped}");
 
-    // Deleting a folder deletes its dashboards; deleting twice answers false.
+    // Deleting a folder deletes its dashboards with their versions and public records;
+    // deleting twice answers false.
     store
         .upsert_dashboard(dashboard(org, "in-folder", Some("f-a")), "", true)
+        .await
+        .unwrap();
+    store
+        .upsert_public_dashboard(public_dashboard(org, "pd-in", "in-folder", "tok-in"))
         .await
         .unwrap();
     store
@@ -225,6 +230,20 @@ async fn contract_folders(store: &dyn DaiyaStore) {
             .await
             .unwrap()
             .is_none()
+    );
+    assert!(
+        store
+            .get_public_dashboard(org, "pd-in")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .list_dashboard_versions(org, "in-folder")
+            .await
+            .unwrap()
+            .is_empty()
     );
     assert!(
         store

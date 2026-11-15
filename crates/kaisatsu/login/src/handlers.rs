@@ -368,7 +368,9 @@ async fn build_policy_context(
         .await?
         .unwrap_or_default();
     let consents = store.list_consents(&realm.id, &user.id).await?;
-    let has_consent = consents.iter().any(|c| c.client_id == client.client_id);
+    let has_consent = consents
+        .iter()
+        .any(|c| c.covers(&client.client_id, &auth_session.scope));
 
     let mut pending = user.required_actions.clone();
     if creds
@@ -671,12 +673,8 @@ async fn render_state_page_with(
             let address = user.and_then(|u| u.email).unwrap_or_default();
             tpl.instructions
                 .push(bundle.format("emailVerifyInstruction1", &[&address]));
-            let resp = render_with_security_headers(
-                &page::Page { alert, ..tpl },
-                None,
-                Some(&auth_session.redirect_uri),
-            );
-            return Ok(resp);
+            // Once the mail's link confirmed the address, this button continues the sign-in.
+            form.submit_label = bundle.get("proceedWithAction").to_owned();
         }
         LoginState::Passkey { .. }
         | LoginState::SecondFactorWebAuthn { .. }

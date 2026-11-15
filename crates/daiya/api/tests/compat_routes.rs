@@ -225,6 +225,37 @@ async fn datasource_crud_answers_as_grafana() {
 
 /// Grafana `PUT /api/datasources/uid/:uid` loads the datasource first and answers 404
 /// (`ErrDataSourceNotFound`) for an unknown uid; it never creates one.
+/// An Organization header names the Organization a request acts in: one this server does not
+/// know is 404, never the caller's first Organization.
+#[tokio::test]
+async fn an_organization_header_naming_no_organization_is_404() {
+    let w = world();
+    let body =
+        json!({ "uid": "p", "name": "Prom p", "type": "prometheus", "url": "http://127.0.0.1:9" });
+    for (header, value) in [
+        ("x-grafana-org-id", "99"),
+        ("x-grafana-org-id", "main"),
+        ("x-daiya-org-id", "not-a-uuid"),
+    ] {
+        let req = http::Request::builder()
+            .method("POST")
+            .uri("/api/datasources")
+            .header("authorization", "Bearer admin")
+            .header("content-type", "application/json")
+            .header(header, value)
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        let (st, answer) = w.send(req).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{header}: {value}: {answer}");
+    }
+    let (_, list) = w.call("GET", "/api/datasources", Some("admin"), None).await;
+    assert_eq!(
+        list,
+        json!([]),
+        "nothing was saved in the caller's Organization"
+    );
+}
+
 #[tokio::test]
 async fn updating_an_unknown_datasource_is_404_and_creates_nothing() {
     let w = world();
