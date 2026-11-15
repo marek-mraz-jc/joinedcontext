@@ -43,8 +43,6 @@ dataroom = [
 daiya = [
   "dep:daiya-server",
   "dep:daiya-model",
-  "dep:daiya-store-memory",
-  "dep:daiya-store-pg",
 ]
 ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:futures", "dep:jc-core"]
 # The platform's broker build (Antares image-jc FEATURES without parquet and tabular): Endpoint
@@ -109,8 +107,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock"], opti
 
 daiya-server = { path = "../../crates/daiya/server", optional = true }
 daiya-model = { path = "../../crates/daiya/model", optional = true }
-daiya-store-memory = { path = "../../crates/daiya/store-memory", optional = true }
-daiya-store-pg = { path = "../../crates/daiya/store-pg", optional = true }
 
 ekiben-server = { path = "../../crates/ekiben/crates/ekiben-server", optional = true }
 ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true }
