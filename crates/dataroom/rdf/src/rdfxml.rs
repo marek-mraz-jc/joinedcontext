@@ -319,7 +319,7 @@ fn xml_char(c: char) -> bool {
 
 /// Escapes markup and writes U+FFFD for a character XML 1.0 cannot carry (no reference to it
 /// is well-formed either), so one stray control character never breaks the whole document.
-fn xml_escape(s: &str) -> String {
+pub fn xml_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
