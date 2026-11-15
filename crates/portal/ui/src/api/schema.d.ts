@@ -1169,6 +1169,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/opendata/pages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List The Open Data Portal's Pages
+         * @description Every page of the request's Organization's open data portal in each of its languages: the built-in Markdown and the Organization's own text (spec.appearance.pages, T-7031). For the Organization's administrators.
+         */
+        get: operations["list_opendata_pages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/opendata/pages/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview An Open Data Portal Page
+         * @description The Markdown as the open data portal would show it, rendered by the portal's own renderer: raw HTML as text, no image, javascript: and data: links without their link (T-7031). For the Organization's administrators; nothing is stored.
+         */
+        post: operations["preview_opendata_page"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/opendata/pages/{page}/{lang}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Publish An Open Data Portal Page
+         * @description Proposes the request's Organization manifest with its own Markdown of one page in one language (spec.appearance.pages, T-7031): a Change, reviewed and audited like every manifest change; the open data portal shows it once merged. For the Organization's administrators.
+         */
+        put: operations["publish_opendata_page"];
+        post?: never;
+        /**
+         * Revert An Open Data Portal Page
+         * @description Proposes the request's Organization manifest without its own text of one page in one language, so the built-in text shows again (T-7031). For the Organization's administrators.
+         */
+        delete: operations["revert_opendata_page"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization/people": {
         parameters: {
             query?: never;
@@ -11384,6 +11448,30 @@ export interface components {
          * @enum {string}
          */
         Op: "eq" | "ne" | "gt" | "ge" | "lt" | "le";
+        /** @description One page in one language: the built-in Markdown and the Organization's own, if any. */
+        OpenDataPageText: {
+            /** @description The text the portal shows when the Organization has none of its own. */
+            builtIn: string;
+            /** @description A two-letter language code, e.g. `sk`. */
+            lang: string;
+            /** @description The Organization's own text, as published; absent when the built-in one shows. */
+            markdown?: string | null;
+            /** @description `connector`, `privacy`, `terms`, `support` or `accessibility`. */
+            page: string;
+            /** @description The title the portal shows: the own text's first `# heading`, else the built-in one. */
+            title: string;
+        };
+        /** @description The editable pages of the request's Organization's open data portal. */
+        OpenDataPages: {
+            /** @description Its languages (`spec.locales`), the default first; `sk` and `en` when it names none. */
+            languages: string[];
+            /** @description The largest Markdown one page in one language holds, in bytes. */
+            maxBytes: number;
+            /** @description The Organization the texts belong to. */
+            organization: string;
+            /** @description Every page in every language, in menu order. */
+            pages: components["schemas"]["OpenDataPageText"][];
+        };
         /** @description What a person fills in to open a project. */
         OpenProject: {
             description?: string | null;
@@ -11513,6 +11601,18 @@ export interface components {
         /** @description The page the question was asked from, as the browser sends it: the route only. */
         PageContextRequest: {
             route: string;
+        };
+        /** @description Markdown to preview or publish. */
+        PageMarkdown: {
+            /** @description The page in Markdown, its first `# heading` the title, e.g. `# Podpora\n\nNapíšte nám.` */
+            markdown: string;
+        };
+        /** @description A page as the portal would show it. */
+        PagePreview: {
+            /** @description The body as safe HTML: no raw HTML, no image, no script link. */
+            html: string;
+            /** @description The first `# heading`, absent when the Markdown has none (the built-in title shows). */
+            title?: string | null;
         };
         /** @description A Portal tab paired with a connector (T-5967). */
         PairedTab: {
@@ -16651,6 +16751,240 @@ export interface operations {
             };
             /** @description Not signed in */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_opendata_pages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The pages */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenDataPages"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    preview_opendata_page: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "markdown": "# Podpora\n\nNapíšte nám na **podpora@bbsk.sk**."
+                 *     }
+                 */
+                "application/json": components["schemas"]["PageMarkdown"];
+            };
+        };
+        responses: {
+            /** @description The page as HTML */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PagePreview"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Empty, over the size cap or with control characters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    publish_opendata_page: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description connector, privacy, terms, support or accessibility */
+                page: string;
+                /** @description A two-letter language code, e.g. sk */
+                lang: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "markdown": "# Podpora\n\nNapíšte nám na **podpora@bbsk.sk**."
+                 *     }
+                 */
+                "application/json": components["schemas"]["PageMarkdown"];
+            };
+        };
+        responses: {
+            /** @description The Change proposing the text */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Change"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such page or language code */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A Change on the Organization is open already; approve or reject it first */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Empty, over the size cap or with control characters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    revert_opendata_page: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description connector, privacy, terms, support or accessibility */
+                page: string;
+                /** @description A two-letter language code, e.g. sk */
+                lang: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Change removing the text */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Change"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such page, or the page shows its built-in text already */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A Change on the Organization is open already; approve or reject it first */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

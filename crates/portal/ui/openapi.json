@@ -3660,6 +3660,298 @@
         }
       }
     },
+    "/api/v1/organization/opendata/pages": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List The Open Data Portal's Pages",
+        "description": "Every page of the request's Organization's open data portal in each of its languages: the built-in Markdown and the Organization's own text (spec.appearance.pages, T-7031). For the Organization's administrators.",
+        "operationId": "list_opendata_pages",
+        "responses": {
+          "200": {
+            "description": "The pages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenDataPages"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/opendata/pages/preview": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Preview An Open Data Portal Page",
+        "description": "The Markdown as the open data portal would show it, rendered by the portal's own renderer: raw HTML as text, no image, javascript: and data: links without their link (T-7031). For the Organization's administrators; nothing is stored.",
+        "operationId": "preview_opendata_page",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageMarkdown"
+              },
+              "example": {
+                "markdown": "# Podpora\n\nNapíšte nám na **podpora@bbsk.sk**."
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The page as HTML",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagePreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Empty, over the size cap or with control characters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/opendata/pages/{page}/{lang}": {
+      "put": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Publish An Open Data Portal Page",
+        "description": "Proposes the request's Organization manifest with its own Markdown of one page in one language (spec.appearance.pages, T-7031): a Change, reviewed and audited like every manifest change; the open data portal shows it once merged. For the Organization's administrators.",
+        "operationId": "publish_opendata_page",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "path",
+            "description": "connector, privacy, terms, support or accessibility",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lang",
+            "in": "path",
+            "description": "A two-letter language code, e.g. sk",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageMarkdown"
+              },
+              "example": {
+                "markdown": "# Podpora\n\nNapíšte nám na **podpora@bbsk.sk**."
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "The Change proposing the text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Change"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such page or language code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A Change on the Organization is open already; approve or reject it first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Empty, over the size cap or with control characters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Revert An Open Data Portal Page",
+        "description": "Proposes the request's Organization manifest without its own text of one page in one language, so the built-in text shows again (T-7031). For the Organization's administrators.",
+        "operationId": "revert_opendata_page",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "path",
+            "description": "connector, privacy, terms, support or accessibility",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lang",
+            "in": "path",
+            "description": "A two-letter language code, e.g. sk",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The Change removing the text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Change"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such page, or the page shows its built-in text already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A Change on the Organization is open already; approve or reject it first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization/people": {
       "get": {
         "tags": [
@@ -54809,6 +55101,76 @@
           "le"
         ]
       },
+      "OpenDataPageText": {
+        "type": "object",
+        "description": "One page in one language: the built-in Markdown and the Organization's own, if any.",
+        "required": [
+          "page",
+          "lang",
+          "title",
+          "builtIn"
+        ],
+        "properties": {
+          "builtIn": {
+            "type": "string",
+            "description": "The text the portal shows when the Organization has none of its own."
+          },
+          "lang": {
+            "type": "string",
+            "description": "A two-letter language code, e.g. `sk`."
+          },
+          "markdown": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Organization's own text, as published; absent when the built-in one shows."
+          },
+          "page": {
+            "type": "string",
+            "description": "`connector`, `privacy`, `terms`, `support` or `accessibility`."
+          },
+          "title": {
+            "type": "string",
+            "description": "The title the portal shows: the own text's first `# heading`, else the built-in one."
+          }
+        }
+      },
+      "OpenDataPages": {
+        "type": "object",
+        "description": "The editable pages of the request's Organization's open data portal.",
+        "required": [
+          "organization",
+          "languages",
+          "maxBytes",
+          "pages"
+        ],
+        "properties": {
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Its languages (`spec.locales`), the default first; `sk` and `en` when it names none."
+          },
+          "maxBytes": {
+            "type": "integer",
+            "description": "The largest Markdown one page in one language holds, in bytes.",
+            "minimum": 0
+          },
+          "organization": {
+            "type": "string",
+            "description": "The Organization the texts belong to."
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenDataPageText"
+            },
+            "description": "Every page in every language, in menu order."
+          }
+        }
+      },
       "OpenProject": {
         "type": "object",
         "description": "What a person fills in to open a project.",
@@ -55207,6 +55569,40 @@
           }
         },
         "additionalProperties": false
+      },
+      "PageMarkdown": {
+        "type": "object",
+        "description": "Markdown to preview or publish.",
+        "required": [
+          "markdown"
+        ],
+        "properties": {
+          "markdown": {
+            "type": "string",
+            "description": "The page in Markdown, its first `# heading` the title, e.g. `# Podpora\\n\\nNapíšte nám.`"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PagePreview": {
+        "type": "object",
+        "description": "A page as the portal would show it.",
+        "required": [
+          "html"
+        ],
+        "properties": {
+          "html": {
+            "type": "string",
+            "description": "The body as safe HTML: no raw HTML, no image, no script link."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The first `# heading`, absent when the Markdown has none (the built-in title shows)."
+          }
+        }
       },
       "PairedTab": {
         "type": "object",

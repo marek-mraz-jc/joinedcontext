@@ -160,7 +160,8 @@ enum Target {
 /// `?` or `#`, so `java\tscript:` (which a browser reads as `javascript:`) is a scheme too.
 fn target(dest: &str) -> Target {
     let dest = dest.trim();
-    if dest.starts_with("//") {
+    // A browser reads `\` as `/`, so `/\host` and `\\host` are protocol-relative too.
+    if dest.len() >= 2 && dest.as_bytes()[..2].iter().all(|b| matches!(b, b'/' | b'\\')) {
         return Target::Elsewhere;
     }
     let end = dest.find(['/', '?', '#']).unwrap_or(dest.len());
@@ -387,6 +388,9 @@ mod tests {
         assert!(!html.to_lowercase().contains("href=\"java"), "{html}");
         assert!(matches!(target(" java\tscript:x"), Target::Refused));
         assert!(matches!(target("VBScript:x"), Target::Refused));
+        for other_host in ["/\\evil.example", "\\\\evil.example", "\\/evil.example"] {
+            assert!(matches!(target(other_host), Target::Elsewhere), "{other_host}");
+        }
         assert!(!html.contains("data:"), "{html}");
         assert!(html.contains("c <a href=\"/dataset/\">d</a>"), "{html}");
         assert!(

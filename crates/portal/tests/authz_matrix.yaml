@@ -315,6 +315,26 @@ routes:
     rule: "signed-in"
     expect: [401, allow, allow, allow, allow, allow, allow, allow]
     note: "the catalog and the operator's bounds are the installation's; a project the caller may not read is left out of the answer (API/01 §28, R20)"
+  - route: GET /organization/opendata/pages
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the open data portal's page texts of the request's Organization, built-in and its own (T-7031)"
+  - route: POST /organization/opendata/pages/preview
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    body: {"markdown": "# Podpora\n\nNapíšte nám."}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "renders Markdown with the catalogue's renderer and stores nothing (T-7031)"
+  - route: PUT /organization/opendata/pages/{page}/{lang}
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    values: {page: support, lang: sk}
+    body: {"markdown": "# Podpora\n\nNapíšte nám."}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "proposes the Organization manifest with one page text (T-7031)"
+  - route: DELETE /organization/opendata/pages/{page}/{lang}
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    values: {page: support, lang: sk}
+    expect: [403, 403, 403, 403, 403, 404, 403, 403]
+    note: "the fixture's Organization has no own support text, so its admin meets 404 (T-7031)"
   - route: GET /organization/setup
     rule: "org-admin (approve and delete on RoleBinding, PF-03)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]

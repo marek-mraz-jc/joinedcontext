@@ -41,6 +41,7 @@ Desired specification of a `Portal` (ODP-08).
 | `licenseDefault` | string | no | The licence a new dataset starts with, e.g. `CC-BY-4.0`. |
 | `logoSvg` | string | no | The logo as an SVG document of at most 64 KiB, without script, event handler or external reference. |
 | `opendataWidgets` | list of string | no | Dashboards the Organization's open data portal shows on its catalogue home, each `project/name` of one of its projects with `visibility: public`, e.g. `doprava/prehlad`; anonymous readers see them (T-6780). |
+| `pages` | list of [AppearancePage](#appearancepage) | no | The texts of the open data portal's own pages, each one page in one language in Markdown (T-7031); a page or language left out shows the built-in text. |
 | `publisher` | string | no | The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`. |
 | `shortName` | string | no | Short name on sidebars and tabs, e.g. `BB`. |
 
@@ -93,6 +94,16 @@ One source of a portal (ODP-10). No source carries a credential in this version.
 | `primary` | string | no | Primary action colour, e.g. `#0b5394`. |
 | `secondary` | string | no | Secondary colour for links and focus, e.g. `#0f766e`. |
 | `text` | string | no | Body text, e.g. `#0f172a`. |
+
+## AppearancePage
+
+`spec.appearance.pages[]`: one page of the open data portal in one language (T-7031).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `lang` | string | yes | The language as a two-letter code, e.g. `sk`. |
+| `markdown` | string | yes | The page in Markdown, its first `# heading` the title, at most 16 KiB, e.g. `# Podpora\n\nNapíšte nám na opendata@mesto.sk.`; raw HTML shows as text. |
+| `page` | string | yes | The page: `connector`, `privacy`, `terms`, `support` or `accessibility`. |
 
 ## HarvestBudget
 
