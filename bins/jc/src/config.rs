@@ -589,6 +589,12 @@ fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigErr
                 "name '{name}' is not a lowercase Organization name"
             ));
         }
+        if jc_core::names::RESERVED_LABELS.contains(&name) {
+            return bad(format!(
+                "Organization '{name}' is reserved for the platform: a service's path or host \
+                 uses this name; choose another"
+            ));
+        }
         if !names.insert(org.name.clone()) {
             return bad(format!("Organization '{name}' is named twice"));
         }
@@ -2313,6 +2319,11 @@ path_prefix = "/api/endpoint"
             ("\"beta\"", "\"alpha\"", "named twice"),
             ("\"beta\"", "\"Beta\"", "not a lowercase Organization name"),
             ("\"beta\"", "\"-b\"", "not a lowercase Organization name"),
+            // T-6974: a name a platform address uses stops jc at startup.
+            ("\"beta\"", "\"api\"", "reserved for the platform"),
+            ("\"beta\"", "\"opendata\"", "reserved for the platform"),
+            ("\"beta\"", "\"oauth\"", "reserved for the platform"),
+            ("\"beta\"", "\"login\"", "reserved for the platform"),
             (
                 "0000000000b1",
                 "0000000000a1",
