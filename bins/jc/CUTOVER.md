@@ -218,6 +218,9 @@ CIMD egress on 443 to public addresses, which jc already has.
 `[[organizations]]` (`bins/jc/src/config.rs`, fixture `bins/jc/tests/fixtures/two-orgs.toml`)
 puts each Organization on its own hosts: `name` (the JC Organization's `metadata.name`), `hosts =
 { portal, opendata, api, mcp }`, `catalogue_id` (a UUID) and an optional `portal_token_file`.
+An optional `id` is the Organization id, its verified domain reversed (`sk_bbsk` for bbsk.sk,
+EP-186): on a shared host the Organization's first path segment is then `/{id}/`, and the old
+`/{name}/` still answers during the move (a page `308` to `/{id}/...`, an API call in place).
 
 - Each host is the Organization's whole host: the Portal on `portal`, dataroom on `opendata`,
   the gateway on `api` and `mcp`, and the gateway's `/cs`, `/api/endpoint` and `/api/mcp` on
