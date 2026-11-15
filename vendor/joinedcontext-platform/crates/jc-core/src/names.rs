@@ -34,8 +34,9 @@ pub fn validate_dns1123_label(name: &str) -> Result<()> {
 /// Every name the platform's routing gives a meaning of its own (T-6974): the first path
 /// segments jc places on a shared host (module slugs, the gateway's and the assistant's root
 /// paths, jc's and the Portal's own pages and the deployment's extra prefixes), every host label
-/// below the deployment's domain (module hosts, the deployment's `idm`, `data`, `status`) and the
-/// labels the domain layout plans (`login`, `embed`, `apps`, ...). An Organization named like one
+/// below the deployment's domain (module hosts, the deployment's `idm`, `data`, `status`, `ai`,
+/// `mqtt`), the segments docs/API/15-addresses-v1.md fixes (`data`, `dash`, `dsc`, `app`, `c`) and
+/// the labels the domain layout plans (`login`, `embed`, `apps`, ...). An Organization named like one
 /// would take that segment or label from the service on a host the Organizations share, so no
 /// Organization takes one. The list only grows; bins/jc fails a test when a mount, host label or
 /// Portal page root it places is missing here. `bbsk` stays out: it is jc-dev's Organization
@@ -43,13 +44,17 @@ pub fn validate_dns1123_label(name: &str) -> Result<()> {
 pub const RESERVED_LABELS: &[&str] = &[
     "accessibility",
     "admin",
+    "ai",
     "ai-connectors",
     "api",
+    "app",
     "apps",
     "assets",
     "assistant",
     "autodiscover",
     "broker",
+    "c",
+    "callback",
     "catalog",
     "catalogue",
     "closed",
@@ -57,9 +62,11 @@ pub const RESERVED_LABELS: &[&str] = &[
     "connectors",
     "cs",
     "d",
+    "dash",
     "dashboards",
     "data",
     "docs",
+    "dsc",
     "embed",
     "endpoints",
     "f",
@@ -70,11 +77,13 @@ pub const RESERVED_LABELS: &[&str] = &[
     "id",
     "idm",
     "login",
+    "logout",
     "mail",
     "mcp",
     "mcp-confirmations",
     "metrics",
     "model-tools",
+    "mqtt",
     "oauth",
     "opendata",
     "ops",
