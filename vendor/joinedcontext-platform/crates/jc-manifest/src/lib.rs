@@ -5,6 +5,7 @@
 #![warn(missing_docs)]
 
 pub mod assemble;
+pub mod attributes;
 pub mod bento;
 pub mod catalogue;
 pub mod foreign_models;

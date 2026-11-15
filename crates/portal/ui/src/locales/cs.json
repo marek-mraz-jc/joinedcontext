@@ -2662,7 +2662,16 @@
       "modeChoice": {
         "upsert": "Vytvořit nebo sloučit",
         "replace": "Nahradit celou entitu",
-        "update-attrs": "Pouze aktualizovat atributy"
+        "update-attrs": "Pouze aktualizovat atributy",
+        "merge": "Sloučit do částí atributů",
+        "backfill": "Pouze přidat do historie"
+      },
+      "modeHint": {
+        "upsert": "Vytvoří entitu nebo aktualizuje atributy, které záznam uvádí; ostatní atributy zůstanou.",
+        "replace": "Entita bude přesně záznam: atributy, které neuvádí, se odstraní. Jen když entitu zapisuje pouze tato pipeline.",
+        "update-attrs": "Aktualizuje na entitě atributy, které záznam uvádí; ostatní atributy zůstanou.",
+        "merge": "Hluboce sloučí záznam, takže dvě pipeline mohou zapisovat každá část jednoho atributu, například address.streetAddress a address.postalCode.",
+        "backfill": "Přidá minulá měření pouze do historie; aktuální hodnota zůstane. Vyžaduje operaci připojení historie v Policy koncového bodu."
       },
       "lastRun": "Poslední běh"
     },
