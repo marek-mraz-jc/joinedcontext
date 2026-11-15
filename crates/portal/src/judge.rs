@@ -97,8 +97,9 @@ pub fn manifest(
 /// (`unmade-writes`, PL-111) and a second model of a space (`one-data-model`, DM-61) are
 /// properties of the whole project once the change merged, read beside Endpoint and model
 /// rights the approval checks itself (PL-94, DM-77). The propose door refuses them before the
-/// Change exists and the reconciler's load refuses them on `main`, whoever pushed to the branch
-/// between, so no path serves them.
+/// Change exists and the reconciler's load refuses them on `main`. A writer's own branch of a
+/// layout 2 project repository never met the propose door, so its approval runs [`manifest`]
+/// whole (S-5-10).
 pub const NOT_AT_APPROVAL: [&str; 3] = ["spec", "unmade-writes", "one-data-model"];
 
 /// [`manifest`] at approval: every check but [`NOT_AT_APPROVAL`].
