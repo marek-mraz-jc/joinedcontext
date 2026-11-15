@@ -425,6 +425,17 @@ pub(crate) fn subject_of(
     if let Some(azp) = claims.azp.as_deref() {
         let accounts = gateway.accounts.load();
         let account = accounts.resolve(azp);
+        // Its client stays enabled in the realm after the credentials end, so the gateway is
+        // where an ended account stops: for its own calls and for the people it acts for.
+        if let Some(account) = account.filter(|account| account.has_ended(crate::pdp::now())) {
+            tracing::warn!(
+                azp,
+                slug = %endpoint.slug,
+                project = %account.project,
+                "the account's credentials have ended"
+            );
+            return Err(Box::new(ProblemDetails::forbidden()));
+        }
         // A person's token the account's client exchanged (ADR-N-038, AG-95): the subject is
         // a person, not the client's own service-account user. Decided as that person when the
         // account declares delegation, and refused when it does not, so no client can carry a
