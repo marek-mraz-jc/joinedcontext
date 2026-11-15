@@ -91,6 +91,11 @@ impl EndpointRoles {
     }
 }
 
+/// The broker view the Portal writes for a Context Space's canonical surface (plan 5.1).
+pub(crate) fn space_view(space: &str) -> String {
+    format!("cs-{space}")
+}
+
 /// The Keycloak client whose roles an Endpoint gives ([`EndpointRoles::of_app`]): the Endpoint
 /// `app-{app}` an App generates is its client's when `has_app(app)` says its project declares
 /// that App, and no other Endpoint is a client's.

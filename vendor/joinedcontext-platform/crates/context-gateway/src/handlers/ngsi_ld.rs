@@ -119,7 +119,7 @@ pub(crate) async fn space_ngsi_ld(
     .map(|(space, subject)| (Arc::clone(&space.endpoint), subject));
     let prefix = format!("/cs/{space}/ngsi-ld/v1");
     // The space surface's view is the one the Portal writes per Context Space (plan 5.1).
-    let view = |endpoint: &Endpoint| format!("cs-{}", endpoint.space);
+    let view = |endpoint: &Endpoint| crate::resolver::space_view(&endpoint.space);
     as_ngsi_ld_error(serve_ngsi_ld_view(&gateway, admitted, &prefix, view, request).await).await
 }
 
@@ -421,7 +421,7 @@ pub(crate) fn has_view(view: &str) -> bool {
 /// canonical surface, the one whose root is `/cs/{segment}` (T-3643).
 pub(crate) fn view_of(endpoint: &Endpoint) -> String {
     if endpoint.base_path.starts_with("/cs/") {
-        format!("cs-{}", endpoint.space)
+        crate::resolver::space_view(&endpoint.space)
     } else {
         endpoint.slug.clone()
     }
@@ -928,10 +928,6 @@ pub(crate) fn capped_query(raw: &str) -> String {
         .join("&")
 }
 
-/// The checks of a view request that need no body: the domain gate on a write (PF-41), a
-/// federated read's write refused (T-3999), the identifier (PF-43), then the tenant and the
-/// verified caller pinned for the hop (T-3641), with the token a `caller` registration of the
-/// space receives (PF-48, PF-113).
 /// A token the gateway exchanged for a federated read reads entities; it never writes and never
 /// touches a subscription, which would outlive it (T-3999, PF-114).
 fn federated_refusal(
@@ -1094,6 +1090,10 @@ fn record_version(
     }
 }
 
+/// The checks of a view request that need no body: the domain gate on a write (PF-41), a
+/// federated read's write refused (T-3999), the identifier (PF-43), then the tenant and the
+/// verified caller pinned for the hop (T-3641), with the token a `caller` registration of the
+/// space receives (PF-48, PF-113).
 pub(crate) async fn view_request(
     gateway: &Gateway,
     endpoint: &Endpoint,

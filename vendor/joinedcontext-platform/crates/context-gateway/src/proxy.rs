@@ -126,7 +126,12 @@ impl From<ProxyError> for ProblemDetails {
                  read the resource before sending a write again",
             );
         }
-        ProblemDetails::new(502, "upstream-unavailable", "Broker Unavailable")
+        let detail = if matches!(error, ProxyError::Unreachable(_)) {
+            "the broker behind this endpoint did not answer; send the request again in a moment"
+        } else {
+            "the gateway cannot reach the broker for this endpoint; ask the platform operator"
+        };
+        ProblemDetails::new(502, "upstream-unavailable", "Broker Unavailable").with_detail(detail)
     }
 }
 
@@ -479,6 +484,25 @@ mod tests {
     use super::*;
     use axum::http::HeaderValue;
     use std::time::Duration;
+
+    /// A 502 tells the caller whether sending again can help, and names nothing behind the hop.
+    #[test]
+    fn a_broker_failure_says_whether_to_retry_without_the_topology() {
+        let problem = |error| serde_json::to_value(ProblemDetails::from(error)).expect("json");
+        let down = problem(ProxyError::Unreachable("10.0.0.7:8080 refused".into()));
+        assert_eq!(down["status"], 502);
+        let detail = down["detail"].as_str().expect("a detail");
+        assert!(detail.contains("again in a moment"), "{detail}");
+        assert!(!detail.contains("10.0.0.7"), "{detail}");
+        let slow = problem(ProxyError::Timeout(Duration::from_secs(30)));
+        assert_eq!(slow["status"], 504);
+        let detail = slow["detail"].as_str().expect("a detail");
+        assert!(detail.contains("before sending a write again"), "{detail}");
+        let unaddressed = problem(ProxyError::Uri("http://broker.internal/x".into()));
+        let detail = unaddressed["detail"].as_str().expect("a detail");
+        assert!(detail.contains("operator"), "{detail}");
+        assert!(!detail.contains("broker.internal"), "{detail}");
+    }
 
     #[test]
     fn the_hop_header_replaces_a_clients_and_never_prints() {

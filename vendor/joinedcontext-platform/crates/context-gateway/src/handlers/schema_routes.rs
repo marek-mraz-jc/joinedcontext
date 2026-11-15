@@ -97,7 +97,7 @@ async fn space_schema(gateway: &Gateway, name: &str, mut request: Request) -> Re
         Err(problem) => return *problem,
     };
     // The space surface's view is the one the Portal writes per Context Space (plan 5.1).
-    let view = format!("cs-{}", space.endpoint.space);
+    let view = crate::resolver::space_view(&space.endpoint.space);
     through_view(gateway, &space.endpoint, &subject, &view, request).await
 }
 

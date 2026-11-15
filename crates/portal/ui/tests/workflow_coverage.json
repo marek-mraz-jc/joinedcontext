@@ -148,17 +148,24 @@
           "POST /api/v1/organization-ids"
         ]
       },
-      "edit-opendata-pages": {
+      "opendata-pages": {
         "live": {
           "spec": "opendata-pages.spec.ts",
-          "test": "an administrator edits the connector page in sk and en, publishes, approves, and the open data portal shows it"
+          "test": "a person who is no administrator of the Organization is refused the page preview, publish and revert"
         },
-        "personOnly": "an Organization's administrator writes its open data portal's page texts on Administration → Open data pages; each publish is a Change an approver merges, and an agent changes the Organization manifest through jc_resource_propose like any other manifest (T-7031, T-7041)",
+        "assistant": "jc_resource_propose",
         "routes": [
           "POST /api/v1/organization/opendata/pages/preview",
           "PUT /api/v1/organization/opendata/pages/{page}/{lang}",
           "DELETE /api/v1/organization/opendata/pages/{page}/{lang}"
         ]
+      },
+      "edit-opendata-pages": {
+        "live": {
+          "spec": "opendata-pages-publish.spec.ts",
+          "test": "an administrator edits the connector page in sk and en, publishes, approves, and the open data portal shows it"
+        },
+        "assistant": "jc_resource_propose"
       }
     },
     "people": {

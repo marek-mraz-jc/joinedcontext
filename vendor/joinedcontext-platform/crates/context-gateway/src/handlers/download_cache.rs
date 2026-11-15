@@ -201,42 +201,40 @@ impl HeldTypes {
 /// The public catalogue records per profile and project (F-PLT1-012): rendering them asks the
 /// broker for each public Endpoint's schema index, so a harvester polling the feed cost one hop
 /// per dataset per request. A record is reused for [`FRESH_FOR`] while the Endpoint table it was
-/// rendered from is the one the resolver holds; a reload renders afresh.
+/// rendered from is the one the resolver holds; a reload renders afresh. Callers missing at once
+/// wait for one render, as [`Downloads`] builds once.
 #[derive(Default)]
 pub(crate) struct CatalogRecords {
     held: Mutex<HashMap<String, HeldRecords>>,
 }
 
 pub(crate) type EndpointTable = Arc<HashMap<String, Arc<Endpoint>>>;
-type HeldRecords = (Instant, EndpointTable, Arc<Vec<serde_json::Value>>);
+type Records = Arc<Vec<serde_json::Value>>;
+type HeldRecords = (Instant, EndpointTable, Arc<OnceCell<Records>>);
 
 impl CatalogRecords {
-    /// The records held under `key`, rendered from `table` less than [`FRESH_FOR`] ago.
-    pub(crate) fn get(
-        &self,
-        key: &str,
-        table: &EndpointTable,
-    ) -> Option<Arc<Vec<serde_json::Value>>> {
-        let held = lock(&self.held);
-        let (at, from, records) = held.get(key)?;
-        (at.elapsed() < FRESH_FOR && Arc::ptr_eq(from, table)).then(|| Arc::clone(records))
-    }
-
-    /// Holds `records`, rendered from `table`, under `key` from now on.
-    pub(crate) fn put(
+    /// The records held under `key` when `table` rendered them less than [`FRESH_FOR`] ago, or
+    /// the ones `render` makes, which every caller asking meanwhile shares. A render whose caller
+    /// went away is taken over by the next one waiting.
+    pub(crate) async fn get_or_render(
         &self,
         key: &str,
         table: EndpointTable,
-        records: Vec<serde_json::Value>,
-    ) -> Arc<Vec<serde_json::Value>> {
-        let records = Arc::new(records);
-        let mut held = lock(&self.held);
-        held.retain(|_, (at, _, _)| at.elapsed() < FRESH_FOR);
-        held.insert(
-            key.to_owned(),
-            (Instant::now(), table, Arc::clone(&records)),
-        );
-        records
+        render: impl Future<Output = Vec<serde_json::Value>>,
+    ) -> Records {
+        let cell = {
+            let mut held = lock(&self.held);
+            held.retain(|_, (at, _, _)| at.elapsed() < FRESH_FOR);
+            match held.get(key) {
+                Some((_, from, cell)) if Arc::ptr_eq(from, &table) => Arc::clone(cell),
+                _ => {
+                    let cell = Arc::new(OnceCell::new());
+                    held.insert(key.to_owned(), (Instant::now(), table, Arc::clone(&cell)));
+                    cell
+                }
+            }
+        };
+        Arc::clone(cell.get_or_init(|| async { Arc::new(render.await) }).await)
     }
 }
 
@@ -374,24 +372,43 @@ mod tests {
         }
     }
 
+    async fn rendered(renders: &AtomicUsize, n: usize) -> Vec<serde_json::Value> {
+        renders.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        vec![serde_json::json!({"n": n}); n]
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn catalogue_records_render_once_per_table_and_window() {
+        let records = CatalogRecords::default();
+        let renders = AtomicUsize::new(0);
+        let table: EndpointTable = Arc::default();
+        let at_once = tokio::join!(
+            records.get_or_render("dcat/", Arc::clone(&table), rendered(&renders, 1)),
+            records.get_or_render("dcat/", Arc::clone(&table), rendered(&renders, 2)),
+            records.get_or_render("dcat/", Arc::clone(&table), rendered(&renders, 3)),
+        );
+        assert_eq!(
+            renders.load(Ordering::SeqCst),
+            1,
+            "callers at once share one render"
+        );
+        assert_eq!(at_once.1, at_once.0);
+        assert_eq!(at_once.2, at_once.0);
+
+        let other = records.get_or_render("dcat/x", Arc::clone(&table), rendered(&renders, 2));
+        assert_eq!(other.await.len(), 2, "another key renders its own");
+        let reloaded: EndpointTable = Arc::default();
+        let afresh = records.get_or_render("dcat/", reloaded, rendered(&renders, 4));
+        assert_eq!(afresh.await.len(), 4, "a reload renders afresh");
+        tokio::time::advance(FRESH_FOR).await;
+        let stale = records.get_or_render("dcat/x", table, rendered(&renders, 5));
+        assert_eq!(stale.await.len(), 5, "an old render is rendered again");
+        assert_eq!(renders.load(Ordering::SeqCst), 4);
+    }
+
     #[test]
     fn a_type_list_is_held_per_space() {
-        let records = CatalogRecords::default();
-        let table: EndpointTable = Arc::default();
-        assert_eq!(records.get("dcat/", &table), None);
-        records.put(
-            "dcat/",
-            Arc::clone(&table),
-            vec![serde_json::json!({"a": 1})],
-        );
-        assert_eq!(records.get("dcat/", &table).map(|r| r.len()), Some(1));
-        let reloaded: EndpointTable = Arc::default();
-        assert_eq!(
-            records.get("dcat/", &reloaded),
-            None,
-            "a reload renders afresh"
-        );
-
         let types = HeldTypes::default();
         assert_eq!(types.get("a"), None);
         types.put("a", vec!["T".to_owned()]);

@@ -21,6 +21,19 @@ use std::collections::BTreeSet;
 /// Ids the existence read of a write asks for at once; a batch naming more is read in chunks.
 const TARGETS_PER_READ: usize = 100;
 
+/// One-to-one targets of a batch whose holders one read asks for at once (`slot=="a","b"`).
+const CLAIMS_PER_READ: usize = 50;
+
+/// The entities one holders' read answers per page, well inside the pre-write read cap.
+const HOLDERS_PER_PAGE: usize = 200;
+
+/// Pages one holders' read follows; a chunk with more holders is left to one read per claim.
+const HOLDER_PAGES: usize = 4;
+
+/// The ids storing each one-to-one target of a batch, by (class, slot, object); a target missing
+/// here is read on its own.
+type Holders<'c> = std::collections::HashMap<(&'c str, &'c str, &'c str), Vec<String>>;
+
 /// One write held against the relationships of the space's model (DM-70, T-2740).
 pub(crate) struct HeldWrite<'a> {
     pub(crate) gateway: &'a Gateway,
@@ -109,7 +122,7 @@ impl HeldWrite<'_> {
             }
             let claims = relationships::claims_of(&payload, shape, self.rules);
             if let Some(violation) = self
-                .untaken(&claims, &[])
+                .untaken(&claims, &[], &Holders::new())
                 .await
                 .map_err(|problem| refuse(*problem))?
             {
@@ -142,17 +155,24 @@ impl HeldWrite<'_> {
             .await
             .map_err(|problem| refuse(*problem))?;
         let mut permitted = Vec::new();
+        let claimed: Vec<Vec<relationships::Claim>> = kept
+            .iter()
+            .map(|(at, _)| relationships::claims_of(&entries[*at], shape, self.rules))
+            .collect();
+        let holders = self
+            .holders(claimed.iter().flatten())
+            .await
+            .map_err(|problem| refuse(*problem))?;
         // One-to-one targets in the batch's order: the first entity that names one takes it.
         let mut taken: Vec<relationships::Claim> = Vec::new();
-        for (at, targets) in kept {
+        for ((at, targets), claims) in kept.into_iter().zip(&claimed) {
             let entry = &entries[at];
             if let Some(violation) = relationships::first_missing(&targets, &found) {
                 refused.push((batch_entry_id(entry).unwrap_or_default(), violation.into()));
                 continue;
             }
-            let claims = relationships::claims_of(entry, shape, self.rules);
             match self
-                .untaken(&claims, &taken)
+                .untaken(claims, &taken, &holders)
                 .await
                 .map_err(|problem| refuse(*problem))?
             {
@@ -160,7 +180,7 @@ impl HeldWrite<'_> {
                     refused.push((batch_entry_id(entry).unwrap_or_default(), violation.into()))
                 }
                 None => {
-                    taken.extend(claims);
+                    taken.extend(claims.iter().cloned());
                     permitted.push(entry.clone());
                 }
             }
@@ -185,6 +205,7 @@ impl HeldWrite<'_> {
         &self,
         claims: &[crate::relationships::Claim],
         earlier: &[crate::relationships::Claim],
+        holders: &Holders<'_>,
     ) -> Result<Option<crate::relationships::Violation>, Box<ProblemDetails>> {
         let all: Vec<_> = earlier.iter().chain(claims).cloned().collect();
         if let Some(twice) = crate::relationships::claimed_twice(&all) {
@@ -195,26 +216,105 @@ impl HeldWrite<'_> {
             if !asked.insert((&claim.class, &claim.slot, &claim.object)) {
                 continue;
             }
-            // Two answers are enough: the holder itself, and anyone else.
-            let storing = storing(
-                &self.gateway.broker,
-                self.headers,
-                &claim.class,
-                &claim.slot,
-                &claim.object,
-                2,
-                0,
-            )
-            .await?;
-            let other = storing
+            let key = (
+                claim.class.as_str(),
+                claim.slot.as_str(),
+                claim.object.as_str(),
+            );
+            let ids: Vec<String> = match holders.get(&key) {
+                Some(ids) => ids.clone(),
+                None => {
+                    // Two answers are enough: the holder itself, and anyone else.
+                    let storing = storing(
+                        &self.gateway.broker,
+                        self.headers,
+                        &claim.class,
+                        &claim.slot,
+                        &claim.object,
+                        2,
+                        0,
+                    )
+                    .await?;
+                    storing
+                        .iter()
+                        .filter_map(|entity| entity.get("id").and_then(Value::as_str))
+                        .map(str::to_owned)
+                        .collect()
+                }
+            };
+            let other = ids
                 .iter()
-                .filter_map(|entity| entity.get("id").and_then(Value::as_str))
-                .any(|id| Some(id) != claim.holder.as_deref());
+                .any(|id| Some(id.as_str()) != claim.holder.as_deref());
             if other {
                 return Ok(Some(claim.taken()));
             }
         }
         Ok(None)
+    }
+
+    /// The ids that store each one-to-one target `claims` name, read per (class, slot) with
+    /// [`CLAIMS_PER_READ`] targets a read instead of one read a claim (DM-70). A chunk whose
+    /// holders fill [`HOLDER_PAGES`] pages, or whose answer holds an entity it cannot place, is
+    /// left out, so its claims are read one by one.
+    async fn holders<'c>(
+        &self,
+        claims: impl Iterator<Item = &'c crate::relationships::Claim>,
+    ) -> Result<Holders<'c>, Box<ProblemDetails>> {
+        let mut asked: std::collections::BTreeMap<(&str, &str), BTreeSet<&str>> =
+            std::collections::BTreeMap::new();
+        for claim in claims {
+            asked
+                .entry((claim.class.as_str(), claim.slot.as_str()))
+                .or_default()
+                .insert(claim.object.as_str());
+        }
+        let mut holders = Holders::new();
+        for ((class, slot), objects) in asked {
+            let objects: Vec<&str> = objects.into_iter().collect();
+            'chunk: for chunk in objects.chunks(CLAIMS_PER_READ) {
+                let mut found: Holders<'c> = chunk
+                    .iter()
+                    .map(|o| ((class, slot, *o), Vec::new()))
+                    .collect();
+                for page in 0..HOLDER_PAGES {
+                    let entities = storing_any(
+                        &self.gateway.broker,
+                        self.headers,
+                        (class, slot),
+                        chunk,
+                        HOLDERS_PER_PAGE,
+                        page * HOLDERS_PER_PAGE,
+                    )
+                    .await?;
+                    for entity in &entities {
+                        let Some(id) = entity.get("id").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        let stored = entity.get(slot).and_then(crate::relationships::objects);
+                        let mut placed = false;
+                        for object in stored.unwrap_or_default() {
+                            let Some(asked) = chunk.iter().find(|asked| **asked == object) else {
+                                continue;
+                            };
+                            if let Some(ids) = found.get_mut(&(class, slot, *asked)) {
+                                ids.push(id.to_owned());
+                                placed = true;
+                            }
+                        }
+                        // The broker matched an entity whose end names none of the asked
+                        // targets as read here: its claims are read one by one, never free.
+                        if !placed {
+                            continue 'chunk;
+                        }
+                    }
+                    if entities.len() < HOLDERS_PER_PAGE {
+                        holders.extend(found);
+                        continue 'chunk;
+                    }
+                }
+            }
+        }
+        Ok(holders)
     }
 
     /// The targets the writer can read in the space: one read through this endpoint under the
@@ -344,7 +444,26 @@ pub(crate) async fn storing(
     limit: usize,
     offset: usize,
 ) -> Result<Vec<Value>, Box<ProblemDetails>> {
-    let q = query::encode(&object_query(slot, object)?);
+    storing_any(broker, headers, (class, slot), &[object], limit, offset).await
+}
+
+/// [`storing`] for any of `objects` at once: `q={slot}=="a","b"`, a value list matching any of
+/// them (CIM 009 4.9).
+async fn storing_any(
+    broker: &Broker,
+    headers: &HeaderMap,
+    (class, slot): (&str, &str),
+    objects: &[&str],
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<Value>, Box<ProblemDetails>> {
+    let mut listed = Vec::with_capacity(objects.len());
+    for object in objects {
+        // Refuses an object that would end its string, as for one object.
+        let one = object_query(slot, object)?;
+        listed.push(one[slot.len() + 2..].to_owned());
+    }
+    let q = query::encode(&format!("{slot}=={}", listed.join(",")));
     let target = format!(
         "/ngsi-ld/v1/entities?type={}&q={q}&attrs={}&limit={limit}&offset={offset}",
         query::encode(class),
@@ -397,6 +516,10 @@ pub(crate) enum Unlinking {
     },
 }
 
+/// The most ids one batch delete names: the broker's own batch ceiling (Antares
+/// `ANTARES_MAX_BATCH_ITEMS`, 1000 unless raised).
+const MAX_DELETE_IDS: usize = 1_000;
+
 /// One delete held against the relationships of the space's model (DM-71, T-2858).
 ///
 /// The broker keeps no relationship rules (the owner's decision of 2026-09-25), so the rules run
@@ -405,10 +528,6 @@ pub(crate) enum Unlinking {
 /// required end, or an entity the caller may not change), and otherwise the entities are changed
 /// or deleted first and the entity itself last. Nothing is changed until every rule has passed;
 /// a reference written after the read is the race window Architecture/11 §1.2 names.
-/// The most ids one batch delete names: the broker's own batch ceiling (Antares
-/// `ANTARES_MAX_BATCH_ITEMS`, 1000 unless raised).
-const MAX_DELETE_IDS: usize = 1_000;
-
 pub(crate) struct HeldDelete<'a> {
     pub(crate) gateway: &'a Gateway,
     pub(crate) subject: &'a Subject,
@@ -1133,16 +1252,12 @@ pub(crate) async fn write_share(
 /// The 503 of a write over the gateway's write budget (T-4077): nothing of it was read, so
 /// sending it again after `Retry-After` is safe.
 pub(crate) fn busy() -> Response<Body> {
-    let mut answer = ProblemDetails::new(503, "service-unavailable", "Service Unavailable")
-        .with_detail(
-            "the gateway holds as many writes as it may at once; send this one again after the \
-             seconds Retry-After names",
-        )
-        .into_response();
-    answer
-        .headers_mut()
-        .insert("retry-after", HeaderValue::from(WRITE_RETRY_SECONDS));
-    answer
+    crate::middleware::in_flight::unavailable(
+        "the gateway holds as many writes as it may at once; send this one again after the \
+         seconds Retry-After names"
+            .into(),
+        WRITE_RETRY_SECONDS,
+    )
 }
 
 /// GW1 and R20: a refused read of one entity is indistinguishable from a miss; everything

@@ -696,6 +696,126 @@ def test_jcctl_judges_the_organization_and_each_project_never_an_apps_source(tmp
     assert rh.jcctl_refusals(str(ok), prepared[1:]) != []
 
 
+OPEN_EP = b"""# the city's open data
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata: { name: city, namespace: zl }
+spec:
+  contextSpaceRef: verejne
+  policyRef: urn:ngsi-ld:Policy:zilina.sk:verejne:read
+  slug: abcdefghijklmnopqrstuvwxyz
+  audience: public
+"""
+POLICY = "kind: Policy\nmetadata: {{ name: {n} }}\nspec:\n  contextSpaceRef: {{ kind: ContextSpace, name: {s} }}\n  operations: [{ops}]\n"
+PIPELINE = b"kind: Pipeline\nmetadata: { name: feed }\nspec:\n  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:verejne:city\n"
+EP187 = ("projects/zl/spaces/verejne/endpoints/city.yaml:1 (document 1): Endpoint city: an open-data "
+         "Endpoint is read-only (EP-187): Pipeline feed writes through it; aim its targetEndpoint at an "
+         "internal Endpoint of the space")
+
+
+def _zl(**extra):
+    files = {"spaces/verejne/space.yaml": b"kind: ContextSpace\nmetadata: { name: verejne }\nspec:\n  urnSegment: zl-verejne\n",
+             "spaces/verejne/endpoints/city.yaml": OPEN_EP, "pipelines/feed/pipeline.yaml": PIPELINE,
+             "spaces/verejne/policies/read.yaml": POLICY.format(n="read", s="verejne", ops="queryEntity").encode(),
+             "spaces/verejne/policies/write.yaml": POLICY.format(n="write", s="verejne", ops="upsertBatch").encode(),
+             "spaces/other/policies/read.yaml": POLICY.format(n="read", s="other", ops="updateOps").encode(), **extra}
+    return [({}, "joinedcontext", "zl", "main", files)]
+
+
+def test_an_export_older_than_ep187_writes_through_a_door_and_reads_as_before():
+    """T-6972: an open-data Endpoint jcctl refuses for a write it served gets `<name>-write` beside it
+    (organization audience, the Policies it served), its Pipelines aim at the door, and it keeps the
+    Policies that write nothing; nothing else moves."""
+    import yaml
+    served_none = OPEN_EP.replace(b"  policyRef: urn:ngsi-ld:Policy:zilina.sk:verejne:read\n", b"")
+    for endpoint, served in ((OPEN_EP, ["read"]), (served_none, ["read", "write"])):
+        prepared = _zl(**{"spaces/verejne/endpoints/city.yaml": endpoint})
+        before = dict(prepared[0][4])
+        moved = rh.write_doors(prepared, ["warning: x", EP187], "forge-token")
+        files = prepared[0][4]
+        door = yaml.safe_load(files["spaces/verejne/endpoints/city-write.yaml"])
+        assert door["spec"]["audience"] == "organization" and door["metadata"]["namespace"] == "zl"
+        assert door["spec"]["policyRefs"] == [f"urn:ngsi-ld:Policy:{{orgDomain}}:zl-verejne:{n}" for n in served]
+        assert re.fullmatch(r"[a-z2-7]{32}", door["spec"]["slug"])
+        city = files["spaces/verejne/endpoints/city.yaml"].decode()
+        assert city.startswith("# the city's open data\n") and "policyRef:" not in city
+        assert yaml.safe_load(city)["spec"]["policyRefs"] == ["urn:ngsi-ld:Policy:{orgDomain}:zl-verejne:read"]
+        assert files["pipelines/feed/pipeline.yaml"] == PIPELINE.replace(b":city\n", b":city-write\n")
+        assert set(files) - set(before) == {"spaces/verejne/endpoints/city-write.yaml"}
+        assert {k for k in before if before[k] != files[k]} == {"spaces/verejne/endpoints/city.yaml",
+                                                                  "pipelines/feed/pipeline.yaml"}
+        assert moved == [{"endpoint": "zl/city", "door": "zl/city-write", "reads": ["read"],
+                          "writers": sorted(set(served) - {"read"}), "pipelines": ["pipelines/feed/pipeline.yaml"]}]
+    # The slug is the same on a rerun under the same forge token, another under another one.
+    def slug(key):
+        prepared = _zl()
+        rh.write_doors(prepared, [EP187], key)
+        return yaml.safe_load(prepared[0][4]["spaces/verejne/endpoints/city-write.yaml"])["spec"]["slug"]
+    assert slug("a") == slug("a") != slug("b")
+    # No EP-187 finding, no change.
+    prepared = _zl()
+    assert rh.write_doors(prepared, ["projects/zl/x.yaml:1 (document 1): Endpoint city: spec is missing"], "k") == []
+    assert prepared == _zl()
+
+
+def _zl_export(export):
+    for rel, data in _zl()[0][4].items():
+        p = export / "gitea" / "files" / "joinedcontext" / "zl" / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    org = export / "gitea" / "files" / "joinedcontext" / "configuration" / "organizations" / "zl.yaml"
+    org.parent.mkdir(parents=True)
+    org.write_bytes(b"kind: Organization\n")
+    (export / "gitea" / "repos.json").write_text(json.dumps([{"owner": "joinedcontext", "name": "zl"},
+                                                              {"owner": "joinedcontext", "name": "configuration"}]))
+
+
+def test_doors_writes_only_the_moved_files_and_the_counts_for_the_changes(tmp_path):
+    """The live form of the move (T-6972): the files a Change per repository commits, nothing else."""
+    _zl_export(tmp_path / "export")
+    jcctl = tmp_path / "jcctl"
+    jcctl.write_text(f"#!/bin/sh\nfor a; do case $a in zl=*) d=${{a#zl=}};; esac; done\n"
+                     f"[ -f \"$d/spaces/verejne/endpoints/city-write.yaml\" ] && exit 0\necho '{EP187}'\nexit 1\n")
+    jcctl.chmod(0o755)
+    out = tmp_path / "out"
+    a = argparse.Namespace(export=str(tmp_path / "export"), out=str(out), jcctl_bin=str(jcctl))
+    assert rh.cmd_doors(a) == 0
+    written = sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file())
+    assert written == ["doors.json", "joinedcontext/zl/pipelines/feed/pipeline.yaml",
+                       "joinedcontext/zl/spaces/verejne/endpoints/city-write.yaml",
+                       "joinedcontext/zl/spaces/verejne/endpoints/city.yaml"]
+    counts = json.loads((out / "doors.json").read_text())
+    assert (counts["before"], counts["after"], counts["refusalsAfter"]) == (1, 0, [])
+    with pytest.raises(SystemExit, match="holds files"):
+        rh.cmd_doors(a)
+
+
+def test_the_import_judges_the_doors_again_and_reports_them(tmp_path):
+    export = tmp_path
+    _zl_export(export)
+    calls = []
+
+    def validate(prepared):
+        zl = next(files for _, _, name, _, files in prepared if name == "zl")
+        calls.append(sorted(zl))
+        return [] if "spaces/verejne/endpoints/city-write.yaml" in zl else [EP187]
+
+    class Stop(Exception):
+        pass
+
+    class Forge:
+        def json(self, *_a, **_k):
+            raise Stop
+
+    report = {}
+    try:
+        rh.import_shako(Forge(), "token", export, report, validate=validate)
+    except Stop:
+        pass
+    assert len(calls) == 2 and "manifestRefusals" not in report
+    assert report["writeDoors"][0]["door"] == "zl/city-write"
+
+
 def test_a_bundle_with_one_changed_byte_or_no_digests_is_not_imported(tmp_path):
     """P-26: export fidelity by content, not counts. The import refuses a bundle whose file differs
     from its manifest's digest by one byte, one missing or added file, or a manifest with none."""

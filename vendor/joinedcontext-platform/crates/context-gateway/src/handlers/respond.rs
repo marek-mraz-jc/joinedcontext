@@ -10,11 +10,7 @@ use serde_json::Value;
 
 /// The lowercase hex sha256 of a body, which is what every `ETag` here is.
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    ring::digest::digest(&ring::digest::SHA256, bytes)
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    crate::query::hex(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
 }
 
 /// A file route names its format in the path, so the hop to the broker asks for JSON whatever
@@ -75,18 +71,5 @@ pub(crate) fn read_only(status: StatusCode) -> Response<Body> {
 
 /// A JSON body, serialized once.
 pub(crate) fn json_response(payload: &Value) -> Response<Body> {
-    match serde_json::to_vec(payload) {
-        Ok(bytes) => (
-            [(
-                axum::http::header::CONTENT_TYPE,
-                HeaderValue::from_static("application/json"),
-            )],
-            bytes,
-        )
-            .into_response(),
-        Err(error) => {
-            tracing::error!(%error, "the answer does not serialize");
-            ProblemDetails::internal().into_response()
-        }
-    }
+    typed_json_response(payload, "application/json")
 }

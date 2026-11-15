@@ -45,30 +45,32 @@ fn add_into(a: &mut [u8; 32], b: &[u8]) {
     }
 }
 
-/// The multiset hash of (id, `modifiedAt`) pairs: the order they come in
-/// does not change it (ADR-0030 rule 2).
-pub fn digest_of<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> (u64, String) {
-    let mut sum = [0u8; 32];
-    let mut count = 0u64;
-    for (id, modified) in pairs {
+/// The multiset hash of (id, `modifiedAt`) pairs: the order they come in does not change it
+/// (ADR-0030 rule 2). Folded one pair at a time, so a walk holds no pair after hashing it.
+#[derive(Default)]
+struct PairSum {
+    sum: [u8; 32],
+    count: u64,
+}
+
+impl PairSum {
+    fn add(&mut self, id: &str, modified: &str) {
         let mut h = Sha256::new();
         h.update(id.as_bytes());
         h.update([0u8]);
         h.update(modified.as_bytes());
-        add_into(&mut sum, &h.finalize());
-        count = count.saturating_add(1);
+        add_into(&mut self.sum, &h.finalize());
+        self.count = self.count.saturating_add(1);
     }
-    (count, sum.iter().map(|b| format!("{b:02x}")).collect())
+
+    fn finish(self) -> (u64, String) {
+        let hex = self.sum.iter().map(|b| format!("{b:02x}")).collect();
+        (self.count, hex)
+    }
 }
 
-fn pair(doc: &Value) -> (String, String) {
-    let text = |k: &str| {
-        doc.get(k)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    (text("id"), text("modifiedAt"))
+fn text<'a>(doc: &'a Value, key: &str) -> &'a str {
+    doc.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
 /// `GET /q/tenants/{tenant}/digest`.
@@ -85,18 +87,16 @@ pub async fn digest(
         Ok(false) => return not_found(&raw),
         Err(e) => return ApiError::from(e).into_response(),
     }
-    let mut pairs = Vec::new();
-    // ponytail: the pairs of one Tenant are held while hashing (two short
-    // strings an Entity); fold per page if a Tenant outgrows that.
+    let mut digest = PairSum::default();
     if let Err(e) = crate::csource::walk_docs(&st, &tenant, Kind::Entity, |doc| {
-        pairs.push(pair(&doc));
+        digest.add(text(&doc, "id"), text(&doc, "modifiedAt"));
         Ok(())
     })
     .await
     {
         return ApiError::from(e).into_response();
     }
-    let (entities, sha256) = digest_of(pairs.iter().map(|(i, m)| (i.as_str(), m.as_str())));
+    let (entities, sha256) = digest.finish();
     let instances = match st.temporal.attr_instance_count(&tenant).await {
         Ok(n) => n,
         Err(e) => return ApiError::from(e).into_response(),
@@ -428,6 +428,14 @@ async fn take(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn digest_of<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> (u64, String) {
+        let mut digest = PairSum::default();
+        for (id, modified) in pairs {
+            digest.add(id, modified);
+        }
+        digest.finish()
+    }
 
     #[test]
     fn the_digest_does_not_depend_on_order_and_sees_every_pair() {

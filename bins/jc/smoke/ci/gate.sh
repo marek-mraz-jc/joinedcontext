@@ -148,7 +148,13 @@ if runs multiorg@path; then
   mo_pids+=($!)
 fi
 
-"$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"
+# reports <env> <prefix>: the import's reports (refusals, writeDoors) into the artifact.
+reports() { local f; for f in "$REHEARSAL_HOME/$1"/import-*report.json; do [ -e "$f" ] && cp "$f" "$out/$2${f##*/}"; done; true; }
+if ! "$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"; then
+  reports gate ""
+  exit 1
+fi
+reports gate ""
 # The red proof: SMOKE_STOP=<module> restarts jc without that module, and the verdict must be RED.
 if [ -n "${SMOKE_STOP:-}" ]; then
   roles=$(printf '%s\n' kaisatsu dataroom daiya ekiben antares gateway portal shako | grep -vx "$SMOKE_STOP" | paste -sd,)
@@ -218,4 +224,5 @@ stop_mo
 cp "$home/jc.log" "$out/jc.log" 2>/dev/null || true
 cp "$REHEARSAL_HOME/mo-hosts/jc.log" "$out/mo-hosts-jc.log" 2>/dev/null || true
 cp "$REHEARSAL_HOME/mo-path/jc.log" "$out/mo-path-jc.log" 2>/dev/null || true
+reports mo-hosts mo-hosts-; reports mo-path mo-path-
 exit $verdict
