@@ -79,7 +79,11 @@ type Answer<O extends keyof operations> = operations[O] extends {
 
 /** Each function the UI calls and the shape of its answer: the same handler serves its REST door. */
 interface Answers {
+  jc_access_explore: Answer<"explore_access">;
+  jc_access_simulate: Answer<"simulate_access">;
   jc_change_history: Answer<"list_change_history">;
+  jc_endpoint_preview: Answer<"preview_endpoint">;
+  jc_serviceaccount_access: Answer<"account_access">;
 }
 
 /**

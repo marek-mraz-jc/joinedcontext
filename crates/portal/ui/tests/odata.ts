@@ -34,9 +34,14 @@ export function odataCall(url: string | URL, body?: unknown): ODataCall | undefi
   return { project: bound[1].replaceAll("''", "'"), name: bound[2], params };
 }
 
-/** The service's answer to a function or action: the operation's value under `value`. */
+/** The body of the service's answer to a function or action: the operation's value under `value`. */
+export function odataBody(value: unknown): string {
+  return JSON.stringify({ "@odata.context": "/api/v1/$metadata#Edm.Untyped", value });
+}
+
+/** The service's answer to a function or action. */
 export function odataValue(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify({ "@odata.context": "/api/v1/$metadata#Edm.Untyped", value }), {
+  return new Response(odataBody(value), {
     status,
     headers: { "Content-Type": "application/json", "OData-Version": "4.01" },
   });

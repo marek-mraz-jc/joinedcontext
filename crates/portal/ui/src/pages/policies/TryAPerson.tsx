@@ -3,6 +3,7 @@ import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { call } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { asManifests, ORG_NAMESPACE, type Manifest } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
@@ -142,16 +143,8 @@ function Panel({ project }: { project: string }): JSX.Element {
   };
 
   const ask = useMutation({
-    mutationFn: async (body: components["schemas"]["SimulateRequest"]) =>
-      unwrap(
-        await api.POST(
-          "/api/v1/projects/{project}/endpoints/{name}/access/simulate",
-          {
-            params: { path: { project, name: chosenEndpoint } },
-            body,
-          },
-        ),
-      ),
+    mutationFn: (body: components["schemas"]["SimulateRequest"]) =>
+      call("jc_access_simulate", project, { ...body, type: body.type ?? undefined, endpoint: chosenEndpoint }),
   });
 
   const who = subject();

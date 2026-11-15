@@ -902,6 +902,117 @@ async fn a_function_answers_as_mcp_tools_call_and_takes_aliases() {
 /// service that moves it fails here until the snapshot is written again
 /// (`JC_WRITE_SNAPSHOT=1 cargo test --test odata_org_tests sdk_metadata`) and the client
 /// regenerated (`node sdk/scripts/odata-gen.mjs`), which CI checks has no diff.
+/// An OData alias of `value` as the UI's SDK client sends it: the literal, percent-encoded.
+fn alias(value: &Value) -> String {
+    let literal = match value {
+        Value::String(text) => format!("'{}'", text.replace('\'', "''")),
+        other => other.to_string(),
+    };
+    literal
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// T-6812: each function the Portal UI moved onto the service, called as its SDK client calls it
+/// (every argument an alias, a JSON object as one), answers what that operation's REST door
+/// answered the page before: the same status, and the REST body as the function's `value`.
+#[tokio::test]
+async fn the_functions_the_ui_calls_answer_as_their_rest_doors() {
+    let state = state();
+    state.mirror.upsert(envelope(
+        "ServiceAccount",
+        "etl",
+        "helsinki",
+        json!({ "description": "nightly import" }),
+    ));
+    let hel = Mode::Host("hel");
+    let subject = json!({ "kind": "role", "name": "reader" });
+    let simulated =
+        json!({ "subject": { "kind": "group", "name": "stewards" }, "action": "retrieveEntity" });
+    let cases: [(&str, Value, Answer); 4] = [
+        (
+            "jc_access_explore",
+            json!({ "subject": subject }),
+            act(
+                &state,
+                "root",
+                "/api/v1/projects/helsinki/access/explore",
+                None,
+                json!({ "subject": subject }),
+            )
+            .await,
+        ),
+        (
+            "jc_serviceaccount_access",
+            json!({ "name": "etl" }),
+            get(
+                &state,
+                hel,
+                "root",
+                "/api/v1/projects/helsinki/serviceaccounts/etl/access",
+            )
+            .await,
+        ),
+        (
+            "jc_change_history",
+            json!({ "page": 1, "kind": "Policy", "name": "air" }),
+            get(
+                &state,
+                hel,
+                "root",
+                "/api/v1/projects/helsinki/changes/history?page=1&kind=Policy&name=air",
+            )
+            .await,
+        ),
+        (
+            "jc_access_simulate",
+            json!({ "endpoint": "air", "subject": simulated["subject"], "action": "retrieveEntity" }),
+            act(
+                &state,
+                "root",
+                "/api/v1/projects/helsinki/endpoints/air/access/simulate",
+                None,
+                simulated.clone(),
+            )
+            .await,
+        ),
+    ];
+    for (name, params, rest) in cases {
+        let params = params.as_object().expect("object");
+        let names: Vec<String> = params.keys().map(|k| format!("{k}=@{k}")).collect();
+        let aliases: Vec<String> = params
+            .iter()
+            .map(|(k, v)| format!("@{k}={}", alias(v)))
+            .collect();
+        let uri = format!(
+            "/api/v1/projects('helsinki')/JoinedContext.Portal.{name}({})?{}",
+            names.join(","),
+            aliases.join("&")
+        );
+        let odata = get(&state, hel, "root", &uri).await;
+        assert_eq!(
+            odata.status, rest.status,
+            "{name}: OData {} REST {}",
+            odata.text, rest.text
+        );
+        if rest.status.is_success() {
+            assert_eq!(odata.json()["value"], rest.json(), "{name}");
+        } else {
+            assert!(
+                odata.json()["error"]["message"].is_string(),
+                "{name}: {}",
+                odata.text
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn sdk_metadata_snapshot_is_the_org_admins_metadata() {
     // One snapshot per role (T-6821): the SDK client is generated from the org-admin's.

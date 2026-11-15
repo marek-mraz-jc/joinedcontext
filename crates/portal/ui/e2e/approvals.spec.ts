@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { odataBody, odataCall } from "../tests/odata";
 
 // `vite preview` serves the built bundle with no portal API behind it, so this journey answers
 // the API from the browser. The clicks, the routing and the rendering are the real ones; only
@@ -291,10 +292,13 @@ test.describe("approvals", () => {
       };
       const asked: string[] = [];
       await stubApi(page);
-      await page.route("**/changes/history**", (route) => {
+      const history = (url: URL) => url.pathname.endsWith("/changes/history/export") || odataCall(url)?.name === "jc_change_history";
+      await page.route(history, (route) => {
         const url = new URL(route.request().url());
-        asked.push(`${url.pathname.split("/").pop()}${url.search}`);
-        if (url.pathname.endsWith("/export")) {
+        const call = odataCall(url);
+        // The list's arguments read as the export's query, so one line names what each was asked.
+        asked.push(call ? `history?${new URLSearchParams(Object.entries(call.params).map(([k, v]) => [k, String(v)]))}` : `export${url.search}`);
+        if (!call) {
           return route.fulfill({
             status: 200,
             headers: { "content-type": "text/csv; charset=utf-8" },
@@ -304,7 +308,7 @@ test.describe("approvals", () => {
         return route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ChangeList", items: [policy] }),
+          body: odataBody({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ChangeList", items: [policy] }),
         });
       });
       await page.goto("/projects/helsinki/approvals?lang=en");
@@ -346,11 +350,11 @@ test.describe("approvals", () => {
       await page.route("**/permissions/me", (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ project: "helsinki", grants: [{ rule: { kinds: ["Pipeline"], verbs: ["propose"] } }] }) }),
       );
-      await page.route("**/changes/history**", (route) =>
+      await page.route((url) => odataCall(url)?.name === "jc_change_history", (route) =>
         route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({
+          body: odataBody({
             apiVersion: "joinedcontext.com/v1alpha1",
             kind: "ChangeList",
             items: [change("chg-00000007", "change.summary.delete", "air-ingest"), change("chg-00000008", "change.summary.update", "air-clean")],

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { App } from "../src/App";
 import { TryAPerson } from "../src/pages/policies/TryAPerson";
+import { asOData, odataCall } from "./odata";
 
 const LIST = (items: unknown[]) => ({
   apiVersion: "joinedcontext.com/v1alpha1",
@@ -69,10 +70,9 @@ function stub(
       const request = input as Request;
       const url = new URL(request.url);
       const text = request.method === "POST" ? await request.text() : "";
-      sent.push({
-        path: url.pathname,
-        body: text ? JSON.parse(text) : undefined,
-      });
+      // A function of the OData service is recorded by its name, its arguments as the body.
+      const called = odataCall(url);
+      sent.push(called ? { path: called.name, body: called.params } : { path: url.pathname, body: text ? JSON.parse(text) : undefined });
       const json = (body: unknown, status = 200) =>
         new Response(JSON.stringify(body), {
           status,
@@ -97,8 +97,8 @@ function stub(
         return json({ items: [AIR_MODEL] });
       if (url.pathname === "/api/v1/projects/org/groups")
         return json(LIST([STEWARDS]));
-      if (url.pathname.endsWith("/access/simulate"))
-        return json(answer.body, answer.status);
+      if (called?.name === "jc_access_simulate")
+        return asOData(json(answer.body, answer.status));
       return json(LIST([]));
     }),
   );
@@ -156,12 +156,13 @@ describe("Try a person (T-3311)", () => {
     expect(
       within(verdict).getByRole("link", { name: "air-read" }),
     ).toBeInTheDocument();
-    expect(sent.find((s) => s.path.endsWith("/access/simulate"))).toEqual({
-      path: "/api/v1/projects/helsinki/endpoints/air/access/simulate",
+    expect(sent.find((s) => s.path === "jc_access_simulate")).toEqual({
+      path: "jc_access_simulate",
       body: {
         subject: { kind: "person", id: "jana-id" },
         action: "retrieveEntity",
         type: "AirQualityObserved",
+        endpoint: "air",
       },
     });
   });
@@ -196,10 +197,11 @@ describe("Try a person (T-3311)", () => {
     const verdict = await screen.findByTestId("try-verdict");
     expect(verdict).toHaveTextContent("Refused");
     expect(verdict).toHaveTextContent("No Policy grants this action.");
-    expect(sent.find((s) => s.path.endsWith("/access/simulate"))?.body).toEqual(
+    expect(sent.find((s) => s.path === "jc_access_simulate")?.body).toEqual(
       {
         subject: { kind: "group", name: "stewards" },
         action: "retrieveEntity",
+        endpoint: "air",
       },
     );
   });
