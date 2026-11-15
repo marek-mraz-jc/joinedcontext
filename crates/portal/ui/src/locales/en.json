@@ -2602,6 +2602,7 @@
       "pick": "Found {count, plural, one {# entry} other {# entries}}",
       "pickHint": "Pick one; Use writes it into the form, where you can still change it.",
       "use": "Use",
+      "useNeeds": "Pick an entry from the list first.",
       "truncated": "The service lists more than the Portal reads; type a narrower URL if yours is missing.",
       "none": "The service lists nothing this preset can read. Check the URL and the API kind.",
       "failed": "Nothing was listed: {reason}. Check the URL and the API kind, then try again.",

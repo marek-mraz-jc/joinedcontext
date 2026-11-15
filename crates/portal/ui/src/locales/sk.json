@@ -2602,6 +2602,7 @@
       "pick": "Nájdené {count, plural, one {# položka} few {# položky} other {# položiek}}",
       "pickHint": "Vyberte jednu; Použiť ju zapíše do formulára, kde ju ešte môžete zmeniť.",
       "use": "Použiť",
+      "useNeeds": "Najprv vyberte položku zo zoznamu.",
       "truncated": "Služba vypisuje viac, než Portál číta; ak chýba vaša položka, zadajte užšiu URL.",
       "none": "Služba nevypisuje nič, čo by táto predvoľba čítala. Skontrolujte URL a druh API.",
       "failed": "Nič sa nevypísalo: {reason}. Skontrolujte URL a druh API a skúste to znova.",
@@ -2614,7 +2615,7 @@
         "collection": "Kolekcia",
         "thing": "Thing"
       },
-      "refused": "Požiadajte správcu projektu o rolu, ktorá navrhuje dátové zdroje."
+      "refused": "Požiadajte správcu projektu o rolu, ktorá navrhuje zdroje údajov."
     },
     "wizard": {
       "step": "{n}. {label}",

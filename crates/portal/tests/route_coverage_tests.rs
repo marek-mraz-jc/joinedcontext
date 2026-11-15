@@ -265,7 +265,7 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("POST", "/projects/{project}/ops/{name}", "the registry's own door"),
 ("GET", "/projects/{project}/permissions/me", "what this caller may do, for the Portal UI; jc_permissions_me answers the same rules (JC2-29)"),
 ("POST", "/projects/{project}/pipelines/test", "jc_pipeline_test"),
-("POST", "/projects/{project}/datasource-discovery", "a steward picks a preset's organization, layer, entity set, feature type, collection or Thing in the DataSource form (T-7076); no MCP tool: an agent writes the preset fields into the manifest it proposes"),
+("POST", "/projects/{project}/datasource-discovery", "jc_datasource_discover"),
 ("POST", "/projects/{project}/datasource-paging", "a steward sees how a new source pages in the data source wizard (T-7094); no MCP tool: an agent writes spec.http.paging into the manifest it proposes and its dryRun probe reads the source"),
 ("POST", "/projects/{project}/datasources/{name}/test", "a steward tests a saved data source's connection from its page (T-4819); an agent checks a draft source with jc_resource_propose and dryRun, whose probe fetches an http source"),
 ("GET", "/projects/{project}/pipelines/{name}/metrics", "jc_pipeline_metrics"),
