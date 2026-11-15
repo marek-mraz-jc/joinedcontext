@@ -547,8 +547,9 @@ test.describe("a model source that cannot be read (T-6950)", () => {
     for (const status of [403, 500]) {
       test(`says a ${status} on the model page and the space tab at ${width} px`, async ({ page }) => {
         await page.setViewportSize({ width, height: width > 600 ? 900 : 860 });
-        // A one-line linkml is a reference, not inline YAML: the page reads the source route.
-        await stubKpi(page, ["read"], "helsinki-kpi");
+        // A one-line linkml is a reference, not inline YAML: the page reads the source route. With
+        // propose granted, Edit model is closed only by the unread source.
+        await stubKpi(page, ["read", "propose"], "helsinki-kpi");
         await page.route("**/datamodels/helsinki-kpi/source", (route) =>
           route.fulfill({
             status,
@@ -571,6 +572,11 @@ test.describe("a model source that cannot be read (T-6950)", () => {
           await expect(page.getByText(words)).toBeVisible({ timeout: 20_000 });
           await expect(page.getByText("The Portal did not answer")).toHaveCount(0);
           await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(status === 403 ? 0 : 1);
+          if (where === "page") {
+            // The record still names the model, and Edit model says why it cannot open (UI judge, T-6950).
+            await expect(page.getByRole("region", { name: "From the model's record" })).toBeVisible();
+            await expect(page.getByRole("button", { name: "Edit model" })).toHaveAccessibleDescription("Editing reads the model's source, which could not be read.");
+          }
           await shot(page, `source-${status}-${where}-${width}`);
         }
       });
