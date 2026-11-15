@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   andQ,
+  andScopeQ,
   complete,
   opsForKind,
   queryFromFilters,
@@ -205,5 +206,11 @@ describe("pageNumbers: a DataTables pager (T-5196)", () => {
     expect(pageNumbers(6, 12)).toEqual([1, null, 5, 6, 7, null, 12]);
     expect(pageNumbers(12, 12)).toEqual([1, null, 11, 12]);
     expect(pageNumbers(3, 4)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("keeps two scope conditions both true", () => {
+    expect(andScopeQ("/city/#", undefined)).toBe("/city/#");
+    expect(andScopeQ("/city/#", "/north")).toBe("(/city/#;/north)");
+    expect(andScopeQ("/a,(/b;/c)", "/d|/e")).toBe("(/a;/d),(/a;/e),(/b;/c;/d),(/b;/c;/e)");
   });
 });

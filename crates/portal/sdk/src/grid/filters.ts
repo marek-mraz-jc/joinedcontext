@@ -300,6 +300,20 @@ export function andQ(...parts: (string | undefined)[]): string | undefined {
   return kept.length === 1 ? kept[0] : kept.map((part) => (hasOr(part) ? `(${part})` : part)).join(";");
 }
 
+/**
+ * Two `scopeQ` values as one: an Entity matches when both match. The grammar (CIM 009 4.19) is a
+ * disjunction of parenthesised `;`-conjunctions, so the result pairs each group of one with each
+ * group of the other.
+ */
+export function andScopeQ(...parts: (string | undefined)[]): string | undefined {
+  const kept = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
+  if (kept.length <= 1) return kept[0];
+  const groups = (scope: string) =>
+    scope.split(/[,|]/).map((group) => group.trim().replace(/^\((.*)\)$/, "$1").trim());
+  const joined = kept.map(groups).reduce((left, right) => left.flatMap((a) => right.map((b) => `${a};${b}`)));
+  return joined.map((group) => `(${group})`).join(",");
+}
+
 /** Whether `q` holds a `|` outside its quoted texts. */
 function hasOr(q: string): boolean {
   let quoted = false;

@@ -120,6 +120,20 @@ describe("the filter row, by field kind (T-6328)", () => {
     await waitFor(() => expect(asked.at(-1)?.idPattern).toBe("bratislava\\.kpi\\[1"));
   });
 
+  it("ID: a preset idPattern is never replaced, and the host's query and the preset both hold", async () => {
+    const { asked, source } = recording();
+    const narrowed = { ...config(), filters: { preset: { q: 'category=="traffic"', idPattern: "^urn:ngsi-ld:KeyPerformanceIndicator:bratislava", scopeQ: "/city/#" } } };
+    render(<EntityGrid config={narrowed} source={source} query={{ q: "kpiValue>5", scopeQ: "/north", idPattern: ".*" }} />);
+    await waitFor(() => expect(asked.length).toBeGreaterThan(0));
+    expect(asked.at(-1)).toMatchObject({
+      q: 'category=="traffic";kpiValue>5',
+      idPattern: "^urn:ngsi-ld:KeyPerformanceIndicator:bratislava",
+      scopeQ: "(/city/#;/north)",
+    });
+    // No id filter could narrow within the preset's pattern, so none is offered to replace it.
+    expect(screen.queryByRole("combobox", { name: "Filter: ID" })).toBeNull();
+  });
+
   it("Type: offered where the grid reads several types, the picked ones narrow its type list", async () => {
     const asked = await grid("KeyPerformanceIndicator,Alert");
     op("Type", "anyOf");
