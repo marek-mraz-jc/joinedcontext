@@ -222,6 +222,32 @@ async fn a_turn_reads_back_redacted_with_its_steps_and_the_cost_is_their_sum() {
         .expect("the data conversation is on a page");
     assert_eq!(paged["models"], json!(["google/gemini-3.8-flash"]));
     assert_eq!(paged["models"], listed["models"]);
+    // T-6948: the outer query sorts the page by the same keys as the inner one, for each order.
+    for sort in ["costUsd", "tokens", "totalMs", "lastAt"] {
+        let by = |limit, cursor| Filter {
+            sort: Some(sort.into()),
+            limit,
+            cursor,
+            ..Filter::default()
+        };
+        let (whole, _) = transcript::list(&pool, PROJECT, &by(None, None))
+            .await
+            .expect("the sorted list reads");
+        let (head, next) = transcript::list(&pool, PROJECT, &by(Some(1), None))
+            .await
+            .expect("the first sorted page reads");
+        let (tail, _) = transcript::list(&pool, PROJECT, &by(Some(1), next))
+            .await
+            .expect("the second sorted page reads");
+        assert_eq!(
+            whole.iter().map(|i| i["id"].clone()).collect::<Vec<_>>(),
+            [&head[0], &tail[0]].map(|i| i["id"].clone()),
+            "{sort}: one page holds the rows in the order the cursor pages them"
+        );
+        if sort == "costUsd" {
+            assert_eq!(whole[0]["id"], RAG, "the dearer conversation comes first");
+        }
+    }
     let (other, _) = transcript::list(&pool, "elsewhere", &Filter::default())
         .await
         .expect("another project's list reads");
