@@ -244,6 +244,10 @@ impl Rate {
 /// [`Hub::recheck`] of `hub` against the gateway's current tables.
 fn recheck(gateway: &Gateway, hub: &Hub) {
     let accounts = gateway.accounts.load();
+    let ended = hub.close_ended(|subject, opened| ended(gateway, &accounts, subject, opened));
+    if !ended.is_empty() {
+        tracing::info!(slug = %hub.slug, closed = ended.len(), "WebSocket connections closed: the caller's access ended");
+    }
     let closed = hub.recheck(
         gateway.resolver.resolve(&hub.slug).as_ref(),
         |azp| accounts.admits_on(azp, &hub.slug),
@@ -252,6 +256,36 @@ fn recheck(gateway: &Gateway, hub: &Hub) {
     if !closed.is_empty() {
         tracing::info!(slug = %hub.slug, closed = closed.len(), "WebSocket connections closed by a reload");
     }
+}
+
+/// Whether the access `subject` was admitted with at the unix second `opened` ended since
+/// (S-3-12): the person was revoked at or after it, the ServiceAccount left the repository or
+/// its last credential ended, or the data space agreement no longer serves.
+fn ended(
+    gateway: &Gateway,
+    accounts: &crate::auth::accounts::ServiceAccounts,
+    subject: &Subject,
+    opened: i64,
+) -> bool {
+    let revoked = subject
+        .id
+        .as_deref()
+        .zip(gateway.verifier.as_deref())
+        .and_then(|(id, verifier)| verifier.revoked_at(id))
+        .is_some_and(|mark| mark >= opened);
+    let now = chrono::Utc::now();
+    let account_gone = subject.service_account.as_deref().is_some_and(|name| {
+        let project = subject
+            .service_account_project
+            .as_deref()
+            .unwrap_or_default();
+        !accounts.holds(project, name, now)
+    });
+    let agreement_gone = subject
+        .agreement
+        .as_deref()
+        .is_some_and(|id| gateway.agreements.load().serving(id, now).is_none());
+    revoked || account_gone || agreement_gone
 }
 
 /// Whether `subject` is still served the WebSocket of `endpoint` after a change of its readable
@@ -771,9 +805,11 @@ pub async fn session(
             () = &mut expired => ended = Some(Ended::Closing("lifetime")),
             () = queue.ready() => {
                 let (items, overflowed) = queue.take();
+                let mut notified = Vec::new();
                 for item in items {
                     match item {
-                        Out::Notification { subscription, body, .. } => {
+                        Out::Notification { subscription, entity, body } => {
+                            notified.push(entity);
                             seq += 1;
                             let text = json!({"metadata": {
                                 "x-op": "x-notification", "x-seq": seq,
@@ -812,6 +848,9 @@ pub async fn session(
                 if overflowed {
                     outgoing.push(gap(seq + 1, seq + 1));
                     ended = Some(Ended::Closing("overflow"));
+                }
+                if !notified.is_empty() {
+                    hub.log_personal_read(conn, &notified);
                 }
             }
         }
@@ -1391,5 +1430,60 @@ mod tests {
             ["type=*&limit=1000&offset=0", "type=*&limit=250&offset=0"],
             "{asked:?}"
         );
+    }
+
+    /// S-3-12: an open session ends when its person is revoked at or after the second it
+    /// opened (a token issued later is a new session's), its ServiceAccount leaves the
+    /// repository, or its agreement stops serving; an anonymous caller has nothing to end.
+    #[test]
+    fn a_session_ends_with_its_callers_access() {
+        let verifier = Arc::new(jc_core::auth::token::Verifier::new("https://realm.test"));
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new("http://127.0.0.1:1"),
+            Box::new(crate::pdp::PolicyPdp),
+            "hel.fi",
+        )
+        .authenticate(
+            Arc::clone(&verifier),
+            crate::auth::accounts::ServiceAccounts::new(),
+            None,
+        );
+        let accounts = gateway.accounts.load();
+        let person = Subject {
+            id: Some("jana".into()),
+            ..Subject::default()
+        };
+        assert!(!ended(&gateway, &accounts, &person, 100), "no mark");
+        verifier.replace_revocations(HashMap::from([("jana".to_owned(), 100)]));
+        assert!(
+            ended(&gateway, &accounts, &person, 100),
+            "marked the second it opened"
+        );
+        assert!(
+            ended(&gateway, &accounts, &person, 99),
+            "marked after it opened"
+        );
+        assert!(
+            !ended(&gateway, &accounts, &person, 101),
+            "opened after the mark"
+        );
+        let account = Subject {
+            service_account: Some("kpi".into()),
+            service_account_project: Some("espoo".into()),
+            ..Subject::default()
+        };
+        assert!(
+            ended(&gateway, &accounts, &account, 100),
+            "the account left"
+        );
+        let consumer = Subject {
+            agreement: Some("agreement-1".into()),
+            ..Subject::default()
+        };
+        assert!(
+            ended(&gateway, &accounts, &consumer, 100),
+            "the agreement serves no more"
+        );
+        assert!(!ended(&gateway, &accounts, &Subject::default(), 100));
     }
 }

@@ -82,6 +82,15 @@ pub enum Out {
     Refused,
 }
 
+/// The unix second now.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+        })
+}
+
 /// A connection's queue: bounded, coalesced per subscription and entity (ADR-N-049 §2.6).
 #[derive(Debug, Default)]
 pub struct Queue {
@@ -165,6 +174,9 @@ struct Conn {
     principal: String,
     /// The caller as admitted at the upgrade; its `client` (`azp`) a reload may stop admitting.
     subject: Subject,
+    /// The unix second the connection opened: a revocation marked at or after it names the
+    /// token the upgrade admitted (S-3-12).
+    opened: i64,
     queue: Arc<Queue>,
     subs: BTreeMap<u32, Sub>,
     next: u32,
@@ -321,6 +333,7 @@ impl Hub {
                 endpoint,
                 principal,
                 subject,
+                opened: unix_now(),
                 queue: Arc::clone(&queue),
                 subs: BTreeMap::new(),
                 next: 1,
@@ -592,6 +605,43 @@ impl Hub {
                     state.index.remove(sub.filter);
                 }
             }
+        }
+        state.forget_unwatched();
+        gone
+    }
+
+    /// DM-128 on the WebSocket (S-3-09): the notifications of `entities` just sent on
+    /// connection `conn` leave the `personal_read` line of its Endpoint and caller, none when
+    /// the Endpoint serves no personal attribute.
+    pub fn log_personal_read(&self, conn: u64, entities: &[String]) {
+        let state = self.state();
+        if let Some(conn) = state.conns.get(&conn) {
+            crate::handlers::ngsi_ld::log_personal_read_of(
+                &conn.endpoint,
+                &conn.subject,
+                "WebSocket",
+                entities,
+                None,
+            );
+        }
+    }
+
+    /// Ends with `access-ended` every connection whose caller lost its access since the
+    /// upgrade (S-3-12): `ended` is asked with the caller and the unix second its connection
+    /// opened. Answers the connections it closes.
+    pub fn close_ended(&self, ended: impl Fn(&Subject, i64) -> bool) -> Vec<u64> {
+        let mut state = self.state();
+        let state = &mut *state;
+        let mut gone = Vec::new();
+        for (id, conn) in &mut state.conns {
+            if !ended(&conn.subject, conn.opened) {
+                continue;
+            }
+            conn.queue.push(Out::Closing("access-ended"));
+            for (_, sub) in std::mem::take(&mut conn.subs) {
+                state.index.remove(sub.filter);
+            }
+            gone.push(*id);
         }
         state.forget_unwatched();
         gone
@@ -1062,6 +1112,110 @@ mod tests {
 
     fn open(hub: &Hub) -> (u64, Arc<Queue>) {
         hub.open(endpoint(), "anonymous".into(), Subject::default())
+    }
+
+    /// S-3-09: notifications sent on a connection of an Endpoint serving a personal attribute
+    /// leave the `personal_read` line with the caller, the surface and the Entities, never a
+    /// value; a connection of an Endpoint without one leaves nothing.
+    #[test]
+    fn a_personal_notification_leaves_the_personal_read_line() {
+        #[derive(Clone, Default)]
+        struct Lines(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let model = json!({"definitions": {"BikeTrip": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "rider": {"type": "string", "x-personal-data": true}}}}});
+        let schema = jc_manifest::model_schema::ModelSchema::compile(
+            "bike-trips",
+            "1.0.0",
+            &model,
+            &["BikeTrip".to_owned()],
+            true,
+        );
+        let mut personal = (*endpoint()).clone();
+        personal.declared_types = Some(Arc::new(crate::resolver::DeclaredTypes {
+            model: "bike-trips".into(),
+            classes: ["BikeTrip".to_owned()].into(),
+            units: Default::default(),
+            relationships: Default::default(),
+            quality: Vec::new(),
+            schema: Some(Arc::new(schema)),
+        }));
+        let hub = Hub::new("s", 10);
+        let jana = Subject {
+            user: Some("jana".into()),
+            ..Subject::default()
+        };
+        let (read, _) = hub.open(Arc::new(personal), "user:jana".into(), jana);
+        let (plain, _) = open(&hub);
+        let lines = Lines::default();
+        let writer = lines.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            hub.log_personal_read(read, &["urn:ngsi-ld:BikeTrip:t1".to_owned()]);
+            hub.log_personal_read(plain, &["urn:ngsi-ld:BikeTrip:t2".to_owned()]);
+        });
+        let text = String::from_utf8_lossy(&lines.0.lock().unwrap_or_else(PoisonError::into_inner))
+            .into_owned();
+        assert_eq!(
+            text.matches("personal attributes read").count(),
+            1,
+            "{text}"
+        );
+        for named in [
+            "WebSocket",
+            "jana",
+            "BikeTrip.rider",
+            "urn:ngsi-ld:BikeTrip:t1",
+        ] {
+            assert!(text.contains(named), "{named} missing: {text}");
+        }
+        assert!(!text.contains("BikeTrip:t2"), "{text}");
+    }
+
+    /// S-3-12: a caller whose access ended closes with `access-ended`, its filters leave the
+    /// index so no later change reaches it, and every other connection stays.
+    #[test]
+    fn a_caller_whose_access_ended_closes_and_hears_nothing_more() {
+        let hub = Hub::new("s", 10);
+        let jana = Subject {
+            id: Some("jana".into()),
+            ..Subject::default()
+        };
+        let (gone, gone_queue) = hub.open(endpoint(), "user:jana".into(), jana);
+        subscribe(&hub, gone, json!({}));
+        let (kept, kept_queue) = open(&hub);
+        subscribe(&hub, kept, json!({}));
+        let closed = hub.close_ended(|subject, opened| {
+            assert!(opened > 0, "the open second is known");
+            subject.id.as_deref() == Some("jana")
+        });
+        assert_eq!(closed, [gone]);
+        assert_eq!(gone_queue.take().0, [Out::Closing("access-ended")]);
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 1.0, "x"),
+            chrono::DateTime::UNIX_EPOCH,
+        );
+        assert!(gone_queue.take().0.is_empty(), "nothing follows the close");
+        assert!(
+            !kept_queue.take().0.is_empty(),
+            "the other caller hears the change"
+        );
+        assert!(hub.close_ended(|_, _| false).is_empty());
     }
 
     /// A connection whose upgrade failed leaves the hub with its guard; a taken one stays.

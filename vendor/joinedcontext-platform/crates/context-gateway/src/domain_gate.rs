@@ -95,6 +95,24 @@ impl DomainGate {
         self.refusal_at(org_domain, Instant::now())
     }
 
+    /// [`Self::refusal`] for a write to a space of `project`, whose Organization declares
+    /// `domain` when the repository says (S-3-14): under `enforce` a project whose
+    /// Organization's domain is unknown is refused rather than judged by another's.
+    pub fn refusal_for(&self, domain: Option<&str>, project: &str) -> Option<ProblemDetails> {
+        match domain {
+            Some(domain) => self.refusal(domain),
+            None if self.mode == Mode::Report => None,
+            None => Some(
+                ProblemDetails::new(403, "domain-not-verified", "Forbidden").with_detail(format!(
+                    "writes to the spaces of the project {project} are refused: the repository \
+                     names no Organization domain for it, and this gateway refuses rather than \
+                     guesses; set spec.organizationRef on the Project and spec.domain on its \
+                     Organization (PF-41)"
+                )),
+            ),
+        }
+    }
+
     /// [`Self::refusal`] at `now`.
     pub fn refusal_at(&self, org_domain: &str, now: Instant) -> Option<ProblemDetails> {
         if self.mode == Mode::Report {
