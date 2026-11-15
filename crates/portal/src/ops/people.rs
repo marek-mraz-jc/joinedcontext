@@ -446,7 +446,7 @@ pub fn operations() -> Vec<Operation> {
         Operation {
             name: "jc_person_edit",
             title: "Edit Person",
-            description: "Edits a person's name, e-mail or language",
+            description: "Edits a person's name, e-mail or language. An e-mail change needs a person in a Portal session (a service account's or an agent's token: 403); names and language stay open to tokens (PF-93)",
             input: edit_schema,
             output: person_schema,
             annotations: annotations(false, false, true),
