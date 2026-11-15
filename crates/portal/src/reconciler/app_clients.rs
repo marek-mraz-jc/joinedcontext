@@ -579,33 +579,47 @@ impl Admin {
         serde_json::from_value(value).map_err(|err| format!("GET {}: {err}", shown(path)))
     }
 
-    /// Every item of a realm listing, read page by page (`first`, `max`) until a short page: one
-    /// page alone misses what a large realm lists past it.
+    /// Every item of a realm listing, read page by page (`first`, `max`) until a page brings
+    /// nothing new: a short page, or one a server that ignores `first` (kaisatsu's compat
+    /// listings) answers again. One page alone misses what a large Keycloak realm lists past it.
+    /// ponytail: a server that honours `max` but not `first` stops at one page of `PAGE`, as the
+    /// single call before did; it needs `first` to list more.
     pub(crate) async fn get_all<T: serde::de::DeserializeOwned>(
         &self,
         token: &str,
         path: &str,
     ) -> Result<Vec<T>, String> {
-        const PAGE: usize = 500;
+        const PAGE: usize = 1000;
         const MOST: usize = 200_000;
         let joiner = if path.contains('?') { '&' } else { '?' };
+        let mut seen = std::collections::HashSet::new();
         let mut all = Vec::new();
         loop {
-            let page: Vec<T> = self
+            let page: Vec<Value> = self
                 .get(
                     token,
                     &format!("{path}{joiner}first={}&max={PAGE}", all.len()),
                 )
                 .await?;
             let short = page.len() < PAGE;
-            all.extend(page);
-            if short {
-                return Ok(all);
+            let before = all.len();
+            for item in page {
+                if seen.insert(item.to_string()) {
+                    all.push(item);
+                }
+            }
+            if short || all.len() == before {
+                break;
             }
             if all.len() >= MOST {
                 return Err(format!("GET {}: more than {MOST} items", shown(path)));
             }
         }
+        all.into_iter()
+            .map(|item| {
+                serde_json::from_value(item).map_err(|err| format!("GET {}: {err}", shown(path)))
+            })
+            .collect()
     }
 
     /// Whether `path` names something the realm holds: a 404 is `false`, any other refusal an

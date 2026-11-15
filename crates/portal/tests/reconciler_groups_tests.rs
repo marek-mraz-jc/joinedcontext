@@ -264,7 +264,7 @@ async fn a_console_edit_is_overwritten_and_reported_and_an_unknown_address_is_on
 #[tokio::test]
 async fn a_managed_group_past_the_first_page_is_converged_not_created() {
     let keycloak = realm().await;
-    let filler: Vec<Value> = (0..500)
+    let filler: Vec<Value> = (0..1000)
         .map(|n| json!({ "id": format!("other-{n}"), "name": format!("other-{n}") }))
         .collect();
     Mock::given(method("GET"))
@@ -275,7 +275,7 @@ async fn a_managed_group_past_the_first_page_is_converged_not_created() {
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{REALM}/groups")))
-        .and(query_param("first", "500"))
+        .and(query_param("first", "1000"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             { "id": "g-late", "name": "city-leads", "attributes": { MANAGED_BY: [MANAGED_VALUE] } }
         ])))
@@ -301,6 +301,62 @@ async fn a_managed_group_past_the_first_page_is_converged_not_created() {
     let outcomes = sync(&keycloak).converge(&mirror).await;
 
     assert_eq!(outcomes[0].error, None, "{outcomes:?}");
+    let wrote = wrote(&keycloak).await;
+    assert!(
+        !wrote.contains(&format!("POST {REALM}/groups")),
+        "{wrote:?}"
+    );
+    assert!(
+        wrote.contains(&format!("PUT {REALM}/users/{LEAD}/groups/g-late")),
+        "{wrote:?}"
+    );
+}
+
+/// A realm that ignores `first` and `max` (kaisatsu's compat listing) answers its whole list to
+/// every page: the run reads it once, finds the managed group past a page's length, and ends.
+#[tokio::test]
+async fn a_realm_that_ignores_paging_is_read_once_and_converged() {
+    let keycloak = realm().await;
+    let mut listed: Vec<Value> = (0..1200)
+        .map(|n| json!({ "id": format!("other-{n}"), "name": format!("other-{n}") }))
+        .collect();
+    listed[1100] = json!({ "id": "g-late", "name": "city-leads", "attributes": { MANAGED_BY: [MANAGED_VALUE] } });
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(Value::Array(listed)))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups/g-late/members")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/users/{LEAD}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": LEAD })))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path_regex(format!("^{REALM}/users/.*/groups/.*$")))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&keycloak)
+        .await;
+
+    let mirror = mirror_with(vec![group("city-leads", &[LEAD])]);
+    let outcomes = sync(&keycloak).converge(&mirror).await;
+
+    assert_eq!(outcomes[0].error, None, "{outcomes:?}");
+    let listings = keycloak
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.method.as_str() == "GET" && r.url.path() == format!("{REALM}/groups"))
+        .count();
+    assert_eq!(
+        listings, 2,
+        "the second answer brings nothing new and ends the read"
+    );
     let wrote = wrote(&keycloak).await;
     assert!(
         !wrote.contains(&format!("POST {REALM}/groups")),
