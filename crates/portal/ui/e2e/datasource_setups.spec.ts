@@ -159,7 +159,7 @@ test.describe("ready-made set-ups on Data sources", () => {
   test("a JSON template names the array its records sit in, and refuses a path that is not names", async ({ page }) => {
     await stubApi(page);
     await page.goto(`/projects/${PROJECT}/datasources/new?lang=en`);
-    await page.getByText("Start from a template").click();
+    // Open at first since T-7094: the wizard is the first choice.
     await page.getByRole("button", { name: /REST API \(JSON\)/ }).click();
     await page.getByLabel("Address of the API").fill("https://gbfs.example.org/gbfs/2.2/helsinki/en/station_information.json");
     const records = page.getByTestId("datasource-templates").getByRole("textbox", { name: "Records are in" });

@@ -121,7 +121,10 @@ pub(crate) fn page_read(url: &Url, capture: &str) -> Result<Value, ApiError> {
 pub(crate) fn guess_of(url: &Url, trace: TestTrace) -> PagingGuess {
     let out = trace.mapping.first().cloned().unwrap_or(Value::Null);
     let bytes = out["bytes"].as_u64().unwrap_or(0) as usize;
-    let link = out["link"].as_str().filter(|l| !l.is_empty()).map(str::to_owned);
+    let link = out["link"]
+        .as_str()
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned);
     let sample = trace.input.sample.clone();
     let probe = crate::api::pipeline_test::answer_of(trace);
     let skipped = |why: String| PagingGuess {
@@ -167,7 +170,9 @@ pub fn guess(url: &Url, body: &Value, link: Option<&str>) -> PagingGuess {
     let records = records_path(body);
     let on_page = records
         .as_deref()
-        .map_or(body.as_array(), |path| at(body, path).and_then(Value::as_array))
+        .map_or(body.as_array(), |path| {
+            at(body, path).and_then(Value::as_array)
+        })
         .map(|items| items.len() as u64);
     let ckan = url.path().ends_with("/package_search");
     let total = if ckan {
@@ -191,7 +196,11 @@ pub fn guess(url: &Url, body: &Value, link: Option<&str>) -> PagingGuess {
         .find(|path| at(body, path).is_some_and(Value::is_boolean));
     let next_in_body = NEXTS
         .iter()
-        .find(|name| body.get(**name).and_then(Value::as_str).is_some_and(is_url_like))
+        .find(|name| {
+            body.get(**name)
+                .and_then(Value::as_str)
+                .is_some_and(is_url_like)
+        })
         .map(|name| (*name).to_owned())
         .or_else(|| {
             body.get("links")
@@ -257,7 +266,8 @@ pub fn guess(url: &Url, body: &Value, link: Option<&str>) -> PagingGuess {
 
 /// The value at a dotted path of names.
 fn at<'a>(body: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.').try_fold(body, |value, name| value.get(name))
+    path.split('.')
+        .try_fold(body, |value, name| value.get(name))
 }
 
 /// Where the records sit: none for a top-level array, else the longest array among the body's
@@ -275,7 +285,9 @@ fn records_path(body: &Value) -> Option<String> {
             continue;
         }
         match value {
-            Value::Array(items) if items.iter().any(Value::is_object) => keep(items.len(), name.clone()),
+            Value::Array(items) if items.iter().any(Value::is_object) => {
+                keep(items.len(), name.clone())
+            }
             Value::Object(inner) => {
                 for (child, value) in inner {
                     if let Value::Array(items) = value {
@@ -328,7 +340,8 @@ mod tests {
 
     fn recorded(folder: &str) -> (Value, Value) {
         let read = |file: &str| -> Value {
-            let text = std::fs::read_to_string(format!("{PRESETS}/{folder}/{file}")).expect("fixture");
+            let text =
+                std::fs::read_to_string(format!("{PRESETS}/{folder}/{file}")).expect("fixture");
             serde_json::from_str(&text).expect("json")
         };
         (read("page-1.json"), read("render.json"))
@@ -345,11 +358,23 @@ mod tests {
             let paging = guessed.paging.clone().expect(folder);
             let walk = &render["paginate"];
             assert_eq!(paging.mode.as_str(), walk["mode"], "{folder}");
-            assert_eq!(guessed.records.as_deref(), walk["records"].as_str(), "{folder}");
+            assert_eq!(
+                guessed.records.as_deref(),
+                walk["records"].as_str(),
+                "{folder}"
+            );
             assert_eq!(paging.next.as_deref(), walk["next"].as_str(), "{folder}");
             assert_eq!(paging.more.as_deref(), walk["more"].as_str(), "{folder}");
-            assert_eq!(paging.offset_param.as_deref(), walk["offset_param"].as_str(), "{folder}");
-            assert_eq!(paging.limit_param.as_deref(), walk["limit_param"].as_str(), "{folder}");
+            assert_eq!(
+                paging.offset_param.as_deref(),
+                walk["offset_param"].as_str(),
+                "{folder}"
+            );
+            assert_eq!(
+                paging.limit_param.as_deref(),
+                walk["limit_param"].as_str(),
+                "{folder}"
+            );
             if walk["mode"] == "offset" {
                 assert_eq!(paging.limit, walk["limit"].as_u64(), "{folder}");
                 assert_eq!(paging.total.as_deref(), walk["total"].as_str(), "{folder}");
@@ -379,15 +404,26 @@ mod tests {
         let linked = guess(
             &url,
             &body,
-            Some(r#"<https://api.example/items?page=2>; rel="next", <https://api.example/items?page=9>; rel="last""#),
+            Some(
+                r#"<https://api.example/items?page=2>; rel="next", <https://api.example/items?page=9>; rel="last""#,
+            ),
         );
         assert_eq!(linked.paging.map(|p| p.mode), Some(HttpPagingMode::Link));
         assert_eq!((linked.records, linked.on_page), (None, Some(2)));
-        assert!(!names_next(r#"<https://api.example/items?page=1>; rel="prev""#));
+        assert!(!names_next(
+            r#"<https://api.example/items?page=1>; rel="prev""#
+        ));
 
-        let bare = guess(&url, &json!({ "total": 13500, "data": [{ "id": 1 }] }), None);
+        let bare = guess(
+            &url,
+            &json!({ "total": 13500, "data": [{ "id": 1 }] }),
+            None,
+        );
         assert_eq!(bare.paging, None);
-        assert_eq!((bare.records.as_deref(), bare.total, bare.pages), (Some("data"), Some(13500), Some(13500)));
+        assert_eq!(
+            (bare.records.as_deref(), bare.total, bare.pages),
+            (Some("data"), Some(13500), Some(13500))
+        );
         assert!(!bare.more);
     }
 
