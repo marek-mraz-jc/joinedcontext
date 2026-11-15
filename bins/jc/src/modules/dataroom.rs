@@ -463,16 +463,22 @@ fn own_gateway(
     live: &crate::siblings::LiveAddresses,
     siblings: &Siblings,
 ) -> Option<(String, Option<std::net::SocketAddr>)> {
-    let gateway = siblings.get(Module::Gateway)?;
-    let public = crate::siblings::origin(&gateway.public);
     if live.api.is_empty() {
         return None;
     }
-    let internal = crate::siblings::origin(&gateway.internal);
-    let loopback = internal
-        .strip_prefix("http://")
-        .and_then(|a| a.parse::<std::net::SocketAddr>().ok())
-        .filter(|a| a.ip().is_loopback());
+    let loopback_of = |url: &str| {
+        crate::siblings::origin(url)
+            .strip_prefix("http://")
+            .and_then(|a| a.parse::<std::net::SocketAddr>().ok())
+            .filter(|a| a.ip().is_loopback())
+    };
+    let Some(gateway) = siblings.get(Module::Gateway) else {
+        // The gateway runs in another container (role split): the api address the operator
+        // named is its, read directly only when it is a loopback literal (a kit's front).
+        return Some((live.api.clone(), loopback_of(&live.api)));
+    };
+    let public = crate::siblings::origin(&gateway.public);
+    let loopback = loopback_of(&gateway.internal);
     // A named api address that is not the gateway's mount is another host: no shortcut. A
     // public origin that is the loopback listener itself (a kit on http://127.0.0.1:<port>) is
     // still jc serving it there.
@@ -1716,7 +1722,24 @@ mod tests {
             Some(("http://localhost:42102".into(), None))
         );
         assert_eq!(own_gateway(&live(""), &slug), None);
-        assert_eq!(own_gateway(&live("x"), &Siblings::new(&[], listener)), None);
+        // No gateway in this jc (role split): the named api address, on loopback only as a literal.
+        let apart = Siblings::new(&[], listener);
+        assert_eq!(own_gateway(&live(""), &apart), None);
+        assert_eq!(
+            own_gateway(&live("https://api.city.example"), &apart),
+            Some(("https://api.city.example".into(), None))
+        );
+        assert_eq!(
+            own_gateway(&live("http://127.0.0.1:42262"), &apart),
+            Some((
+                "http://127.0.0.1:42262".into(),
+                Some("127.0.0.1:42262".parse().unwrap())
+            ))
+        );
+        assert_eq!(
+            own_gateway(&live("http://10.0.0.5:8080"), &apart),
+            Some(("http://10.0.0.5:8080".into(), None))
+        );
     }
 
     /// Without a gateway of their own, prod's sources keep prod's converted datasets and read

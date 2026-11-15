@@ -859,10 +859,16 @@ fn split_credentials(cfg: &Config) -> Vec<crate::setup::Secret> {
     let served = crate::config::SPLIT_MODULES
         .into_iter()
         .filter(|m| cfg.door.is_some() && cfg.roles.contains(m));
-    served
+    let mut out: Vec<_> = served
         .chain(cfg.remote_modules.keys().copied())
         .filter_map(crate::setup::Secret::service_credential)
-        .collect()
+        .collect();
+    // The Portal registers its hooks on a shako in another container with the webhook secret and
+    // checks their deliveries with it, so it keeps that secret (on disk) without shako beside it.
+    if cfg.roles.contains(&Module::Portal) && cfg.remote_modules.contains_key(&Module::Shako) {
+        out.push(crate::setup::Secret::ForgeWebhookSecret);
+    }
+    out
 }
 
 /// One loopback forwarder per `[remote.modules]` entry, each added to `siblings` so the Portal
@@ -1427,6 +1433,33 @@ mod tests {
             ..crate::config::Cli::default()
         };
         Config::merge(cli, file).unwrap()
+    }
+
+    /// A Portal whose shako runs in another container holds the forge webhook secret beside the
+    /// shako token: without it the Portal got no `JC_SHAKO_*` group and never started (T-7014).
+    #[test]
+    fn a_portal_with_a_remote_shako_holds_the_forge_webhook_secret() {
+        use crate::setup::Secret;
+        let cfg = dev_config(
+            "kaisatsu,portal",
+            "[remote]\ntoken_url = \"http://id/token\"\nclient_id = \"portal-remote\"\n\
+             [remote.modules]\nshako = \"https://git.city.test\"\n",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let setup = Setup::prepare_with(
+            &state,
+            &cfg.roles,
+            &std::collections::BTreeMap::new(),
+            &split_credentials(&cfg),
+        )
+        .unwrap();
+        assert!(setup.value(Secret::ShakoToken).is_some());
+        assert!(setup.value(Secret::ForgeWebhookSecret).is_some());
+        assert!(
+            state.join("forge-webhook-secret").is_file(),
+            "kept across restarts"
+        );
     }
 
     /// Which module the planned router table sends `host` `path` to, and the path it hands over
