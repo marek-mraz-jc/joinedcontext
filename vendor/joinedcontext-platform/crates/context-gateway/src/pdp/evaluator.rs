@@ -141,14 +141,6 @@ pub struct Constraints {
     /// Whether the caller asked for more than the grants cover, so the answer is a
     /// narrowed one and says so (R22).
     pub restricted: bool,
-    /// The types this query was not allowed to select on, because it filters or orders on an
-    /// attribute they may not serve (T-1862, MP-02).
-    ///
-    /// Every one of them is a type the caller may read — that is what makes it safe to name in a
-    /// warning: what the answer cannot say is *why* a row is missing, and a caller reading an
-    /// empty list with no explanation debugs it by asking the same question with more filters,
-    /// which is the behaviour the rule exists to discourage.
-    pub dropped: BTreeSet<String>,
     /// Each grant as an entity is judged against it, so an entity shows only what the grants
     /// it matches show and an entity none of them matches is not served (T-3530, EP-16).
     ///
@@ -158,9 +150,6 @@ pub struct Constraints {
     /// (T-1862, T-3530). An entity whose matched grants do not show one of them is not served:
     /// whether it matched would say what the hidden value is.
     pub referenced: BTreeSet<String>,
-    /// The caller's own `attrs`, narrowed to the grants: an entity carrying none of them is not
-    /// in the answer, as CIM 009 selects. Empty when the caller named none.
-    pub attrs_asked: BTreeSet<String>,
 }
 
 /// What the gateway does with the request (GW1, GW2, GW3).
@@ -433,9 +422,6 @@ fn withhold(
         return None;
     }
     constraints.attrs.retain(|name| !withheld.contains(name));
-    constraints
-        .attrs_asked
-        .retain(|name| !withheld.contains(name));
     // A caller asking only for withheld attributes gets nothing: `attrs` selects the entities
     // that carry one, which would say which carry the withheld one.
     if !operation.is_write() && !request.attrs.is_empty() && constraints.attrs.is_empty() {
@@ -494,12 +480,6 @@ fn intersect(
     // An empty `attrs` downstream is "no projection", the opposite of what was decided.
     let no_attr_left = !request.attrs.is_empty() && !granted_attrs.is_empty() && attrs.is_empty();
 
-    let attrs_asked = if operation.is_write() || request.attrs.is_empty() {
-        BTreeSet::new()
-    } else {
-        attrs.clone()
-    };
-
     let filters: Vec<String> = grants
         .iter()
         .filter_map(|policy| policy_filter(policy))
@@ -557,12 +537,10 @@ fn intersect(
         temporal_windows: clamped.windows,
         empty: clamped.empty || no_type_left || no_attr_left,
         // Filled by the filter rule, which runs after this and knows which types it took out.
-        dropped: BTreeSet::new(),
         grants: grants.iter().map(|policy| GrantView::of(policy)).collect(),
         // CIM 009's `attrs` selects the entities that carry one of the names. The broker is
         // asked for the grants' condition attributes beside them, so the selection is the
         // gateway's to make again on the answer (T-3530).
-        attrs_asked,
         // Filled by the filter rule, which reads the request's references.
         referenced: BTreeSet::new(),
     }

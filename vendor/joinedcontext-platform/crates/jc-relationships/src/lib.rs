@@ -310,7 +310,7 @@ pub struct Shape<'a> {
 /// (`{"type": "Relationship", "object": …}`), concise (`{"object": …}`), a multi-attribute
 /// array of instances, and an `object` that is itself a list. `None` when the value is
 /// NGSI-LD's null, which removes the attribute.
-fn objects(value: &Value) -> Option<Vec<String>> {
+pub fn objects(value: &Value) -> Option<Vec<String>> {
     match value {
         Value::Null => None,
         Value::String(text) if text == NGSI_LD_NULL => None,

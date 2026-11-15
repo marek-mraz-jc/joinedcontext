@@ -124,10 +124,14 @@ async fn serve(State(store): State<Shared>, request: Request) -> axum::response:
             let kinds: Vec<String> = param("type")
                 .map(|kinds| kinds.split(',').map(str::to_owned).collect())
                 .unwrap_or_default();
-            // `q={slot}=="{urn}"`: the computed end's query.
+            // `q={slot}=="{urn}"` or `q={slot}=="{a}","{b}"`: the computed end's query.
             let pointing = param("q").and_then(|q| {
-                let (slot, object) = q.split_once("==")?;
-                Some((slot.to_owned(), object.trim_matches('"').to_owned()))
+                let (slot, listed) = q.split_once("==")?;
+                let listed: Vec<String> = listed
+                    .split(',')
+                    .map(|one| one.trim_matches('"').to_owned())
+                    .collect();
+                Some((slot.to_owned(), listed))
             });
             let limit: usize = param("limit").and_then(|l| l.parse().ok()).unwrap_or(20);
             let offset: usize = param("offset").and_then(|o| o.parse().ok()).unwrap_or(0);
@@ -139,9 +143,9 @@ async fn serve(State(store): State<Shared>, request: Request) -> axum::response:
                     kinds.is_empty() || kinds.iter().any(|kind| entity["type"] == kind.as_str())
                 })
                 .filter(|entity| match &pointing {
-                    Some((slot, object)) => entity
-                        .get(slot)
-                        .is_some_and(|value| objects(value).contains(object)),
+                    Some((slot, listed)) => entity.get(slot).is_some_and(|value| {
+                        objects(value).iter().any(|object| listed.contains(object))
+                    }),
                     None => true,
                 })
                 .skip(offset)
@@ -358,7 +362,7 @@ fn entity(kind: &str, local: &str, links: &[(&str, Value)]) -> Value {
 }
 
 /// Two schools in one building, a teacher at each with a desk and courses, two lessons of the
-/// first teacher.
+/// first teacher, and thirty free desks.
 fn campus() -> Vec<Value> {
     let course = |local: &str, dataset: &str| {
         json!({ "type": "Relationship", "object": urn("Course", local),
@@ -393,6 +397,10 @@ fn campus() -> Vec<Value> {
         entity("Lesson", "l1", &[("teacher", link(&urn("Teacher", "t1")))]),
         entity("Lesson", "l2", &[("teacher", link(&urn("Teacher", "t1")))]),
     ]
+    .into_iter()
+    // Free desks for a large batch.
+    .chain((10..40).map(|n| entity("Desk", &format!("d{n}"), &[])))
+    .collect()
 }
 
 struct Answer {
@@ -565,6 +573,48 @@ async fn two_teachers_of_one_batch_taking_one_desk_divide_the_batch() {
     assert_eq!(errors[0]["entityId"], urn("Teacher", "t4"));
     assert_eq!(errors[0]["error"]["rule"], "target-taken");
     assert!(answer.held(&urn("Teacher", "t4")).is_none());
+}
+
+#[tokio::test]
+async fn a_batch_reads_the_holders_of_its_desks_at_once() {
+    let teacher = |local: &str, desk: &str| {
+        entity(
+            "Teacher",
+            local,
+            &[
+                ("school", link(&urn("School", "s2"))),
+                ("desk", link(&urn("Desk", desk))),
+            ],
+        )
+    };
+    let mut batch: Vec<Value> = (10..40)
+        .map(|n| teacher(&format!("t{n}"), &format!("d{n}")))
+        .collect();
+    batch.push(teacher("t40", "d1"));
+    let answer = send(
+        CLASSES,
+        &[],
+        Method::POST,
+        "/entityOperations/upsert",
+        Some(Value::Array(batch)),
+    )
+    .await;
+
+    assert_eq!(answer.status, StatusCode::MULTI_STATUS, "{}", answer.body);
+    let errors = answer.body["errors"].as_array().expect("the errors");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0]["entityId"], urn("Teacher", "t40"));
+    assert_eq!(errors[0]["error"]["rule"], "target-taken");
+    assert_eq!(answer.body["success"].as_array().map(Vec::len), Some(30));
+    let holder_reads = answer
+        .store
+        .lock()
+        .expect("the store")
+        .calls
+        .iter()
+        .filter(|call| call.starts_with("GET /ngsi-ld/v1/entities?") && call.contains("&q=desk"))
+        .count();
+    assert_eq!(holder_reads, 1, "one read for the 31 desks, not one a desk");
 }
 
 // --- delete rules (DM-71) ---------------------------------------------------------------------

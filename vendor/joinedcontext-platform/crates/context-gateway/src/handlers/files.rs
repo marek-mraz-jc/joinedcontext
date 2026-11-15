@@ -32,8 +32,7 @@ pub(crate) async fn file_csv(
     mut request: Request,
 ) -> Response<Body> {
     tenancy::strip_client_headers(&mut request);
-    broker_speaks_json(&mut request);
-    let (endpoint, subject) = match admit(
+    let admitted = match admit(
         &gateway,
         &slug,
         Some(Representation::Csv),
@@ -42,6 +41,17 @@ pub(crate) async fn file_csv(
         Ok(admitted) => admitted,
         Err(problem) => return *problem,
     };
+    file_csv_for(&gateway, admitted, request).await
+}
+
+/// `file.csv` for a caller already admitted on `endpoint`, whose request holds no client
+/// identity header any more: an output's `{output}.csv` admits once and answers through this.
+pub(crate) async fn file_csv_for(
+    gateway: &Gateway,
+    (endpoint, subject): (Arc<Endpoint>, Subject),
+    mut request: Request,
+) -> Response<Body> {
+    broker_speaks_json(&mut request);
     // Normalized NGSI-LD whatever the caller asked, so `options` cannot rename columns (T-5209).
     let params: Vec<(String, String)> = query::parse(request.uri().query().unwrap_or_default())
         .into_iter()
@@ -61,7 +71,7 @@ pub(crate) async fn file_csv(
     let shared = endpoint.personal_attributes().is_empty();
     let key = Key::of(gateway.resolver.table(), &endpoint, &subject, &request).filter(|_| shared);
     let build = build(
-        &gateway,
+        gateway,
         (&endpoint, &subject),
         &params,
         &mut request,

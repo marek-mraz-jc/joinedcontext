@@ -87,6 +87,14 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   `manifest.json`). It turns each CkanInstance `spec.url` to `https://catalogue.rehearsal.invalid`
   (report: `fenced`), which up.sh routes to the rehearsal's own dataroom, so the Portal never
   publishes into the source environment's catalogue.
+- An export older than EP-187 (T-6972) imports onto write doors: each open-data Endpoint `jcctl
+  validate` refuses for a write it served gets an internal `<name>-write` Endpoint beside it
+  (audience organization, the Policies it served), its project's Pipelines aim at the door, and it
+  keeps only the Policies that write nothing (report: `writeDoors`); `jcctl validate` then judges
+  the result again. No entity, Policy or Pipeline is removed. `rehearsal.py doors --export <export>
+  --out <empty dir> --jcctl-bin <jcctl>` writes the same move for a live environment: under
+  `<owner>/<repo>/` only the files it adds or changes (one Portal Change per repository) and
+  `doors.json` with the EP-187 findings before and after.
 - `realms` leaves out only what a live Keycloak export carries that kaisatsu refuses and nothing
   uses (unknown built-in mappers, unbound built-in flows, client-flow alternatives no client uses),
   each named in `state/realm-<name>-left-out.json`; anything else kaisatsu refuses stops the start.
