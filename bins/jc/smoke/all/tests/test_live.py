@@ -104,8 +104,8 @@ def guard(tmp_path, edge):
 def test_paths_of_the_rehearsal_go_to_the_host_jc_serves_them_on(tmp_path):
     g = live.Guard(live.config("t", "city.test", "127.0.0.1", TOML, tmp_path))
     v = "t.smoke.invalid"
-    assert g.route(v, "/id/realms/smartcity?x=1") == ("idm.city.test", "/realms/smartcity?x=1")
-    assert g.route(v, "/id") == ("idm.city.test", "/")
+    assert g.route(v, "/login/realms/smartcity?x=1") == ("idm.city.test", "/realms/smartcity?x=1")
+    assert g.route(v, "/login") == ("idm.city.test", "/")
     assert g.route(v, "/opendata/api/3/action/package_list") == ("opendata.city.test", "/api/3/action/package_list")
     assert g.route(v, "/api/endpoint/abc/ngsi-ld/v1/types") == ("api.city.test", "/api/endpoint/abc/ngsi-ld/v1/types")
     assert g.route(v, "/api/mcp") == ("api.city.test", "/api/mcp")
@@ -131,7 +131,7 @@ def test_only_anonymous_reads_and_the_named_posts_reach_the_edge(guard, tmp_path
     g, seen = guard
     port = edge[0]
     http = common.Http("http://t.smoke.invalid", timeout=5)
-    assert http.call("GET", "/id/realms/smartcity")[0] == 200
+    assert http.call("GET", "/login/realms/smartcity")[0] == 200
     assert http.call("POST", "/api/mcp", body={"jsonrpc": "2.0", "id": 1, "method": "initialize"})[0] == 200
     assert http.call("POST", "/api/endpoint/abc/ngsi-ld/v1/entities", body={"id": "x", "type": "T"})[0] == 200
     refused = [

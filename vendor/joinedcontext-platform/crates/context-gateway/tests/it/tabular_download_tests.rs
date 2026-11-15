@@ -45,6 +45,7 @@ fn endpoint(representations: Vec<Representation>, file_limits: Option<FileLimits
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         policy_names: Vec::new(),
         manifest_name: String::new(),
         policies: vec![serde_norway::from_str(

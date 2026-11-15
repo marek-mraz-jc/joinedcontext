@@ -51,6 +51,11 @@ pub struct ScopedRole {
 }
 
 impl Account {
+    /// Whether every credential of the account has ended at `now` (PF-36).
+    pub fn has_ended(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        self.credentials_end.is_some_and(|end| end <= now)
+    }
+
     /// The roles that reach one space of one project: the called Endpoint's.
     ///
     /// A role scoped to another space is not a role here: that is the whole point of
@@ -118,9 +123,7 @@ impl ServiceAccounts {
     /// ended at `now` (PF-36): what an open session admitted under it rechecks (S-3-12).
     pub fn holds(&self, project: &str, name: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
         self.by_client_id.values().any(|account| {
-            account.project == project
-                && account.name == name
-                && account.credentials_end.is_none_or(|end| end > now)
+            account.project == project && account.name == name && !account.has_ended(now)
         })
     }
 

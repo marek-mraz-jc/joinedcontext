@@ -116,7 +116,7 @@ const CASES: Case[] = [
     connect: async (dialog) => {
       await addItem(dialog, "paths", "/data/fmi-helsinki-weather.csv");
     },
-    endpoint: "helsinki-all",
+    endpoint: "helsinki-all-write",
     type: "WeatherObserved",
     sample: { name: "fmi-helsinki-weather.csv", mimeType: "text/csv", text: WEATHER_CSV },
     mapping: WEATHER_MAPPING,
@@ -132,7 +132,7 @@ const CASES: Case[] = [
       await dialog.locator("#root_table").fill("indicators");
       await addItem(dialog, "columns", "*");
     },
-    endpoint: "helsinki-kpi",
+    endpoint: "helsinki-kpi-write",
     type: "KeyPerformanceIndicator",
     sample: { name: "indicators.json", mimeType: "application/json", text: INDICATOR_ROW },
     mapping: INDICATOR_MAPPING,
@@ -146,7 +146,7 @@ const CASES: Case[] = [
       await addItem(dialog, "urls", "nats://demo-nats.dev.svc.cluster.local:4222");
       await dialog.locator("#root_subject").fill("helsinki.demo.counters");
     },
-    endpoint: "helsinki-kpi",
+    endpoint: "helsinki-kpi-write",
     type: "KeyPerformanceIndicator",
     sample: { name: "demo-counter.json", mimeType: "application/json", text: COUNTER_MESSAGE },
     mapping: COUNTER_MAPPING,
@@ -229,7 +229,7 @@ for (const c of CASES) {
     };
     const slug = endpoints.items?.find((e) => e.metadata.name === c.endpoint)?.spec?.slug;
     expect(slug, `endpoint ${c.endpoint} has a slug`).toBeTruthy();
-    const space = c.endpoint === "helsinki-kpi" ? "helsinki-kpi" : PROJECT;
+    const space = c.endpoint.startsWith("helsinki-kpi") ? "helsinki-kpi" : PROJECT;
     const found = await Promise.all(
       c.ids.map(async (local) => {
         const id = `urn:ngsi-ld:${c.type}:hel.fi:${space}:${local}`;

@@ -377,11 +377,27 @@ async fn start_on(
     args: &[&str],
     envs: &[(&str, &str)],
 ) -> Option<Jc> {
+    start_configured(root, base_host, port, args, envs, "").await
+}
+
+/// As [`start_on`], with `extra` appended to jc's config file.
+async fn start_configured(
+    root: &Path,
+    base_host: &str,
+    port: u16,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    extra: &str,
+) -> Option<Jc> {
     let state = root.join("state");
     let realms = root.join("realms");
     let realm_secrets = root.join("realm-secrets");
     let config = root.join("jc.toml");
-    std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
+    std::fs::write(
+        &config,
+        format!("[mounts.portal]\npath_prefix = \"\"\n{extra}"),
+    )
+    .unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
     cmd.args(["--profile", "development"]);
     // The service tokens between modules live in jc's memory only; the test acts as the Portal
@@ -501,7 +517,14 @@ fn manifests() -> Vec<(String, String)> {
         ),
         (
             space("endpoints/public.yaml"),
-            endpoint("public", PUBLIC, "public", ""),
+            // Open data is read-only (EP-187): the public Endpoint serves the public read alone,
+            // the writers write through the closed one.
+            endpoint(
+                "public",
+                PUBLIC,
+                "public",
+                &format!("  policyRefs: [urn:ngsi-ld:Policy:jc.invalid:{SPACE}:public-read]\n"),
+            ),
         ),
         (
             space("endpoints/closed.yaml"),
@@ -612,7 +635,7 @@ async fn scoped_token(
     scope: &str,
 ) -> Result<String, String> {
     let resp = Client::new()
-        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "password"),
             ("client_id", client),
@@ -635,7 +658,9 @@ async fn scoped_token(
 /// A person's token from `client` of `realm` by the password grant.
 async fn token_in(jc: &Jc, realm: &str, client: &str, username: &str) -> String {
     let resp = Client::new()
-        .post(jc.url(&format!("/id/realms/{realm}/protocol/openid-connect/token")))
+        .post(jc.url(&format!(
+            "/login/realms/{realm}/protocol/openid-connect/token"
+        )))
         .form(&[
             ("grant_type", "password"),
             ("client_id", client),
@@ -1013,6 +1038,99 @@ async fn the_anonymous_oauth_server_runs_on_a_key_jc_keeps() {
     }
 }
 
+/// T-7006: kaisatsu moved from `/id` to `/login`, so its issuer moved too. A token kaisatsu
+/// signed under the old issuer, with the same key, is refused by the gateway after the move:
+/// one issuer at a time, the old one is no fallback.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_token_of_the_old_sign_in_issuer_is_refused_after_the_move() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    realm_file(
+        &root.join("realms"),
+        &root.join("realm-secrets"),
+        "jc",
+        "00-e2e.json",
+    );
+    let port = free_port();
+    let base_host = format!("localhost:{port}");
+    /// The Portal's own service-account token for the hub (`mcp-hub`), kaisatsu at `/{slug}`.
+    async fn hub_token(jc: &Jc, slug: &str) -> String {
+        let resp = Client::new()
+            .post(jc.url(&format!("/{slug}/realms/jc/protocol/openid-connect/token")))
+            .form(&[
+                ("grant_type", "client_credentials"),
+                ("client_id", "portal-api"),
+                ("client_secret", jc.secret("portal-client-secret").as_str()),
+                ("scope", "gateway-hub"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        let body: Value = resp.json().await.unwrap_or(Value::Null);
+        body["access_token"].as_str().expect("hub token").to_owned()
+    }
+    /// The hub's tools/list with `token`; `Err` while the gateway has not loaded (503).
+    async fn hub(jc: &Jc, token: Option<String>) -> Result<(StatusCode, String), String> {
+        let tools = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+        let post = reqwest::Method::POST;
+        let (status, body) = call(jc, post, "/api/mcp", token.as_deref(), Some(&tools)).await;
+        match status {
+            StatusCode::SERVICE_UNAVAILABLE => Err(body),
+            status => Ok((status, body)),
+        }
+    }
+    // Before the move: an image that still mounted kaisatsu at `/id`.
+    let before = start_configured(
+        root,
+        &base_host,
+        port,
+        &[],
+        &[],
+        "[mounts.kaisatsu]\npath_prefix = \"/id\"\n",
+    )
+    .await
+    .expect("jc lost its listen port");
+    let old = hub_token(&before, "id").await;
+    assert_eq!(issuer_of(&old), format!("http://{base_host}/id/realms/jc"));
+    let (status, body) = eventually("the hub before the move", &before, 60, || {
+        hub(&before, Some(old.clone()))
+    })
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the old token before the move: {body}"
+    );
+    drop(before);
+
+    // After the move, on the same state and key: the old token is 401, a new one reads.
+    let mut after = None;
+    for _ in 0..5 {
+        after = start_configured(root, &base_host, port, &[], &[], "").await;
+        if after.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    let after = after.expect("jc lost its listen port 5 times");
+    let new = hub_token(&after, "login").await;
+    assert_eq!(
+        issuer_of(&new),
+        format!("http://{base_host}/login/realms/jc")
+    );
+    let (status, body) = eventually("the hub after the move", &after, 60, || {
+        hub(&after, Some(new.clone()))
+    })
+    .await;
+    assert_eq!(status, StatusCode::OK, "a token of the new issuer: {body}");
+    let (status, body) = hub(&after, Some(old)).await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the old issuer's token: {body}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn endpoints_answer_inside_jc_as_on_dev() {
     let jc = start().await;
@@ -1207,7 +1325,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     // `service-account-portal-api` user, whom no Policy grants, so it reads nothing and the link
     // opens no Endpoint beyond the person exchange below.
     let portal = Client::new()
-        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "client_credentials"),
             ("client_id", "portal-api"),
@@ -1757,7 +1875,7 @@ fn pipeline() -> Value {
 /// A client-credentials token of `client` in realm `jc`.
 async fn client_token(jc: &Jc, client: &str, secret: &str) -> String {
     let resp = Client::new()
-        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "client_credentials"),
             ("client_id", client),
@@ -1775,7 +1893,7 @@ async fn client_token(jc: &Jc, client: &str, secret: &str) -> String {
 /// A kaisatsu admin token of the Portal's own people client.
 async fn kaisatsu_admin_token(jc: &Jc) -> String {
     let resp = Client::new()
-        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "client_credentials"),
             ("client_id", "portal-reconciler"),
@@ -1800,7 +1918,7 @@ async fn second_admin(jc: &Jc, password: &str) -> String {
     let token = kaisatsu_admin_token(jc).await;
     let admin = |m: reqwest::Method, path: &str| {
         Client::new()
-            .request(m, jc.url(&format!("/id/admin/realms/jc{path}")))
+            .request(m, jc.url(&format!("/login/admin/realms/jc{path}")))
             .bearer_auth(&token)
     };
     let username = "e2e.approver@jc.invalid";
@@ -2390,7 +2508,9 @@ fn claims_of(token: &str) -> Value {
 /// A service-account token of `client` in `realm` (client credentials, the secret jc keeps).
 async fn service_token(jc: &Jc, realm: &str, client: &str, secret: &str) -> String {
     let resp = Client::new()
-        .post(jc.url(&format!("/id/realms/{realm}/protocol/openid-connect/token")))
+        .post(jc.url(&format!(
+            "/login/realms/{realm}/protocol/openid-connect/token"
+        )))
         .form(&[
             ("grant_type", "client_credentials"),
             ("client_id", client),
@@ -2411,7 +2531,7 @@ async fn admin_read(jc: &Jc, realm: &str, path: &str) -> Value {
     let (status, body) = call(
         jc,
         reqwest::Method::GET,
-        &format!("/id/admin/realms/{realm}{path}"),
+        &format!("/login/admin/realms/{realm}{path}"),
         Some(&token),
         None,
     )
@@ -2466,7 +2586,7 @@ async fn portal_me(jc: &Jc, token: &str, edge: bool) -> StatusCode {
 async fn exchange_at_dev(jc: &Jc, subject: &str) -> (StatusCode, Value) {
     let scope = format!("gateway-hub endpoint:{CLOSED}");
     let resp = Client::new()
-        .post(jc.url("/id/realms/dev/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/dev/protocol/openid-connect/token"))
         .form(&[
             (
                 "grant_type",
@@ -2498,7 +2618,7 @@ async fn kids(jc: &Jc, realm: &str) -> Vec<String> {
     let (status, body) = call(
         jc,
         reqwest::Method::GET,
-        &format!("/id/realms/{realm}/protocol/openid-connect/certs"),
+        &format!("/login/realms/{realm}/protocol/openid-connect/certs"),
         None,
         None,
     )
@@ -2576,7 +2696,7 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
 
     // The gateway admits dev's tokens: a writer's create and a reader's read land.
     let reader = token_in(&jc, "dev", "e2e-reader", PERSON).await;
-    assert_eq!(issuer_of(&reader), format!("{base}/id/realms/dev"));
+    assert_eq!(issuer_of(&reader), format!("{base}/login/realms/dev"));
     let thing = entity("Thing", "one");
     eventually("a dev writer's create lands", &jc, 60, || async {
         let (status, body) = call(
@@ -2602,7 +2722,7 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     // Endpoint, and on the public one too (a presented token is never read as anonymous).
     for realm in TWINS {
         let twin = token_in(&jc, realm, "e2e-reader", PERSON).await;
-        assert_eq!(issuer_of(&twin), format!("{base}/id/realms/{realm}"));
+        assert_eq!(issuer_of(&twin), format!("{base}/login/realms/{realm}"));
         for path in [read.clone(), format!("{public}/entities?type=Thing")] {
             let (status, body) = call(&jc, get.clone(), &path, Some(&twin), None).await;
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{realm} {path}: {body}");
@@ -2710,7 +2830,7 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     let (status, body) = call(
         &jc,
         get.clone(),
-        "/id/realms/jc/.well-known/openid-configuration",
+        "/login/realms/jc/.well-known/openid-configuration",
         None,
         None,
     )

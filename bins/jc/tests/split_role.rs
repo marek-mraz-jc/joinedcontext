@@ -194,7 +194,7 @@ async fn a_module_in_another_container_admits_a_kaisatsu_token_for_its_audience_
         "kaisatsu starts",
     )
     .await;
-    let realm_base = format!("http://127.0.0.1:{id_port}/id/realms/{REALM}");
+    let realm_base = format!("http://127.0.0.1:{id_port}/login/realms/{REALM}");
     let token_url = format!("{realm_base}/protocol/openid-connect/token");
 
     // The modules' container, behind the door.

@@ -53,7 +53,8 @@ const MINE = new RegExp(`^rdy-[a-z]+-${SUFFIX}$`);
 const ROLE = "model-editor";
 const APP = "helsinki-alerts";
 const STATIONS = "https://gbfs.theta.fifteen.eu/gbfs/2.2/helsinki/en/station_information.json";
-const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all";
+// The write door of the helsinki space: open data is read-only (EP-187).
+const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all-write";
 /** The seeded stations pipeline's mapping, first 20 stations: the same ids and values, no residue. */
 const MAPPING = [
   'let domain = env("JC_ORG_DOMAIN")',

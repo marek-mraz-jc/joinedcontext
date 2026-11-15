@@ -27,11 +27,17 @@ pub(crate) fn refusal(uri: &str, private_hosts: &[String]) -> Option<ProblemDeta
     if private_hosts.contains(&host) {
         return None;
     }
-    let internal = host == "localhost"
-        || host.ends_with(".localhost")
-        || host.parse::<IpAddr>().is_ok_and(|ip| !is_public(ip));
+    // An address by its range; a name of one label or under an internal suffix (`localhost`,
+    // `.svc`, `.local`, `.internal`) whatever it resolves to.
+    let internal = host.parse::<IpAddr>().map_or_else(
+        |_| jc_core::address::check_remote_host(&host).is_err(),
+        |ip| !is_public(ip),
+    );
     match internal {
-        true => refused("a notification endpoint may not point inside the platform's own networks"),
+        true => refused(
+            "a notification endpoint may not point inside the platform's own networks; name a \
+             public host, e.g. https://hooks.example.com/notify",
+        ),
         false => None,
     }
 }
@@ -77,6 +83,23 @@ mod tests {
         }
     }
 
+    /// A name no public host can have is inside the installation whatever it resolves to: a
+    /// Service of one label, a cluster or private-zone name (the broker dials names unchecked
+    /// where private egress is allowed).
+    #[test]
+    fn an_internal_name_is_refused() {
+        for uri in [
+            "http://postgres:5432/",
+            "http://jc-functions.jc.svc.cluster.local:8080/run",
+            "http://context-broker.broker.svc/ngsi-ld/v1",
+            "http://receiver.internal/in",
+            "http://printer.local/",
+            "http://nas.home.arpa/",
+        ] {
+            assert!(refusal(uri, &[]).is_some(), "{uri} passed");
+        }
+    }
+
     /// T-5335: the platform's one guard ([`jc_core::outbound::is_public`]) judges the address, so
     /// the ranges the gateway's own list missed are refused here too.
     #[test]
@@ -104,8 +127,9 @@ mod tests {
         ] {
             assert!(refusal(uri, &[]).is_none(), "{uri} refused");
         }
-        let named = ["receiver.internal".to_owned()];
+        let named = ["receiver.internal".to_owned(), "postgres".to_owned()];
         assert!(refusal("http://receiver.internal/in", &named).is_none());
+        assert!(refusal("http://postgres:5432/", &named).is_none());
     }
 
     #[test]

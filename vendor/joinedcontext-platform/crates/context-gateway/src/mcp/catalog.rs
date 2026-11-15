@@ -724,6 +724,7 @@ pub(crate) mod tests {
             calendars: Vec::new(),
             map_defaults: Default::default(),
             page: None,
+            open_data: false,
             base_path: String::new(),
             models: Vec::new(),
             policy_names: Vec::new(),

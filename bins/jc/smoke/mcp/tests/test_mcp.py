@@ -87,7 +87,7 @@ def test_the_persona_fixture_signs_in_at_the_realm_the_state_names(tmp_path, mon
     f = personas.Fixture("http://127.0.0.1:9", tmp_path, "o/r")
     with pytest.raises(RuntimeError, match="401"):
         f.admin_token()
-    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+    assert seen == ["/login/realms/smartcity/protocol/openid-connect/token"]
 
 
 class FakeHttp:

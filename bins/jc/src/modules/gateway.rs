@@ -1296,7 +1296,7 @@ mod tests {
             .mount(
                 jc_router::MountSpec {
                     module: "kaisatsu".into(),
-                    host: Some("id.city.example".into()),
+                    host: Some("login.city.example".into()),
                     path_prefix: None,
                 },
                 kaisatsu,
@@ -1317,10 +1317,10 @@ mod tests {
             Setup::prepare(dir.path(), &Module::ALL, &std::collections::BTreeMap::new()).unwrap();
         let taken = Some("127.0.0.1:40123".parse().unwrap());
         let v = vars(&siblings, &setup, true, &mount, None, taken, |_: &str| None);
-        assert_eq!(v["JC_OIDC_ISSUER"], "https://id.city.example/realms/jc");
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://login.city.example/realms/jc");
         let url = &v["JC_OIDC_JWKS_URL"];
         assert!(!url.starts_with("https://"), "the gateway refuses {url}");
-        assert_eq!(url, &format!("http://id.city.example{certs}"));
+        assert_eq!(url, &format!("http://login.city.example{certs}"));
         assert_eq!(v["JC_OIDC_JWKS_REACH"], listener.to_string());
         // The gateway's own reader takes the keys from there, never from DNS.
         let verifier = jc_core::auth::token::Verifier::new(v["JC_OIDC_ISSUER"].clone());
@@ -1393,10 +1393,10 @@ mod tests {
             v["JC_GATEWAY_OAUTH_KEY"],
             setup.value(Secret::GatewayOauthKey).unwrap()
         );
-        assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/id/realms/jc");
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/login/realms/jc");
         assert_eq!(
             v["JC_OIDC_JWKS_URL"],
-            "http://127.0.0.1:8443/id/realms/jc/protocol/openid-connect/certs"
+            "http://127.0.0.1:8443/login/realms/jc/protocol/openid-connect/certs"
         );
         assert_eq!(v["JC_OIDC_CLIENT_ID"], setup::GATEWAY_CLIENT);
         assert_eq!(
@@ -1409,11 +1409,11 @@ mod tests {
         let named = vars(&siblings, &dev, true, &mount, Some(&hop), None, bind);
         assert_eq!(
             named["JC_OIDC_ISSUER"],
-            "https://city.example/id/realms/dev"
+            "https://city.example/login/realms/dev"
         );
         assert_eq!(
             named["JC_OIDC_JWKS_URL"],
-            "http://127.0.0.1:8443/id/realms/dev/protocol/openid-connect/certs"
+            "http://127.0.0.1:8443/login/realms/dev/protocol/openid-connect/certs"
         );
         assert_eq!(
             v["JC_GATEWAY_REVOCATIONS_URL"],

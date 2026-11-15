@@ -222,7 +222,7 @@ async fn the_portal_clients_own_token_requests_go_to_the_back_channel_through_re
     );
     // kaisatsu stamps `iss` from the request's host, and the ID token is checked against the
     // public issuer: a back channel on another host still names the issuer's (slug mode,
-    // `127.0.0.1:{port}/id` for `localhost:{port}/id`; in host mode the two are the same).
+    // `127.0.0.1:{port}/login` for `localhost:{port}/login`; in host mode the two are the same).
     assert_eq!(
         service[0].headers.get("host").and_then(|h| h.to_str().ok()),
         Some(public_authority.as_str()),

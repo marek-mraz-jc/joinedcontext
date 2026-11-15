@@ -45,7 +45,7 @@ use jcctl::commands::publish_ckan::{self as publisher, Target};
 use jcctl::loader::{RawManifest, RawMetadata, Repository, ResourceId};
 use jcctl::publish::ckan::{CkanApi, CkanError, Measurements, Outcome, Settings};
 use jcctl::publish::ckan_http::HttpCkan;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -143,6 +143,10 @@ pub struct CkanSync {
     /// Each Organization's own catalogue (`organization_host::OrganizationCatalogue`): an
     /// Endpoint of a project it owns publishes there alone, under its name, with its token.
     organizations: Vec<crate::organization_host::OrganizationCatalogue>,
+    /// Each `(catalogue, dataset)` a dataset left for its Organization's own catalogue, once its
+    /// copy there was published (T-7020): asked again only after the Portal restarts.
+    /// ponytail: one `package_show` per moved dataset per start; persist it if that grows.
+    moved_out: Arc<Mutex<HashSet<(String, String)>>>,
 }
 
 impl CkanSync {
@@ -159,6 +163,7 @@ impl CkanSync {
             api_reach: None,
             installation: None,
             organizations: Vec::new(),
+            moved_out: Arc::default(),
         }
     }
 
@@ -355,6 +360,8 @@ impl CkanSync {
     ) -> Vec<Report> {
         let mut reports = Vec::new();
         let mut wanted: Vec<Target> = Vec::new();
+        // The targets `routed` sent to their Organization's own catalogue, as they were declared.
+        let mut moved: Vec<Target> = Vec::new();
         let known = Organizations::default();
         let mut unread: BTreeSet<String> = BTreeSet::new();
         // Endpoints that would be datasets and cannot be, this run: each keeps what it had in
@@ -363,7 +370,13 @@ impl CkanSync {
         for project in projects(repo) {
             match publisher::targets_with(repo, &project, self.installation.as_ref()) {
                 Ok((targets, unplanned)) => {
-                    wanted.extend(targets.into_iter().map(|t| self.routed(repo, t)));
+                    for declared in targets {
+                        let routed = self.routed(repo, declared.clone());
+                        if routed.instance.base_url() != declared.instance.base_url() {
+                            moved.push(declared);
+                        }
+                        wanted.push(routed);
+                    }
                     for line in unplanned {
                         held.insert((line.project.clone(), line.endpoint.clone()));
                         if let Some(report) = self.unplanned(line) {
@@ -474,6 +487,12 @@ impl CkanSync {
             }
         })
         .await;
+        let skip = Skip {
+            unread: &unread,
+            held: &held,
+        };
+        self.move_out(moved, &published, &claims, skip, repository, &known)
+            .await;
         reports.extend(published);
         for (key, print, dashboard) in due_dashboards {
             let report = self.dashboard(dashboard, repository, &known).await;
@@ -582,6 +601,60 @@ impl CkanSync {
             said.insert(key, line);
         }
         logged
+    }
+
+    /// Withdraws each `moved` dataset from the catalogue it was declared in once its copy in its
+    /// Organization's own catalogue was published in `published` (T-7020), so a dataset is in one
+    /// catalogue and the old address answers `301` to the new one (dataroom `moved_home`, T-6853).
+    /// A dataset another current Endpoint still publishes in that catalogue stays, so does one of a
+    /// project that did not read or an Endpoint held back this run; a declared catalogue that is an
+    /// Organization's own is never withdrawn from (another Organization's token and datasets); a
+    /// withdrawal touches only a dataset the platform published there (jcctl `withdraw`), and one
+    /// that is absent or already gone counts as done. Not a report: the Endpoint is published, not
+    /// withdrawn.
+    async fn move_out(
+        &self,
+        moved: Vec<Target>,
+        published: &[Report],
+        claims: &BTreeSet<(String, String)>,
+        skip: Skip<'_>,
+        repository: &Path,
+        known: &Organizations,
+    ) {
+        let due = {
+            let done = self.moved_out.lock().unwrap_or_else(|p| p.into_inner());
+            due_moves(moved, published, claims, &done, skip, |declared| {
+                self.organization_catalogue(&declared.instance).is_some()
+            })
+        };
+        for declared in due {
+            let key = claim(&declared);
+            let report = self
+                .one(&declared, true, repository, Measurements::default(), known)
+                .await;
+            match &report.publication {
+                Publication::Failed(why) => tracing::warn!(
+                    project = %report.project,
+                    endpoint = %report.endpoint,
+                    dataset = %report.dataset,
+                    catalogue = %key.0,
+                    "the dataset moved to its Organization's catalogue and stays in the old one for now: {why}"
+                ),
+                _ => {
+                    tracing::info!(
+                        project = %report.project,
+                        endpoint = %report.endpoint,
+                        dataset = %report.dataset,
+                        catalogue = %key.0,
+                        "the dataset moved to its Organization's catalogue and left this one"
+                    );
+                    self.moved_out
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(key);
+                }
+            }
+        }
     }
 
     /// One Endpoint: resolve the token, then publish or withdraw on a blocking thread.
@@ -1308,6 +1381,48 @@ pub fn claim(target: &Target) -> (String, String) {
     )
 }
 
+/// What a pass keeps its hands off: the projects whose publications did not read and the
+/// `(project, endpoint)`s held back (EP-174).
+#[derive(Clone, Copy)]
+struct Skip<'a> {
+    unread: &'a BTreeSet<String>,
+    held: &'a BTreeSet<(String, String)>,
+}
+
+/// The `moved` targets (as declared, before [`CkanSync::routed`]) whose dataset leaves its declared
+/// catalogue this pass (T-7020): its copy in the Organization's own catalogue was published in
+/// `published`, no current Endpoint claims it where it was declared, it has not left already, its
+/// project read and its Endpoint is not held back, and the declared catalogue is no Organization's
+/// own (`organization_catalogue`): a project's `CkanInstance` naming another Organization's
+/// catalogue would otherwise withdraw that Organization's dataset with its token.
+fn due_moves(
+    moved: Vec<Target>,
+    published: &[Report],
+    claims: &BTreeSet<(String, String)>,
+    done: &HashSet<(String, String)>,
+    skip: Skip<'_>,
+    organization_catalogue: impl Fn(&Target) -> bool,
+) -> Vec<Target> {
+    let landed: BTreeSet<Owner> = published
+        .iter()
+        .filter(|r| matches!(r.publication, Publication::Published { .. }))
+        .map(|r| (r.project.clone(), r.endpoint.clone(), r.dataset.clone()))
+        .collect();
+    moved
+        .into_iter()
+        .filter(|declared| {
+            let key = claim(declared);
+            let project = declared.id.namespace.clone().unwrap_or_default();
+            !done.contains(&key)
+                && !claims.contains(&key)
+                && landed.contains(&owner(declared))
+                && !organization_catalogue(declared)
+                && !skip.unread.contains(&project)
+                && !skip.held.contains(&(project, declared.id.name.clone()))
+        })
+        .collect()
+}
+
 /// Who publishes a target: `(project, endpoint, dataset)`, the key [`claimed_twice`] refuses by.
 pub type Owner = (String, String, String);
 
@@ -1571,6 +1686,90 @@ mod tests {
             spec,
             status: None,
         }
+    }
+
+    /// T-7020: a dataset `routed` sent to its Organization's own catalogue leaves the catalogue
+    /// its `CkanInstance` names only after its new copy was published, once, and never while
+    /// another current Endpoint publishes a dataset of that name there.
+    #[test]
+    fn a_moved_dataset_leaves_its_old_catalogue_once_its_new_copy_is_published() {
+        let published = |project: &str, publication: Publication| Report {
+            project: project.to_owned(),
+            endpoint: "bikes".to_owned(),
+            dataset: "bikes".to_owned(),
+            publication,
+        };
+        let ok = Publication::Published {
+            dataset: "bikes".to_owned(),
+            outcome: Outcome::Created,
+            no_linkml: false,
+        };
+        let names = |due: Vec<Target>| -> Vec<String> {
+            due.iter()
+                .map(|t| t.id.namespace.clone().unwrap_or_default())
+                .collect()
+        };
+        let moved = || vec![target("helsinki"), target("bratislava")];
+        let none = BTreeSet::new();
+        let (unread, held) = (BTreeSet::new(), BTreeSet::new());
+        let skip = Skip {
+            unread: &unread,
+            held: &held,
+        };
+        let due = |moved, reports: &[Report], claims: &BTreeSet<_>, done: &HashSet<_>| {
+            due_moves(moved, reports, claims, done, skip, |_: &Target| false)
+        };
+        let reports = [
+            published("helsinki", ok.clone()),
+            published("bratislava", Publication::Failed("refused".to_owned())),
+        ];
+        // helsinki's copy landed; bratislava's did not, so its old copy stays and answers.
+        assert_eq!(
+            names(due(moved(), &reports, &none, &HashSet::new())),
+            ["helsinki"]
+        );
+        // A pass that did not publish it (paced) withdraws nothing.
+        assert!(due(moved(), &[], &none, &HashSet::new()).is_empty());
+        // Gone once: not asked again.
+        let done = HashSet::from([claim(&target("helsinki"))]);
+        assert!(due(moved(), &reports, &none, &done).is_empty());
+        // Another current Endpoint still publishes `bikes` in the old catalogue: it stays.
+        let claims = BTreeSet::from([claim(&target("helsinki"))]);
+        assert!(due(moved(), &reports, &claims, &HashSet::new()).is_empty());
+        // A project that did not read, or an Endpoint held back, keeps its old copy (EP-174).
+        let unread = BTreeSet::from(["helsinki".to_owned()]);
+        let skip_unread = Skip {
+            unread: &unread,
+            held: &held,
+        };
+        let kept = due_moves(
+            moved(),
+            &reports,
+            &none,
+            &HashSet::new(),
+            skip_unread,
+            |_| false,
+        );
+        assert!(kept.is_empty(), "an unread project's dataset was withdrawn");
+        let endpoint = target("helsinki").id.name.clone();
+        let held_back = BTreeSet::from([("helsinki".to_owned(), endpoint)]);
+        let no_projects = BTreeSet::new();
+        let skip_held = Skip {
+            unread: &no_projects,
+            held: &held_back,
+        };
+        let kept = due_moves(moved(), &reports, &none, &HashSet::new(), skip_held, |_| {
+            false
+        });
+        assert!(kept.is_empty(), "a held Endpoint's dataset was withdrawn");
+        // A CkanInstance naming another Organization's own catalogue: that catalogue is never
+        // withdrawn from, whatever the routed copy did (its token and datasets are not this
+        // project's).
+        let kept = due_moves(moved(), &reports, &none, &HashSet::new(), skip, |_| true);
+        assert!(
+            kept.is_empty(),
+            "a dataset was withdrawn from an Organization's own catalogue"
+        );
     }
 
     /// jc-multiorg-portal: an Endpoint of each Organization's project publishes into that

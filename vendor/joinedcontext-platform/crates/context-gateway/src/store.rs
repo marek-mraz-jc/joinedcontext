@@ -889,6 +889,7 @@ fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> 
         )
         .map(Arc::new);
         let page = dataset_page(&spec, &project, &id.name, &ckan_pages);
+        let open_data = spec.is_open_data(&bound);
         endpoints.push(Endpoint {
             roles: match app_client {
                 Some(client) => EndpointRoles::of_app(&project, &id.name, &spec, client),
@@ -921,6 +922,7 @@ fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> 
             calendars,
             map_defaults,
             page,
+            open_data,
             feeds: spec.representations.map(|r| r.feed).unwrap_or_default(),
             view_mapping: spec.view_mapping_ref.and_then(|view| {
                 let named = (
@@ -1132,6 +1134,7 @@ fn spaces_from(repo: &Repository, models: &ModelSet) -> Vec<Space> {
                 calendars: Vec::new(),
                 map_defaults: Default::default(),
                 page: None,
+                open_data: false,
                 base_path: format!("/cs/{segment}"),
             }),
             title: language_map(&resource.manifest.metadata.rest, "title"),
@@ -1257,6 +1260,7 @@ fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(Strin
                 let space = spec.context_space_ref.name().to_owned();
                 let rules = rules
                     .into_iter()
+                    .filter(|(name, rule)| without_public_write(name, rule))
                     .map(|(name, rule)| (name, of_own_project(rule, &project)))
                     .collect::<Vec<_>>();
                 policies.entry((project, space)).or_default().extend(rules);
@@ -1278,6 +1282,21 @@ fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(Strin
         }
     }
     policies
+}
+
+/// Whether the rule `name` may be served: a stored grant to the role `public` that changes data
+/// predates the validation that refuses it (EP-187, T-6998) and is left out whole, its reads
+/// too, as validation refuses the whole Policy.
+fn without_public_write(name: &str, rule: &PolicySpec) -> bool {
+    let Some(op) = rule.public_write() else {
+        return true;
+    };
+    tracing::warn!(
+        rule = %name,
+        operation = %op,
+        "Policy rule left out of the endpoint table: a public grant only reads or creates (EP-187)"
+    );
+    false
 }
 
 /// `spec` with a bare `serviceAccount` assignee named `{project}/{name}`: a bare name means the
