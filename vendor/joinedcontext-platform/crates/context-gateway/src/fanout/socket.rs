@@ -244,7 +244,7 @@ impl Rate {
 /// [`Hub::recheck`] of `hub` against the gateway's current tables.
 fn recheck(gateway: &Gateway, hub: &Hub) {
     let accounts = gateway.accounts.load();
-    let ended = hub.close_ended(|subject, opened| ended(gateway, &accounts, subject, opened));
+    let ended = hub.close_ended(|subject, issued| ended(gateway, &accounts, subject, issued));
     if !ended.is_empty() {
         tracing::info!(slug = %hub.slug, closed = ended.len(), "WebSocket connections closed: the caller's access ended");
     }
@@ -258,21 +258,21 @@ fn recheck(gateway: &Gateway, hub: &Hub) {
     }
 }
 
-/// Whether the access `subject` was admitted with at the unix second `opened` ended since
-/// (S-3-12): the person was revoked at or after it, the ServiceAccount left the repository or
+/// Whether the access `subject` was admitted with, by a token issued at the unix second
+/// `issued`, ended since (S-3-12): the person was revoked at or after it, the ServiceAccount left the repository or
 /// its last credential ended, or the data space agreement no longer serves.
 fn ended(
     gateway: &Gateway,
     accounts: &crate::auth::accounts::ServiceAccounts,
     subject: &Subject,
-    opened: i64,
+    issued: i64,
 ) -> bool {
     let revoked = subject
         .id
         .as_deref()
         .zip(gateway.verifier.as_deref())
         .and_then(|(id, verifier)| verifier.revoked_at(id))
-        .is_some_and(|mark| mark >= opened);
+        .is_some_and(|mark| mark >= issued);
     let now = chrono::Utc::now();
     let account_gone = subject.service_account.as_deref().is_some_and(|name| {
         let project = subject
@@ -1432,8 +1432,8 @@ mod tests {
         );
     }
 
-    /// S-3-12: an open session ends when its person is revoked at or after the second it
-    /// opened (a token issued later is a new session's), its ServiceAccount leaves the
+    /// S-3-12: an open session ends when its person is revoked at or after the second its
+    /// token was issued (a token issued later is a new session's), its ServiceAccount leaves the
     /// repository, or its agreement stops serving; an anonymous caller has nothing to end.
     #[test]
     fn a_session_ends_with_its_callers_access() {
@@ -1457,15 +1457,15 @@ mod tests {
         verifier.replace_revocations(HashMap::from([("jana".to_owned(), 100)]));
         assert!(
             ended(&gateway, &accounts, &person, 100),
-            "marked the second it opened"
+            "marked the second it was issued"
         );
         assert!(
             ended(&gateway, &accounts, &person, 99),
-            "marked after it opened"
+            "marked after it was issued"
         );
         assert!(
             !ended(&gateway, &accounts, &person, 101),
-            "opened after the mark"
+            "issued after the mark"
         );
         let account = Subject {
             service_account: Some("kpi".into()),
