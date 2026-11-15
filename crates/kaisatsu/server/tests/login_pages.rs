@@ -718,13 +718,24 @@ async fn strictest_of_two_organizations_wins() {
     assert_eq!(page_id(&html), "config-totp", "{html}");
 }
 
-/// A consent covers what the sign-in resolved: a requested scope that resolves to nothing in
-/// the token's `scope` (here `phone`, allowed on the client with no scope of that name) is not
-/// stored in the consent, so a later single sign-on with the same request issues a code
-/// instead of asking again.
+/// A consent covers what the sign-in resolved: a requested scope kept out of the token's
+/// `scope` (include.in.token.scope=false) is not stored in the consent, so a later single
+/// sign-on with the same request issues a code instead of asking again.
 #[tokio::test]
 async fn single_sign_on_compares_consent_with_the_resolved_scope() {
     let (app, store) = app().await;
+    let realm = store.get_realm("dev").await.unwrap().unwrap();
+    let mut phone = store
+        .list_client_scopes(&realm.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "phone")
+        .expect("the realm's phone scope");
+    phone
+        .attributes
+        .insert("include.in.token.scope".into(), "false".into());
+    store.upsert_client_scope(phone).await.unwrap();
     let mut edge = store
         .get_client_by_client_id("dev", "edge")
         .await
