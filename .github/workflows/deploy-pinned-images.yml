@@ -1,0 +1,53 @@
+name: deploy-pinned-images
+# Every image deploy/components/*/images.yaml pins, scanned by its digest (T-3289): a CRITICAL with a
+# fixed version, or a fixed HIGH that CISA lists as exploited, fails the job, and tasks/ci files a
+# task for the red run. Excuses live in deploy/ci/pinned-images-ignore.yaml, each with a reason, a task
+# and an expiry. Weekly (the deployment repository's sweep.yml schedule, T-6152; owner 2026-10-30:
+# security sweeps before production) and on dispatch.
+on:
+  schedule: [{ cron: "17 3 * * 1" }]
+  workflow_dispatch:
+permissions: { contents: read, packages: read }
+defaults: { run: { working-directory: deploy } }
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/deploy-tools
+        with: { helmfile: "false" }
+      - name: trivy
+        run: |
+          curl --fail --retry 3 --retry-all-errors -sSL -o trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_CHECKSUM}  trivy.tgz" | sha256sum --check --status
+          tar xzf trivy.tgz trivy && sudo install -m 0755 trivy /usr/local/bin/trivy
+      - name: retry wrapper test
+        run: scripts/trivy-scan-retry.test.sh
+      # The vulnerability DB and the image layers of a digest seen before are not downloaded again
+      # (T-4704): fewer bytes asked of ECR Public's data limit.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with: { path: ~/.cache/trivy, key: "trivy-${{ hashFiles('deploy/components/*/images.yaml') }}", restore-keys: "trivy-" }
+      - name: scan every pinned image
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          set -eu
+          mkdir -p reports
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          python3 scripts/scan-pinned-images.py list > pinned.txt
+          n=0
+          while read -r image; do
+            n=$((n + 1))
+            scripts/trivy-scan-retry.sh "$image" "reports/${n}.json"
+          done < pinned.txt
+      - name: CISA known exploited vulnerabilities
+        # CISA's own copy on GitHub: its web site answers 403 to a script.
+        run: curl --fail --retry 3 --retry-all-errors -sSLf -o kev.json https://raw.githubusercontent.com/cisagov/kev-data/main/known_exploited_vulnerabilities.json
+      # T-3834 (d): every fixable HIGH or CRITICAL as a tasks/file-failures summary, one board
+      # task per (image, CVE): `tasks/file-failures vuln-summary.json` files and closes them.
+      - name: board summary
+        run: python3 scripts/scan-pinned-images.py summary reports/*.json --repo joinedcontext --run "$GITHUB_RUN_ID" > vuln-summary.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: { name: vuln-summary, path: deploy/vuln-summary.json, retention-days: 14 }
+      - name: judge
+        run: python3 scripts/scan-pinned-images.py judge reports/*.json --kev kev.json
