@@ -101,10 +101,23 @@ pub(crate) async fn keep(
     let Some(pipeline) = state.mirror.get(project, "Pipeline", name) else {
         return StatusCode::NOT_FOUND;
     };
+    // The stage the runner ran names the rule: the space's LinkML model when it renders the
+    // LinkML stage (G-19), else, and for what that one leaves to its mappings, the compiled one.
     let problems = target_space(state, project, &pipeline.spec)
         .and_then(|space| {
             let schema = state.model_schemas.get(project, &space)?;
-            Some(schema.check(&refused.record))
+            let linkml = state
+                .model_schemas
+                .stage_linkml(project, &space)
+                .map(|linkml| {
+                    linkml.check(&refused.record, crate::pipeline_validation::closed(&schema))
+                })
+                .unwrap_or_default();
+            Some(if linkml.is_empty() {
+                schema.check(&refused.record)
+            } else {
+                linkml
+            })
         })
         .unwrap_or_default();
     let step = refused.step.as_ref().and_then(|step| match step {
@@ -473,8 +486,14 @@ mod tests {
     /// A project with one space that names its model, an Endpoint into it and a pipeline
     /// writing through that Endpoint; the model is compiled the way a sync compiles it.
     fn world() -> AppState {
+        world_staged(false)
+    }
+
+    /// [`world`], its stage the LinkML one when `linkml` (G-19).
+    fn world_staged(linkml: bool) -> AppState {
         let mut config = Config::for_tests();
         config.org_domain = Some("banskabystrica.sk".into());
+        config.pipeline_linkml_stage = linkml;
         let state = AppState::new(config, None);
         state.mirror.upsert(manifest(
             "ContextSpace",
@@ -566,6 +585,53 @@ mod tests {
             .expect("the list");
         let rules: Vec<&str> = kept.iter().map(|r| r.rule.as_str()).collect();
         assert_eq!(rules, ["type", "id", "sh:datatype"], "newest first");
+    }
+
+    /// G-19: under the LinkML stage the rule is the LinkML model's, in the Portal's words; what
+    /// that model leaves to the stage's mappings (the class, the id) is named as before.
+    #[tokio::test]
+    async fn under_the_linkml_stage_a_record_is_kept_with_the_linkml_models_rule() {
+        let state = world_staged(true);
+        let model = json!({ "id": "https://e.org/air/", "name": "air",
+            "classes": { "AirQualityObserved": { "slots": ["pm10"] } },
+            "slots": { "pm10": { "range": "float", "minimum_value": 0 } } });
+        state
+            .model_schemas
+            .set_linkml("ovzdusie", "ovzdusie", "d1".into(), &model);
+        let below = json!({
+            "id": "urn:ngsi-ld:AirQualityObserved:banskabystrica.sk:ovzdusie:s-1",
+            "type": "AirQualityObserved",
+            "pm10": { "type": "Property", "value": -3 }
+        });
+        let other = json!({ "id": "urn:ngsi-ld:Bus:1", "type": "Bus" });
+        for record in [below, other] {
+            assert_eq!(
+                keep(&state, "ovzdusie", "stations", refused(record, None)).await,
+                StatusCode::NO_CONTENT
+            );
+        }
+        let kept = state
+            .rejected
+            .list("ovzdusie", "stations", 10, None)
+            .await
+            .expect("the list");
+        let rules: Vec<(&str, &str)> = kept
+            .iter()
+            .map(|r| (r.rule.as_str(), r.path.as_str()))
+            .collect();
+        assert_eq!(
+            rules,
+            [("type", "type"), ("sh:minInclusive", "pm10")],
+            "newest first"
+        );
+        assert!(!kept[1].message.contains("-3"), "{}", kept[1].message);
+        let off = world();
+        off.model_schemas
+            .set_linkml("ovzdusie", "ovzdusie", "d1".into(), &model);
+        assert!(off
+            .model_schemas
+            .stage_linkml("ovzdusie", "ovzdusie")
+            .is_none());
     }
 
     #[tokio::test]

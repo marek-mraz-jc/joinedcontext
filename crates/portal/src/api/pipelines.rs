@@ -1169,7 +1169,8 @@ pub async fn retry_rejected(
         internal.trim_end_matches('/')
     );
     let mut config = replay_stream(&records, &project, &slug);
-    crate::pipeline_validation::insert_stage(&mut config, &schema, &sink);
+    let linkml = state.model_schemas.stage_linkml(&project, &space);
+    crate::pipeline_validation::insert_stage(&mut config, &schema, linkml.as_deref(), &sink);
     // What the replay writes is a line of the pipeline's log like any run's (PL-62).
     if let Some(output) = config.get_mut("output") {
         let outcomes = format!(
