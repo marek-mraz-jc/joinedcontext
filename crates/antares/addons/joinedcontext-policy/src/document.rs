@@ -76,7 +76,7 @@ pub enum Kind {
     Role,
     /// `x-jc-client`.
     ServiceAccount,
-    /// No header carries one yet: matches nobody.
+    /// `x-jc-did`: the data-space participant a transfer token names (DS-02).
     Did,
     /// `x-jc-member: true`: a member of the Organization of the Endpoint's project, as the
     /// gateway verified it from the token's `jc_org` (ADR-N-067 2.3). Carries no id.
