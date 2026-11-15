@@ -42,7 +42,12 @@ def test_jcctl_is_built_beside_jc_and_shipped_to_the_shards_with_the_ui_it_embed
     jcctl = next(i for i, r in enumerate(runs) if "-p jcctl" in r)
     assert "vendor/joinedcontext-platform/Cargo.toml" in runs[jcctl] and "--target-dir target" in runs[jcctl]
     tar = next(i for i, r in enumerate(runs) if "tar -cf" in r)
-    assert tar > jcctl and all(f in runs[tar] for f in ("target/debug/jc ", "target/debug/jcctl", "crates/portal/ui/dist"))
+    # up.sh and import.sh run kaisatsu, daiya and jcctl beside jc (`dirname "$jc_bin"`)
+    shipped = ("target/debug/jc ", "target/debug/kaisatsu ", "target/debug/daiya ", "target/debug/jcctl", "crates/portal/ui/dist")
+    assert tar > jcctl and all(f in runs[tar] for f in shipped)
+    rehearsal = (repo / "deploy/rehearsal/up.sh").read_text() + (repo / "deploy/rehearsal/import.sh").read_text()
+    for b in re.findall(r'dirname "\$jc_bin"\)/(\w+)', rehearsal):
+        assert f"target/debug/{b}" in runs[tar], b
     assert "JCCTL_BIN" not in str(jobs())
 
 

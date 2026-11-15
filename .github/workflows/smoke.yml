@@ -28,7 +28,7 @@ env:
   CARGO_PROFILE_TEST_DEBUG: "0"
   CARGO_INCREMENTAL: "0"
 jobs:
-  # jc, kaisatsu, daiya and jcctl with the Portal UI jc embeds, as one tar: tar keeps the mtimes
+  # jc, kaisatsu, daiya (the -server crates' binaries) and jcctl with the Portal UI jc embeds, as one tar: tar keeps the mtimes
   # up.sh's ui-fresh.sh compares (ui/dist built after the last UI commit, jc linked after ui/dist).
   build:
     runs-on: ubuntu-latest
@@ -52,7 +52,7 @@ jobs:
       # beside jc): jcctl is a crate of the vendored platform workspace, built into jc's target.
       - run: cargo build --locked --manifest-path vendor/joinedcontext-platform/Cargo.toml -p jcctl --target-dir target
       - run: |
-          tar -cf - target/debug/jc target/debug/kaisatsu-server target/debug/daiya-server target/debug/jcctl \
+          tar -cf - target/debug/jc target/debug/kaisatsu target/debug/daiya target/debug/jcctl \
             crates/portal/ui/dist | zstd -T0 -3 > "$RUNNER_TEMP/smoke-bin.tar.zst"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
