@@ -117,7 +117,6 @@ export function TemplateGallery({ onUse }: TemplateGalleryProps): JSX.Element {
             >
               <Input
                 id="template-sheet"
-                placeholder="Stations 2026"
                 maxLength={31}
                 value={sheet}
                 onChange={(e) => {

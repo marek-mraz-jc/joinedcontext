@@ -9085,8 +9085,8 @@
       "2": "2: práve raz (najpomalšie)"
     },
     "httpBodyFormat": {
-      "csv": "CSV: jeden záznam na riadok",
-      "xlsx": "Tabuľka (xlsx, ods): jeden záznam na riadok hárka"
+      "csv": "CSV",
+      "xlsx": "Tabuľka (xlsx, ods)"
     }
   },
   "picker": {

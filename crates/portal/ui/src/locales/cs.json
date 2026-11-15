@@ -9085,8 +9085,8 @@
       "2": "2: právě jednou (nejpomalejší)"
     },
     "httpBodyFormat": {
-      "csv": "CSV: jeden záznam na řádek",
-      "xlsx": "Tabulka (xlsx, ods): jeden záznam na řádek listu"
+      "csv": "CSV",
+      "xlsx": "Tabulka (xlsx, ods)"
     }
   },
   "picker": {

@@ -9085,8 +9085,8 @@
       "2": "2: genau einmal (am langsamsten)"
     },
     "httpBodyFormat": {
-      "csv": "CSV: ein Datensatz je Zeile",
-      "xlsx": "Tabelle (xlsx, ods): ein Datensatz je Zeile eines Blatts"
+      "csv": "CSV",
+      "xlsx": "Tabelle (xlsx, ods)"
     }
   },
   "picker": {

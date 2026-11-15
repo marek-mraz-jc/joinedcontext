@@ -9085,8 +9085,8 @@
       "2": "2: exactly once (slowest)"
     },
     "httpBodyFormat": {
-      "csv": "CSV: one record per row",
-      "xlsx": "Spreadsheet (xlsx, ods): one record per row of a sheet"
+      "csv": "CSV",
+      "xlsx": "Spreadsheet (xlsx, ods)"
     }
   },
   "picker": {
