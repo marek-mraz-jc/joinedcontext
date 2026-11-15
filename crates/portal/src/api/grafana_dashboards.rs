@@ -303,6 +303,23 @@ fn readable_variable(
     variable
 }
 
+/// `dashboard` with each variable as the caller may see it: the values a picked one is checked
+/// against are the ones the caller is offered, so a refusal tells nothing of the hidden ones.
+fn readable_dashboard(
+    state: &AppState,
+    effective: &Effective,
+    project: &str,
+    dashboard: &Value,
+) -> Value {
+    let mut dashboard = dashboard.clone();
+    if let Some(list) = dashboard["templating"]["list"].as_array_mut() {
+        for variable in list {
+            *variable = readable_variable(state, effective, project, variable);
+        }
+    }
+    dashboard
+}
+
 fn variable_view(variable: &Value) -> VariableView {
     let kind = variable["type"].as_str().unwrap_or("custom").to_owned();
     let options = match kind.as_str() {
@@ -779,7 +796,10 @@ pub async fn panel_data(
         panel,
     )
     .ok_or_else(|| ApiError::NotFound(format!("panel {panel} not found on '{uid}'")))?;
-    let query = checked_query(&dashboard, &asked)?;
+    let query = checked_query(
+        &readable_dashboard(&state, &effective, &project, &dashboard),
+        &asked,
+    )?;
     let held = client.all_datasources(org).await?;
     if let Some(reason) = denial(&state, &effective, &project, saved, &held) {
         return Ok(Json(PanelData {
@@ -1616,6 +1636,21 @@ mod tests {
         ))
         .is_empty());
         assert_eq!(offered(&approver, &variable("closed")), 1);
+        // A picked value is checked against what the caller is offered, never the hidden list.
+        let dashboard = json!({ "templating": { "list": [variable("closed")] } });
+        let asked = vec![("var-station".to_owned(), "Kallio".to_owned())];
+        assert!(matches!(
+            checked_query(
+                &readable_dashboard(&state, &viewer, PROJECT, &dashboard),
+                &asked
+            ),
+            Err(ApiError::Unprocessable { .. })
+        ));
+        assert!(checked_query(
+            &readable_dashboard(&state, &approver, PROJECT, &dashboard),
+            &asked
+        )
+        .is_ok());
         let own = json!({ "name": "unit", "type": "custom", "query": "a,b" });
         assert_eq!(
             offered(&viewer, &own),
