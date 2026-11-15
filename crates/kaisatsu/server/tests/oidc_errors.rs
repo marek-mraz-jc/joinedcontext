@@ -418,6 +418,116 @@ async fn refresh_refusals_after_session_end_and_disable_and_membership_org() {
     );
 }
 
+/// A token exchange keeps the subject token's narrowing and its refresh keeps the exchange's
+/// (S-4-08): `jc:read-only` stays, the organization pin stays that organization's alone (another
+/// one asked for is refused), and the refreshed token is still the actor's.
+#[tokio::test]
+async fn token_exchange_and_its_refresh_keep_read_only_the_organization_pin_and_act() {
+    let (app, store, _) = app().await;
+    client(&store, "tx", |c| {
+        c.attributes
+            .insert("standard.token.exchange.enabled".into(), "true".into());
+        c.attributes.insert(
+            "standard.token.exchange.enableRefreshRequestedTokenType".into(),
+            "SAME_SESSION".into(),
+        );
+    })
+    .await;
+    let mut gw = store
+        .get_client_by_client_id("dev", "apisix-gateway")
+        .await
+        .unwrap()
+        .unwrap();
+    gw.protocol_mappers.push(ProtocolMapperRepresentation {
+        id: "aud-tx".into(),
+        name: "aud-tx".into(),
+        protocol: "openid-connect".into(),
+        protocol_mapper: "oidc-audience-mapper".into(),
+        config: BTreeMap::from([
+            ("included.client.audience".into(), "tx".into()),
+            ("access.token.claim".into(), "true".into()),
+        ]),
+        ..Default::default()
+    });
+    store.upsert_client(gw).await.unwrap();
+    let analyst = user_id(&store, "demo.analyst@hel.fi").await;
+    for alias in ["t-ro", "t-other"] {
+        store
+            .upsert_organization(Organization {
+                id: format!("org-{alias}"),
+                realm_id: "dev".into(),
+                name: alias.into(),
+                alias: alias.into(),
+                enabled: true,
+                description: String::new(),
+                domains: vec![],
+                attributes: HashMap::new(),
+                managed_by: None,
+            })
+            .await
+            .unwrap();
+        store
+            .upsert_membership(Membership {
+                id: format!("m-{alias}"),
+                realm_id: "dev".into(),
+                org_id: format!("org-{alias}"),
+                person_id: analyst.clone(),
+                org_roles: vec![],
+                created_at: chrono::Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+    let subject = password_grant(
+        &app,
+        "demo.analyst@hel.fi",
+        "AnalystPass123!Valid",
+        "openid jc:read-only organization:t-ro",
+    )
+    .await;
+    let subject = subject["access_token"].as_str().unwrap().to_owned();
+    let as_tx = async |form: &[(&str, &str)]| {
+        let mut f = vec![("client_id", "tx"), ("client_secret", "tx-secret")];
+        f.extend_from_slice(form);
+        let (st, _, body) = post_form(&app, TOKEN, &f, None).await;
+        (st, json_of(&body))
+    };
+    let exchange = "urn:ietf:params:oauth:grant-type:token-exchange";
+    let narrowed = |v: &Value| {
+        let claims = decode_jwt_payload(v["access_token"].as_str().unwrap());
+        let scope: Vec<String> = claims["scope"]
+            .as_str()
+            .unwrap_or_default()
+            .split(' ')
+            .map(str::to_owned)
+            .collect();
+        assert!(scope.contains(&"jc:read-only".into()), "{claims}");
+        assert!(scope.contains(&"organization:t-ro".into()), "{claims}");
+        assert!(!scope.contains(&"organization:t-other".into()), "{claims}");
+        assert_eq!(claims["organization"], json!({ "t-ro": {} }), "{claims}");
+        assert_eq!(claims["act"]["sub"], "tx", "{claims}");
+    };
+
+    let (st, other) = as_tx(&[
+        ("grant_type", exchange),
+        ("subject_token", &subject),
+        ("scope", "openid organization:t-other"),
+    ])
+    .await;
+    assert_eq!((st, other["error"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_scope")), "{other}");
+
+    let (st, exchanged) = as_tx(&[("grant_type", exchange), ("subject_token", &subject)]).await;
+    assert_eq!(st, StatusCode::OK, "{exchanged}");
+    narrowed(&exchanged);
+    let (st, refreshed) = as_tx(&[
+        ("grant_type", "refresh_token"),
+        ("refresh_token", exchanged["refresh_token"].as_str().expect("refresh")),
+    ])
+    .await;
+    assert_eq!(st, StatusCode::OK, "{refreshed}");
+    narrowed(&refreshed);
+}
+
 #[tokio::test]
 async fn token_exchange_keeps_an_earlier_act_and_jwt_bearer_needs_an_enabled_account() {
     let (app, store, kek) = app().await;

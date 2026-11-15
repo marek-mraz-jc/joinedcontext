@@ -45,6 +45,10 @@ pub fn login_router(state: OidcState) -> Router {
         )
         .merge(kaisatsu_oidc::broker_router())
         .merge(crate::account::account_router())
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            kaisatsu_oidc::handlers::active_realm,
+        ))
         .with_state(state)
 }
 

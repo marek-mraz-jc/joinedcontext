@@ -69,6 +69,8 @@ fn family(id: &str, session: &str, user: &str, client: &str) -> RefreshTokenFami
         offline: false,
         revoked: false,
         expires_at: Utc::now() + Duration::hours(1),
+        act: None,
+        only_audience: None,
     }
 }
 
