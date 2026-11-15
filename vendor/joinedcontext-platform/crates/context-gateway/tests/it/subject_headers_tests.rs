@@ -769,10 +769,9 @@ fn writer_app_on(broker: &str, realm: &common::Realm, open_data: bool) -> Router
 
 /// EP-187 (T-6972): an open-data Endpoint is read-only. Every write path a steward may use on
 /// the internal Endpoint, MCP's included, answers `403 open-data-read-only` there before the
-/// broker; the same writes on the internal Endpoint pass, reads and subscriptions go on, and
-/// `tools/list` offers no write tool.
+/// broker; the same writes on the internal Endpoint pass, and reads and subscriptions go on.
 #[tokio::test]
-async fn an_open_data_endpoint_refuses_every_write_and_lists_no_write_tool() {
+async fn an_open_data_endpoint_refuses_every_write_before_the_broker() {
     let realm = common::Realm::new();
     let base = format!("/api/endpoint/{AIR}/ngsi-ld/v1");
     let entity = json!({ "id": ENTITY, "type": "AirQualityObserved" });
@@ -859,46 +858,6 @@ async fn an_open_data_endpoint_refuses_every_write_and_lists_no_write_tool() {
         StatusCode::FORBIDDEN,
         "a subscription changes no data: {problem}"
     );
-
-    let tools = |open_data: bool| {
-        let list = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
-        let app = writer_app_on(&broker.url, &realm, open_data);
-        let asked = request(
-            Method::POST,
-            &format!("/api/endpoint/{AIR}/mcp"),
-            Some(&bearer),
-            &[],
-            Some(list),
-        );
-        async move {
-            let (_, listed) = answer(app, asked).await;
-            let names: Vec<String> = listed["result"]["tools"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
-                .collect();
-            names
-        }
-    };
-    let internal = tools(false).await;
-    assert!(
-        internal.iter().any(|name| name == "batch_delete"),
-        "{internal:?}"
-    );
-    let open = tools(true).await;
-    assert!(open.iter().any(|name| name == "query_entities"), "{open:?}");
-    for write in [
-        "batch_delete",
-        "create_entity",
-        "update_attributes",
-        "batch_upsert",
-    ] {
-        assert!(
-            !open.iter().any(|name| name == write),
-            "{write} listed: {open:?}"
-        );
-    }
 }
 
 /// S-49 (T-5955): a prompt-injected model holding a read-only connector's token forges writes

@@ -691,12 +691,14 @@ fn facets_gap(facets: &[String]) -> Option<String> {
 
 impl EndpointSpec {
     /// Whether this Endpoint is open data (EP-62, EP-187): it publishes to an open-data
-    /// catalogue, or a Policy it serves (`served`, as the gateway binds them) grants the role
-    /// `public` and it is no public form (`spec.creates`, EP-97), which takes anonymous creates.
-    /// The gateway, `jcctl validate` and the Portal all decide it here.
+    /// catalogue, or anyone may call it (`audience: public`) and a Policy it serves (`served`, as
+    /// the gateway binds them) grants the role `public`. A public form (`spec.creates`, EP-97)
+    /// takes anonymous creates and is no open data unless it publishes. The gateway,
+    /// `jcctl validate` and the Portal all decide it here.
     pub fn is_open_data<'a>(&self, served: impl IntoIterator<Item = &'a PolicySpec>) -> bool {
         self.publish.is_some()
-            || self.creates.is_none()
+            || self.audience == Audience::Public
+                && self.creates.is_none()
                 && served
                     .into_iter()
                     .any(|policy| policy.is_public() && !policy.effect.is_prohibition())
@@ -1383,6 +1385,10 @@ mod tests {
         let reads = [("public-read", &read), ("subscribe", &subscribe)];
         assert_eq!(endpoint(true).open_data_write(&reads), None);
         assert!(endpoint(false).is_open_data([&read]));
+        // The organization's own Endpoint serving the same public read is no open data.
+        let mut internal = endpoint(false);
+        internal.audience = Audience::Organization;
+        assert_eq!(internal.open_data_write(&served), None);
         assert!(!endpoint(false).is_open_data([&write]));
         // A public form takes anonymous creates and is no open data, unless it publishes.
         let create = policy("public", "createEntity");

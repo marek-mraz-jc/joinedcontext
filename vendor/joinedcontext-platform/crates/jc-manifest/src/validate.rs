@@ -1234,6 +1234,12 @@ pub fn unmade_writes(repo: &Repository) -> Vec<UnmadeWrite> {
     found
 }
 
+/// Every open-data Endpoint of `repo` (EP-187), with the sentence naming the write Policy it
+/// binds or `None` when it only reads: the Portal's reconciler marks each one from this.
+pub fn open_data_endpoints(repo: &Repository) -> Vec<(ResourceId, Option<String>)> {
+    WriteBindings::new(repo).open_data()
+}
+
 /// The path of output `index` of [`jc_core::kinds::PipelineSpec::outputs`] in the manifest.
 fn output_field(spec: &jc_core::kinds::PipelineSpec, index: usize) -> String {
     let lane = spec.lane_outputs().len();
@@ -1380,10 +1386,9 @@ impl<'a> WriteBindings<'a> {
         found
     }
 
-    /// An open-data Endpoint that binds a Policy granting a write (EP-187): it publishes to a
-    /// catalogue or serves a public grant, so it is read-only. The finding is on the Endpoint and
-    /// names the Policy and its operation.
-    fn open_data_writes(&self) -> Vec<UnmadeWrite> {
+    /// Every open-data Endpoint (EP-187) with why it cannot stay as it is: the sentence naming
+    /// the first Policy it binds that grants a write, `None` when it only reads.
+    fn open_data(&self) -> Vec<(ResourceId, Option<String>)> {
         use jc_core::kinds::PolicySpec;
         let mut rules: Vec<(String, String, PolicySpec)> = Vec::new();
         for (id, resource) in self.repo.iter().filter(|(id, _)| id.kind == "Policy") {
@@ -1405,7 +1410,28 @@ impl<'a> WriteBindings<'a> {
                 })
                 .map(|(_, name, policy)| (name.as_str(), policy))
                 .collect();
-            let Some(message) = spec.open_data_write(&served) else {
+            if !spec.is_open_data(served.iter().map(|(_, policy)| *policy)) {
+                continue;
+            }
+            let id = ResourceId::new("joinedcontext.com", "Endpoint", Some(key.0.clone()), &key.1);
+            let why = spec
+                .open_data_write(&served)
+                .map(|message| format!("Endpoint {}: {message}", key.1));
+            found.push((id, why));
+        }
+        found
+    }
+
+    /// An open-data Endpoint that binds a Policy granting a write (EP-187), the finding on the
+    /// Endpoint at the field that binds it.
+    fn open_data_writes(&self) -> Vec<UnmadeWrite> {
+        let mut found = Vec::new();
+        for (id, why) in self.open_data() {
+            let Some(message) = why else { continue };
+            let Some(spec) = self
+                .endpoints
+                .get(&(id.namespace.clone().unwrap_or_default(), id.name.clone()))
+            else {
                 continue;
             };
             let field = match (&spec.policy_ref, &spec.policy_refs) {
@@ -1414,9 +1440,9 @@ impl<'a> WriteBindings<'a> {
                 (None, None) => "spec.contextSpaceRef",
             };
             found.push(UnmadeWrite {
-                id: ResourceId::new("joinedcontext.com", "Endpoint", Some(key.0.clone()), &key.1),
+                id,
                 field: Some(field.to_owned()),
-                message: format!("Endpoint {}: {message}", key.1),
+                message,
             });
         }
         found

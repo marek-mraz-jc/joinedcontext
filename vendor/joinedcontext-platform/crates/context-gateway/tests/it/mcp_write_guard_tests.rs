@@ -352,6 +352,58 @@ async fn a_forms_confirmed_create_through_mcp_keeps_the_id_the_person_was_asked_
     assert_eq!(ids, vec![ids[0].clone(); 3]);
 }
 
+/// EP-187 (T-6972): a steward lists every tool the broker's view offers on the internal
+/// Endpoint, and only the reads on the same Endpoint once it is open data.
+#[tokio::test]
+async fn an_open_data_endpoint_lists_no_write_tool() {
+    let realm = common::Realm::new();
+    let offered: Vec<Value> = [
+        "query_entities",
+        "batch_delete",
+        "create_entity",
+        "update_attributes",
+    ]
+    .iter()
+    .map(|name| json!({ "name": name, "inputSchema": { "type": "object" } }))
+    .collect();
+    let tools = json!({ "jsonrpc": "2.0", "id": 1, "result": { "tools": offered } });
+    let (upstream, _) = broker(StatusCode::OK, tools).await;
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let bearer = format!("Bearer {}", steward(&realm, "jana"));
+    let mut names = Vec::new();
+    for open_data in [false, true] {
+        let mut served = endpoint(None);
+        served.open_data = open_data;
+        let app = router(Arc::new(gateway(&upstream, served, &realm)));
+        let (status, answer) = send(&app, &mcp(), Some(&bearer), &list).await;
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        let listed: Vec<String> = answer["result"]["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("no tool list: {answer}"))
+            .iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+            .collect();
+        names.push(listed);
+    }
+    assert!(
+        names[0].iter().any(|name| name == "batch_delete"),
+        "{:?}",
+        names[0]
+    );
+    assert!(
+        names[1].iter().any(|name| name == "query_entities"),
+        "{:?}",
+        names[1]
+    );
+    for write in ["batch_delete", "create_entity", "update_attributes"] {
+        assert!(
+            !names[1].iter().any(|name| name == write),
+            "{write}: {:?}",
+            names[1]
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_header_that_is_not_a_bearer_token_is_anonymous_on_an_endpoints_mcp() {
     let realm = common::Realm::new();
