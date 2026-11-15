@@ -1,5 +1,6 @@
 {
   "inputs": [
+    "amqp_0_9",
     "aws_s3",
     "batched",
     "broker",
@@ -16,6 +17,7 @@
     "read_until",
     "resource",
     "sequence",
+    "sftp",
     "socket",
     "sql_raw",
     "sql_select",

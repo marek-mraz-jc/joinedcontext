@@ -298,6 +298,27 @@ describe("every field the catalog calls a secret renders as a reference (T-2239)
   });
 });
 
+describe("the runner's own sftp fields (T-7090)", () => {
+  const sftp = (bentoInputs as { inputs: CatalogInput[] }).inputs.find((input) => input.name === "sftp");
+
+  it("asks for the host key pin, required, with an example", () => {
+    expect(sftp).toBeDefined();
+    const { schema, uiSchema } = runnerInputSchema(sftp as CatalogInput);
+    expect(schema.required).toContain("host_key_fingerprint");
+    const pin = (schema.properties as Record<string, { description?: string }>).host_key_fingerprint;
+    expect(pin.description).toContain("SHA256:");
+    const order = (uiSchema["ui:order"] as string[]) ?? [];
+    expect(order.indexOf("host_key_fingerprint")).toBe(order.indexOf("address") + 1);
+  });
+
+  it("takes a private key only as a secret reference", () => {
+    const { uiSchema } = runnerInputSchema(sftp as CatalogInput);
+    const creds = uiSchema.credentials as Record<string, Record<string, unknown>> | undefined;
+    expect(creds?.private_key?.["ui:widget"]).toBe("secretRef");
+    expect(creds?.password?.["ui:widget"]).toBe("secretRef");
+  });
+});
+
 describe("a runner field in a person's words (T-4165, photo audit T-4159)", () => {
   const nats = (bentoInputs as { inputs: CatalogInput[] }).inputs.find((input) => input.name === "nats");
 

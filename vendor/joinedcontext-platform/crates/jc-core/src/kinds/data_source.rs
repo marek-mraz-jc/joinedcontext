@@ -2327,14 +2327,14 @@ mod runner_registry_tests {
         );
 
         let nested = source(
-            "  type: broker\n  input:\n    inputs:\n      - nats: { urls: [\"nats://broker.example.fi:4222\"], subject: a }\n      - amqp_0_9: { urls: [\"amqp://broker.example.fi:5672\"], queue: a }\n",
+            "  type: broker\n  input:\n    inputs:\n      - nats: { urls: [\"nats://broker.example.fi:4222\"], subject: a }\n      - kafka_franz: { seed_brokers: [\"broker.example.fi:9092\"], topics: [a] }\n",
         );
         let err = crate::registry::validate_yaml("DataSource", &nested)
             .expect("a kind")
-            .expect_err("amqp_0_9 is not built by the runner")
+            .expect_err("kafka_franz is not built by the runner")
             .to_string();
         assert!(
-            err.contains("spec.input") && err.contains("`amqp_0_9`"),
+            err.contains("spec.input") && err.contains("`kafka_franz`"),
             "{err}"
         );
 
@@ -2344,6 +2344,14 @@ mod runner_registry_tests {
         crate::registry::validate_yaml("DataSource", &nats)
             .expect("a kind")
             .expect("nats is built by the runner");
+
+        // T-7090: the runner builds amqp_0_9.
+        let amqp = source(
+            "  type: amqp_0_9\n  input:\n    urls: [\"amqps://broker.example.fi:5671/\"]\n    queue: vehicles\n",
+        );
+        crate::registry::validate_yaml("DataSource", &amqp)
+            .expect("a kind")
+            .expect("amqp_0_9 is built by the runner");
     }
 
     /// Every input offered is one the Bento catalog draws a form for and the runner builds.
