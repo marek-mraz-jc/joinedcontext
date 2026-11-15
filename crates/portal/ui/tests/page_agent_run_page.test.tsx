@@ -216,7 +216,7 @@ describe("the run page", () => {
     const alert = await screen.findByText(/did not answer in time/);
     expect(alert.textContent).toContain(en.agentRun.failedNext);
     const publish = screen.getByRole("button", { name: new RegExp(`^${en.agentRun.publish}`) });
-    expect(publish).toBeDisabled();
+    expect(publish).toHaveAttribute("aria-disabled", "true");
     expect(publish).toHaveAccessibleDescription(en.agentRun.publishOver);
     expect(screen.getByRole("link", { name: en.agentRun.failedOpen })).toHaveAttribute("href", expect.stringMatching(/\/assistant$/));
     expect(screen.queryByRole("button", { name: en.agentRun.cancel })).toBeNull();

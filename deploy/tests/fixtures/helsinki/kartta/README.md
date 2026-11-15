@@ -14,3 +14,12 @@ and `LTJ_avoin_rauhoitettu_Natura_viivamaiset`.
 Tasks: T-5256 (Kaupunginosajako), T-5286 (traffic layers), T-5378 (water, trees, LTJ_avoin_*,
 Meluselvitys_*, VISTRA), T-5663 rows 66, 74, 80 (Maalinnoitus_*, Maisemakulttuuri_*,
 rantareitin_uusien_toimintojen_paikat_2025).
+
+## WFS 1.1 GML answers
+
+`wfs11-*-EPSG3879.xml` were recorded 2026-11-15T20:00Z (T-7077) from the same server as the GML
+answer of WFS 1.1.0: `request=GetFeature&typeName=avoindata:<layer>&srsName=urn:ogc:def:crs:EPSG::3879`,
+kept as served. The server writes `srsName="urn:x-ogc:def:crs:EPSG:3879"` with northing first.
+`Pysakointipaikat_alue` (`maxFeatures=2`) holds `gml:MultiSurface` polygons in `gml:posList`;
+`Kaupunginosajako` (`maxFeatures=1`) holds a `gml:Ring` of `gml:LineString` and `gml:ArcString`
+curve members. The ekiben `parse_gml` tests read both.

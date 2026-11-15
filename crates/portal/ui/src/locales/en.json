@@ -6743,6 +6743,7 @@
       "failed": "Version {version} is not published while {failed} of its tests fail: {names}. Ask the assistant to fix them."
     },
     "publishOver": "This run has ended, so it has nothing to publish.",
+    "publishNotReady": "No version is ready to publish yet: Publish opens once its preview is built and its tests pass.",
     "failedNext": "Nothing was published. Open the Assistant page to build it again.",
     "failedOpen": "Build it again"
   },

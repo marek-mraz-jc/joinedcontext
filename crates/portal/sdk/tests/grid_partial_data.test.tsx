@@ -83,6 +83,24 @@ describe("relationship targets (G-R2GRID2-017)", () => {
     expect(within(shown()[0] as HTMLElement).getByText("Station 3")).toBeInTheDocument();
   });
 
+  it("opens a target with none of the outer type's preset conditions or attributes", async () => {
+    const { source } = counted([...stations, ...companies]);
+    const asked: { type: string; q?: string; attrs?: string[] }[] = [];
+    const watched: EntitySource = { ...source, query: (q, page) => (asked.push({ type: q.type, q: q.q, attrs: q.attrs }), source.query(q, page)) };
+    const config = parseGridConfig({
+      source: { kind: "fixture", name: "t" },
+      type: "Station",
+      columns: [{ attr: "name", label: "Name" }, { attr: "owner", label: "Owner" }],
+      filters: { preset: { q: 'name=="Station 3"', attrs: ["name", "owner"] } },
+    }).config!;
+    render(<EntityGrid config={config} source={watched} />);
+    fireEvent.click((await screen.findAllByRole("button", { name: `${DEFAULT_LABELS.openTarget}: Company · Company 3` }))[0]);
+    expect(await screen.findByText(/^1\D?003$/)).toBeInTheDocument();
+    const targets = asked.filter((one) => one.type === "Company");
+    expect(targets.length).toBeGreaterThan(1);
+    expect(targets.every((one) => one.q === undefined && one.attrs === undefined)).toBe(true);
+  });
+
   it("shows a target the person may not read as its id alone: no link, none of its values", async () => {
     const secret = { id: "urn:ngsi-ld:Company:hidden", type: "Company", name: prop("TOPSECRET Ltd"), revenue: prop(424242) };
     const row = { id: "urn:ngsi-ld:Station:x", type: "Station", name: prop("X"), owner: { type: "Relationship", object: secret.id } };

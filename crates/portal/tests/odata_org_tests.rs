@@ -994,6 +994,29 @@ async fn metadata_names_only_the_sets_the_caller_reads() {
             }
         }
         assert!(container.get("projects").is_some(), "{who}: {container}");
+        // The service document lists the same sets as `$metadata`, no more.
+        let service = get(&state, mode, who, "/api/v1/").await.json();
+        let mut in_service: Vec<String> = service["value"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|v| v["kind"] == "EntitySet")
+            .filter_map(|v| v["name"].as_str().map(str::to_owned))
+            .collect();
+        in_service.sort();
+        let mut in_metadata: Vec<String> = container
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(_, v)| v.get("$Collection").is_some())
+            .map(|(k, _)| k.clone())
+            .collect();
+        in_metadata.sort();
+        if in_service != in_metadata {
+            wrong.push(format!(
+                "{who}: service document {in_service:?}, $metadata {in_metadata:?}"
+            ));
+        }
         // Every type an action is bound to is a type of this caller's model.
         for (name, member) in doc["JoinedContext.Portal"]
             .as_object()

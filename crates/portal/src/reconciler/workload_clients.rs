@@ -877,13 +877,9 @@ impl WorkloadClientSync {
         // The realm's clients first: who already holds a subject decides a contested one.
         let listed = match self
             .admin
-            .send(
-                &token,
-                reqwest::Method::GET,
-                "/clients?briefRepresentation=false&max=2000",
-                None,
-            )
+            .get_all::<Value>(&token, "/clients?briefRepresentation=false")
             .await
+            .map(|listed| Some(Value::Array(listed)))
         {
             Ok(listed) => listed.unwrap_or(Value::Null),
             Err(err) => {

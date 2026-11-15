@@ -400,6 +400,51 @@ async fn an_off_main_or_a_non_writers_merge_request_is_not_found_and_never_merge
     assert!(merged(&server).await.is_empty());
 }
 
+/// ADR-N-061: a binding names the writer by their Keycloak id; the forge's e-mail of the
+/// merge request's author is that person's in the realm, so the branch is still a Change.
+#[tokio::test]
+async fn a_writer_bound_by_their_keycloak_id_has_their_branch_listed() {
+    let (_server, mut state) = forge(&["read", "propose"]).await;
+    state.mirror.upsert(org(
+        "RoleBinding",
+        "wera",
+        json!({ "subjects": [{ "user": "0b6f0e4c-wera" }], "role": "writer", "scope": { "organization": "hel" } }),
+    ));
+    let kc = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/hel/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/users"))
+        .and(query_param("email", WRITER.1))
+        .and(query_param("exact", "true"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!([{ "id": "0B6F0E4C-wera", "username": WRITER.0, "email": WRITER.1 }]),
+        ))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/users"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&kc)
+        .await;
+    state.people = joinedcontext_portal::people::People::new(
+        &format!("{}/realms/hel", kc.uri()),
+        "portal".into(),
+        joinedcontext_portal::config::ClientAuth::Secret("secret".into()),
+    )
+    .map(Arc::new);
+
+    let (status, body) = get(&state, APPROVER, "/api/v1/projects/ovzdusie/changes").await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let list: ChangeList = serde_json::from_value(body).expect("ChangeList");
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(list.items[0].author.email.as_deref(), Some(WRITER.1));
+}
+
 #[tokio::test]
 async fn a_writer_who_lost_the_binding_has_no_change_any_more() {
     let (server, state) = forge(&["read"]).await;

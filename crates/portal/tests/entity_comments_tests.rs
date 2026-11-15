@@ -272,6 +272,59 @@ async fn a_reader_comments_mentions_readers_of_the_space_and_only_they_are_notif
     assert_eq!(list[0]["mine"], false);
 }
 
+/// ADR-N-061: a binding names a reader by their Keycloak id; a mention of their e-mail reaches
+/// them through the realm, which names that id.
+#[tokio::test]
+async fn a_mention_reaches_a_reader_bound_by_their_keycloak_id() {
+    let mut world = world().await;
+    let ida = "ida.air@hel.fi";
+    world.state.mirror.upsert(envelope(
+        "RoleBinding",
+        "air-reader-by-id",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "5f0c-ida" }], "role": "space-reader",
+                "scope": { "contextSpace": "air" } }),
+    ));
+    let kc = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/hel/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/users"))
+        .and(wiremock::matchers::query_param("email", ida))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!([{ "id": "5f0c-ida", "username": ida, "email": ida }])),
+        )
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/users"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&kc)
+        .await;
+    world.state.people = joinedcontext_portal::people::People::new(
+        &format!("{}/realms/hel", kc.uri()),
+        "portal".into(),
+        joinedcontext_portal::config::ClientAuth::Secret("secret".into()),
+    )
+    .map(std::sync::Arc::new);
+    let text = format!("@{ida} pm10 jumped, cc @{STRANGER}");
+    let (status, made) = call(
+        &world.state,
+        READER,
+        "POST",
+        COMMENTS,
+        Some(json!({ "urn": URN, "text": text })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    assert_eq!(made["mentions"], json!([ida]), "{made}");
+    assert_eq!(made["unknownMentions"], json!([STRANGER]), "{made}");
+}
+
 #[tokio::test]
 async fn a_notification_is_read_by_its_recipient_alone() {
     let world = world().await;

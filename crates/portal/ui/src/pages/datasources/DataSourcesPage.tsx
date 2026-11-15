@@ -1,6 +1,7 @@
 import { useFormRoute, useOpenFromAddress } from "../../components/forms/FormRoute";
 import { RecordLink } from "../../components/RecordLink";
-import { withoutUserinfo } from "../../components/ui/safeHref";
+import { endpointView } from "../../components/ui/safeHref";
+export { endpointView };
 import { useMemo, useState } from "react";
 import { AdminGrid } from "../../components/grid/AdminGrid";
 import type { DataColumn } from "../../components/grid/AdminGrid";
@@ -220,20 +221,6 @@ export function endpointOf(spec: Record<string, unknown>): string {
     return spec.type.trim();
   }
   return "";
-}
-
-const TEMPLATE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
-
-/**
- * An address as the table shows it (T-4991): host and path, the scheme left to the Type column,
- * the query string only in the hover title, and no user or password part ever. A `${VAR}`
- * template becomes the name of the secret it reads, never its text.
- */
-export function endpointView(raw: string): { shown: string; full: string; secrets: string[] } {
-  const secrets = [...new Set([...raw.matchAll(TEMPLATE)].map((match) => match[1] as string))];
-  const each = raw.split(", ").map((one) => withoutUserinfo(one).replace(TEMPLATE, "…"));
-  const shown = each.map((one) => one.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[?#]/)[0]?.replace(/(.)\/$/, "$1") ?? "");
-  return { shown: shown.join(", "), full: each.join(", "), secrets };
 }
 
 /** The words of a runner input's name that are written in capitals: protocols, products, clouds. */
