@@ -123,9 +123,7 @@ impl ServiceAccounts {
     /// ended at `now` (PF-36): what an open session admitted under it rechecks (S-3-12).
     pub fn holds(&self, project: &str, name: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
         self.by_client_id.values().any(|account| {
-            account.project == project
-                && account.name == name
-                && !account.has_ended(now)
+            account.project == project && account.name == name && !account.has_ended(now)
         })
     }
 
