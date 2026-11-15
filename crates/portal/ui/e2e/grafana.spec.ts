@@ -114,6 +114,14 @@ for (const width of [1440, 400]) {
       await expect(page.getByText("Helsinki air quality: AirQualityObserved, pm25")).toBeVisible();
       await shot(page, "saved", width);
       expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);
+      // Removing asks in the shared dialog, Cancel first; Escape keeps the visualization (A-8-06).
+      await page.getByRole("button", { name: "Remove PM2.5 by station" }).click();
+      const asked = page.getByRole("alertdialog", { name: "Remove PM2.5 by station" });
+      await expect(asked.getByRole("button", { name: "Cancel" })).toBeFocused();
+      await shot(page, "remove-confirm", width);
+      await page.keyboard.press("Escape");
+      await expect(asked).toBeHidden();
+      await expect(page.getByRole("button", { name: "Remove PM2.5 by station" })).toBeFocused();
     });
 
     test("a refusal names the field and keeps what was typed", async ({ page }) => {
