@@ -85,19 +85,20 @@ async fn start_mock_server() -> (String, Arc<AtomicUsize>) {
 }
 
 fn setup_contexts(allow_private_ips: bool) -> (Arc<Registry>, ProcContext, StreamContext) {
+    setup_with_quotas(OrgQuotas {
+        allow_private_ips,
+        ..Default::default()
+    })
+}
+
+fn setup_with_quotas(quotas: OrgQuotas) -> (Arc<Registry>, ProcContext, StreamContext) {
     let reg = Arc::new(Registry::new());
     ekiben_processors::register_all(&reg);
     ekiben_io_http::register_all(&reg);
 
     let resources = ResourceManager::new();
     let org_id = OrgId::new("org-http");
-    resources.set_org_quotas(
-        &org_id,
-        OrgQuotas {
-            allow_private_ips,
-            ..Default::default()
-        },
-    );
+    resources.set_org_quotas(&org_id, quotas);
     let org = resources.get_or_create_org(&org_id);
     let (_tx, rx) = watch::channel(false);
     let metrics = StreamMetrics::new("http-test", "org-http");
@@ -192,6 +193,48 @@ http:
     assert!(!ekiben_io_http::client::is_private_or_loopback_host(
         "[::ffff:8.8.8.8]"
     ));
+    // The same rule as the resolver's: IPv6 forms embedding a loopback or metadata address.
+    for embedded in [
+        "[64:ff9b::7f00:1]",
+        "[2002:a9fe:a9fe::]",
+        "[::7f00:1]",
+        "[ff02::1]",
+    ] {
+        assert!(
+            ekiben_io_http::client::is_private_or_loopback_host(embedded),
+            "{embedded}"
+        );
+    }
+}
+
+/// A host the Organization lists in `private_hosts` goes through the private-host client: a
+/// private range would pass there (outbound_tests), loopback never does, so a listed name that
+/// resolves to loopback is still refused, by that client's resolver.
+#[tokio::test]
+async fn a_listed_private_host_is_resolved_by_the_private_host_rule_and_never_reaches_loopback() {
+    let (reg, pctx, _) = setup_with_quotas(OrgQuotas {
+        private_hosts: vec!["localhost".to_string()],
+        ..Default::default()
+    });
+    let conf = ComponentConfig::from_json_value(
+        &serde_json::json!({ "http": { "url": "http://localhost.:8080/secret", "verb": "GET", "retries": 0 } }),
+        "noop",
+        None,
+    )
+    .unwrap();
+    let proc = reg.build_processor(&conf, &pctx, "0").unwrap();
+    let out = proc
+        .process_batch(&pctx, vec![Part::from_str("{}")])
+        .await
+        .expect("an http failure flags the part, not the batch");
+    let msg = out[0][0]
+        .error_get()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(
+        msg.contains("resolves only to loopback, link-local or metadata"),
+        "{msg:?}"
+    );
 }
 
 /// A listener with two mounts, `/broker` and `/portal`, recording each path it is asked for;

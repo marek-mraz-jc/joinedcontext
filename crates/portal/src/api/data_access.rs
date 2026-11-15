@@ -404,7 +404,7 @@ fn granted(answer: &Value) -> bool {
 }
 
 /// A Policy's own assignee (place 0) and each rule's (place 1..), with their parts.
-fn assignees(spec: &Value) -> impl Iterator<Item = (usize, &Value)> {
+pub(crate) fn assignees(spec: &Value) -> impl Iterator<Item = (usize, &Value)> {
     let rules = spec["rules"]
         .as_array()
         .map(Vec::as_slice)

@@ -6,7 +6,7 @@
 use axum::Router;
 use axum::body::Body;
 use daiya_api::{DaiyaState, TokenBinding, api_router};
-use daiya_model::{InstallationId, InstanceId, OrgId, PolicyAuthorizer, Subject};
+use daiya_model::{DatasourceRecord, InstallationId, InstanceId, OrgId, PolicyAuthorizer, Subject};
 use daiya_query::{MapSecretResolver, OutboundPolicy};
 use daiya_store_memory::MemoryStore;
 use http::{Request, StatusCode};
@@ -223,15 +223,43 @@ async fn a_datasource_created_through_the_api_is_queried_by_the_router() {
 async fn a_stored_datasource_whose_host_is_refused_reports_unhealthy_and_queries_nothing() {
     let (url, seen) = mock(vec![("/", json!({}))]).await;
     // Default operator policy: https only, no private network open.
-    let (_state, app) = app(OutboundPolicy::default());
-    let (status, _) = call(
+    let (state, app) = app(OutboundPolicy::default());
+    // Saved today it is refused, naming the field (T-6965)...
+    let (status, body) = call(
         &app,
         "POST",
         "/api/datasources",
         Some(json!({ "uid": "local", "name": "Local", "type": "prometheus", "url": url })),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.to_string().contains("url"), "{body}");
+    // ...but a row stored before that check still reaches nothing when it is used.
+    let now = chrono::Utc::now();
+    state
+        .store
+        .upsert_datasource(DatasourceRecord {
+            installation_id: InstallationId::from_u128(1),
+            org_id: ORG,
+            instance_id: InstanceId::from_u128(1),
+            project_id: None,
+            uid: "local".into(),
+            name: "Local".into(),
+            kind: "prometheus".into(),
+            access: "proxy".into(),
+            url: url.clone(),
+            is_default: false,
+            read_only: false,
+            json_data: json!({}),
+            secret_refs: Default::default(),
+            allow_hosts: Vec::new(),
+            wasm_digest: None,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .expect("a legacy row");
     let (status, health) = call(&app, "GET", "/api/datasources/uid/local/health", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(health["status"], "error", "{health}");

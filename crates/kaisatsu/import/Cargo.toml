@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 kaisatsu-core = { path = "../core" }
 kaisatsu-crypto = { path = "../crypto" }
+kaisatsu-oidc = { path = "../oidc" }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.13"
 schemars = { version = "0.8", features = ["uuid1", "chrono"] }

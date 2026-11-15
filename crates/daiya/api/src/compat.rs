@@ -426,10 +426,9 @@ async fn add_datasource(
             "data source with the same name already exists".into(),
         ));
     }
-    let saved = state
-        .store
-        .upsert_datasource(req.into_record(state, ctx, uid))
-        .await?;
+    let record = req.into_record(state, ctx, uid);
+    state.check_datasource_url(&record)?;
+    let saved = state.store.upsert_datasource(record).await?;
     Ok(json!({
         "message": "Datasource added",
         "id": 1,
@@ -484,10 +483,9 @@ async fn update_datasource(
             "Cannot update read-only data source".into(),
         ));
     }
-    let saved = state
-        .store
-        .upsert_datasource(req.into_record(state, ctx, uid))
-        .await?;
+    let record = req.into_record(state, ctx, uid);
+    state.check_datasource_url(&record)?;
+    let saved = state.store.upsert_datasource(record).await?;
     Ok(json!({
         "message": "Datasource updated",
         "id": 1,
