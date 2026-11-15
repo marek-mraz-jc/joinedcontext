@@ -25,7 +25,7 @@ pub const EXTENSION_FUNCTIONS: &[&str] = &[
 ];
 
 /// The names a `crs` argument may give WGS 84 by; anything else needs reprojection.
-const WGS84: &[&str] = &[
+pub(crate) const WGS84: &[&str] = &[
     "EPSG:4326",
     "WGS84",
     "OGC:CRS84",
@@ -33,14 +33,24 @@ const WGS84: &[&str] = &[
     "http://www.opengis.net/def/crs/EPSG/0/4326",
 ];
 
-/// The method names this module adds (an ekiben extension).
+/// Every ekiben extension method (none is Bento's): this module's, the trigonometry of
+/// methods_numbers.rs and the WKT methods of geo.rs. Lint names these as non-Bento.
 pub const EXTENSION_METHODS: &[&str] = &[
+    "acos",
+    "asin",
+    "atan",
+    "atan2",
+    "exp",
+    "format_wkt",
+    "geo_transform",
     "ngsild_geoproperty",
     "ngsild_key_values",
     "ngsild_language_property",
     "ngsild_normalized",
     "ngsild_property",
     "ngsild_relationship",
+    "parse_wkt",
+    "sqrt",
 ];
 
 /// The deepest GeometryCollection nesting a GeoJSON value may have.
@@ -740,7 +750,7 @@ pub(crate) fn eval_point(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Resul
     if let Some(crs) = opt_string(args, "crs", 2, ctx)? {
         if !WGS84.contains(&crs.as_str()) {
             return Err(format!(
-                "parameter crs: {crs:?} is not WGS 84, and reprojection (geo_transform) is not in this build"
+                "parameter crs: {crs:?} is not WGS 84; reproject the position first with geo_transform(from: {crs:?}, to: \"EPSG:4326\")"
             ));
         }
     }

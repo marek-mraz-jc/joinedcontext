@@ -1007,6 +1007,11 @@ fn parse_dot_tail(state: &mut ParserState<'_>, target: Expr) -> Result<Expr, Par
         if state.rem().starts_with('(') {
             // Bento parses the whole call first and reports an unknown name after its arguments.
             let args = parse_arg_list(state)?;
+            if crate::methods::REFUSED_METHODS.contains(&ident.as_str()) {
+                return Err(state.err(format!(
+                    "method '{ident}' is refused: it reads a file from the host"
+                )));
+            }
             if !state.env.has_method(&ident) {
                 return Err(state.err(format!("unrecognised method '{ident}'")));
             }

@@ -51,6 +51,16 @@ pub fn known_methods() -> HashSet<String> {
         "uint64",
         "parse_bytes",
         "parse_big_decimal",
+        // ekiben extensions (not Bento): trigonometry and WKT geometry
+        "acos",
+        "asin",
+        "atan",
+        "atan2",
+        "exp",
+        "sqrt",
+        "format_wkt",
+        "geo_transform",
+        "parse_wkt",
         // Strings, Regex, Parsing, Encoding & Hash
         "capitalize",
         "compress",
@@ -198,6 +208,19 @@ pub fn known_methods() -> HashSet<String> {
     .collect()
 }
 
+/// Bento methods ekiben refuses at parse time: each reads a MaxMind database file from the
+/// host, and a mapping reads no file.
+pub const REFUSED_METHODS: &[&str] = &[
+    "geoip_anonymous_ip",
+    "geoip_asn",
+    "geoip_city",
+    "geoip_connection_type",
+    "geoip_country",
+    "geoip_domain",
+    "geoip_enterprise",
+    "geoip_isp",
+];
+
 /// Methods (methods_numbers.rs; not the int and float casts, which read a json.Number's text) that match a target or its elements on Int, Uint and Float.
 const NUMBER_METHODS: &[&str] = &[
     "ceil",
@@ -293,6 +316,9 @@ fn eval_method_on_value(
         return res;
     }
     if let Some(res) = crate::ngsild::eval_ngsild_method(&target_val, name, args, ctx) {
+        return res;
+    }
+    if let Some(res) = crate::geo::eval_geo_family(&target_val, name, args, ctx) {
         return res;
     }
     Err(format!("unrecognised method '{name}'"))
