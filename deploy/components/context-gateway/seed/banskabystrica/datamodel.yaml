@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: bb-air-quality
+  namespace: banskabystrica
+  title: { sk: Kvalita ovzdušia, en: Air quality }
+spec:
+  contextSpaceRef: ovzdusie
+  linkml: ./bb-air-quality.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [AirQualityObserved]
+  # A published model commits all four artifacts (DM-02); the gateway opens them beside the
+  # manifest and serves schema/v1 from them (DM-22, EP-49). Regenerate: seed README.
+  artifacts:
+    jsonSchema: ./bb-air-quality.v1.schema.json
+    context: ./bb-air-quality.v1.context.jsonld
+    docs: ./bb-air-quality.v1.md
+    example: ./bb-air-quality.v1.example.jsonld

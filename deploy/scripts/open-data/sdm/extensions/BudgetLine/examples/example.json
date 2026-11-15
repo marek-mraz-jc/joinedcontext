@@ -1,0 +1,22 @@
+{
+  "adjustedAmount": 0.0,
+  "approvedAmount": 0.0,
+  "budgetArea": "budgetArea",
+  "budgetFunction": "budgetFunction",
+  "budgetItem": "budgetItem",
+  "budgetPurpose": "budgetPurpose",
+  "dataProvider": "dataProvider",
+  "fiscalYear": 0,
+  "id": "urn:ngsi-ld:BudgetLine:joinedcontext.com:example:1",
+  "identifier": "identifier",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "observedAt": "2026-01-01T00:00:00Z",
+  "source": "https://example.org/source",
+  "type": "BudgetLine"
+}

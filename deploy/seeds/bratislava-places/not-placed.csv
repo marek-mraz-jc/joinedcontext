@@ -1,0 +1,74 @@
+table,street,district,reason
+materske-skoly,Františka Kubu 6,Rača,no such address in Bratislava
+materske-skoly,Hraničiarska 101,Čunovo,no such address in Bratislava
+materske-skoly,Ivanská cesta 32E,Ružinov,no such address in Bratislava
+materske-skoly,Jána Valašťana Dolinského 1,Dúbravka,no such address in Bratislava
+materske-skoly,Nobelovo námestie 6,Petržalka,no such address in Bratislava
+materske-skoly,Rešetkova 6,Nové Mesto,no such address in Bratislava
+materske-skoly,Tekovská 7-9,Ružinov,no such address in Bratislava
+materske-skoly,Trnková 4,Jarovce,no such address in Bratislava
+materske-skoly,Ulica 29. augusta 6,Staré Mesto,no such address in Bratislava
+materske-skoly,Vývojová 228 (hlavný vchod Kovácsova / súpisné číslo 465),Rusovce,no such address in Bratislava
+materske-skoly,Ľudovíta Fullu 12,Karlova Ves,in the register without a point
+mestske-organizacie,"Daliborovo námestie 2937/2, 851 01 Bratislava - mestská časť Petržalka",,no such address in Bratislava
+ochladzovacie-miesta,Bratislavská 63,,no such address in Bratislava
+ochladzovacie-miesta,Harmincova 3580,,no such address in Bratislava
+ochladzovacie-miesta,Jantárová cesta 30,,no such address in Bratislava
+ochladzovacie-miesta,Nákupná zóna Bory s/n 1,,no such address in Bratislava
+ochladzovacie-miesta,Námestie sv. Františka 8,,no such address in Bratislava
+ochladzovacie-miesta,Púchovská ulica 8A,,no such address in Bratislava
+ochladzovacie-miesta,Slovnaftská ulica 5,,in the register without a point
+ochladzovacie-miesta,Tomislava P. Kolakoviča 1A,,no such address in Bratislava
+ochladzovacie-miesta,Trnavská cesta 41A,,no such address in Bratislava
+ochladzovacie-miesta,Šancová 112,,in the register without a point
+vzdelavacie-institucie,Cintorínska 7669/7,Bratislava-Staré Mesto,no such address in Bratislava
+vzdelavacie-institucie,Cédrová ulica 6,Bratislava-Čunovo,no such address in Bratislava
+vzdelavacie-institucie,Daliborovo námestie 2,Bratislava-Petržalka,no such address in Bratislava
+vzdelavacie-institucie,Detvianska 24,Bratislava-Rača,no such address in Bratislava
+vzdelavacie-institucie,Dolnozemská cesta 1/b,Bratislava-Petržalka,no such address in Bratislava
+vzdelavacie-institucie,Gerulatská 2,Bratislava-Rusovce,no such address in Bratislava
+vzdelavacie-institucie,Hraničiarska 101,Bratislava-Čunovo,no such address in Bratislava
+vzdelavacie-institucie,Ilkovičova 2,Bratislava-Karlova Ves,no such address in Bratislava
+vzdelavacie-institucie,Ivanská cesta 32E,Bratislava-Ružinov,no such address in Bratislava
+vzdelavacie-institucie,Jesenského 4/A,Bratislava-Staré Mesto,no such address in Bratislava
+vzdelavacie-institucie,Kovácsova 465,Bratislava-Rusovce,no such address in Bratislava
+vzdelavacie-institucie,Košická,Bratislava-Ružinov,no such address in Bratislava
+vzdelavacie-institucie,Líščie údolie 43/6357,Bratislava-Karlova Ves,no such address in Bratislava
+vzdelavacie-institucie,Mlynská dolina CH1,Bratislava-Karlova Ves,no such address in Bratislava
+vzdelavacie-institucie,Mlynská dolina F2,Bratislava-Karlova Ves,no such address in Bratislava
+vzdelavacie-institucie,Mlynské luhy č.4,Bratislava-Ružinov,no such address in Bratislava
+vzdelavacie-institucie,Nobelovo námestie 6,Bratislava-Petržalka,no such address in Bratislava
+vzdelavacie-institucie,Radničné námestie 4,Bratislava-Ružinov,no such address in Bratislava
+vzdelavacie-institucie,Rešetkova 6,Bratislava-Nové Mesto,no such address in Bratislava
+vzdelavacie-institucie,Staré grunty 330,Bratislava-Karlova Ves,no such address in Bratislava
+vzdelavacie-institucie,Sv. Pia X. 1/A,Bratislava-Záhorská Bystr,no such address in Bratislava
+vzdelavacie-institucie,Trnavská cesta 3421/39,Bratislava-Nové Mesto,no such address in Bratislava
+vzdelavacie-institucie,Trnková 4,Bratislava-Jarovce,no such address in Bratislava
+vzdelavacie-institucie,Ulica 29. augusta 6,Bratislava-Staré Mesto,no such address in Bratislava
+vzdelavacie-institucie,Vajnorská 19,Bratislava-Nové Mesto,2 points in ['Bratislava-Nové Mesto']
+vzdelavacie-institucie,Ventúrska ul.3,Bratislava-Staré Mesto,no such address in Bratislava
+vzdelavacie-institucie,Viedenská cesta 257,Bratislava-Petržalka,no such address in Bratislava
+vzdelavacie-institucie,Vývojová 228,Bratislava-Rusovce,no such address in Bratislava
+vzdelavacie-institucie,Zadunajská 406/4,Bratislava-Petržalka,no such address in Bratislava
+vzdelavacie-institucie,Zadunajská cesta 406/4,Bratislava-Petržalka,no such address in Bratislava
+vzdelavacie-institucie,Zlatohorská 18,Bratislava-Lamač,no such address in Bratislava
+vzdelavacie-institucie,Zochova 6-8,Bratislava-Staré Mesto,no such address in Bratislava
+vzdelavacie-institucie,Ľudovíta Fullu 12,Bratislava-Karlova Ves,in the register without a point
+vzdelavacie-institucie,Šafárikovo nám.č.6,Bratislava-Staré Mesto,no such address in Bratislava
+vzdelavacie-institucie,Špitálska ul.24,Bratislava-Staré Mesto,no such address in Bratislava
+zakladne-skoly,Detvianska 24,Rača,no such address in Bratislava
+zakladne-skoly,Jána Valašťana Dolinského 1,Dúbravka,no such address in Bratislava
+zakladne-skoly,Krajinská 91,Podunajské Biskupice,in the register without a point
+zakladne-skoly,Marie Curie-Sklodowskej 1,Petržalka,no such address in Bratislava
+zakladne-skoly,Nobelovo námestie 6,Petržalka,no such address in Bratislava
+zakladne-skoly,Radničné námestie 4,Ružinov,no such address in Bratislava
+zakladne-skoly,Trnavská cesta 39,Nové Mesto,no such address in Bratislava
+zakladne-skoly,Vývojová 228,Rusovce,no such address in Bratislava
+zakladne-umelecke-skoly,Daliborovo námestie 2,Petržalka,no such address in Bratislava
+zakladne-umelecke-skoly,Gerulatská 2,Rusovce,no such address in Bratislava
+zakladne-umelecke-skoly,Vajnorská 19,Nové Mesto,2 points in ['Bratislava-Nové Mesto']
+zakladne-umelecke-skoly,Vazozova 4,Staré Mesto,no such address in Bratislava
+zakladne-umelecke-skoly,Vývojová 228,Rusovce,no such address in Bratislava
+zakladne-umelecke-skoly,Zlatohorská 18,Lamač,no such address in Bratislava
+zakladne-umelecke-skoly,Československých tankistov 134,Záhorská Bystrica,no such address in Bratislava
+zakladne-umelecke-skoly,Československých tankistov 34,Záhorská Bystrica,no such address in Bratislava

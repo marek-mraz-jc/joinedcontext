@@ -1,0 +1,18 @@
+# IPR Praha's geoportal item 8818bda5e5e34d96af02126d9554b385 (Sdílená data o zeleni – vegetační prvky – linie), 37 tree rows of 755 lines on 2026-10-23: the layer's description
+# on IPR's ArcGIS server, whose field list and coded values the mapping reads before it pages
+# through the layer's FeatureServer. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5425).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-green-register-tree-rows
+  namespace: praha
+  title:
+    en: 'Shared green register: tree rows (IPR Praha)'
+    cs: Sdílená data o zeleni – vegetační prvky – linie (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_VP_L/FeatureServer/0?f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

@@ -1,0 +1,84 @@
+# The mapping of the drepo pipeline (PL-03, T-3138): one Article per item of DREPO that
+# carries an open licence of its own. The DataSource fetches page 0; this mapping fetches pages 1
+# to the last one the answer names and maps every item of every page. Authors are people and never
+# leave the item (open data rules §1); an item without an open `dc.rights.uri` is left out.
+
+pipeline:
+  processors:
+    # The empty-read guard (T-3138): a library answering no item is the server failing, never the
+    # university withdrawing everything, so the run fails where it can be seen; the expiry would
+    # otherwise delete the whole space three weeks later.
+    - mapping: |
+        root = if this._embedded.searchResult.page.totalElements.or(0) == 0 { throw("the library answered no item") } else { this }
+
+    # Page 0 as it came, then one request per further page. The page count is the server's word, so
+    # it is capped (T-5701): 14 pages of 100 on 2026-10-25, four times that at most; past it the run
+    # fails with no request and no item, page 0's included.
+    - mapping: |
+        let pages = this._embedded.searchResult.page.totalPages.or(1).int64()
+        root = if $pages > 56 { [{ "problem": "the library names %v pages; more than 56 is not DREPO's 14".format($pages) }] } else if $pages <= 1 { [this] } else { [this].concat(range(1, $pages).map_each(p -> { "page": p })) }
+    - unarchive: { format: json_array }
+    - mapping: |
+        root = if this.problem.or(null) != null { throw(this.problem) } else { this }
+    - switch:
+        - check: this.page.or(null) != null
+          processors:
+            - mapping: |
+                meta page = this.page.string()
+                root = ""
+            - http:
+                url: https://dspace.uniza.sk/server/api/discover/search/objects?dsoType=ITEM&size=100&embed=owningCollection&page=${! @page }
+                verb: GET
+                headers: { Accept: application/json }
+                timeout: 60s
+                retries: 2
+                rate_limit: pipeline_egress
+            # A page that did not come is items the expiry would delete, so it fails the run.
+            - mapping: |
+                root = if errored() { throw("page %v did not come: %v".format(@page, error())) } else { this }
+
+    # A refusal above goes on as no item.
+    - mapping: |
+        root = if this.problem.or(null) != null { [] } else { this._embedded.searchResult._embedded.objects.map_each(o -> o._embedded.indexableObject) }
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        # CC BY and CC BY-SA in any version, CC0 and the Public Domain Mark: the licences that let
+        # anyone reuse the work. NC and ND are not open (Open Definition 2.1) and stay out.
+        let licence = this.metadata."dc.rights.uri".or([]).map_each(r -> r.value).filter(u -> u.re_match("^https?://creativecommons\\.org/(licenses/(by|by-sa)/[0-9.]+|publicdomain/(zero|mark)/1\\.0)/?$")).index(0).catch(null)
+        let title = this.metadata."dc.title".or([]).index(0).value.or("")
+        root = if this.withdrawn.or(false) || !this.discoverable.or(true) || $licence == null || $title == "" { deleted() } else { this }
+        meta licence = $licence
+
+    - mapping: |
+        let values = this.metadata
+        # The repository's language codes, as ISO 639-1; `other` and an empty field are a title of
+        # no stated language, which NGSI-LD writes as `@none`.
+        let languages = { "sk": "sk", "en": "en", "en_US": "en", "cz": "cs", "cs": "cs", "de": "de", "fr": "fr", "pl": "pl", "hu": "hu" }
+        let language = $languages.get($values."dc.language.iso".or([]).index(0).value.catch("")).or("@none")
+        let year = $values."dc.date.issued".or([]).index(0).value.catch("").slice(0, 4).number().catch(null)
+        let type_ = $values."dc.type".or([]).index(0).value.catch(null)
+        let publisher = $values."dc.publisher".or([]).index(0).value.catch(null)
+        let handle = $values."dc.identifier.uri".or([]).index(0).value.catch(null)
+        let collection = this._embedded.owningCollection.name.catch(null)
+        let collection_handle = this._embedded.owningCollection.handle.catch(null)
+        root = {
+          # The handle is the item's persistent name; its slash would open a URN segment.
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("Article", "zilina.sk", env("JC_SPACE"), this.handle.replace_all("/", "-")),
+          "type": "Article",
+          "identifier": { "type": "Property", "value": this.handle },
+          "name": { "type": "LanguageProperty", "languageMap": { $language: $values."dc.title".index(0).value } },
+          "workType": if $type_ == null { null } else { { "type": "Property", "value": $type_ } },
+          "yearPublished": if $year == null || $year < 1900 { null } else { { "type": "Property", "value": $year.int64() } },
+          # isPartOf is the collection's own address (schema:isPartOf, a URI); its name is collectionName.
+          "isPartOf": if $collection_handle == null { null } else { { "type": "Property", "value": "https://dspace.uniza.sk/handle/" + $collection_handle } },
+          "collectionName": if $collection == null { null } else { { "type": "Property", "value": $collection.trim() } },
+          "publisher": if $publisher == null { null } else { { "type": "Property", "value": $publisher } },
+          "license": { "type": "Property", "value": @licence },
+          "url": if $handle == null { null } else { { "type": "Property", "value": $handle } },
+          "dataProvider": { "type": "Property", "value": "Žilinská univerzita v Žiline, DREPO" },
+          "source": { "type": "Property", "value": "https://dspace.uniza.sk/server/api/" }
+        }.filter(entry -> entry.value != null)
+
+    # One request per run's batch rather than one per work.
+    - archive: { format: json_array }

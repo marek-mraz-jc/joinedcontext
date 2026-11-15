@@ -733,9 +733,11 @@ async fn compat_partial_import(
             "invalid ifResourceExists: {mode}"
         )));
     }
-    // A client asking for an algorithm the realm cannot sign is refused before anything is written.
+    // A client asking for an algorithm the realm cannot sign, or naming a sign-out address the
+    // outbound guard refuses, is refused before anything is written.
     for c in &payload.clients {
         c.check_signature_algorithms()?;
+        state.oidc.guard.check_client(&c.attributes)?;
     }
     // FAIL is all or nothing, as in Keycloak: a conflict is found before anything is written.
     if mode == "FAIL" {
@@ -2109,6 +2111,7 @@ async fn compat_create_client(
         client.org_id = ctx.active_org_id.clone();
     }
     client.check_signature_algorithms()?;
+    state.oidc.guard.check_client(&client.attributes)?;
     let managed = client.attributes.get("managed-by").cloned();
     check_decision(state.authorizer.check(
         &ctx,
@@ -2240,6 +2243,11 @@ async fn compat_update_client(
         },
     ))?;
     client.check_signature_algorithms()?;
+    // A changed address is checked; a stored one the edit keeps stays (its send is refused anyway),
+    // so a client imported before the rule can still be edited.
+    let mut changed = client.attributes.clone();
+    changed.retain(|k, v| existing.attributes.get(k) != Some(v));
+    state.oidc.guard.check_client(&changed)?;
     client.id = uuid.clone();
     if client.client_id != existing.client_id
         && state

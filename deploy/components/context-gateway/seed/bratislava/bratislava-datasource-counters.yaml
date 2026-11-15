@@ -1,0 +1,18 @@
+# The newest hour per counter site of the hub's cyclists' table (data.bratislava.sk, Feature Service
+# cyklisti2_0, CC BY 4.0), as the service's statistics: where the daily import stopped, which names
+# the closed day the counters pipelines read (T-5273). About 25 rows, no key.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: counters-newest
+  namespace: bratislava
+  title:
+    sk: Sčítače dopravy, najnovšia hodina (data.bratislava.sk)
+    en: Counter sites, newest hour (data.bratislava.sk)
+spec:
+  type: http
+  http:
+    url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/cyklisti2_0/FeatureServer/0/query?where=1%3D1&groupByFieldsForStatistics=NAZOV&outStatistics=%5B%7B%22statisticType%22%3A%22max%22%2C%22onStatisticField%22%3A%22DATUM_A_CAS%22%2C%22outStatisticFieldName%22%3A%22newest%22%7D%5D&f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

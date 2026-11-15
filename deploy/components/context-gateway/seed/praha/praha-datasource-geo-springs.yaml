@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item 8aabe75c9689487a88d3e297bf498d6a (Oázy chladu – studánky, prameny), 214 records on 2026-10-23, served by its ArcGIS Hub
+# download as GeoJSON in WGS 84, as the toilets read theirs. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5269).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-springs
+  namespace: praha
+  title:
+    en: 'Cool spots: wells and springs (IPR Praha)'
+    cs: Oázy chladu – studánky, prameny (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/8aabe75c9689487a88d3e297bf498d6a_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

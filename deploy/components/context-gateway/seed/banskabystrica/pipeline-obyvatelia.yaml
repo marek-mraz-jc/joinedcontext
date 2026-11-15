@@ -1,0 +1,18 @@
+# One KeyPerformanceIndicator per year of age from the city's own register. The register declares
+# no period, so the row is dated by the day it was fetched and a daily poll is what makes that
+# date mean something: the series is the register as it stood on each day it was read.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: obyvatelia
+  namespace: banskabystrica
+  title: { sk: Počet občanov podľa veku, en: Citizens by year of age }
+spec:
+  class: auto
+  period: 24h
+  schedule: '53 3 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: mesto-obyvatelia-vek }
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-mesto:banskabystrica-mesto
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

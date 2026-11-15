@@ -1,0 +1,6 @@
+apiVersion: v2
+name: app
+description: The standalone assistant - a static copy of the widget on ai.{domain}
+type: application
+version: 0.1.0
+appVersion: '1.0.0'

@@ -1,0 +1,44 @@
+# Population of Bratislava's city districts in 2035: one public dataset of the hub (T-5274), item 39354c8e25a44394b6464c1249725271, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-obyvatelov-v-mestskych-castiach-v
+  namespace: bratislava
+  title:
+    sk: Počet obyvateľov v mestských častiach Bratislavy v roku 2035
+    en: Population of Bratislava's city districts in 2035
+  description:
+    sk: 'Ukazovatele tabuľky „Počet obyvateľov v mestských častiach Bratislavy v roku 2035“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Population of Bratislava's city districts in 2035”, one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: q7xtvyanhfh4b6vtjflwmoesdqygkis5
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-obyvatelov-v-mestskych-castiach-v
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/39354c8e25a44394b6464c1249725271
+        title:
+          sk: Počet obyvateľov v mestských častiach Bratislavy v roku 2035
+          en: Population of Bratislava's city districts in 2035
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet obyvateľov v mestských častiach Bratislavy v roku 2035. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Population of Bratislava's city districts in 2035. Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics }

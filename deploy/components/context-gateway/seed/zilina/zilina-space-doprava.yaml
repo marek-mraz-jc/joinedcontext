@@ -1,0 +1,51 @@
+# What the city's own open data portal (opendata.zilina.sk) publishes about moving and parking in Žilina: car park occupancy, buses and trolleybuses with their delay, hourly traffic counts and the street lights (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: zilina-doprava
+  namespace: zilina
+  title:
+    sk: Žilina — doprava a mesto naživo
+    en: Žilina, mobility live
+  description:
+    sk: Obsadenosť parkovísk, vozidlá MHD s meškaním, hodinové počty sčítačov dopravy a pouličné svietidlá z otvorených dát mesta Žilina (opendata.zilina.sk, ODbL).
+    en: Car park occupancy, public transport vehicles with their delay, hourly traffic counts and street lights from the City of Žilina's open data (opendata.zilina.sk, ODbL).
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: zilina-doprava
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: zilina-doprava }
+  defaultLocale: sk
+  # History per type (DM-82, DM-108, DM-109). A live count is stored when it changes and once an
+  # hour when it does not, never once per five-minute read; dateObserved, the read's own time, is
+  # the current state only. An hourly count is one row per new hour (observed).
+  retention:
+    - entityType: OffStreetParking
+      history: P30D
+      record: onChange
+      heartbeat: PT1H
+      attributes:
+        dateObserved: { record: never }
+    - entityType: Vehicle
+      # A vehicle keeps an hour of track at most, the owner's order for every live vehicle feed
+      # (T-4624, tests/test_helsinki_retention.py).
+      history: PT1H
+      record: onChange
+      heartbeat: PT1H
+      # A bus standing at a stop does not write a row per read.
+      minDistance: 25
+      attributes:
+        dateObserved: { record: never }
+    - entityType: TrafficFlowObserved
+      history: P30D
+      record: observed
+    - entityType: Streetlight
+      history: 'off'
+  # The city of Žilina with a margin; an entity outside it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area
+      entityType: Streetlight
+      kind: area
+      attribute: location
+      bbox: [18.55, 49.1, 18.95, 49.35]

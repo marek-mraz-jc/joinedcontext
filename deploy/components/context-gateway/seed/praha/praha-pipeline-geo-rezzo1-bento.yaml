@@ -1,0 +1,102 @@
+# The mapping of an IPR emission register layer (T-5429, PL-03): one EmissionSource per record of the
+# layer Vyjmenované stacionární zdroje znečišťování ovzduší - REZZO 1 (409 sources on 2026-10-24).
+# REZZO 1 and REZZO 2 share this mapping; only the lets of the second step differ.
+#
+# Ids: urn:ngsi-ld:EmissionSource:{org}:{space}:geo-{layer}-{globalid}; the Policy
+# public-zdroje-znecisteni names them.
+#
+# Read: the point, the address (street, house numbers, city district), the dominant fuel group
+# (division) and the yearly emissions of PM10, PM2.5, SO2, NOx, CO and VOC in tonnes a year. The
+# operator (provoz), the source's name (zdroj) and the operator's company number (ico) are NOT read:
+# some operators are private persons (sole traders), and the register keys a source by its address.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a GUID, without a point, outside Prague's
+# box (the city plus about 1 km) or at 0,0 is dropped, and so is a second record of one GUID; an
+# emission below 0 or above 100 000 t a year (Prague's largest source emits under 1 000) is left
+# out of its entity and counted. The log line counts each reason. An answer that is not a feature
+# list, an empty one, or one where fewer than half the records survive (a projection or schema
+# change) fails the run, so the sources already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes; more than 16 MiB is not a register layer".format(content().length())) } else { this }
+        - mapping: |
+            let set = "rezzo1"
+            let item = "d2382afbf9454951ab71a0a89c762d15"
+            let register = "rezzo1"
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            map point {
+              root = if this.type() == "array" && this.length() >= 2 { this.slice(0, 2) } else { null }
+            }
+            let features = this.features.catch(null)
+            root = if $features.type() != "array" {
+              throw("IPR layer %v did not answer a feature list".format($item))
+            } else if $features.length() == 0 {
+              throw("IPR layer %v listed no record; the register is never empty, so the download failed".format($item))
+            } else {
+              { "set": $set, "register": $register, "item": $item, "rows": $features.map_each(f -> {
+                "c": f.geometry.coordinates.catch(null).apply("point"),
+                "p": f.properties.catch({}),
+                "key": f.properties.globalid.catch("").string().re_replace_all("[{}]", "").lowercase()
+              }) }
+            }
+        - mapping: |
+            let rows = this.rows
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))
+            let located = $usable.filter(r -> r.c.type() == "array" && r.c.length() == 2 && r.c.index(0).type() == "number" && r.c.index(1).type() == "number")
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let unique = $inside.unique(r -> r.key)
+            let values = $unique.map_each(r -> ["pm10", "pm25", "so2", "nox", "co", "voc"].filter(k -> r.p.get(k).type() == "number"))
+            let ranged = $unique.map_each(r -> ["pm10", "pm25", "so2", "nox", "co", "voc"].filter(k -> r.p.get(k).type() == "number" && r.p.get(k) >= 0 && r.p.get(k) <= 100000))
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta range = $values.map_each(v -> v.length()).sum() - $ranged.map_each(v -> v.length()).sum()
+            meta set = this.set
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("IPR layer %v: only %v of %v records have a GUID and a point in Prague".format(this.item, $unique.length(), $rows.length()))
+            } else { this.assign({ "rows": $unique }) }
+        - log:
+            level: INFO
+            message: 'geo-${! meta("set") }: read ${! meta("read") }, dropped ${! meta("unusable") } without GUID, ${! meta("outside") } without a point in Prague, ${! meta("duplicate") } duplicates; left out ${! meta("range") } emissions out of range'
+        - mapping: |
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            map number {
+              root = if this.type() == "number" { this.string().re_replace_all("\\.0+$", "") } else if this.type() == "string" { this.trim() } else { "" }
+            }
+            map emission {
+              root = if this.type() == "number" && this >= 0 && this <= 100000 { { "type": "Property", "value": this } } else { null }
+            }
+            let set = this.set
+            let register = this.register
+            let label = if this.register == "rezzo1" { "REZZO 1" } else { "REZZO 2" }
+            let source = "https://geoportalpraha.cz/data-a-sluzby/" + this.item
+            root = this.rows.map_each(r -> {
+              "r": r,
+              "street": if r.p.ulice.apply("words") != "" { [r.p.ulice.apply("words"), [r.p.cpop.apply("number"), r.p.cor.apply("number")].filter(n -> n != "").join("/")].filter(s -> s != "").join(" ") } else { "" },
+              "district": r.p.nmc.apply("words"),
+              "area": r.p.nku.apply("words"),
+              "fuel": r.p.division.apply("words")
+            }).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:geo-%v-%v".format("EmissionSource", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $set, v.r.key),
+              "type": "EmissionSource",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": "Zdroj %v: %v".format($label, [v.street, v.district, v.area].filter(s -> s != "").append("Praha").index(0)) + if v.street != "" && v.district != "" { " (%v)".format(v.district) } else { "" } } },
+              "registerCategory": { "type": "Property", "value": $register },
+              "fuelType": if v.fuel != "" { { "type": "Property", "value": v.fuel } } else { null },
+              "pm10Emission": v.r.p.pm10.apply("emission"),
+              "pm25Emission": v.r.p.pm25.catch(null).apply("emission"),
+              "so2Emission": v.r.p.so2.apply("emission"),
+              "noxEmission": v.r.p.nox.apply("emission"),
+              "coEmission": v.r.p.co.apply("emission"),
+              "vocEmission": v.r.p.voc.apply("emission"),
+              "address": if v.street != "" { { "type": "Property", "value": { "streetAddress": v.street, "addressLocality": if v.district != "" { v.district } else { "Praha" }, "addressCountry": "CZ" } } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": v.r.c } },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+              "source": { "type": "Property", "value": $source }
+            }.filter(kv -> kv.value != null))

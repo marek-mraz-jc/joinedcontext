@@ -1,0 +1,16 @@
+# Dwellings under construction, started and completed per year, the kraj and its 13 okresy, 2001 on. From Q3 2025 the source is the ŠRBDB register instead of the Stav 3-04 form (cube note), so 2025 is not strictly comparable with 2024. No key, CC-BY-4.0 (NKOD record of ŠÚ SR).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-st3004rr
+  namespace: bbsk
+  title:
+    sk: Byty – vybrané ukazovatele (ŠÚ SR, st3004rr)
+    en: Dwellings, selected indicators (ŠÚ SR, st3004rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/st3004rr/SK032,SK0321,SK0322,SK0323,SK0324,SK0325,SK0326,SK0327,SK0328,SK0329,SK032A,SK032B,SK032C,SK032D/*/ROZOST_BYT_ZAC,ZAC_BYT,DOKONC_BYT,ROZOST_BYT_KON?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

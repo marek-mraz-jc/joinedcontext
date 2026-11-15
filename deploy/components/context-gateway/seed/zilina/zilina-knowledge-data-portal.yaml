@@ -1,0 +1,17 @@
+# Žilina's open datasets for its public assistant (T-4281): the CKAN at data.dev holds five
+# bodies' catalogues; this source lists the organization `zilina` alone, anonymously, so no other
+# body's dataset and no private one reaches the index. Read once a night.
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: data-portal
+  namespace: zilina
+  title: { sk: Otvorené údaje mesta Žilina a Žilinskej univerzity, en: Žilina's open datasets }
+spec:
+  source: ckan
+  ckanInstanceRef: zilina
+  organizations: [zilina]
+  schedule: '55 3 * * *'
+  maxPages: 500
+  languages: [sk, en]
+  visibility: public

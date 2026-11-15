@@ -1,0 +1,14 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: pipelines-write
+  namespace: praha
+  title: { cs: Kanály zapisují městská data, en: The ingestion pipelines write the city space }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is what a poll does; create and query are what a stream needs to start from nothing
+  # and to check itself. No delete: a record a source stops publishing stays until a person
+  # removes it.
+  operations: [upsertBatch, createBatch, queryBatch]

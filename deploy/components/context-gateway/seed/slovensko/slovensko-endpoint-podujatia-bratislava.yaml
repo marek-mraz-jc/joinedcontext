@@ -1,0 +1,52 @@
+# The events of Bratislava (T-5666): the events of slovensko-podujatia whose scope is /SK/BA/bratislava, read
+# through a Policy that narrows by scopeQ. The sources are the inventory rows of town Bratislava
+# (seeds/bbsk-events/sources-sk.csv); docs Research/bratislava-events.md lists every candidate with its verdict.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: slovensko-podujatia-bratislava
+  namespace: slovensko
+  title: { sk: Podujatia v Bratislave, en: Events in Bratislava }
+  description:
+    sk: Nadchádzajúce podujatia mestských častí, divadiel, múzeí, galérií, knižníc a kultúrnych centier Bratislavy s časom a miestom konania, aj ako kalendár na odber.
+    en: Upcoming events of Bratislava's boroughs, theatres, museums, galleries, libraries and culture centres with their time and place, also as a calendar to subscribe to.
+spec:
+  contextSpaceRef: slovensko-podujatia
+  slug: g7hot6lsrwn3gjes5flpm4en6dosssxf
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:joinedcontext.com:slovensko-podujatia:podujatia-bratislava-read
+  # facets: the dataset page's builder draws a Town and a Genre select from these (EP-178, T-6768).
+  facets: [address.addressLocality, eventCategory]
+  # ical: the calendars a person subscribes to, /api/endpoint/{slug}/ical/v1/{name}.ics, one per output of
+  # representations.ical (EP-125, EP-159).
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp, ical]
+  representations:
+    ical:
+      - name: vsetky
+        title: { sk: Všetky podujatia v Bratislave, en: All events in Bratislava }
+        lang: sk
+        timezone: Europe/Bratislava
+        sources:
+          - type: Event
+            preset: sdm-event
+            mapping: { LAST-MODIFIED: dateModified, CATEGORIES: eventCategory }
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: slovensko }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { sk: Platforma joinedcontext, en: The joinedcontext platform }
+      uri: https://dev.joinedcontext.com/
+    # Public events of public bodies: a record names an event and its place, never a person.
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: webové stránky inštitúcií, ktoré podujatie zverejnili (atribút source); polohy miest konania © prispievatelia OpenStreetMap, ODbL 1.0'
+      en: 'Source: the web sites of the bodies that announced each event (attribute source); venue points © OpenStreetMap contributors, ODbL 1.0'
+    themes: [EDUC, SOCI]
+    keywords:
+      sk: [podujatia, kultúra, kalendár, Bratislava]
+      en: [events, culture, calendar, Bratislava]
+    spatial: [SK010]
+    frequency: DAILY

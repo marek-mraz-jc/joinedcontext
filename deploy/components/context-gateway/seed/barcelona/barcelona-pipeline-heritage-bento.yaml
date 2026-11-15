@@ -1,0 +1,92 @@
+# The mapping of the heritage pipeline (PL-03, T-6570): one PointOfInterest per building of
+# Barcelona's architectural heritage as the bcn-heritage DataSource's SPARQL query answers it from
+# Wikidata (1,484 buildings on 2026-11-03): the item, its IPAC code, its point (WKT, WGS84), its
+# Catalan, Spanish and English labels, a street address where Wikidata has one and its heritage
+# designations (P1435 item ids). The id carries the prefix heritage- and the Wikidata item id, so a
+# building never meets a facility of the city's register (equipaments) and the Endpoint heritage
+# reads them by idPattern. Written: name (Catalan, else Spanish, else English), category
+# [heritage, then each designation's code, strongest first], location, address and source (the
+# item's Wikidata page).
+#
+# Plausibility (owner 2026-10-22): a row whose item is no Wikidata item or with no name, whose
+# point is no WKT point or lies outside the municipality's 1 km margin (the space's in-area bbox),
+# and a second row of one item are each dropped and counted by reason in `dropped`, which the next
+# step logs. Two buildings on one point are kept: Wikidata lists paired houses as two items. An
+# answer that is no SPARQL result, or one with no building at all, fails the run, so the buildings
+# stand instead of going quiet. `expiresAt`: a building Wikidata drops leaves every read three
+# weeks (three weekly runs) after it was last listed.
+
+pipeline:
+  processors:
+    - mapping: |
+        let bbox = [2.04, 41.3, 2.24, 41.48]
+        # Wikidata's heritage designations (P1435) and the code each writes, strongest first; an
+        # item the list lacks writes no code.
+        let designations = [
+          ["Q9259", "world-heritage"],
+          ["Q43113623", "world-heritage"],
+          ["Q23712", "bic"],
+          ["Q1019352", "bcin"],
+          ["Q11910250", "bcil"],
+          ["Q28034408", "bpcc"],
+          ["Q112668687", "urban-protection"],
+          ["Q107542530", "elements-of-interest"],
+          ["Q69873044", "red-list"],
+          ["Q15945449", "public-art"]
+        ]
+        let rows = if content().length() > 8388608 {
+          throw("the heritage answer is %d bytes, more than the 8 MiB read".format(content().length()))
+        } else if this.results.bindings.or(null).type() != "array" {
+          throw("Wikidata answered no SPARQL result for the heritage query")
+        } else if this.results.bindings.length() >= 5000 {
+          throw("the heritage query answered %d rows, its LIMIT 5000: raise it, or the rows past it are dropped".format(this.results.bindings.length()))
+        } else { this.results.bindings }
+        let placed = $rows.map_each(r -> {
+          "id": r.item.value.or("").string().re_find_object("^http://www\\.wikidata\\.org/entity/(?P<q>Q[0-9]{1,12})$").q.or(""),
+          "name": [r.ca.value.or(""), r.es.value.or(""), r.en.value.or("")].map_each(n -> n.string().trim()).filter(n -> n != "").index(0).or(""),
+          "street": r.street.value.or("").string().trim(),
+          "point": r.coord.value.or("").string().re_find_object("^Point\\((?P<lon>-?[0-9]{1,3}(\\.[0-9]+)?) (?P<lat>-?[0-9]{1,2}(\\.[0-9]+)?)\\)$"),
+          "held": r.heritage.value.or("").string().split(" ")
+        }).map_each(b -> b.without("point").assign({
+          "lon": b.point.lon.or("").number().catch(null),
+          "lat": b.point.lat.or("").number().catch(null),
+          "codes": $designations.filter(d -> b.held.contains(d.index(0))).map_each(d -> d.index(1)).unique()
+        }).without("held"))
+        let coded = $placed.filter(b -> b.id != "" && b.name != "")
+        let pointed = $coded.filter(b -> b.lon != null && b.lat != null)
+        let inside = $pointed.filter(b -> b.lon >= $bbox.index(0) && b.lon <= $bbox.index(2) && b.lat >= $bbox.index(1) && b.lat <= $bbox.index(3))
+        # One building per item: sorted, so a repeat sits beside its first.
+        let by_id = $inside.sort_by(b -> b.id)
+        let unique = $by_id.enumerated().filter(e -> e.index == 0 || $by_id.index(e.index - 1).id != e.value.id).map_each(e -> e.value)
+        root.dropped = {
+          "noItemOrName": $placed.length() - $coded.length(),
+          "noPoint": $coded.length() - $pointed.length(),
+          "outsideTheCity": $pointed.length() - $inside.length(),
+          "duplicateItem": $inside.length() - $unique.length()
+        }
+        root.buildings = if $unique.length() == 0 { throw("the heritage answer holds no building") } else { $unique }
+    - log:
+        level: INFO
+        message: 'heritage: ${! json("buildings").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.buildings
+    - unarchive: { format: json_array }
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44); the run's clock is
+        # bcn_now when a test sets it.
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:heritage-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
+          "type": "PointOfInterest",
+          "expiresAt": ($now + 21 * 86400).ts_format("2006-01-02T15:04:05Z", "UTC"),
+          "name": { "type": "Property", "value": this.name },
+          "category": { "type": "Property", "value": ["heritage"].concat(this.codes) },
+          "location": { "type": "GeoProperty", "value": {
+            "type": "Point", "coordinates": [(this.lon * 1000000).round() / 1000000, (this.lat * 1000000).round() / 1000000]
+          } },
+          "address": { "type": "Property", "value": {
+            "streetAddress": this.street,
+            "addressLocality": "Barcelona",
+            "addressCountry": "ES"
+          }.filter(entry -> entry.value != "") },
+          "source": { "type": "Property", "value": "https://www.wikidata.org/wiki/" + this.id }
+        }

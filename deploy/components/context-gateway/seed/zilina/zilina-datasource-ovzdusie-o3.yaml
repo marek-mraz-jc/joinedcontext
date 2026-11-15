@@ -1,0 +1,16 @@
+# Up-to-date (E2a) hourly O3 of sampling point SPO-SK0020A_00007_500, the city's urban-background station, as the EEA download service publishes it: one Parquet file per sampling point per year, about 300 kB. The URL is the one the service's ParquetFile/urls call returns for SK0020A and pollutant 5. No key. CC BY 4.0, copyright holder EEA (EEA SDI record fe809728-9cec-41c0-a9be-3a8f04600974).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: eea-sk0020a-o3
+  namespace: zilina
+  title:
+    sk: O3, SK0020A (EEA)
+    en: O3, SK0020A (EEA)
+spec:
+  type: http
+  http:
+    url: https://eeadmz1batchservice02.blob.core.windows.net/airquality-p/SK/SPO-SK0020A_00007_500.parquet
+    verb: GET
+    headers: { Accept: application/octet-stream }
+    timeout: 60s

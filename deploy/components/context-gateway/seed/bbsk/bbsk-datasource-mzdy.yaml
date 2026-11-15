@@ -1,0 +1,16 @@
+# Average monthly wage by workplace, both sexes, all activities, the kraj and its 13 okresy, 2009 on. No key, CC-BY-4.0 (NKOD record of ŠÚ SR).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-np3110rr
+  namespace: bbsk
+  title:
+    sk: Mzdy podľa ekonomickej činnosti (ŠÚ SR, np3110rr)
+    en: Wages by economic activity (ŠÚ SR, np3110rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/np3110rr/SK032,SK0321,SK0322,SK0323,SK0324,SK0325,SK0326,SK0327,SK0328,SK0329,SK032A,SK032B,SK032C,SK032D/*/E_PRIEM_MZDA/3/SPOLU?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

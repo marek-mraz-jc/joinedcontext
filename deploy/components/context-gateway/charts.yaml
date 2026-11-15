@@ -1,0 +1,6 @@
+---
+context-gateway:
+  gateway:
+    chart: ../../charts/workload
+  portal-access:
+    chart: ./charts/portal-access

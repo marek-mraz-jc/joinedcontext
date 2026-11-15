@@ -1,0 +1,63 @@
+# One Smart Data Model type per catalogue dataset (T-4344): PointOfInterest of the space
+# praha-mesto, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-mista
+  namespace: praha
+  title:
+    cs: Kultura, školy, toalety a prodejní místa PID — Praha
+    en: Culture, schools, toilets and PID ticket points — Prague
+  description:
+    cs: 'Kulturní a školská zařízení, veřejné toalety a prodejní místa jízdenek PID. Zdroje: IPR Praha a ROPID, CC BY 4.0.'
+    en: 'Cultural and school facilities, public toilets and the places that sell PID tickets. Sources: IPR Praha and ROPID, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: y5un365itcxfgdme2muhk7dweef43ydl
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-mista
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    # Open data under the Czech act on free access to information (DCAT-AP-CZ, API/08 section 3).
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroje: datový podklad © IPR Praha (CC BY 4.0); ROPID (CC BY 4.0)'
+      en: 'Sources: data © IPR Praha (CC BY 4.0); ROPID (CC BY 4.0)'
+    themes: [EDUC, SOCI, TRAN]
+    keywords:
+      cs: [Praha, kultura, školy, toalety, jízdenky]
+      en: [Prague, culture, schools, toilets, tickets]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/17f4294bf3f041db9a0ec0d6ac0741a6_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Kulturní zařízení (IPR Praha), en: Cultural venues (IPR Praha) }
+        description:
+          cs: Kulturní zařízení z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Cultural venues from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/5d32db18a5d545a79ad3029917984a89_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Školská zařízení (IPR Praha), en: School facilities (IPR Praha) }
+        description:
+          cs: Školská zařízení z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: School facilities from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/62e3cf1020434b07832ca9ae19bce348_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Veřejné toalety (IPR Praha), en: Public toilets (IPR Praha) }
+        description:
+          cs: Veřejné toalety z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Public toilets from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://data.pid.cz/pointsOfSale/json/pointsOfSale.json
+        title: { cs: Prodejní místa dokladů PID (ROPID), en: PID ticket points of sale (ROPID) }
+        description:
+          cs: Místa, kde se prodávají jízdenky PID, CC BY 4.0.
+          en: The places that sell PID tickets, CC BY 4.0.

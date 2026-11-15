@@ -1,0 +1,10 @@
+---
+# ghcr.io/marek-mraz-jc/jc-app-<app>, built from crates/portal/apps/<app>, smoke-tested, signed and
+# scanned by the monorepo's .github/workflows/image-apps.yml on main (ci.yml job ship-apps).
+app-pods:
+  # jc main f8306912, ship-apps job 129740302840 (cosign tlog 3782776416, identity
+  # image-apps.yml@refs/heads/main), scan 129744210366 green.
+  hsl-transport:
+    repository: 'ghcr.io/marek-mraz-jc/jc-app-hsl-transport'
+    tag: 'main'
+    digest: 'sha256:3ba9d499396553d2aac92315d22d55a8e367a9dca36578138174ef697229b6e1'

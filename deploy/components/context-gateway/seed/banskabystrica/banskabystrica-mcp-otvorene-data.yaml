@@ -1,0 +1,26 @@
+# The city's open data as one public, read-only MCP connector (T-4141, T-5367, ADR-N-043): the
+# address a resident's or an agency's AI client is given,
+# `https://{domain}/api/mcp/banskabystrica/otvorene-data`. It selects every public Endpoint of the
+# city's two data spaces; the space ovzdusie and its `public-air` stay out, because the smoke run
+# and the ETSI suite write test entities through it. Every call is still that Endpoint's own call,
+# decided by its anonymous Policy, and the gateway lists anonymous callers read-only tools only
+# (T-4168). The edge counts anonymous calls per client IP (context-mcp-named).
+apiVersion: joinedcontext.com/v1alpha1
+kind: McpServer
+metadata:
+  name: otvorene-data
+  namespace: banskabystrica
+  # What an AI client reads as serverInfo and initialize.instructions (EP-92).
+  title:
+    sk: Mesto Banská Bystrica — otvorené údaje
+    en: City of Banská Bystrica, open data
+  description:
+    sk: 'Otvorené údaje mesta Banská Bystrica, len na čítanie: podujatia mesta, školy v meste a hodinové merania PM10 a PM2.5 na stanici SK0263A, ďalšie tabuľky katalógu mesta (zmluvy, objednávky, dotácie, adresy, počty obyvateľov, zasadnutia) a správy mesta (Aktuality, typ Article; celý text je v content, krátka stránka: attrs=name,dateGmt,url). Zdroje: Mesto Banská Bystrica, Ministerstvo školstva SR, Európska environmentálna agentúra (údaje SHMÚ); CC BY 4.0. Pri citovaní uveďte zdroj.'
+    en: "Read-only open data of the City of Banská Bystrica, Slovakia: the city's events (Event), the schools in the city (Organization) and hourly PM10 and PM2.5 at air station SK0263A (AirQualityObserved), the other tables of the city's catalogue (contracts, orders, grants, addresses, population counts, council meetings) and the city's news (Aktuality, type Article; `content` holds the whole text, so ask attrs=name,dateGmt,url for a short page); each entity's `isPartOf` links its catalogue page. Start with list_endpoints or search, then query_entities naming one endpoint, with a small limit. Texts are in Slovak. Sources: City of Banská Bystrica, Slovak Ministry of Education, European Environment Agency (SHMÚ's data); CC BY 4.0, credit the source when you quote it."
+spec:
+  # Every public Endpoint of these spaces, resolved on each call (MF-55, T-5367): a new one joins
+  # without an edit here, one that stops being public leaves.
+  select:
+    spaces: [banskabystrica/banskabystrica-verejne, banskabystrica/banskabystrica-otvorene-data]
+    accessLevel: [public]
+  audience: public

@@ -1,0 +1,4 @@
+---
+node-storage:
+  local-path:
+    chart: charts/local-path-config

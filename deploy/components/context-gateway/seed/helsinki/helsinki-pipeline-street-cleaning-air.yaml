@@ -1,0 +1,18 @@
+# One AirQualityObserved per reading of `fvh-swarco-street-cleaning-air`, written into the city space (T-5255).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: street-cleaning-air
+  namespace: helsinki
+  title: { en: Air quality during street cleaning }
+spec:
+  class: auto
+  # The pilot ended in May 2023 and its file is final; a weekly read notices a republished file
+  # without rewriting 14,000 unchanged readings every day.
+  period: 168h
+  schedule: '20 4 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: fvh-swarco-street-cleaning-air }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: AirQualityObserved, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 200 }

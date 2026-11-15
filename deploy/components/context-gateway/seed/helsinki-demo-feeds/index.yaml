@@ -1,0 +1,19 @@
+# The Helsinki pipeline that reads the demo NATS feed (T-2960), committed only where the
+# `demo-feeds` component runs: a pipeline whose broker is not there would stay in error.
+# Each file maps to its repository path, as in ../helsinki/index.yaml.
+datasource-demo-counters.yaml: projects/helsinki/datasources/demo-feed-counters.yaml
+pipeline-demo-counters.yaml: projects/helsinki/pipelines/demo-counters/pipeline.yaml
+pipeline-demo-counters-bento.yaml: projects/helsinki/pipelines/demo-counters/bento.yaml
+# HSL's trams through the platform's own broker (T-5883), only where the dev bridge (demo-feeds
+# hsl-bridge) runs: the broker hsl-bridge it publishes to, its account, and the pipeline writing
+# the trams into the organization-only test space hsl-mqtt-test.
+helsinki-mqttbroker-hsl-bridge.yaml: projects/helsinki/mqttbrokers/hsl-bridge.yaml
+helsinki-serviceaccount-hsl-bridge.yaml: projects/helsinki/access/serviceaccounts/hsl-bridge.yaml
+helsinki-datasource-mqtt-hsl-bridge.yaml: projects/helsinki/datasources/mqtt-hsl-bridge.yaml
+helsinki-hsl-mqtt-test-space.yaml: projects/helsinki/spaces/hsl-mqtt-test/space.yaml
+helsinki-hsl-mqtt-test-datamodel.yaml: projects/helsinki/spaces/hsl-mqtt-test/datamodels/hsl-mqtt-test.yaml
+hsl-mqtt-test.linkml.yaml: projects/helsinki/spaces/hsl-mqtt-test/datamodels/hsl-mqtt-test.linkml.yaml
+helsinki-hsl-mqtt-test-endpoint.yaml: projects/helsinki/spaces/hsl-mqtt-test/endpoints/hsl-mqtt-test.yaml
+helsinki-hsl-mqtt-test-policy-pipelines-write.yaml: projects/helsinki/spaces/hsl-mqtt-test/policies/hsl-mqtt-test-pipelines-write.yaml
+helsinki-pipeline-mqtt-hsl-bridge.yaml: projects/helsinki/pipelines/mqtt-hsl-bridge/pipeline.yaml
+helsinki-pipeline-mqtt-hsl-bridge-bento.yaml: projects/helsinki/pipelines/mqtt-hsl-bridge/bento.yaml

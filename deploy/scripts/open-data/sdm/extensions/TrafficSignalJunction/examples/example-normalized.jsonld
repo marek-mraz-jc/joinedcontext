@@ -1,0 +1,54 @@
+{
+  "id": "urn:ngsi-ld:TrafficSignalJunction:joinedcontext.com:example:1",
+  "type": "TrafficSignalJunction",
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "dateModified": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "description": {
+    "type": "Property",
+    "value": "description"
+  },
+  "junctionNumber": {
+    "type": "Property",
+    "value": "junctionNumber"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "signalKind": {
+    "type": "Property",
+    "value": "signalKind"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "status": {
+    "type": "Property",
+    "value": "status"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/TrafficSignalJunction/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

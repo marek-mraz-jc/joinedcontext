@@ -1,0 +1,18 @@
+---
+# The assistant's own database on the cluster's PostgreSQL (T-3050): pages, documents, links,
+# chunks with their embeddings, the crawl queue and usage, every tenant table behind forced
+# row-level security. `vector` is not a trusted extension, so the role job creates it;
+# `unaccent` the migration creates as the `assistant` role.
+assistant:
+  name: 'assistant'
+  embedded: true
+  user: 'assistant'
+  secret:
+    name: 'db-assistant'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432
+  extensions:
+    - name: vector
+      ensure: present

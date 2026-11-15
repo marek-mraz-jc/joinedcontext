@@ -1,0 +1,15 @@
+{#
+  The dataset map (T-4639), one block for the dataset page and the framable /map/ page:
+  jc-map.js reads `data-jc-map`, asks each layer for its first page of features, and shows the
+  map only when one has a geometry. The JSON sits in a single-quoted attribute, where `tojson` escapes the
+  quote. The keys line is what a screen reader hears for the map.
+#}
+<link rel="stylesheet" href="{{ h.url_for_static('/maplibre-gl-6.14.0/maplibre-gl.css') }}">
+{# The tiles host's vector basemap is read through pmtiles (T-4661); a classic script, so it has
+   run before jc-map.js, a module, starts. #}
+{% if jc_map_config.pmtiles %}<script src="{{ h.url_for_static(jc_map_config.pmtiles) }}"></script>{% endif %}
+<div class="jc-map" data-jc-map='{{ jc_map_config|tojson }}'>
+  <div class="jc-map-area" role="application" aria-label="{{ h.jc_t('map_title') }}: {{ jc_map_config.title }}" aria-describedby="jc-map-keys"></div>
+  <p class="jc-map-note" role="status"></p>
+  <p id="jc-map-keys" class="visually-hidden">{{ h.jc_t('map_keys') }}</p>
+</div>

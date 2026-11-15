@@ -1,0 +1,16 @@
+# PF-56: the person who publishes data proposes Endpoints; the lane policy decides who
+# approves a public one (CC-63).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: endpoint-editor
+  namespace: org
+spec:
+  rules:
+    - kinds:
+        - Endpoint
+        # An endpoint that names a projection carries one, and the Portal proposes the two
+        # as one import: a role that may act on the endpoint and not on its projection cannot
+        # check its own proposal (MP-01, T-1222).
+        - ModelProjection
+      verbs: [propose]

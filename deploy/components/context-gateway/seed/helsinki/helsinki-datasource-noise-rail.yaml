@@ -1,0 +1,24 @@
+# The city's 2022 noise survey, layers
+#   Meluselvitys_2022_Helsinki_juna_LAeq_7-22_NPM
+#   Meluselvitys_2022_Helsinki_juna_LAeq_22-7_NPM
+#   Meluselvitys_2022_Helsinki_metro_LAeq_7-22_NPM
+#   Meluselvitys_2022_Helsinki_metro_LAeq_22-7_NPM
+#   Meluselvitys_2022_Helsinki_raitiovaunu_LAeq_7-22_NPM
+#   Meluselvitys_2022_Helsinki_raitiovaunu_LAeq_22-7_NPM
+# As an open WFS answer in WGS84 (T-5378).
+# No key. CC-BY-4.0, read from the HRI catalogue (helsingin-kaupungin-meluselvitys-2017, whose 2022 update the layers are).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-noise-rail
+  namespace: helsinki
+  title:
+    en: Railway, metro and tram noise, day and night
+    fi: Juna-, metro- ja raitioliikennemelu, päivä ja yö
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=%28avoindata:Meluselvitys_2022_Helsinki_juna_LAeq_7-22_NPM%29%28avoindata:Meluselvitys_2022_Helsinki_juna_LAeq_22-7_NPM%29%28avoindata:Meluselvitys_2022_Helsinki_metro_LAeq_7-22_NPM%29%28avoindata:Meluselvitys_2022_Helsinki_metro_LAeq_22-7_NPM%29%28avoindata:Meluselvitys_2022_Helsinki_raitiovaunu_LAeq_7-22_NPM%29%28avoindata:Meluselvitys_2022_Helsinki_raitiovaunu_LAeq_22-7_NPM%29
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

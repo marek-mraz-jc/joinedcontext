@@ -1,0 +1,4 @@
+---
+embedder:
+  server:
+    chart: ../../charts/workload

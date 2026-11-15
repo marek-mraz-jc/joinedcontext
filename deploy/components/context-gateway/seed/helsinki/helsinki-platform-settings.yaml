@@ -1,0 +1,7 @@
+# The settings the whole organization shares (Architecture/06 §1). Not a manifest: a plain
+# document read by jcctl and by the Portal, reviewed like every other file of this repository.
+modelTools:
+  # The image the Portal's preview and a CI step both run, pinned by digest (DM-19). Bumping it
+  # is one commit that also carries every artifact the new generator renders differently.
+  image: ghcr.io/marek-mraz-jc/joinedcontext-platform/model-tools@sha256:51c6129072227b9e0aeddceaac40830794e8db87a6b870af180f32f92f728132
+  generatorVersion: linkml-1.11.1

@@ -1,0 +1,17 @@
+# One KeyPerformanceIndicator per cell of the ŠÚ SR cube cr3803mr for the city, written through the space's one Endpoint with the runner's service account (PL-18, PF-39, T-3138).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: navstevnost
+  namespace: zilina
+  title: { sk: Návštevnosť mesta, en: Visitors to the city }
+spec:
+  class: auto
+  # Monthly data, published with a delay; one read a day finds a new month the day it appears (PL-26).
+  period: 24h
+  schedule: '23 5 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: susr-cr3803mr }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-mesto:zilina-mesto
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

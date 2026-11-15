@@ -1,0 +1,47 @@
+# One catalogue dataset (T-5435): the tourist coach stops (OnStreetParking) of the space bratislava, read
+# through its own Policy, which narrows the space's public read to them.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-turisticke-autobusy
+  namespace: bratislava
+  title: { sk: Zastávky turistických autobusov — Bratislava, en: Tourist coach stops — Bratislava }
+  description:
+    sk: >-
+      Miesta, kde môžu v Bratislave zastaviť turistické autobusy: krátkodobé zastavenie na výstup a nástup a dlhodobé státie s počtom miest, s pamiatkami v dosahu. Typ Smart Data Models OnStreetParking. Zoznam mesta neuvádza súradnice: polohu má každá zastávka podľa svojho názvu z OpenStreetMap (ulica alebo miesto, nie presné stojisko). Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0; poloha OpenStreetMap, ODbL.
+    en: >-
+      Where tourist coaches may stop in Bratislava: short-term stops to let passengers off and on and long-term stands with their number of places, with the sights in reach. Smart Data Models type OnStreetParking. The city's list carries no coordinates: each stop is placed by its name from OpenStreetMap (the street or place, not the exact stand). Source: City of Bratislava, data.bratislava.sk, CC BY 4.0; positions OpenStreetMap, ODbL.
+spec:
+  contextSpaceRef: bratislava
+  slug: ht4b72jukrx7zohxumymih6zozbavi73
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-turisticke-autobusy
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+      license: cc-by
+  catalog:
+    # The publisher is the Project's spec.catalog (T-4596). A list of stops: no record names a person.
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0; poloha © prispievatelia OpenStreetMap, ODbL'
+      en: 'Source: City of Bratislava, data.bratislava.sk, CC BY 4.0; positions © OpenStreetMap contributors, ODbL'
+    themes: [TRAN]
+    keywords:
+      sk: [Bratislava, turistické autobusy, parkovanie, zastávky]
+      en: [Bratislava, tourist coaches, parking, stops]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: IRREG
+    source:
+      - url: https://data.bratislava.sk/datasets/14464afe4fa94436b6a460e1fb027c49
+        title:
+          sk: List of tourist bus stops in 2025 (data.bratislava.sk)
+          en: List of tourist bus stops in 2025 (data.bratislava.sk)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: List of tourist bus stops in 2025 (data.bratislava.sk). Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: List of tourist bus stops in 2025 (data.bratislava.sk). Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: coach-stops }

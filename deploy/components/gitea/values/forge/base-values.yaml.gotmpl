@@ -1,0 +1,316 @@
+---
+{{- $global := .Values.global }}
+{{- $this := .Values.gitea.forge }}
+{{- $image := .Values.images.gitea.forge }}
+{{- $db := .Values.databases.gitea }}
+{{- $prefix := $this.pathPrefix | trimSuffix "/" }}
+{{- /* Gitea's map is group -> organization -> teams; the environment names group -> teams
+       and the organization is the one the configuration repository lives in. */}}
+{{- $groupTeamMap := dict }}
+{{- range $group, $teams := $this.groupTeams | default dict }}
+{{- $orgs := dict $global.configRepo.owner $teams }}
+{{- /* The same teams in the applications' own organization (T-3030), which the bootstrap Job
+       creates beside the configuration's: a reader reads every App's source too. */}}
+{{- with $this.appsOrganization }}
+{{- $_ := set $orgs . $teams }}
+{{- end }}
+{{- $_ := set $groupTeamMap (printf "/%s" $group) $orgs }}
+{{- end }}
+{{- /* PF-87: each project repository is read through its own two teams. The Portal's
+       reconciler creates the teams `{slug}-readers` and `{slug}-writers` and fills the Keycloak
+       groups of the same names from the project's bindings; this map joins each group to its
+       team, for the projects the environment lists. */}}
+{{- range $slug := $this.projectTeams | default list }}
+{{- range $role := list "readers" "writers" }}
+{{- $name := printf "%s-%s" $slug $role }}
+{{- $_ := set $groupTeamMap (printf "/%s" $name) (dict $global.configRepo.owner (list $name)) }}
+{{- end }}
+{{- end }}
+{{- /* Where merge hooks are delivered. The reconciler runs in the portal process
+       (docs Architecture/14), so its Service is the only target that exists today; an
+       environment without the portal gets no webhook allow-list and Gitea keeps its
+       default of refusing every private address. */}}
+{{- $webhookTargets := list }}
+{{- if hasKey .Values "portal" }}
+{{- $webhookTargets = append $webhookTargets (printf "portal.%s.svc.cluster.local" .Values.portal.portal.namespace) }}
+{{- end }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem` -> rootless image, /tmp
+#       and /data are the only writable paths and both are volumes
+# - [x] Health probes -> the chart's TCP probes on the http port
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required
+# - [x] Named ports -> 3000 container mapped to 3000 service
+# - [ ] Ingress with TLS -> not applicable, the forge is fronted by APISIX
+
+fullnameOverride: gitea
+
+image:
+  registry: {{ $image.registry }}
+  repository: {{ $image.repository }}
+  tag: {{ $image.tag | quote }}
+  digest: {{ $image.digest }}
+  # The rootless image is the only one that can run under the restricted Pod Security
+  # Standards this deployment enforces; the root-based one starts as uid 0 to drop
+  # privileges itself.
+  rootless: true
+  pullPolicy: IfNotPresent
+
+# Every bundled dependency is off. PostgreSQL is CloudNativePG's job (databases.yaml), and
+# the queue, cache and session stores that would otherwise pull in a Valkey cluster are
+# Gitea's own on-disk ones — a single-replica forge has nothing to share them with.
+postgresql:
+  enabled: false
+postgresql-ha:
+  enabled: false
+valkey:
+  enabled: false
+valkey-cluster:
+  enabled: false
+
+# The chart's helm-test Pod pulls busybox:latest and runs it without a security context:
+# an unpinned image and five Pod Security violations, for a check nothing runs — `helmfile
+# sync` never applies test hooks.
+test:
+  enabled: false
+
+service:
+  http:
+    port: 3000
+    # The chart defaults this to None. A headless Service would leave the APISIX upstream
+    # resolving straight to pod addresses, which is neither what docs Deployment/10 names
+    # as the upstream nor what the mesh expects.
+    clusterIP: ''
+
+# The chart gives its init containers requests and no limits, which the production policy
+# set rejects. They run the same image as the forge and do three short jobs — make the
+# directories, write app.ini, create the admin and the auth source.
+initContainers:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+persistence:
+  enabled: true
+  create: true
+  claimName: gitea-shared-storage
+  size: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClass: {{ $global.storage.storageClass.rwo | quote }}
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+containerSecurityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+gitea:
+  {{- if and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+  podAnnotations:
+    linkerd.io/inject: enabled
+    # Gitea's first act is OIDC discovery against the public Keycloak host, which resolves to
+    # the in-cluster ingress on 443. The same hop resets under the outbound proxy as it does
+    # for the Portal (see components/portal): 443 leaves the redirect, the mesh never carried
+    # mTLS on this public-TLS hop, and every other call (Postgres 5432, the Portal 8080) stays
+    # meshed. Without it the k3d linkerd variant's Gitea crashloops on `connection reset by peer`.
+    config.linkerd.io/skip-outbound-ports: "443"
+  {{- end }}
+
+  admin:
+    existingSecret: gitea-admin-credentials
+    email: {{ $global.initialUserEmail | quote }}
+    # The generated password is written once, on an empty database. `keepUpdated` would
+    # reset the administrator's password on every helmfile apply, including one an operator
+    # has deliberately rotated.
+    passwordMode: initialOnlyNoReset
+
+  # Human login is Keycloak's. The chart passes --key and --secret through to
+  # `gitea admin auth add-oauth`, and defaults both to the shell variables set in
+  # deployment.env below when neither is given here — which is how the generated client
+  # secret reaches Gitea without being rendered into a manifest.
+  # The chart turns every key of this entry into `--<kebab-case key> "<value>"` on
+  # `gitea admin auth add-oauth`, which is how the group mapping below reaches the forge.
+  oauth:
+    - name: keycloak
+      provider: openidConnect
+      autoDiscoverUrl: 'https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}/.well-known/openid-configuration'
+      # A person signed in with Keycloak carries `platform-readers` (components/keycloak) and
+      # lands in the forge team that reads the configuration repository, instead of meeting a
+      # 404 on a private repository (PF-79). The teams themselves are created by the bootstrap
+      # Job; a group with no team here changes nothing.
+      # The claim holds full paths (components/keycloak, ADR-N-067 2.2), so the map's keys and
+      # the admin group are `/{group}`.
+      groupClaimName: groups
+      groupTeamMap: '{{ $groupTeamMap | toJson }}'
+      # A person the realm no longer holds in a mapped group leaves its team at their next
+      # sign-in, so a removed binding closes the project repository to them (PF-87). The flag
+      # takes no value: the chart writes `--group-team-map-removal "true"`, and the forge sets
+      # the flag and ignores the word after it.
+      groupTeamMapRemoval: true
+      {{- with $this.adminGroup }}
+      adminGroup: {{ printf "/%s" . | quote }}
+      {{- end }}
+
+  config:
+    APP_NAME: 'joinedcontext configuration forge'
+    server:
+      # Explicit, though the chart would default it from service.http.port: that default is
+      # a side effect of rendering another template first, and the Service's targetPort and
+      # the container port both read it. Rendered empty they produce a Service pointing at
+      # nothing.
+      HTTP_PORT: 3000
+      DOMAIN: {{ $global.domain }}
+      # Gitea listens at the root and renders every link from ROOT_URL, so the prefix lives
+      # here and APISIX strips it on the way in (components/gitea/apisix-plugins.yaml).
+      ROOT_URL: 'https://{{ $global.domain }}{{ $prefix }}/'
+      # No SSH: the edge terminates HTTPS only, and a Git-over-SSH port would need a
+      # LoadBalancer of its own. Clone over HTTPS.
+      DISABLE_SSH: true
+      START_SSH_SERVER: false
+      # Nothing is fetched from the internet for rendering — no gravatar, no CDN.
+      OFFLINE_MODE: true
+    database:
+      DB_TYPE: postgres
+      HOST: '{{ $db.hostServiceName }}.{{ .Values.postgres.cluster.namespace }}.svc.cluster.local:{{ $db.port }}'
+      NAME: {{ $db.name }}
+      USER: {{ $db.user }}
+      # CloudNativePG's pg_hba only has `hostssl` rules, so an unencrypted connection is
+      # refused before the password is ever checked: `pg_hba.conf rejects connection ...
+      # no encryption`. Gitea defaults SSL_MODE to disable. `require` encrypts without
+      # asking for a CA; the peer's identity is Linkerd's job.
+      SSL_MODE: require
+      # Gitea opens connections without a ceiling by default and shares one Postgres with
+      # every other component: counted in tests/test_postgres_connection_budget.py (T-4933).
+      MAX_OPEN_CONNS: 3
+      MAX_IDLE_CONNS: 2
+    service:
+      DISABLE_REGISTRATION: true
+      SHOW_REGISTRATION_BUTTON: false
+      # A person signed in through Keycloak is an account of the forge, and the forge lets every
+      # account create an organization of its own by default (T-1703): a place outside the
+      # team map to hold repositories in. Only the administrator creates one.
+      DEFAULT_ALLOW_CREATE_ORGANIZATION: false
+    session:
+      # Sessions in the database rather than in memory: one replica means one restart
+      # signs everybody out, and the database is already there.
+      PROVIDER: db
+    repository:
+      DEFAULT_BRANCH: main
+      # A repository is created by the reconciler or by an operator, never by a push.
+      ENABLE_PUSH_CREATE_USER: false
+      ENABLE_PUSH_CREATE_ORG: false
+      # Nor by a person (T-1461): Gitea offers every reader "fork to propose changes", and a
+      # fork is a personal copy of the private configuration that leaving the Keycloak group
+      # does not take away. Only the administrator creates repositories (a site admin ignores
+      # the limit); the second line stops a fork from ignoring it too.
+      MAX_CREATION_LIMIT: 0
+      ALLOW_FORK_WITHOUT_MAXIMUM_LIMIT: false
+    migrations:
+      # Duplicating a project copies its repository with its history (PF-89). Gitea refuses a
+      # fork into the owner that holds the origin, so the Portal migrates it from the forge's
+      # own Service instead; a private address is refused unless allowed, and the allow-list
+      # holds that Service alone, so no migration dials anything else in the cluster. Only the
+      # administrator creates repositories (MAX_CREATION_LIMIT above), so only the Portal
+      # migrates. The matching self rule is in components/gitea/networkpolicies.yaml.
+      ALLOW_LOCALNETWORKS: true
+      ALLOWED_DOMAINS: 'gitea-http.{{ $this.namespace }}.svc.cluster.local'
+    oauth2_client:
+      # First login through Keycloak creates the Gitea account and links it to the existing
+      # one with that e-mail, instead of asking the person to invent a second password.
+      ENABLE_AUTO_REGISTRATION: true
+      ACCOUNT_LINKING: auto
+      UPDATE_AVATAR: false
+    {{- if $webhookTargets }}
+    webhook:
+      # Gitea refuses to deliver a webhook to a private address unless it is listed here,
+      # and every consumer of these hooks is an in-cluster Service. The matching egress
+      # rule is in components/gitea/networkpolicies.yaml.
+      ALLOWED_HOST_LIST: {{ join "," $webhookTargets | quote }}
+    {{- end }}
+    # The application factory (ADR-N-028): every application repository builds itself with the
+    # workflow the Portal commits into it, on the gitea-runner component, and publishes its
+    # bundle as a generic package of the organization. `self`: an action a workflow names is
+    # resolved on this forge, never on github.com (OFFLINE_MODE above says the same for pages).
+    actions:
+      ENABLED: true
+      DEFAULT_ACTIONS_URL: self
+    # Written by a job's token or a person's, read by the Portal's; the registry refuses an
+    # anonymous write whatever the owner's visibility.
+    packages:
+      ENABLED: true
+    # No automatic gc (T-3027): git's `gc --auto` after a push repacked the configuration
+    # repository in the second the Portal's merge wrote its commit, and main pointed at an object
+    # that was gone (dev, 2026-09-26). Gitea writes these keys into its own git config, which
+    # every git it runs reads. The chart's init script exports every key as a shell variable and
+    # masks the dots of a section name only, so a key's dot is written `_0X2E_`: a literal
+    # `receive.autogc` is "not a valid identifier" and the init container exits 1.
+    git.config:
+      receive_0X2E_autogc: false
+      gc_0X2E_auto: 0
+    # Compaction instead: Gitea's cron runs `git gc` over every repository once a day.
+    # ponytail: midnight is only the quietest hour, not a lock against a merge; if a nightly
+    # gc ever meets a write, run it from a maintenance window that stops the Portal first.
+    cron.git_gc_repos:
+      ENABLED: true
+      SCHEDULE: '@midnight'
+
+  # The database password and the OIDC client secret, both generated by the secrets
+  # component, reach the process as environment variables. `additionalConfigFromEnvs` is
+  # read by the init container that writes app.ini; `deployment.env` reaches every
+  # container, which is where `gitea admin auth add-oauth` expands ${GITEA_OAUTH_*}.
+  additionalConfigFromEnvs:
+    - name: GITEA__database__PASSWD
+      valueFrom:
+        secretKeyRef:
+          name: {{ $db.secret.name }}
+          key: {{ $db.secret.key }}
+
+deployment:
+  env:
+    - name: GITEA_OAUTH_KEY_0
+      value: gitea
+    - name: GITEA_OAUTH_SECRET_0
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-client-gitea
+          key: client-secret
+{{- if eq ($global.ingress.clusterIssuer | default "") "selfsigned-ca" }}
+    # `gitea admin auth add-oauth` fetches the issuer's discovery document from the
+    # configure-gitea INIT container, and Gitea is Go, so it reads the roots named by
+    # SSL_CERT_FILE. Under a self-signed cluster issuer the public bundle does not contain
+    # the CA that signed idm.<domain>, and the init container exits with
+    # `x509: certificate signed by unknown authority` — a crashloop that never reaches the
+    # server. The prepare component already distributes that CA as `custom-ca-cert`.
+    - name: SSL_CERT_FILE
+      value: /etc/jc/ca/ca.crt
+{{- end }}
+
+{{- if eq ($global.ingress.clusterIssuer | default "") "selfsigned-ca" }}
+extraVolumes:
+  - name: cluster-ca
+    secret:
+      secretName: custom-ca-cert
+
+# Both containers, separately: the init container runs the discovery above, and the running
+# server contacts the same issuer on every human login. `extraVolumeMounts` would cover both
+# in one key but the chart deprecates it in favour of these two.
+extraInitVolumeMounts:
+  - name: cluster-ca
+    mountPath: /etc/jc/ca
+    readOnly: true
+
+extraContainerVolumeMounts:
+  - name: cluster-ca
+    mountPath: /etc/jc/ca
+    readOnly: true
+{{- end }}

@@ -1,0 +1,49 @@
+---
+gitea-forge:
+  name: gitea-forge
+  description: Internal Git forge for pull requests and CI pipelines
+  upstream: gitea-http.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}.svc.cluster.local:3000 # yamllint disable-line rule:line-length
+  uri: '/git/*'
+  # The forge shares the primary host with the portal, whose `/*` route sits at priority 1.
+  host: '{{ .Values.global.domain }}'
+  priority: 10
+  # Git pushes and repository archives are neither of them a web page; the portal's
+  # defaults would cut a large clone off mid-transfer.
+  timeout:
+    connect: 6
+    send: 60
+    read: 60
+
+# The forge's container registry, where a node pulls a fullstack App's image (AP-108). The
+# distribution protocol fixes /v2/ at the host's root, so it cannot sit under /git/; Gitea serves
+# it at its own root and names its token realm there too (https://{domain}/v2/token), which this
+# one route carries. The Portal pushes in-cluster and never through here.
+gitea-registry:
+  name: gitea-registry
+  description: The forge's container registry, pulled by nodes at /v2/
+  upstream: gitea-http.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}.svc.cluster.local:3000 # yamllint disable-line rule:line-length
+  uri: '/v2/*'
+  host: '{{ .Values.global.domain }}'
+  # Pull only: a node reads manifests, blobs and its token here. The Portal pushes in-cluster,
+  # so a push through the public edge is never a push anybody meant.
+  methods: [GET, HEAD]
+  priority: 10
+  # A layer is megabytes; the defaults would cut a pull off on a slow node.
+  timeout:
+    connect: 6
+    send: 300
+    read: 300
+
+# containerd, holding the pull Secret, first asks the token realm with an OAuth POST and falls
+# back to GET only on a 404. Gitea answers that POST 404 on purpose; without this route the POST
+# reaches the portal's catch-all, whose 302 to an HTML page failed every fullstack pull (T-2665).
+# Exactly /v2/token and POST only, so a push through the edge stays impossible.
+gitea-registry-token:
+  name: gitea-registry-token
+  description: The registry's token realm, POST, for containerd's OAuth attempt
+  upstream: gitea-http.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}.svc.cluster.local:3000 # yamllint disable-line rule:line-length
+  uri: '/v2/token'
+  host: '{{ .Values.global.domain }}'
+  methods: [POST]
+  priority: 11
+  pluginConfig: gitea-registry

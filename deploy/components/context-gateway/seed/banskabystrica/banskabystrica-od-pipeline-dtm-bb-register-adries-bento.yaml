@@ -1,0 +1,182 @@
+# The mapping of the od-dtm-bb-register-adries pipeline, generated from the T-4254 mapping: one Address per row of
+# "DTM_BB-Register-adries" (https://opendata.dev.joinedcontext.com/dataset/bb-dtm-bb-register-adries). Do not edit: change the mapping and run scripts/open-data/generate.py.
+
+pipeline:
+  processors:
+    # The whole ZIP as it came, its size capped before it is unpacked: 786468 bytes when measured,
+    # four times that at most (T-5701). Bento cannot cap what a member inflates to, so this packed size is
+    # the only bound. Its one GeoJSON member, picked by its ending: the archive sets no
+    # UTF-8 flag, so a name with diacritics arrives as cp437 bytes. Coordinates are S-JTSK
+    # (EPSG:5514), reprojected to WGS 84 in the mapping below (T-4317).
+    - try:
+        - mapping: |
+            root = if content().length() > 3145872 { throw("the archive holds %v bytes; more than 3145872 is not this dataset".format(content().length())) } else { content() }
+        - unarchive:
+            format: zip
+    # An errored zip skipped the unpack: it goes on as a problem, never as rows.
+    - mapping: |
+        root = if errored() { { "problem": error() } } else if @archive_filename.or("").lowercase().has_suffix(".geojson") { this } else { deleted() }
+    # A refusal fails the run and writes none of its rows.
+    - mapping: |
+        root = if this.problem.or(null) != null { throw(this.problem) } else if this.features.or(null) == null { throw("the archive's GeoJSON holds no features") } else { this.features }
+    - mapping: |
+        root = if this.type() == "array" { this } else { [] }
+    - unarchive:
+        format: json_array
+    - mapping: |
+        # Slovak notation: a space (or a no-break one) between thousands, a comma before the decimals, so
+        # "10 700,01" is 10700.01 (T-4324); a text without a comma keeps its dot, "1.5" is one and a half.
+        map number {
+          let s = this.string().re_replace_all("[ 	  ]", "")
+          let t = if $s.contains(",") { $s.replace_all(".", "").replace_all(",", ".") } else { $s }
+          root = $t.number().catch(null)
+        }
+        map integer {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v.round().int64() } }
+        }
+        map float {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        map string {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": $v } }
+        }
+        map string_list {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": [$v] } }
+        }
+        map uri {
+          root = this.apply("string")
+        }
+        # An Esri date is milliseconds since the epoch; a WordPress one is text.
+        # `match` rebinds `this` to what it matches, so the value is named first.
+        map datetime {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02T15:04:05Z", "UTC").catch(null),
+            "string" => $x.ts_parse("2006-01-02T15:04:05").ts_format("2006-01-02T15:04:05Z", "UTC").catch($x.ts_format("2006-01-02T15:04:05Z", "UTC").catch(null)),
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        # The instant a row was observed, from its `observedAt` column: a bare year is its first instant,
+        # anything else reads as a datetime (T-4288).
+        map observed {
+          let x = this
+          root = if $x == null { null } else if $x.string().re_match("^[0-9]{4}$") { $x.string() + "-01-01T00:00:00Z" } else {
+            $x.apply("datetime").value.catch(null)
+          }
+        }
+        # A measured Property with the instant it holds, so SensorThings charts it (T-4288).
+        map stamped {
+          root = if this.p == null || this.at == null { this.p } else { this.p.merge({ "observedAt": this.at }) }
+        }
+        map date {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02", "UTC").catch(null),
+            # ISO, or the Slovak "29.08.2026" and "1. 3. 2024".
+            "string" => if $x.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}") { $x.slice(0, 10) } else {
+              $x.re_replace_all("[.] +", ".").trim().ts_parse("2.1.2006").ts_format("2006-01-02", "UTC").catch(null)
+            },
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        map atan1 {
+          let x = this
+          let y0 = $x * 0.785398163397448279 - $x * ($x.abs() - 1) * (0.2447 + 0.0663 * $x.abs())
+          let t0 = $y0.tan()
+          let y1 = $y0 - ($t0 - $x) / (1 + $t0 * $t0)
+          let t1 = $y1.tan()
+          let y2 = $y1 - ($t1 - $x) / (1 + $t1 * $t1)
+          let t2 = $y2.tan()
+          root = $y2 - ($t2 - $x) / (1 + $t2 * $t2)
+        }
+        map atan {
+          let x = this
+          root = if $x > 1 { 1.570796326794896558 - (1 / $x).apply("atan1") } else if $x < -1 { -1.570796326794896558 - (1 / $x).apply("atan1") } else { $x.apply("atan1") }
+        }
+        map asin {
+          let x = this
+          root = ($x / (1 - $x * $x).pow(0.5)).apply("atan")
+        }
+        map atan2 {
+          let y = this.index(0)
+          let x = this.index(1)
+          let t = if $x == 0 { 0 } else { ($y / $x).apply("atan") }
+          root = if $x > 0 { $t } else if $x < 0 && $y >= 0 { $t + 3.141592653589793116 } else if $x < 0 { $t - 3.141592653589793116 } else if $y > 0 { 1.570796326794896558 } else { -1.570796326794896558 }
+        }
+        map sjtsk_lat {
+          let es = 0.08169683122252750784 * this.phi.sin()
+          root = {"tu": this.tu, "phi": 2 * ((0.99659451817804844964 * this.tu.pow(0.99940285841947362755) * ((1 + $es) / (1 - $es)).pow(0.04084841561126375392)).apply("atan") - 0.785398163397448279)}
+        }
+        map sjtsk {
+          let xp = 0 - this.index(1)
+          let yp = 0 - this.index(0)
+          let r = ($xp * $xp + $yp * $yp).pow(0.5)
+          let d = ($yp / $xp).apply("atan") * 1.02048656930936165743
+          let t = 2 * (((1298039.00462282216176390648 / $r).pow(1.02048656930936165743) * 9.93100876732584403328).apply("atan") - 0.785398163397448279)
+          let u = (0.86349996977895215888 * $t.sin() - 0.50434888935314292624 * $t.cos() * $d.cos()).apply("asin")
+          let v = ($t.cos() * $d.sin() / $u.cos()).apply("asin")
+          let lam = 0.43342343091192514493 - $v * 0.99940285841947362755
+          let tu = ($u / 2 + 0.785398163397448279).tan()
+          let phi = {"phi": $u, "tu": $tu}.apply("sjtsk_lat").apply("sjtsk_lat").apply("sjtsk_lat").apply("sjtsk_lat").phi
+          let sp = $phi.sin()
+          let nn = 6377397.15500000026077032089 / (1 - 0.00667437223180214478 * $sp * $sp).pow(0.5)
+          let x = $nn * $phi.cos() * $lam.cos()
+          let y = $nn * $phi.cos() * $lam.sin()
+          let z = $nn * (1 - 0.00667437223180214478) * $sp
+          let x2 = 485.02100000000001500666 + $x - 0.00001989023272872444 * $y + 0.00002131994342617965 * $z
+          let y2 = 169.46500000000000341061 + 0.00001989023272872444 * $x + $y - 0.00003774925127397787 * $z
+          let z2 = 483.83899999999999863576 - 0.00002131994342617965 * $x + 0.00003774925127397787 * $y + $z
+          let p = ($x2 * $x2 + $y2 * $y2).pow(0.5)
+          let q = [$z2 * 6378137, $p * 6356752.31424517929553985596].apply("atan2")
+          let sq = $q.sin()
+          let cq = $q.cos()
+          let lat = [$z2 + 0.0067394967422764341 * 6356752.31424517929553985596 * $sq * $sq * $sq, $p - 0.00669437999014131646 * 6378137 * $cq * $cq * $cq].apply("atan2")
+          let lon = [$y2, $x2].apply("atan2")
+          root = [($lon * 57.29577951308232286465 * 10000000).round() / 10000000, ($lat * 57.29577951308232286465 * 10000000).round() / 10000000]
+        }
+        map sjtsk_coords {
+          root = if this.index(0).type() == "number" { this.apply("sjtsk") } else { this.map_each(c -> c.apply("sjtsk_coords")) }
+        }
+        let local = "dtm-bb-register-adries-" + [this.properties."ID"].map_each(v -> v.string()).join("-").re_replace_all("[^A-Za-z0-9._~-]", "-").slice(0, 80)
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("Address", "banskabystrica.sk", env("JC_SPACE"), $local),
+          "type": "Address",
+          "iD": this.properties."ID".apply("float"),
+          "kRAJ": this.properties."KRAJ".apply("string"),
+          "kRAJID": this.properties."KRAJ_ID".apply("integer"),
+          "oKRES": this.properties."OKRES".apply("string"),
+          "oKRESID": this.properties."OKRES_ID".apply("integer"),
+          "postName": this.properties."OBEC".apply("string_list"),
+          "oBECID": this.properties."OBEC_ID".apply("integer"),
+          "addressArea": this.properties."CAST_OBCE".apply("string_list"),
+          "cOID": this.properties."CO_ID".apply("integer"),
+          "thoroughfare": this.properties."ULICA".apply("string_list"),
+          "uLICAID": this.properties."ULICA_ID".apply("integer"),
+          "oRIENTC": this.properties."ORIENT_C".apply("string"),
+          "sUPISNEC": this.properties."SUPISNE_C".apply("string"),
+          "oRIENTCC": this.properties."ORIENT_C_C".apply("string"),
+          "oRIENTCP": this.properties."ORIENT_C_P".apply("string"),
+          "postCode": this.properties."PSC".apply("string_list"),
+          "dPOSTA": this.properties."DPOSTA".apply("string"),
+          "tYPBUDOVY": this.properties."TYP_BUDOVY".apply("integer"),
+          "sCHRANKY": this.properties."SCHRANKY".apply("integer"),
+          "zSJ": this.properties."ZSJ".apply("string"),
+          "zSJID": this.properties."ZSJ_ID".apply("float"),
+          "idRegad": this.properties."id_regad".apply("string"),
+          "location": if this.geometry.or(null) == null { null } else { { "type": "GeoProperty", "value": { "type": this.geometry.type, "coordinates": this.geometry.coordinates.apply("sjtsk_coords") } } },
+          "dataProvider": { "type": "Property", "value": "Mesto Banská Bystrica (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://dtm-banskabystrica.tmapserver.sk/opendata/OE_01_register_adries.zip" },
+          "isPartOf": { "type": "Property", "value": "https://opendata.dev.joinedcontext.com/dataset/bb-dtm-bb-register-adries" }
+        }.filter(entry -> entry.value != null)
+    # One request per run's batch rather than one per row.
+    - split:
+        size: 1000
+        byte_size: 2097152
+    - archive:
+        format: json_array

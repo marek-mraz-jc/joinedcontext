@@ -1,0 +1,16 @@
+# The city's resident and business parking zones as an open WFS layer, 16 zones on 2026-09-25, in WGS84. No key.
+# CC-BY-4.0, read from the HRI catalogue (package
+# helsingin-kantakaupungin-ja-asukaspysakointivyohykkeiden-pysakointipaikat), which names this layer.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-resident-parking-zones
+  namespace: helsinki
+  title: { en: Resident and business parking zones, fi: Asukas- ja yrityspysäköintivyöhykkeet }
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Asukas_ja_yrityspysakointivyohykkeet_alue
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

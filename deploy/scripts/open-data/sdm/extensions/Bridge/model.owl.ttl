@@ -1,0 +1,525 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:Bridge a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Bridge" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:zatazitelnostNaJednuNapravu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pocetDilCelkov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rokKonstrukcie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:druhNosnejKonstrukcie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typKomunikacie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vlastnik ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vynimocnaZatazitelnostT ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rokZasadnejRekonstrukcie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:ulica ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:hodnotenie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:predmetPremostenia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:obec ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:aktualnyStavebnotechnickyStav ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dlzkaPremosteniaM ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:okres ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typPamiatky ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:docasnostMosta ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:identifikacneCislo ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:legislativnyStav ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:ojedinelaZatazitelnostT ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:materialNosnejKonstrukcie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:komunikacia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:normalnaZatazitelnostT ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vyhradnaZatazitelnostT ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:triedaCesty ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:spravca ],
+        jc:Entity ;
+    skos:definition "A bridge on a road the region owns or manages." ;
+    skos:exactMatch jc:Bridge ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:upstream_source "https://smart-data-models.github.io/dataModel.PointOfInterest/PointOfInterest/schema.json" .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:aktualnyStavebnotechnickyStav a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "aktualnyStavebnotechnickyStav" ;
+    skos:definition "The source column `Aktuálny_stavebnotechnický_stav`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:date_or_datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date_or_datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:decimal a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:decimal ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dlzkaPremosteniaM a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dlzkaPremosteniaM" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Dĺžka_premostenia__m_`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:docasnostMosta a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "docasnostMosta" ;
+    skos:definition "The source column `Dočasnosť_mosta`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:double a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:double ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:druhNosnejKonstrukcie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "druhNosnejKonstrukcie" ;
+    skos:definition "The source column `Druh_nosnej_konštrukcie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:hodnotenie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "hodnotenie" ;
+    skos:definition "The source column `Hodnotenie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:identifikacneCislo a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "identifikacneCislo" ;
+    skos:definition "The source column `Identifikačné_číslo`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:jsonpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:jsonpointer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpointer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:komunikacia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "komunikacia" ;
+    skos:definition "The source column `Komunikácia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:legislativnyStav a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "legislativnyStav" ;
+    skos:definition "The source column `Legislatívny_stav`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:materialNosnejKonstrukcie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "materialNosnejKonstrukcie" ;
+    skos:definition "The source column `Materiál_nosnej_konštrukcie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The source column `Názov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:normalnaZatazitelnostT a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "normalnaZatazitelnostT" ;
+    skos:definition "The source column `Normálna_zaťažiteľnosť__t_`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:obec a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "obec" ;
+    skos:definition "The source column `Obec`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:ojedinelaZatazitelnostT a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "ojedinelaZatazitelnostT" ;
+    skos:definition "The source column `Ojedinelá_zaťažiteľnosť__t_`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:okres a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "okres" ;
+    skos:definition "The source column `Okres`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pocetDilCelkov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pocetDilCelkov" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Počet_dil__celkov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:predmetPremostenia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "predmetPremostenia" ;
+    skos:definition "The source column `Predmet_premostenia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rokKonstrukcie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rokKonstrukcie" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Rok_konštrukcie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rokZasadnejRekonstrukcie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rokZasadnejRekonstrukcie" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Rok_zásadnej_rekonštrukcie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:sparqlpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:sparqlpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:spravca a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "spravca" ;
+    skos:definition "The source column `Správca`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:time a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:time ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:triedaCesty a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "triedaCesty" ;
+    skos:definition "The source column `Trieda_cesty`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:typKomunikacie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typKomunikacie" ;
+    skos:definition "The source column `Typ_komunikácie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:typPamiatky a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typPamiatky" ;
+    skos:definition "The source column `Typ_pamiatky`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:ulica a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "ulica" ;
+    skos:definition "The source column `Ulica`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:vlastnik a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vlastnik" ;
+    skos:definition "The source column `Vlastník`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:vyhradnaZatazitelnostT a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vyhradnaZatazitelnostT" ;
+    skos:definition "The source column `Výhradná_zaťažiteľnosť__t_`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:vynimocnaZatazitelnostT a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vynimocnaZatazitelnostT" ;
+    skos:definition "The source column `Výnimočná_zaťažiteľnosť__t_`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:zatazitelnostNaJednuNapravu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "zatazitelnostNaJednuNapravu" ;
+    skos:definition "The source column `Zaťažiteľnosť_na_jednu_nápravu_`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Bridge> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+
+<https://joinedcontext.com/models/sdm/extensions/Bridge> a owl:Ontology ;
+    rdfs:label "Bridge" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "Bridge, an extension of dataModel.PointOfInterest/PointOfInterest" ;
+    skos:definition "A bridge on a road the region owns or manages. Extends dataModel.PointOfInterest/PointOfInterest: Transportation Road and RoadSegment require roadClass, refRoad, startPoint and endPoint, which a structure register has not; PointOfInterest is a located named thing." .
+

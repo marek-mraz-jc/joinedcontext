@@ -1,0 +1,17 @@
+# One PointOfInterest per record of the IPR layer Potravinářské plnosortimentní prodejny into the city space (T-5269).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-grocery-stores
+  namespace: praha
+  title: { en: Grocery stores, cs: Potravinářské plnosortimentní prodejny }
+spec:
+  class: auto
+  # IPR republishes its layers a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '25 2 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-grocery-stores }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

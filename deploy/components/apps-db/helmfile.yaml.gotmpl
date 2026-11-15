@@ -1,0 +1,96 @@
+---
+bases:
+  - "../../defaults/helm-defaults.yaml"
+---
+{{- $componentData := (readFile "./component.yaml" | fromYaml) }}
+
+{{- $root := .Values }}
+{{- $component := $componentData.component }}
+{{- $parts :=  $componentData.parts }}
+
+repositories:
+{{- $alreadyAdded := dict }}
+{{- range $parts }}
+  {{- $part := . }}
+  {{- $repoUrl := index $root.charts $component $part.name "repository" | default "" }}
+  {{- if ne $repoUrl "" }}
+    {{- $chart := index $root.charts $component $part.name "chart" }}
+    {{- $chartParts := splitList "/" $chart }}
+    {{- $repoName := index $chartParts 0 }}
+    {{- if not (hasKey $alreadyAdded $repoName) }}
+      {{- $_ := set $alreadyAdded $repoName true }}
+  - name: cc2-{{ $repoName }}
+    url: {{ $repoUrl }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+
+releases:
+  {{- $layer := $root.deployLayer | default "" }}
+  {{- range $parts }}
+  {{- $part := . }}
+  {{- $releaseName := printf "%s-%s" $component $part.name }}
+  {{- $repoUrl := index $root.charts $component $part.name "repository" | default "" }}
+  {{- $partLabels := index $part "extraLabels" | default dict }}
+  {{- $isOperator := eq (index $partLabels "operator" | default "") "true" }}
+  {{- if or (eq $layer "") (and (eq $layer "operators") $isOperator) (and (eq $layer "instance") (not $isOperator)) }}
+  - name: {{ $releaseName }}
+    labels:
+      release: {{ $releaseName }}
+      {{- range $key, $value := (index $part "extraLabels" | default dict) }}
+      {{ $key }}: {{ $value }}
+      {{- end }}
+    namespace: {{ index $root $component $part.name "namespace" }}
+    {{- if ne $repoUrl "" }}
+    chart: cc2-{{ index $root.charts $component $part.name "chart" }}
+    {{- else }}
+    chart: {{ index $root.charts $component $part.name "chart" }}
+    {{- end }}
+    {{- if index $root.charts $component $part.name "version" }}
+    version: {{ index $root.charts $component $part.name "version" }}
+    {{- end }}
+    createNamespace: {{ $root.global.createNamespaces }}
+    installed: {{ index $root $component $part.name "enabled" }}
+    condition: {{ $component }}.{{ $part.name }}.enabled
+    {{- if index $part "needs" }}
+    {{- $renderedNeeds := list }}
+    {{- range index $part "needs" }}
+      {{- $items := splitList "." . }}
+      {{- $depComponent := index $items 0 }}
+      {{- $depPart := index $items 1 }}
+      {{- $depIsOperator := false }}
+      {{- if eq $depComponent $component }}
+        {{- range $p := $parts }}
+          {{- if eq $p.name $depPart }}
+            {{- $depLabels := index $p "extraLabels" | default dict }}
+            {{- if eq (index $depLabels "operator" | default "") "true" }}{{- $depIsOperator = true }}{{- end }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- /* Emit the dependency only when its release is rendered in this layer. */}}
+      {{- if or (eq $layer "") (and (eq $layer "operators") $depIsOperator) (and (eq $layer "instance") (not $depIsOperator)) }}
+        {{- $renderedNeeds = append $renderedNeeds (printf "%s/%s-%s" (index $root $depComponent $depPart "namespace") ($depComponent | kebabcase) $depPart) }}
+      {{- end }}
+    {{- end }}
+    {{- if gt (len $renderedNeeds) 0 }}
+    needs:
+      {{- range $renderedNeeds }}
+      - {{ . }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if index $part "hooks" }}
+    hooks:
+      {{- range index $part "hooks" }}
+      - {{ . | toYaml | nindent 8 }}
+      {{- end }}
+    {{- end }}
+    values:
+      - values/{{ $part.name }}/base-values.yaml.gotmpl
+      - values/{{ $part.name }}/{{ $root.global.valuesProfile | default $root.global.profile }}-values.yaml.gotmpl
+      - {{- index $root $component $part.name "rawValues" | default dict | toYaml | nindent 8 }}
+  {{- end }}
+  {{- end }}
+
+commonLabels:
+  component: {{ $component }}

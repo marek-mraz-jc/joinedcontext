@@ -1,0 +1,4 @@
+---
+component: context-broker
+parts:
+  - name: broker

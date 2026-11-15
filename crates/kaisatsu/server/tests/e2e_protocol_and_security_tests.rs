@@ -45,7 +45,7 @@ use common::*;
 async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backchannel_logout() {
     let (state, _store, _kek) = setup_dev_realm_state().await;
     state.guard().insert_mock(
-        "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout",
+        "https://portal.dev.example.test/api/v1/auth/backchannel-logout",
         204,
         Vec::new(),
     );

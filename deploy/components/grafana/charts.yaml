@@ -1,0 +1,8 @@
+---
+grafana:
+  dashboards:
+    chart: charts/dashboards
+  grafana:
+    repository: https://grafana.github.io/helm-charts
+    chart: grafana/grafana
+    version: '10.5.15'

@@ -1,0 +1,64 @@
+# The mapping of the vantaa-bikes pipeline (PL-03, T-5254): one BikeHireDockingStation per City Bike Vantaa
+# station, the same model as HSL's stations (citybikes-gbfs-info). The register carries the station's name in
+# Finnish, Swedish and English, its street address and its number of slots (`totalSlotNumber`); it has no
+# live count, so `availableBikeNumber` and `freeSlotNumber` stay out rather than read as zero. The ids carry
+# `vantaa-` so a Vantaa station never meets an HSL GBFS station id.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a station without a position or outside Vantaa's box plus 1 km
+# (24.77..25.28 E, 60.24..60.38 N), a slot count outside 1..200, or a second record of one id or of one name
+# at one place (~10 m grid) is dropped and counted by reason in a WARN line of the run. An answer with no
+# station fails the run, so the stored stations stay.
+
+pipeline:
+  processors:
+    # One `try`: a refused answer stops at its throw, so no later step writes over it (Bento runs later
+    # processors on an errored message otherwise).
+    - try:
+        - mapping: |
+            root = if content().length() > 4194304 { throw("the Vantaa bike stations answer is %d bytes, more than the 4 MiB read".format(content().length())) } else { this }
+        - mapping: |
+            root = if this.features.or([]).length() == 0 { throw("the Vantaa bike stations answer holds no station: the run fails and the stored stations stay") } else { this }
+        - mapping: |
+            let rows = this.features.map_each(f -> {
+              "f": f,
+              "lon": f.geometry.coordinates.index(0).number().catch(null),
+              "lat": f.geometry.coordinates.index(1).number().catch(null),
+              "slots": f.properties.Kapasiteet.number().catch(null)
+            }).map_each(r -> r.merge({
+              "reason": if r.lon == null || r.lat == null || r.f.geometry.type.or("") != "Point" { "noLocation" }
+                else if r.lon < 24.77 || r.lon > 25.28 || r.lat < 60.24 || r.lat > 60.38 { "outOfArea" }
+                else if r.slots != null && (r.slots < 1 || r.slots > 200) { "outOfRange" }
+                else if !r.f.properties.ID.or("").string().re_match("^[0-9A-Za-z-]{1,20}$") { "noId" }
+                else if r.f.properties.Nimi.or("").string().trim() == "" { "noName" }
+                else { null }
+            }))
+            let valid = $rows.filter(r -> r.reason == null)
+            let kept = $valid.unique(r -> r.f.properties.ID.string()).unique(r -> "%v|%v|%v".format(r.f.properties.Nimi, (r.lon * 10000).round(), (r.lat * 10000).round()))
+            let reasons = $rows.filter(r -> r.reason != null).map_each(r -> r.reason)
+            root.dropped = {
+              "noLocation": $reasons.filter(x -> x == "noLocation").length(),
+              "outOfArea": $reasons.filter(x -> x == "outOfArea").length(),
+              "outOfRange": $reasons.filter(x -> x == "outOfRange").length(),
+              "noId": $reasons.filter(x -> x == "noId").length(),
+              "noName": $reasons.filter(x -> x == "noName").length(),
+              "duplicate": $valid.length() - $kept.length()
+            }
+            root.entities = $kept.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:vantaa-%v".format("BikeHireDockingStation", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.f.properties.ID.string()),
+              "type": "BikeHireDockingStation",
+              "name": { "type": "LanguageProperty", "languageMap": { "fi": r.f.properties.Nimi.or(""), "sv": r.f.properties.Namn.or(""), "en": r.f.properties.Name.or("") }.filter(e -> e.value.string().trim() != "") },
+              "totalSlotNumber": if r.slots != null { { "type": "Property", "value": r.slots.int64() } },
+              "address": if r.f.properties.Osoite.or("").string().trim() == "" { null } else {
+                { "type": "Property", "value": { "streetAddress": r.f.properties.Osoite.string().trim(), "addressLocality": r.f.properties.Kaupunki.or("Vantaa"), "addressCountry": "FI" } }
+              },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [ r.lon, r.lat ] } },
+              "dataProvider": { "type": "Property", "value": "Helsinki Region Transport (HSL), City Bike Vantaa" },
+              "source": { "type": "Property", "value": "https://hri.fi/data/en_GB/dataset/vantaan-kaupunkipyoraasemat" }
+            }.filter(e -> e.value != null))
+        - switch:
+            - check: this.dropped.values().sum() > 0
+              processors:
+                - log:
+                    level: WARN
+                    message: 'vantaa-bikes: ${! json("entities").length() } stations written, dropped by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.entities

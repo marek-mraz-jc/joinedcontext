@@ -1,0 +1,40 @@
+{{- $sa := .Values.serviceAccount }}
+{{- $namespace := required "serviceAccount.namespace is the Portal's namespace" $sa.namespace }}
+{{- /*
+  The identity of the Portal's second Keycloak client, `portal-reconciler` (PF-47, PF-63, T-2868).
+  Keycloak finds a federated client by its token's subject, and the Portal's pod already is
+  `portal-api`'s, so the reconciler's client trusts this account instead. No pod runs as it and it
+  mounts nothing: the Portal mints a ten-minute token of it per token request, which this Role
+  allows for this one name and nothing else.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: portal-reconciler
+  namespace: {{ $namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: portal-reconciler-token
+  namespace: {{ $namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    verbs: ["create"]
+    resourceNames: ["portal-reconciler"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: portal-reconciler-token
+  namespace: {{ $namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: portal-reconciler-token
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa.name }}
+    namespace: {{ $namespace }}

@@ -1,0 +1,170 @@
+{{- $global := .Values.global }}
+{{- /* One file for every shard part, told apart by the release: wasm-host-shard-0, -1, … */}}
+{{- $part := .Release.Name | trimPrefix "wasm-host-" }}
+{{- $shard := $part | trimPrefix "shard-" }}
+{{- $images := index .Values.images "wasm-host" $part }}
+{{- $digest := required (printf "wasm-host.%s needs its image digest in components/wasm-host/images.yaml" $part) $images.digest }}
+{{- $appsDb := index .Values "apps-db" "cluster" "namespace" }}
+{{- $store := index .Values "artifact-store" "store" "namespace" }}
+{{- /* The gateway and the Portal the shard calls, and the identity that reads /jobs. Where jc
+       carries both, the shard calls neither yet: jc trusts X-Forwarded-* from the whole pod
+       network, so only APISIX may reach its listener (tests/test_jc_component.py), and the host
+       passes a component's own forwarding headers on (platform crates/wasm-host host.rs). Unset,
+       a component's gateway call is refused at once and identity answers nobody. */}}
+{{- $jc := has "jc" .Values.components }}
+{{- $portal := dig "portal" "portal" dict .Values }}
+{{- $gatewayUrl := "" }}
+{{- $portalUrl := "" }}
+{{- $portalAccount := dict }}
+{{- if $jc }}
+{{- $portalAccount = dict "serviceAccount" "jc" "namespace" .Values.jc.server.namespace }}
+{{- else }}
+{{- $gatewayUrl = printf "http://context-gateway.%s.svc.cluster.local:8080" (index .Values "context-gateway" "gateway" "namespace") }}
+{{- if dig "enabled" false $portal }}
+{{- $portalUrl = printf "http://portal.%s.svc.cluster.local:8080" (dig "namespace" "" $portal) }}
+{{- $portalAccount = dict "serviceAccount" "portal" "namespace" $portal.namespace }}
+{{- end }}
+{{- end }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem` -> /tmp is the one writable path
+# - [x] Health probes -> /healthz
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] No ServiceAccount token: the host calls no API server
+# - [x] Named ports -> the Service the edge route names, jc-wasm-host-<shard>:8080 (`http`), and
+#       the admin port 9090 (`admin`: /metrics and /jobs, the Portal alone, T-3857)
+# - [ ] Ingress with TLS -> not applicable, reached through APISIX only
+
+# The Service the edge's route names (jcctl apisix.rs `wasm_host_service`).
+fullnameOverride: jc-wasm-host-{{ $shard }}
+# One label for every shard, which the NetworkPolicies select on.
+nameOverride: wasm-host-shard
+
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $digest }}
+  pullPolicy: IfNotPresent
+
+command: ["/usr/local/bin/jc-wasm-host"]
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+# What the host reads (platform crates/wasm-host/src/main.rs). Every credential is a mounted
+# file, never a variable: the shard's database password and its store key.
+env:
+  JC_WASM_SHARD: {{ $shard | quote }}
+  JC_WASM_PLACEMENTS: /etc/jc-wasm/placement/placements.json
+  {{- if $gatewayUrl }}
+  JC_GATEWAY_URL: {{ $gatewayUrl | quote }}
+  {{- end }}
+  JC_WASM_S3_ENDPOINT: "http://artifact-store.{{ $store }}.svc.cluster.local:9000"
+  JC_WASM_S3_BUCKET: {{ index .Values "wasm-host" "bucket" | default "apps" | quote }}
+  JC_WASM_S3_KEY_FILE: /etc/jc-wasm/store/access-key
+  JC_WASM_S3_SECRET_FILE: /etc/jc-wasm/store/secret-key
+  # Presigned URLs name the App's own host, https://{name}.apps.<domain>/api/_jc/files/<key>, which
+  # the edge routes to this shard like the rest of /api/*, so the store keeps no address in the
+  # open (T-6195, PF-32). An image without this variable ignores it.
+  JC_WASM_APPS_HOST: "apps.{{ $global.domain }}"
+  # The address in the open, the login's generated password from its file (AP-144).
+  JC_WASM_DB_URL: "postgresql://wasm_host_{{ $shard }}@apps-db-rw.{{ $appsDb }}.svc.cluster.local:5432/apps?sslmode=require"
+  JC_WASM_DB_PASSWORD_FILE: /etc/jc-wasm/db/password
+  # Compiled components a shard keeps. Measured at about 1.25 MiB each in the 30-minute run on a
+  # GitHub runner (T-3345, ADR-N-044 §8: 892.6 MiB peak with 700 kept): the host's default of 2000
+  # would pass the 1 GiB limit near 800 and be OOM-killed; 600 keeps about 270 MiB for compiles in
+  # flight and running instances. Raise it with the memory limit.
+  JC_WASM_CACHED_COMPONENTS: "600"
+  {{- if $portalUrl }}
+  # The Portal the host asks for a request's caller and an App's email and ai, as that person and
+  # on the App's own host (T-3622, API/06 §5). Unset, identity answers nobody and both services
+  # say so.
+  JC_WASM_PORTAL_URL: {{ $portalUrl | quote }}
+  {{- end }}
+  {{- if index .Values "wasm-host" "tokens" "enabled" }}
+  # The job token service (AP-159): a job runs as the App's job principal. Unset, every run fails
+  # saying so, and nothing else changes.
+  JC_WASM_JOB_TOKEN_URL: "http://wasm-host-tokens.{{ index .Values "wasm-host" "tokens" "namespace" }}.svc.cluster.local:4180/token"
+  {{- end }}
+
+# The placement and the store key are the Portal's (AP-157, AP-158): a shard waits for both
+# rather than serve nothing. The database login is generated by components/secrets.
+extraVolumes:
+  - name: placement
+    configMap:
+      name: jc-wasm-host-{{ $shard }}-placements
+  - name: store
+    secret:
+      secretName: apps-host-{{ $shard }}-store
+  - name: db
+    secret:
+      secretName: apps-host-{{ $shard }}-db
+      items:
+        - key: password
+          path: password
+extraVolumeMounts:
+  - name: placement
+    mountPath: /etc/jc-wasm/placement
+    readOnly: true
+  - name: store
+    mountPath: /etc/jc-wasm/store
+    readOnly: true
+  - name: db
+    mountPath: /etc/jc-wasm/db
+    readOnly: true
+
+containerPort: 8080
+
+service:
+  enabled: true
+  port: 8080
+
+# /metrics and /jobs (every App's job records, AP-154) answer on this port alone, never on 8080,
+# which the edge reaches (T-3857). JC_WASM_ADMIN_LISTEN defaults to it.
+metrics:
+  enabled: true
+  port: 9090
+  name: admin
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 10
+
+# Per request the host stops an App at 64 MiB (AP-146); a shard holds the compiled components and
+# its concurrent instances.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+
+# The job records answer the Portal's reconciler alone (T-3857): the port the NetworkPolicy opens
+# for the proxy (4143) admits APISIX too; this is what keeps it off 9090.
+{{- if $portalAccount }}
+meshAuthorization:
+  port: 9090
+  clients:
+    - serviceAccount: {{ $portalAccount.serviceAccount }}
+      namespace: {{ $portalAccount.namespace }}
+{{- end }}

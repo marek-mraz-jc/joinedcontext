@@ -1,0 +1,36 @@
+# One door over two spaces. An ordinary Endpoint in every respect — the same slug, the same
+# policy set, the same representations — and what differs is only what its broker tenant holds
+# (EP-70). The MCP representation is why the hub exists at all for an assistant: one connector,
+# one dataset, and a `jc:source` on every answer saying which city system said what (EP-71).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-hub
+  namespace: helsinki
+  title:
+    en: Helsinki, all of it
+spec:
+  contextSpaceRef: helsinki-hub
+  slug: hub7kq3zr5mx2vwt6nbc4pjd7fgs3a2y
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki-hub:public-hub
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  # No licence: the hub also serves the indicators of `helsinki-kpi`, which have no source a licence
+  # can be read from yet (T-2793).
+  catalog:
+    # Not a catalogue dataset: one door over two spaces whose types are datasets of their own, read by the Apps.
+    # Its own record stays; the harvest feeds leave it out (EP-139, T-4744).
+    harvest: false
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    themes: [TRAN, REGI]
+    keywords:
+      fi: [joukkoliikenne, tunnusluvut]
+      sv: [kollektivtrafik, nyckeltal]
+      en: [public transport, indicators]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/049
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/092

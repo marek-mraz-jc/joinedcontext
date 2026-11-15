@@ -1,0 +1,33 @@
+---
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: audit-collector-host-logs
+  annotations:
+    reason: >-
+      The audit trail is collected by one Vector agent per node reading that node's own
+      container logs, because an aggregator would be a second hop and a second place to lose
+      the trail (OPS-42). A node's container logs live on the node, so the DaemonSet has to
+      mount them from it; there is no configuration of `kubernetes_logs` that reads them any
+      other way. The mounts are narrowed in the component's own values to the one the source
+      reads, /var/log read-only, plus the chart's writable data directory /var/lib/vector:
+      the /proc, /sys and /var/lib the chart mounts by default are not mounted here (T-4775).
+      The exception names this one DaemonSet, so nothing else in the platform gains host
+      access by inheriting it. Re-check on every Vector chart bump.
+spec:
+  exceptions:
+    - policyName: disallow-host-path
+      ruleNames:
+        - host-path
+        - autogen-host-path
+    - policyName: restrict-volume-types
+      ruleNames:
+        - restricted-volumes
+        - autogen-restricted-volumes
+  match:
+    any:
+      - resources:
+          kinds:
+            - DaemonSet
+          names:
+            - audit-logging-collector-vector

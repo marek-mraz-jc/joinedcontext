@@ -1,0 +1,242 @@
+id: https://hel.fi/models/helsinki/hsl-mqtt-test
+name: hsl-mqtt-test
+title: HSL trams through our MQTT broker (test)
+description: "The one type of the MQTT test space (DM-61): HSL's vehicles as the space helsinki's model has them (the hub's Vehicle class, its slots and enum copied), so a tram the pipeline writes here reads with the same terms."
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  jc: https://joinedcontext.com/models/
+  sdm: https://smartdatamodels.org/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+default_prefix: jc
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+classes:
+  Vehicle:
+    class_uri: sdm:Vehicle
+    description: One HSL vehicle in service, registered from the helsinki space.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+    slots:
+      - speed
+      - heading
+      - route
+      - vehicleType
+      - transportMode
+      - fleetVehicleId
+      - onRoute
+      - nextStop
+      - delay
+      - occupancy
+    slot_usage:
+      route:
+        rank: 1
+        annotations:
+          summary: true
+          label:
+            tag: label
+            value:
+              sk: Linka
+              cs: Linka
+              fi: Linja
+              en: Route
+              de: Linie
+          ngsi_ld_kind: Property
+          upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      vehicleType:
+        rank: 2
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Typ vozidla
+              cs: Typ vozidla
+              fi: Ajoneuvotyyppi
+              en: Vehicle type
+              de: Fahrzeugtyp
+          ngsi_ld_kind: Property
+          upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      nextStop:
+        rank: 3
+        annotations:
+          summary: true
+          label:
+            tag: label
+            value:
+              sk: Ďalšia zastávka
+              cs: Další zastávka
+              fi: Seuraava pysäkki
+              en: Next stop
+              de: Nächste Haltestelle
+          ngsi_ld_kind: Relationship
+      delay:
+        rank: 4
+        annotations:
+          summary: true
+          label:
+            tag: label
+            value:
+              sk: Meškanie
+              cs: Zpoždění
+              fi: Myöhästyminen
+              en: Delay
+              de: Verspätung
+          ngsi_ld_kind: Property
+      speed:
+        rank: 5
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Rýchlosť
+              cs: Rychlost
+              fi: Nopeus
+              en: Speed
+              de: Geschwindigkeit
+          ngsi_ld_kind: Property
+          upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      occupancy:
+        rank: 6
+        annotations:
+          summary: true
+          label:
+            tag: label
+            value:
+              sk: Obsadenosť
+              cs: Obsazenost
+              fi: Kuormitus
+              en: Occupancy
+              de: Auslastung
+          ngsi_ld_kind: Property
+      heading:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Smer
+              cs: Směr
+              fi: Suunta
+              en: Heading
+              de: Fahrtrichtung
+          ngsi_ld_kind: Property
+          upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+slots:
+  speed:
+    slot_uri: sdm:speed
+    description: Ground speed of the vehicle.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: m/s }
+    annotations:
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  heading:
+    slot_uri: sdm:heading
+    description: Compass heading of the vehicle, degrees clockwise from north.
+    range: float
+    minimum_value: 0
+    maximum_value: 360
+    unit: { ucum_code: deg }
+    annotations:
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  route:
+    slot_uri: sdm:route
+    description: The HSL route id the vehicle is serving, as GTFS names it (2550, 1009, 31M1, 3001K).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Linka
+          cs: Linka
+          en: Route
+          de: Linie
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  vehicleType:
+    slot_uri: sdm:vehicleType
+    description: The Smart Data Models kind of vehicle - bus, tram, passengerVessel for a ferry, other for metro and train; transportMode names HSL's mode.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Typ vozidla
+          cs: Typ vozidla
+          en: Vehicle type
+          de: Fahrzeugtyp
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  transportMode:
+    slot_uri: jc:transportMode
+    description: What serves the stop or runs the line.
+    range: TransportMode
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh dopravy
+          cs: Druh dopravy
+          fi: Kulkumuoto
+          en: Transport mode
+          de: Verkehrsmittel
+      ngsi_ld_kind: Property
+  fleetVehicleId:
+    slot_uri: sdm:fleetVehicleId
+    description: The operator and vehicle number HSL publishes, operator-vehicle.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Číslo vozidla
+          cs: Číslo vozidla
+          fi: Kalustonumero
+          en: Fleet number
+          de: Wagennummer
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  onRoute:
+    slot_uri: jc:onRoute
+    description: The line the vehicle is running, the URN of a GtfsRoute of this space.
+    range: uriorcurie
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Na trase
+          cs: Na trase
+          fi: Reitillä
+          en: On route
+          de: Auf der Strecke
+      ngsi_ld_kind: Relationship
+  nextStop:
+    slot_uri: jc:nextStop
+    description: The stop the vehicle stands at or comes to next, the URN of a GtfsStop of this space; HSL moves it on at each departure from or passing of a stop.
+    range: uriorcurie
+    annotations: { ngsi_ld_kind: Relationship }
+  delay:
+    slot_uri: jc:delay
+    description: Seconds behind the timetable, negative when ahead (HSL's dl with the sign turned).
+    range: integer
+    unit: { ucum_code: s }
+    annotations: { ngsi_ld_kind: Property }
+  occupancy:
+    slot_uri: jc:occupancy
+    description: How full the vehicle is, in percent; HSL sends 0 (room) or 100 (full).
+    range: integer
+    minimum_value: 0
+    maximum_value: 100
+    unit: { ucum_code: '%' }
+    annotations: { ngsi_ld_kind: Property }
+enums:
+  TransportMode:
+    permissible_values:
+      bus: { description: A bus. }
+      tram: { description: A tram. }
+      metro: { description: The metro. }
+      train: { description: A commuter train. }
+      ferry: { description: A ferry. }

@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: context-gateway }
+spec:
+  template:
+    spec:
+      serviceAccountName: context-gateway
+      containers:
+        - name: gateway
+          image: ghcr.io/marek-mraz-jc/joinedcontext-platform@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          securityContext:
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            limits: { memory: 512Mi }

@@ -1,0 +1,300 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:PurchaseOrder a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "PurchaseOrder" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dodavatel ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:datumVystavenia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:identifier ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:datumZverejnenia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:predmetObjednavky ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:objednavkaSpolu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rok ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:mena ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:suma ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iCO ],
+        jc:Entity ;
+    skos:definition "An order the publisher issued and published." ;
+    skos:exactMatch jc:PurchaseOrder ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:upstream_source "https://smart-data-models.github.io/dataModel.CPSV-AP/Cost/schema.json" .
+
+jc:adresa a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "adresa" ;
+    skos:definition "The source column `Adresa`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:datumVystavenia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "datumVystavenia" ;
+    skos:definition "The source column `Dátum_vystavenia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:datumZverejnenia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "datumZverejnenia" ;
+    skos:definition "The source column `Dátum_zverejnenia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:dodavatel a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dodavatel" ;
+    skos:definition "The source column `Dodávateľ`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iCO a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iCO" ;
+    skos:definition "The source column `IČO`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:identifier a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "identifier" ;
+    skos:definition "The source column `Číslo_objednávky`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:mena a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "mena" ;
+    skos:definition "The source column `Mena`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:objednavkaSpolu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "objednavkaSpolu" ;
+    skos:definition "The source column `Objednávka_spolu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:predmetObjednavky a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "predmetObjednavky" ;
+    skos:definition "The source column `Predmet_objednávky`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rok a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rok" ;
+    skos:definition "The source column `Rok`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:suma a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "suma" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Suma`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:textObjednavky a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "textObjednavky" ;
+    skos:definition "The source column `Text_objednávky`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+
+<https://joinedcontext.com/models/sdm/extensions/PurchaseOrder> a owl:Ontology ;
+    rdfs:label "PurchaseOrder" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "PurchaseOrder, an extension of dataModel.CPSV-AP/Cost" ;
+    skos:definition "An order the publisher issued and published. Extends dataModel.CPSV-AP/Cost: CPSV-AP Cost is the official model of an amount a public body pays or charges (value, currency, identifier); no subject holds a contract, order, invoice, grant or procurement." .
+

@@ -1,0 +1,23 @@
+# One TrafficFlowObserved per counted direction of Golemio's cycle counters in Prague, with the
+# bicycles of its newest five minutes, into the city space every five minutes (T-5681).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: bicycle-counters
+  namespace: praha
+  title: { en: Cycle counters, cs: Sčítače cyklistů }
+spec:
+  class: auto
+  # The counters report a five-minute interval about five to ten minutes after it ends.
+  period: 5m
+  source:
+    dataSourceRef: { kind: DataSource, name: golemio-bicycle-counters }
+  # The mapping's second call, the counts of the last hour, carries the same Golemio key: the step
+  # reads it as PRAHA_GOLEMIO_TOKEN, the only runner variable it may name (PL-15, PL-16).
+  secretRefs:
+    - name: golemio
+      key: token
+      envVar: PRAHA_GOLEMIO_TOKEN
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: TrafficFlowObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

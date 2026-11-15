@@ -1,0 +1,15 @@
+# The platform's User Guide (T-3226, AG-118): how to create an App, an Endpoint, a pipeline, a
+# data source, a data model, a Policy or a workspace, step by step, every step linking into the
+# Portal's form in this project. jc-assistant ships the guide (scripts/sync-user-guide.sh in the
+# platform repository copies the docs' User-Guide pages alone, never a runbook), so the source
+# fetches nothing and holds nothing internal: it is public. Read again with every new image.
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: guide
+  namespace: helsinki
+  title: { en: The platform's User Guide }
+spec:
+  source: guide
+  languages: [en]
+  visibility: public

@@ -1,0 +1,17 @@
+# One OnStreetParking (category public, T-4329) per record of `parkkiopas-parking-areas`, written into the city space (T-2787).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: parking-areas
+  namespace: helsinki
+  title: { en: Parking areas from the parking guide }
+spec:
+  class: auto
+  # The outlines and the estimates change rarely; a nightly read is enough.
+  period: 24h
+  schedule: '25 3 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: parkkiopas-parking-areas }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: OnStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

@@ -1,0 +1,19 @@
+# IPR Praha's geoportal item 9938b4b73b4d49a7aef5a605f4d39acf, served by its download API (opendata.geoportalpraha.cz/api/download/v1/items/9938b4b73b4d49a7aef5a605f4d39acf/geojson), which
+# answers with a redirect to this ArcGIS Hub URL; the manifest names the target so the fetch is one request. No key.
+# CC BY 4.0 with the credit "datový podklad © IPR Praha", read from geoportalpraha.cz/data-a-sluzby/otevrena-data and the
+# IPR DCAT feed. 5813 points, 2.4 MB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-waste-stations
+  namespace: praha
+  title:
+    en: Sorted-waste collection points (MHMP, IPR Praha)
+    cs: Stanoviště tříděného odpadu (MHMP, IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/9938b4b73b4d49a7aef5a605f4d39acf_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

@@ -1,0 +1,23 @@
+# The write door of slovensko-participacia (T-5065, the T-5033 shape): the decidim-* pipelines upsert through it.
+# Each Pipeline writes as its own derived account pl-{pipeline} under a derived Policy (PL-19, PL-20), and an
+# Endpoint binds those only without a policyRef; the public Endpoint keeps its read policyRef. The audience keeps
+# out anyone outside the organization.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: slovensko-participacia-zapis
+  namespace: slovensko
+  title: { sk: 'Participácia občanov: zápis kanálov', en: 'Citizen participation: pipeline writes' }
+  description:
+    sk: Interný vstup, cez ktorý zberné kanály zapisujú participačné dáta; čítajú sa cez verejný Endpoint slovensko-participacia.
+    en: The internal door the ingestion pipelines write the participation data through; people read them through the public Endpoint slovensko-participacia.
+spec:
+  contextSpaceRef: slovensko-participacia
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:joinedcontext.com:slovensko-participacia:decidim-tvormespolu-account
+    - urn:ngsi-ld:Policy:joinedcontext.com:slovensko-participacia:participacia-read
+    - urn:ngsi-ld:Policy:joinedcontext.com:slovensko-participacia:participacia-statistika-read
+  slug: o6av726lj6atb4mn5o5ptnujabssdilo
+  audience: organization
+  enabledRepresentations: [ngsi-ld, websocket, ogc-features, mcp]

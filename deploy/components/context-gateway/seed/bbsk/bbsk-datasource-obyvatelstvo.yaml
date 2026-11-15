@@ -1,0 +1,16 @@
+# The resident-population cube of ŠÚ SR, the kraj and its 13 okresy, every year the cube carries. No key, CC-BY-SA-4.0 (the licence of the data.statistics.sk distribution in the national catalogue, not of the statdata.statistics.sk one, which is CC-BY-4.0).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-om7102rr
+  namespace: bbsk
+  title:
+    sk: Stav obyvateľstva (ŠÚ SR, om7102rr)
+    en: Resident population (ŠÚ SR, om7102rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/om7102rr/SK032,SK0321,SK0322,SK0323,SK0324,SK0325,SK0326,SK0327,SK0328,SK0329,SK032A,SK032B,SK032C,SK032D/*/IN010115/SPOLU?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

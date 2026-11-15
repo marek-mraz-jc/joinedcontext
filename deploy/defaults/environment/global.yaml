@@ -1,0 +1,446 @@
+---
+# Internal orchestration flag (do not edit here). Set by the dedicated entrypoints:
+#   ""         -> deploy everything in one pass (legacy single-instance behaviour)
+#   "operators"-> only the shared cluster operators (deployment/helmfile-operators.yaml)
+#   "instance" -> everything except the operators (deployment/helmfile-instance.yaml.gotmpl)
+deployLayer: ''
+
+global:
+  # The DNS domain for all services
+  # e.g. this would build the keycloak domain: idm.joinedcontext.test
+  domain: joinedcontext.test
+
+  # Unique identifier for this deployment instance (used as namespace and keycloak realm)
+  instanceSlug: dev
+
+  # The organization's own DNS name: the org-domain segment of every entity URN
+  # (urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}), which the Context Gateway checks on
+  # every write (PF-42). Not the platform's domain above.
+  orgDomain: joinedcontext.test
+
+  # Email of the initial user with admin rights
+  initialUserEmail: admin@joinedcontext.test
+  # Their Keycloak user id, which a production realm's seeded steward grants name (PF-126):
+  # the keycloak people Job creates the initial user with it. An instance whose owner already
+  # exists under another id sets that one here; the Job fails naming it until then.
+  initialUserId: 0a000000-0000-4000-8000-000000000001
+
+  # Whether `portal-approver` carries `mfa-required`, so every approver signs in with a one-time
+  # code (T-5120, AUT-2). `platform-admin` keeps it regardless. Only dev turns it off, by the
+  # owner's order of 2026-10-26 (T-5776); a production instance never does.
+  approverMfa: true
+
+  # The production guard (production-guard.yaml.gotmpl) judges every `profile: production`
+  # render; an instance that serves production hosts under another profile sets this (T-6720).
+  productionGuard: false
+
+  # RFC 9116 security.txt, served by the edge at /.well-known/security.txt on every host
+  # (T-1721, OPS-52): where a vulnerability is reported (`mailto:` or `https:`) and when the
+  # file stops being valid (RFC 3339, at most a year ahead). A production instance must set both.
+  securityTxt:
+    contact: ""
+    expires: ""
+
+  # The one repository that holds this installation's configuration (CC-02, CC-08). The Portal
+  # proposes and merges into it and the Context Gateway projects its endpoint table from a
+  # checkout of it, so both of them read the name from here rather than carrying one of their
+  # own (OPS-46). The gitea component creates it, and the organization above it, on the first
+  # apply; nothing else in the platform may assume a different name.
+  configRepo:
+    owner: joinedcontext
+    name: configuration
+    branch: main
+    # 1: every project lives under projects/{slug}/ of this repository. 2: this repository holds
+    # the organization and the registry projects/{slug}.yaml, and each project a repository of
+    # its own (ADR-N-029, CC-85); the Context Gateway then runs `jcctl checkouts` beside
+    # git-sync to keep every registered project checked out at its ref (CC-86, T-2646).
+    layout: 1
+
+  # Deployment profile: "development" or "production"
+  # Controls resource limits, replica counts, scaling
+  profile: development
+  # Which profile's values files the components read, when not the profile's own. A single-node
+  # production instance carrying dev's seeds (smartcity, T-4678) sets "development": dev's measured
+  # sizes and seeds, under the production profile's guards, accounts and test-object exclusions.
+  valuesProfile: ''
+  # The Keycloak id of the person who administers Decidim on a production-profile realm (T-6448):
+  # empty seeds nobody. An id of its own per instance, never a de300000- demo id.
+  participationStewardId: ''
+  # true seeds no TOTP for that person: they enrol their own device at first sign-in, as a
+  # production realm's people do (T-6448). false is for a test instance a script signs in to.
+  participationStewardEnrols: false
+  # The person agents sign in as where no demo people exist (T-6449); empty means none.
+  walkerUserId: ""
+  # The Keycloak id of the person the owner presents as (T-6542, components/keycloak/presenter.yaml):
+  # one id on dev, stage and prod; empty seeds nobody.
+  presenterUserId: ""
+
+  # Whether Helmfile should create the namespaces automatically
+  createNamespaces: true
+
+  # Namespace strategy:
+  #   true  = all components in a single namespace (e.g. "dev")
+  #   false = each component in its own namespace (e.g. "dev-postgres", "dev-keycloak")
+  singleNamespace: true
+
+  # Shared cluster operators (CloudNativePG).
+  # Enables running the operators ONCE per cluster while deploying arbitrarily
+  # many instances.
+  operators:
+    # Namespace for the shared cluster operators. Override it per environment by setting
+    # this key in deployment/environments/<env>/global.yaml.gotmpl; both the operator and
+    # the instance entrypoints read the same value, so they always agree.
+    #   "" (this default):
+    #     - multi-instance (deploy-operators / deploy-instance) -> resolves to the
+    #       built-in default namespace "jc-operators"
+    #     - legacy all-in-one deployment                        -> operators run in the
+    #       instance namespace (single-instance behaviour)
+    #   "<name>": use this exact namespace for the shared operators.
+    # With multiple instances on the cluster it must differ from every instanceSlug
+    # (else destroying that instance tears down the shared operators). For a single
+    # instance, setting it to that instanceSlug is fine (operators + instance in one namespace).
+    namespace: ''
+    # true -> operators watch ALL namespaces (CNPG clusterWide),
+    # so a single operator deployment serves every instance on the cluster.
+    # The operator entrypoint sets this automatically; leave it false here.
+    watchAllNamespaces: false
+
+  # The catalogue's Keycloak login (T-0403, OPS-26). It is a global flag and not a value of the
+  # component alone, because two files turn on together: the CKAN release, which loads
+  # `ckanext-oidc-pkce` and needs the image that carries it, and the NetworkPolicy that lets the
+  # catalogue reach the realm on 443. One is useless without the other.
+  ckan:
+    # On against `ghcr.io/marek-mraz-jc/joinedcontext-ckan` (components/ckan/images.yaml), which
+    # is public and pulls anonymously (T-0403). Turning this on against the stock image is a CKAN
+    # that never starts; the pair is checked by `test_the_plugin_list_and_the_image_cannot_disagree`.
+    sso: true
+    # DCAT-AP 3 on /catalog.ttl and /dataset/{id}.ttl for harvesters (T-3010). Same pairing as
+    # `sso`: `ckanext-dcat` is in images/ckan/Dockerfile, so this goes on together with the pin
+    # of an image built from it; `test_the_pinned_image_carries_every_listed_plugin` refuses
+    # the pair when they disagree.
+    dcat: true
+
+  # The Context Brokers beside `main` (ADR-N-046 §2.5, PF-110, T-3989). `main` is always there:
+  # today's release `context-broker-broker`, Service `context-broker`, database on the platform's
+  # postgres-cluster, sized by the profile. Each entry here adds a release `context-broker-{name}`
+  # with its own CloudNativePG cluster `context-broker-{name}-db`, generated credentials, Keycloak
+  # client and audience `context-broker-{name}`, NetworkPolicies and ServiceMonitor; the gateway
+  # and the Portal reach it at `http://context-broker-{name}.{namespace}.svc.cluster.local:8080`.
+  # `size` is a preset of components/context-broker/sizes.yaml (small, medium, large);
+  # `storageClass` empty takes storage.storageClass.rwo. A name is a DNS label of at most 16
+  # characters, neither `main` nor `broker`.
+  #   contextBrokers:
+  #     - name: archive
+  #       size: small
+  #       storageClass: ''
+  contextBrokers: []
+
+  # Further CKAN catalogues beside the default instance `catalogue` (T-4636), one per city. An entry
+  # names the instance and its host; each becomes a release, Secrets, databases and an edge route of
+  # its own (ckan-{name}, db-ckan-{name}, ckan_{name}, {subDomain}.{domain}), checked by
+  # catalogues-guard.yaml.gotmpl. The instance's words sit in `ckan.{name}`, shaped like
+  # `ckan.catalogue` (site, samples, languages, assistant, assistantSeed), and its publishers and
+  # sizes in components/ckan/values/{name}/; components/ckan/values/example-city is the example.
+  #   catalogues:
+  #     - name: example-city
+  #       subDomain: opendata
+  catalogues: []
+
+  # The Kubernetes API server's addresses as NetworkPolicy CIDRs (`kubectl get endpoints
+  # kubernetes`, one /32 per address): what a workload that calls the API on 6443 may reach.
+  # The default opens 6443 everywhere; an environment that knows its API server narrows it.
+  kubeApiCidrs: [0.0.0.0/0]
+
+  # Service mesh configuration
+  serviceMesh:
+    enable: true
+    type: linkerd
+    # Auto-inject Linkerd sidecars into namespaces
+    patchNamespaces: true
+    # mTLS enforcement level, applied as the namespace's Linkerd
+    # `config.linkerd.io/default-inbound-policy` annotation:
+    #   all-unauthenticated   - opportunistic mTLS (Linkerd default): meshed-to-meshed
+    #                           traffic is encrypted, but plaintext/unmeshed inbound is
+    #                           still accepted.
+    #   cluster-authenticated - mandatory mTLS: only authenticated, meshed clients from
+    #                           within this cluster may connect (recommended).
+    #   all-authenticated     - mandatory mTLS from any valid mesh identity.
+    #   audit                 - log-only; reports what *would* be denied without enforcing
+    #                           (use as a safe rollout step before switching to enforce).
+    # Kubelet liveness/readiness probes are auto-authorized by Linkerd regardless of this
+    # setting. Genuinely public/unmeshed edges (the APISIX data plane behind the ingress)
+    # are carved out explicitly via Linkerd `Server` policies, so mandatory mTLS does not
+    # break ingress.
+    defaultInboundPolicy: cluster-authenticated
+    # Whether the cluster's ingress controller may reach the APISIX data
+    # plane WITHOUT mTLS. This drives the `accessPolicy` of the APISIX `Server`:
+    #   true  - ingress is unmeshed; the data-plane edge is `all-unauthenticated`
+    #           so plaintext ingress traffic is accepted.
+    #   false - the ingress controller is meshed; ingress->APISIX is mTLS, so the
+    #           data-plane edge is `all-authenticated` and rejects plaintext (default).
+    # Defaults to mandatory mTLS on the ingress edge: the ingress controller
+    # must be meshed (Linkerd-injected). Environments with an unmeshed ingress
+    # (e.g. the CI vcluster, whose ingress lives in the host cluster) must override
+    # this to true.
+    allowUnauthenticatedIngress: false
+    # Requests and the memory limit of the injected linkerd-proxy, written by the prepare hook as
+    # the meshed namespace's config.linkerd.io/proxy-* annotations. Linkerd gives the same values
+    # to the linkerd-network-validator init container (partials/_network-validator.tpl reads
+    # proxy.resources), so both satisfy require-requests-limits. Measured on dev 2026-10-24: 35
+    # proxies use 274 MiB together, the largest 18Mi (context-broker) (T-5554). The request follows
+    # that measurement so the scheduler sees the proxies; the limit is Linkerd's own values-ha
+    # proxy limit, because an OOMKilled proxy cuts its pod off, and this default reaches every
+    # environment, production included. An empty value removes the annotation an earlier apply
+    # wrote, which leaves Linkerd's own default. A pod needing more sets the same annotation on
+    # its pod template. T-5897: 270 MiB over ~35 proxies on 2026-10-28 (7.7Mi mean), so the request is
+    # 16Mi, above all but the broker's proxy; 24Mi booked 840Mi for 270Mi used. 10Mi since the
+    # node must keep the largest rolling surge free (deployer 2026-10-28: a model-tools surge pod
+    # stayed Pending at 95 % booked): the mean plus 30 % sums to what the proxies use together,
+    # and a proxy above it only uses room the limit already gives it.
+    proxyResources:
+      cpuRequest: 10m
+      memoryRequest: 10Mi
+      memoryLimit: 250Mi
+
+  ingress:
+    # Whether this environment is published behind an ingress controller. Off by default:
+    # a cluster without one has nothing to issue the edge certificate for.
+    enabled: false
+    # Use your available cluster issuer for production, e.g. 'letsencrypt-prod'
+    clusterIssuer: 'selfsigned-ca'
+    ingressClass: 'nginx'
+    # A domain the edge is moving to: its hostnames are ordered from Let's Encrypt STAGING
+    # (HTTP-01, namespaced Issuer) before `domain` moves and production carries them.
+    stagingDomain: ''
+    # One certificate `*.apps.<domain>` by DNS-01 for every App host, so a published App answers
+    # at once (ADR-N-037 §6, T-3013). It needs the zone `apps.<domain>` delegated to Hetzner DNS
+    # and the operator-supplied Secret `tokenSecret` (key `token`, a Hetzner Cloud token of the
+    # project that holds that zone alone) in `certManagerNamespace`. Off: every App host gets a
+    # certificate of its own by HTTP-01.
+    appsWildcard:
+      enabled: false
+      certManagerNamespace: 'cert-manager'
+      tokenSecret: 'hetzner-dns'
+    # App hosts `{name}.apps.{domain}` the edge serves one by one when no Portal stamps them (jc,
+    # edge-session-design S4a): each gets an Ingress rule, TLS from Secret `app-{name}-tls` and a
+    # Certificate `app-{name}` by HTTP-01. jc-prod lists prod's App Ingresses so the copied
+    # certificates are served the second DNS moves. Empty renders nothing.
+    appHosts: []
+
+  # Storage class mappings (leave empty to use cluster defaults)
+  storage:
+    storageClass:
+      # ReadWriteOnce (databases)
+      rwo: ''
+      # ReadWriteMany (shared volumes, currently not used)
+      rwx: ''
+      # Local storage
+      loc: ''
+
+  # What this installation is called and what it looks like (OPS-46, UI-30).
+  # Every name, colour, logo and contact a user sees comes from here; no chart, image or
+  # template carries a city literal. The Portal serves it at GET /api/v1/branding and the
+  # CKAN theme renders the same block, so a rebrand is a values change and an apply.
+  # Colours are hex triplets or sextets: they reach a browser as CSS custom properties.
+  branding:
+    instanceName: joinedcontext
+    shortName: joinedcontext
+    city: ''
+    organisation: ''
+    orgDomain: ''
+    domain: ''
+    contactEmail: ''
+    licenseDefault: CC-BY-4.0
+    # File names, never URLs: both are served from the platform's own origin.
+    logo: ''
+    favicon: ''
+    # The logo file itself, so one values block carries the whole identity and every
+    # consumer (Portal, CKAN) mounts the same bytes. Empty means no logo.
+    logoSvg: ''
+    colours:
+      primary: '#1d4ed8'
+      secondary: '#0f766e'
+      accent: '#f59e0b'
+      background: '#ffffff'
+      text: '#0f172a'
+    fonts:
+      heading: system-ui, sans-serif
+      body: system-ui, sans-serif
+    languages:
+      default: en
+      offered:
+        - en
+    # The catalogue's own words (T-3009): the line under the name on its home page (empty is
+    # the theme's default, in the page's language) and its footer lines, one paragraph each,
+    # e.g. a demo disclaimer or an imprint.
+    tagline: ''
+    footerLines: []
+
+  # Prometheus metrics scraping
+  metrics:
+    enabled: false
+
+  # Kyverno runtime policy enforcement mode
+  # Audit: log violations only; Enforce: block violating resources
+  runtimePolicies:
+    enabled: true
+    failureAction: Enforce
+
+  # Code-branch previews in namespaces pv-{slug} (ADR-N-062, Deployment/17, T-5548). On, the
+  # postgres cluster refuses every pv_* role on any database but its own (pg_hba) and Keycloak
+  # and Postgres admit the preview namespaces' pods; `just dev-preview` refuses to start a
+  # preview where it is off. Only dev may turn it on, and the production guard refuses it; dev
+  # keeps it off while its Postgres has no room for the previews' connections (T-5548).
+  branchPreviews:
+    enabled: false
+
+# Which set of components to deploy (T-4856): `full` deploys the `components` list below (or
+# the environment's own); `minimal` and `broker-only` deploy their list in `componentProfiles`
+# instead, so a small node gets a small platform without an edited list. Measured footprints:
+# docs Deployment/ "Component profiles".
+componentProfile: full
+componentProfiles:
+  # The platform people log in to: the broker behind the Portal, Keycloak and the APISIX edge,
+  # with the NetworkPolicies, the Kyverno runtime policies and TLS at the edge kept. Without the
+  # forge, pipelines, gateway, MQTT, model tools, catalogue and monitoring.
+  minimal:
+    - prepare
+    - secrets
+    - networkpolicies
+    - runtime-policies
+    - postgres
+    - keycloak
+    - apisix
+    - context-broker
+    - portal
+  # A bare NGSI-LD broker on its database. Nothing authenticates a request in front of it: the
+  # broker has no Service outside the cluster and its NetworkPolicies admit no client namespace,
+  # so it answers only `kubectl port-forward` or a workload the operator lets in.
+  broker-only:
+    - prepare
+    - secrets
+    - networkpolicies
+    - postgres
+    - context-broker
+# What a profile changes besides the list: sizes for the smaller node it is for, merged under
+# the environment's values (an environment that sets the same key keeps its own). Each part's
+# `rawValues` is merged last into that release's values.
+componentProfileValues:
+  # For a 4 GB node. One CloudNativePG instance holds the three databases of Keycloak, the
+  # Portal and the broker; it keeps the development max_connections 55, whose worst case
+  # (tests/test_postgres_memory_budget.py) needs the 2Gi limit, and asks for less of it.
+  minimal:
+    postgres:
+      cluster:
+        rawValues:
+          cluster:
+            resources:
+              requests: {memory: 768Mi}
+    context-broker:
+      broker:
+        rawValues:
+          resources:
+            requests: {memory: 256Mi}
+    # The development 576Mi is dev's Portal with ~500 pipelines and the runner's metrics to
+    # read (T-5282); without pipelines it held about 300Mi (T-5113).
+    portal:
+      portal:
+        rawValues:
+          resources:
+            requests: {memory: 320Mi}
+  # For a 1 GB node: the operator, one database and the broker ask for 512Mi together. 16
+  # connections are the broker's pool of 10, CloudNativePG's 3 reserved ones and 3 spare; with
+  # 64MB shared buffers and two autovacuum workers the worst case is about 700MiB, under 80 %
+  # of the 1Gi limit.
+  broker-only:
+    postgres:
+      cluster:
+        rawValues:
+          cluster:
+            resources:
+              requests: {cpu: 50m, memory: 256Mi}
+              limits: {memory: 1Gi}
+            postgresql:
+              parameters:
+                max_connections: "16"
+                shared_buffers: "64MB"
+                autovacuum_max_workers: "2"
+    context-broker:
+      broker:
+        rawValues:
+          resources:
+            requests: {memory: 128Mi}
+            limits: {memory: 512Mi}
+          env:
+            ANTARES_PG_POOL: "10"
+            # No gateway forwards a verified caller here, so the joinedcontext engine would refuse
+            # every request as the cluster's own (403 AccessDenied, ci-full 39537767356). The
+            # broker's stock engine and the NGSI-LD API alone (`admin` = health and metrics):
+            # the NetworkPolicies are the access control of this profile.
+            ANTARES_POLICY: "allow-all"
+            ANTARES_API_SURFACES: "admin"
+# The components each one cannot run without. A render whose component list (any profile, an
+# environment's own list included) deploys one of these keys without all of its values fails.
+componentDependencies:
+  postgres: [secrets]
+  keycloak: [postgres, secrets]
+  apisix: [keycloak, secrets]
+  context-broker: [postgres, secrets, networkpolicies]
+  portal: [postgres, keycloak, apisix, context-broker, secrets]
+  gitea: [postgres, keycloak, apisix]
+  gitea-runner: [gitea]
+  context-gateway: [context-broker, keycloak]
+  mqtt-brokers: [context-gateway, pipeline-runner]
+  observability: [portal, keycloak]
+  # Its one caller (networkpolicies.yaml, meshAuthorization) is jc's pod.
+  embedder: [jc, networkpolicies]
+  # Its one caller is jc's Portal (networkpolicies.yaml, meshAuthorization), which proxies each App host.
+  app-pods: [jc, networkpolicies]
+
+# List of components to deploy (order matters for dependencies)
+# To "disable" a component, remove it from the list.
+# To add custom components/addons, add them to the list.
+# This is not under the "global" key, but its own root key!
+components:
+  - prepare
+  - secrets
+  - networkpolicies
+  - runtime-policies
+  - postgres
+  # The S3 API for everything the platform renders: schemas, compiled mappings, dumps, export
+  # bundles, app builds and the gateway's file cache (PF-29, PF-30, Architecture/17).
+  - artifact-store
+  - keycloak
+  - apisix
+  # After Keycloak and the edge: the forge's init registers its OIDC login against
+  # idm.<domain> through APISIX (`gitea admin auth add-oauth` fetches the discovery document),
+  # and a fresh cluster has neither yet (T-0653). Still before the two components that read a
+  # token it mints: its bootstrap Job creates the configuration repository and writes
+  # `gitea-token-portal` and `gitea-token-gateway`, and a pod whose `secretKeyRef` names a
+  # Secret that does not exist yet stays in CreateContainerConfigError until it does. It
+  # recovers on its own, but a first apply that looks broken for a minute is a first apply
+  # people debug.
+  - gitea
+  # The forge's Actions runner (ADR-N-028): after the forge, whose bootstrap Job writes the
+  # registration token it starts with.
+  - gitea-runner
+  - context-broker
+  - pipeline-runner
+  - context-gateway
+  # The MQTT edge brokers (ADR-N-048): after the gateway, whose CONNECT check they call, and
+  # the runner, the one client of their internal listener.
+  - mqtt-brokers
+  # The generator behind the LinkML editor; before the portal, which takes its address.
+  - model-tools
+  - portal
+  # After the portal: the collector posts activity events to it and takes its token from
+  # Keycloak, so both have to exist before it is worth starting.
+  - observability
+  # Ships the audit stream of the gateway, Keycloak and the forge to append-only storage
+  # (OPS-42). It reads the node's log files, so it needs nothing above it to be running.
+  - audit-logging
+  # Deletes sandbox namespaces past their Time-To-Live (OPS-44, PF-19). It reads namespaces
+  # rather than any component above it, so its position in this list does not matter.
+  - sandbox-reaper
+  # Last on purpose: it scrapes the components above, so it is rendered once they are known.
+  - monitoring

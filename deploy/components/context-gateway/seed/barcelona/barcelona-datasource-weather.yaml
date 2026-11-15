@@ -1,0 +1,21 @@
+# Open Data BCN's daily weather file of 2026 (dataset mesures-estacions-meteorologiques, CC BY 4.0,
+# from the Catalan weather service Meteocat): every day, station and variable since 1 January,
+# rewritten every night at about 03:00 UTC. One resource per year: move the id to the new year's
+# 2027_MeteoCat_Detall_Estacions.csv in January (the run fails as stale until then). About 450 KB in
+# October; the mapping refuses more than 2 MiB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-weather
+  namespace: barcelona
+  title:
+    ca: Estacions meteorològiques, dades diàries (Open Data BCN)
+    es: Estaciones meteorológicas, datos diarios (Open Data BCN)
+    en: Weather stations, daily data (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/dataset/cf1de5ca-9d1c-424c-9543-8ab23e7f478e/resource/34726b8b-c1ea-44aa-adcd-1820a7bf9b24/download
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 30s

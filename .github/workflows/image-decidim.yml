@@ -1,0 +1,85 @@
+name: image-decidim
+# The participation platform image: stock Decidim plus the realm sign-in (T-6316, ADR-N-065).
+# The repository is public, so its minutes are not metered (T-3289).
+on:
+  # Dispatch only until the cut-over (T-6988): the deployment repository still builds these images,
+  # and the owner first grants this repository write access to the ghcr package. Then the two
+  # commented triggers come back.
+  workflow_dispatch:
+  # push: { branches: [jc-portal-1], paths: ["deploy/images/decidim/**", ".github/workflows/image-decidim.yml"] }
+  # schedule: [{ cron: "30 4 1 * *" }]
+permissions: { contents: read }
+concurrency: { group: "image-decidim", cancel-in-progress: true }
+jobs:
+  build:
+    # the one job that pushes and signs (keyless) holds the two publish grants (T-5564)
+    permissions: { contents: read, packages: write, id-token: write }
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      # Built into the runner's Docker first and scanned there: an image that fails the HIGH and
+      # CRITICAL gate never reaches the registry, signed or not.
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: deploy/images/decidim
+          file: deploy/images/decidim/Dockerfile
+          load: true
+          tags: joinedcontext-decidim:scan
+          # No cache: the generator, `apt-get upgrade` and `bundle lock --update` layers must read today's
+          # archive and today's gem index, never a cached layer (T-5372).
+          no-cache: true
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: joinedcontext-decidim:scan
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+      # The same builder holds every layer of the scanned build, so this push reuses them all
+      # and publishes the image just scanned, with provenance and BuildKit's SBOM.
+      - id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: deploy/images/decidim
+          file: deploy/images/decidim/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/joinedcontext-decidim:0.32.2
+            ghcr.io/${{ github.repository_owner }}/joinedcontext-decidim:${{ github.sha }}
+          provenance: true
+          sbom: true
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      # Signed like every image this platform deploys: the cluster's policy verifies the
+      # signature, so an unsigned image would be refused at admission (OPS-27).
+      - run: cosign sign --yes ghcr.io/${{ github.repository_owner }}/joinedcontext-decidim@${{ steps.push.outputs.digest }}
+      # OPS-41 asks for the bill of materials in CycloneDX; `sbom: true` above attaches
+      # BuildKit's SPDX one. The CycloneDX document is read off the pushed digest and attested
+      # to it, because an uploaded artifact expires and an attestation travels with the image
+      # (T-2412).
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: "ghcr.io/${{ github.repository_owner }}/joinedcontext-decidim@${{ steps.push.outputs.digest }}"
+          format: cyclonedx
+          output: sbom.cdx.json
+      - run: cosign attest --yes --type cyclonedx --predicate sbom.cdx.json ghcr.io/${{ github.repository_owner }}/joinedcontext-decidim@${{ steps.push.outputs.digest }}
+      # Read back what was just attested, by the same digest and under the identity of this
+      # workflow: a lane that stops attesting, or attests under another identity, goes red here
+      # instead of publishing an image nothing describes.
+      - run: |
+          cosign verify-attestation --type cyclonedx \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/image-decidim.yml@${{ github.ref }}" \
+            "ghcr.io/${{ github.repository_owner }}/joinedcontext-decidim@${{ steps.push.outputs.digest }}" > /dev/null
+      # The digest to pin in components/decidim/images.yaml (web and sidekiq); nothing deploys until it is pinned.
+      - run: |
+          {
+            echo "pin this in components/decidim/images.yaml (web and sidekiq):"
+            echo '```yaml'
+            echo "    repository: 'ghcr.io/${{ github.repository_owner }}/joinedcontext-decidim'"
+            echo "    tag: '0.32.2'"
+            echo "    digest: '${{ steps.push.outputs.digest }}'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

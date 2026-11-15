@@ -1,0 +1,255 @@
+{
+  "uid": "project-bbsk",
+  "title": "BBSK ukazovatele",
+  "description": "Published indicators of the region, read through its Endpoint with your own rights.",
+  "tags": [
+    "project",
+    "bbsk",
+    "ngsi-ld"
+  ],
+  "schemaVersion": 39,
+  "editable": false,
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "refresh": "1h",
+  "timezone": "browser",
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Obyvateľstvo",
+      "description": "Trvale bývajúce obyvateľstvo na konci obdobia, kraj a okresy. Endpoint bbsk-kpi, verejný.",
+      "type": "table",
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "bbsk-kpi"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "bbsk-kpi"
+          },
+          "queryType": "entity",
+          "format": "table",
+          "entityType": "KeyPerformanceIndicator",
+          "attributes": [
+            "title",
+            "currentValue"
+          ],
+          "lang": "sk",
+          "limit": 100,
+          "idPattern": ".*:obyvatelstvo-stav-.*",
+          "customQuery": "currentValue>=0"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "id": true,
+              "type": true,
+              "observedAt": true
+            },
+            "indexByName": {
+              "title": 0,
+              "currentValue": 1
+            },
+            "renameByName": {
+              "title": "Územie",
+              "currentValue": "Obyvatelia"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "–"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Územie"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^.*, ([^,]+)$",
+                      "result": {
+                        "text": "$1",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Obyvatelia"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Obyvatelia",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "title": "Emisie tuhých látok, t/km²",
+      "description": "Emisie tuhých znečisťujúcich látok na km², kraj a okresy. Endpoint bbsk-kpi, verejný.",
+      "type": "table",
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "bbsk-kpi"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "bbsk-kpi"
+          },
+          "queryType": "entity",
+          "format": "table",
+          "entityType": "KeyPerformanceIndicator",
+          "attributes": [
+            "title",
+            "currentValue"
+          ],
+          "lang": "sk",
+          "limit": 100,
+          "idPattern": ".*:emisie-tuhe-km2-.*",
+          "customQuery": "currentValue>=0"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "id": true,
+              "type": true,
+              "observedAt": true
+            },
+            "indexByName": {
+              "title": 0,
+              "currentValue": 1
+            },
+            "renameByName": {
+              "title": "Územie",
+              "currentValue": "t/km²"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "–"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Územie"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^.*, ([^,]+)$",
+                      "result": {
+                        "text": "$1",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "t/km²"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "t/km²",
+            "desc": true
+          }
+        ]
+      }
+    }
+  ]
+}

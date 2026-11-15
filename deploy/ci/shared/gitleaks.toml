@@ -1,0 +1,51 @@
+# The secret patterns every repository of the platform is scanned for (OPS-37, CC-06, TS-24).
+# `useDefault` keeps gitleaks' own ruleset and adds the four shapes this platform produces and
+# its own rules would otherwise miss.
+#
+# The copy embedded in `.github/workflows/reusable-gitleaks.yml` is generated from this file
+# and `tests/test_reusable_workflows.py` fails when the two drift.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "jc-keycloak-client-secret"
+description = "Keycloak client secret"
+# Keycloak writes client secrets as a 32-character UUID-shaped or base64 string. Every one of
+# them belongs in a Secret the reconciler resolves by `secretRef`, never in Git (CC-06).
+regex = '''(?i)client[_-]?secret["'\s:=]+([A-Za-z0-9_\-+/]{20,})'''
+secretGroup = 1
+keywords = ["client_secret", "clientSecret", "client-secret"]
+
+[[rules]]
+id = "jc-argon2id-hash"
+description = "Argon2id password hash"
+# A hash is not a password, but the ones this platform writes are Keycloak and Gitea admin
+# credentials at rest, and an offline attack on a committed hash is a real attack.
+regex = '''\$argon2id\$v=\d+\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+'''
+keywords = ["argon2id"]
+
+[[rules]]
+id = "jc-age-secret-key"
+description = "age secret key (SOPS)"
+# The SOPS identity that decrypts every environment secret of a deployment.
+regex = '''AGE-SECRET-KEY-1[0-9A-Z]{58}'''
+keywords = ["AGE-SECRET-KEY-1"]
+
+[[rules]]
+id = "jc-jwt-bearer-token"
+description = "JWT bearer token"
+# An audience-bound access token is short-lived, and a committed one is still a live
+# credential for as long as it lives, plus a map of the claims the issuer hands out.
+regex = '''eyJ[A-Za-z0-9_\-=]{8,}\.eyJ[A-Za-z0-9_\-=]{8,}\.[A-Za-z0-9_\-+/=]{8,}'''
+keywords = ["eyJ"]
+
+# The Smart Data Model pins of the open-data seed are public git commits of smart-data-models;
+# gitleaks' generic-api-key rule takes one for a key because its JSON key names a model with
+# "Key" in it (dataModel.KeyPerformanceIndicator in scripts/open-data/sdm/pins.json, T-4341).
+# Allowed only as that whole line, a `"dataModel.<name>": "<40-hex commit>"` pin: any other value
+# on such a line, a commit-shaped value under any other key, and every other line are scanned as
+# before. (A `paths` + `regexes` AND allowlist let any value of the file through in v8.29.0.)
+[[allowlists]]
+description = "SDM commit pins"
+regexTarget = "line"
+regexes = ['''^\s*"dataModel\.[A-Za-z0-9-]+": "[0-9a-f]{40}",?\s*$''']

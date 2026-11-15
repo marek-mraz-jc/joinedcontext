@@ -1,0 +1,4 @@
+---
+artifact-store:
+  store:
+    chart: charts/rustfs

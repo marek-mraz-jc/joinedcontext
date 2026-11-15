@@ -1,0 +1,160 @@
+---
+# A dashboard viewer reads one Prometheus, talks to one identity provider, and reads project
+# Endpoints through the gateway, and that is the whole of its network life. Ingress: APISIX, which
+# is the only way in. Egress: Prometheus, Keycloak, the gateway and DNS. It has no database, reads
+# no other component's API, and reaches nothing outside the cluster (OPS-38).
+grafana:
+  podSelector:
+    app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # CoreDNS. Every rule below names a Service, and a Service name is worth nothing
+    # without this one.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The Prometheus that scrapes this installation: by the pod label its Operator sets, in the
+    # one namespace grafana.grafana.prometheusNamespace names.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: grafana.grafana.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 9090
+    # The code exchange and the userinfo call, in-cluster. The browser's own hop to the
+    # realm goes through the edge and never through this pod.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# The project dashboards' reads (T-6504): the datasource proxy, with the person's own token. Plain
+# rule: this is the only component a project datasource may address.
+grafana-egress-to-gateway:
+  podSelector:
+    app.kubernetes.io/name: grafana
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# The gateway lists its callers by name too.
+context-gateway-from-grafana:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# Keycloak lists its callers by name, and Grafana is one.
+keycloak-from-grafana:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# The Portal saves a person's visualization through the admin API (T-6509). Both directions are
+# named: the Portal's egress is default-deny too.
+grafana-from-portal:
+  podSelector:
+    app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 3000
+
+portal-egress-to-grafana:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - protocol: TCP
+          port: 3000
+
+# The edge side of the ingress rule above. APISIX runs under a default-deny egress of its own
+# and its component names only the upstreams that ship with every installation; an addon
+# brings its own line. Without it the route resolves, the connection is dropped on the way
+# out, and the edge answers 504 while the pod is 1/1 and healthy (T-0419).
+apisix-egress-to-grafana:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - protocol: TCP
+          port: 3000

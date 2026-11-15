@@ -1,8 +1,9 @@
 #!/bin/sh
-# Writes the jc pin (deploy-pin.yml) into the deployment repository: components/jc/images.yaml
-# `jc.server` set to IMAGE@DIGEST of commit SHA, committed on pin/jc-<sha> (pin-proof/jc-<sha>
-# for a ship-proof/** BRANCH) on top of DEPLOY_BASE, pushed, and for main a pull request opened.
-#   SHA= DIGEST= IMAGE= BRANCH= DEPLOYMENT=<owner/repo> DEPLOY_BASE= PIN_TOKEN= sh deploy-pin.sh
+# Writes the jc pin (deploy-pin.yml) into the repository DEPLOYMENT: PIN_PATH (its images.yaml,
+# default components/jc/images.yaml) `jc.server` set to IMAGE@DIGEST of commit SHA, committed on
+# pin/jc-<sha> (pin-proof/jc-<sha> for a ship-proof/** BRANCH) on top of DEPLOY_BASE, pushed, and
+# for main a pull request opened.
+#   SHA= DIGEST= IMAGE= BRANCH= DEPLOYMENT=<owner/repo> DEPLOY_BASE= PIN_PATH= PIN_TOKEN= sh deploy-pin.sh
 #   sh deploy-pin.sh --selftest
 set -eu
 
@@ -47,10 +48,12 @@ case "$BRANCH" in
   *) echo "::error::no pin for branch $BRANCH"; exit 1 ;;
 esac
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
+PIN_PATH=${PIN_PATH:-components/jc/images.yaml}
+case "$PIN_PATH" in /* | *..*) echo "::error::PIN_PATH '$PIN_PATH' is no path inside the repository"; exit 1 ;; esac
 if [ -z "${PIN_TOKEN:-}" ]; then
   {
     echo "### jc $short is signed and scanned, but not pinned"
-    echo "The secret DEPLOY_PIN_TOKEN is not set. Pin by hand in $DEPLOYMENT components/jc/images.yaml:"
+    echo "The secret DEPLOY_PIN_TOKEN is not set. Pin by hand in $DEPLOYMENT $PIN_PATH:"
     # shellcheck disable=SC2016
     printf '```yaml\njc:\n  server:\n    repository: %s\n    tag: main\n    digest: %s\n```\n' "'$IMAGE'" "'$DIGEST'"
   } >> "$summary"
@@ -59,10 +62,12 @@ if [ -z "${PIN_TOKEN:-}" ]; then
 fi
 auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PIN_TOKEN" | base64 -w0)"
 work=$(mktemp -d)
-git -c http.extraheader="$auth" clone -q --depth 1 --branch "$DEPLOY_BASE" "https://github.com/$DEPLOYMENT.git" "$work"
+# only the one file: the repository is large
+git -c http.extraheader="$auth" clone -q --depth 1 --filter=blob:none --sparse --branch "$DEPLOY_BASE" "https://github.com/$DEPLOYMENT.git" "$work"
 cd "$work"
-[ -f components/jc/images.yaml ] || { echo "::error::$DEPLOYMENT $DEPLOY_BASE has no components/jc/images.yaml"; exit 1; }
-pin components/jc/images.yaml "$IMAGE" "$DIGEST" "$SHA"
+git sparse-checkout set --no-cone "/$PIN_PATH"
+[ -f "$PIN_PATH" ] || { echo "::error::$DEPLOYMENT $DEPLOY_BASE has no $PIN_PATH"; exit 1; }
+pin "$PIN_PATH" "$IMAGE" "$DIGEST" "$SHA"
 if git diff --quiet; then
   echo "::notice::$DEPLOYMENT $DEPLOY_BASE already pins $DIGEST"
   exit 0
@@ -71,7 +76,7 @@ git config user.name "deploy-pin"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git checkout -q -b "$pin_branch"
 git commit -q -m "Pin jc $short ($DIGEST) for dev: signed by the monorepo's image.yml, scanned by image-scan.yml" \
-  -m "ci: ${CI_URL:-}" -m "pin: ${RUN_URL:-}" -- components/jc/images.yaml
+  -m "ci: ${CI_URL:-}" -m "pin: ${RUN_URL:-}" -- "$PIN_PATH"
 git -c http.extraheader="$auth" push -q origin "HEAD:refs/heads/$pin_branch"
 echo "pushed $DEPLOYMENT $pin_branch" | tee -a "$summary"
 if [ "$BRANCH" = main ]; then

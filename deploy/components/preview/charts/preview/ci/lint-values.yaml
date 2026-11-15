@@ -1,0 +1,5 @@
+# What helm lint renders in ci.yml: a slug and two pinned images, as `just dev-preview` passes them.
+slug: lint
+images:
+  portal: ghcr.io/marek-mraz-jc/joinedcontext-portal@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  portalUi: ghcr.io/marek-mraz-jc/joinedcontext-portal-ui@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

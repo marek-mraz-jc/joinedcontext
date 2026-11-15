@@ -1,0 +1,101 @@
+---
+component: gitea
+parts:
+  - name: forge
+  # After the forge, because it talks to it. `needs` is the ordering; the Job's own wait loop
+  # only covers the gap between a ready Deployment and a Gitea that has finished migrating.
+  # The sample applications' files, a release of their own so the bootstrap's stays under Helm's
+  # 1 MiB (T-3175); before the bootstrap, whose Job mounts them. Four releases, each app in the
+  # one its name hashes to (values/sample-apps), since seven apps already filled one (T-3333) and
+  # sixteen filled the first of three (T-3393), and the third outgrew its Secret once its Apps
+  # carried a server (T-3350): its odd ones moved to -5. The second outgrew it the same way when
+  # the Apps gained roles and history (T-4195): its odd ones moved to -6, and -4's split by the
+  # hash's third digit into -7.
+  # In order, so an app that moves is deleted by the release it left before the next creates it.
+  - name: sample-apps
+  - name: sample-apps-2
+    valuesFrom: sample-apps
+    needs:
+      - gitea.sample-apps
+  - name: sample-apps-3
+    valuesFrom: sample-apps
+    needs:
+      - gitea.sample-apps-2
+  - name: sample-apps-4
+    valuesFrom: sample-apps
+    needs:
+      - gitea.sample-apps-3
+  - name: sample-apps-5
+    valuesFrom: sample-apps
+    needs:
+      - gitea.sample-apps-4
+  - name: sample-apps-6
+    valuesFrom: sample-apps
+    needs:
+      - gitea.sample-apps-5
+  - name: sample-apps-7
+    valuesFrom: sample-apps
+    needs:
+      - gitea.sample-apps-6
+  # The projects' seed out of the bootstrap's release for the same reason (T-3998), packed by
+  # size into these sixteen (values/seed-layout.tpl, T-4431; eleven since T-5364, twelve since T-5254, fourteen since T-5332, fifteen since the 2026-10-24 seed train, sixteen since T-5429).
+  - name: seed
+  - name: seed-2
+    valuesFrom: seed
+  - name: seed-3
+    valuesFrom: seed
+  - name: seed-4
+    valuesFrom: seed
+  - name: seed-5
+    valuesFrom: seed
+  - name: seed-6
+    valuesFrom: seed
+  - name: seed-7
+    valuesFrom: seed
+  - name: seed-8
+    valuesFrom: seed
+  - name: seed-9
+    valuesFrom: seed
+  - name: seed-10
+    valuesFrom: seed
+  - name: seed-11
+    valuesFrom: seed
+  - name: seed-12
+    valuesFrom: seed
+  - name: seed-13
+    valuesFrom: seed
+  - name: seed-14
+    valuesFrom: seed
+  - name: seed-15
+    valuesFrom: seed
+  - name: seed-16
+    valuesFrom: seed
+  # Its post-upgrade Job pushes six projects' seeds and the sample apps: 6 min 45 s on
+  # 2026-10-07, past Helm's 300 s default, which failed an apply whose Job then succeeded (T-3207).
+  - name: bootstrap
+    timeout: 900
+    needs:
+      - gitea.forge
+      - gitea.sample-apps
+      - gitea.sample-apps-2
+      - gitea.sample-apps-3
+      - gitea.sample-apps-4
+      - gitea.sample-apps-5
+      - gitea.sample-apps-6
+      - gitea.sample-apps-7
+      - gitea.seed
+      - gitea.seed-2
+      - gitea.seed-3
+      - gitea.seed-4
+      - gitea.seed-5
+      - gitea.seed-6
+      - gitea.seed-7
+      - gitea.seed-8
+      - gitea.seed-9
+      - gitea.seed-10
+      - gitea.seed-11
+      - gitea.seed-12
+      - gitea.seed-13
+      - gitea.seed-14
+      - gitea.seed-15
+      - gitea.seed-16

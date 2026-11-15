@@ -1,0 +1,30 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Minimal Resources
+# - [x] Minimal storage -> stateless gateway
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    # T-4473: dev, kubectl top 2026-10-17 21:22-22:22Z: median 387, peak 555Mi for the pod, 64Mi of it the sidecar's request.
+    memory: 384Mi
+  limits:
+    cpu: '1'
+    # 512Mi was OOMKilled at a measured 422 MB steady peak plus every broker rollout's read burst
+    # (T-4077), before the WebSocket fan-out keeps entities in memory (T-4133); production has 2Gi.
+    memory: 1Gi
+
+# The fan-out's entity table per Endpoint (ADR-N-049 2.2): dev holds a fifth of the 50,000
+# default; an evicted entity that changes again only counts as new.
+env:
+  JC_GATEWAY_WS_ENTITIES: "10000"
+  # glibc keeps up to 8 malloc arenas per core, and a tokio service holds freed memory in them;
+  # two arenas trade a little allocation contention for that memory (T-4351, measured on dev).
+  MALLOC_ARENA_MAX: "2"
+
+# The endpoint table comes out of the forge's repository (base-values, T-0278); the demo
+# manifests it serves are the seed the forge bootstrap commits (seed/helsinki, seed/banskabystrica).

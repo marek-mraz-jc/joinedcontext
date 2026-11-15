@@ -1,0 +1,15 @@
+---
+{{ '{{' }}- $this := .Values.{{ componentVariableName }}.{{ release }} {{ '}}' }}
+{%- raw %}
+{{- $global := .Values.global }}
+{%- endraw %}
+# Checklist:
+# - [ ] Containers run as non-root with `readOnlyRootFilesystem`
+# - [ ] Health probes
+# - [ ] Graceful shutdown
+# - [ ] Standard labels
+# - [ ] ServiceAccount with least privilege where required
+# - [ ] Named ports
+# - [ ] Ingress with TLS
+
+# TODO: set helm values for {{ release }} here

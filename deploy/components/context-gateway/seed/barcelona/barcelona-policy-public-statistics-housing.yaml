@@ -1,0 +1,34 @@
+# Public read of the housing and households statistics (T-5266): the indicators whose id carries the
+# theme `housing`, current and history: all ten years the space keeps, one row per published period.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-statistics-housing
+  namespace: barcelona
+  title:
+    ca: 'Lectura pública: estadístiques, habitatge i llars'
+    es: 'Lectura pública: estadísticas, vivienda y hogares'
+    en: 'Public read: housing and households statistics'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  temporalQ: timerel=after;timeAt=P-3650D
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:barcelona:stat-housing-[A-Za-z0-9._-]+$

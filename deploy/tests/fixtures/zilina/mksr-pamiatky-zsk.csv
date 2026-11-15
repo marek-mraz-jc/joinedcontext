@@ -1,0 +1,111 @@
+_id,Okres,Obec,Katastrálne územie,Unifikovaný názov NNKP,Zaužívaný názov NNKP,Č. ÚZPF NNKP,Index PO,Unifikovaný názov PO,Bližšie určenie PO,Adresa,Súpisné číslo,Orientačné číslo,Čísla parciel,Vznik,Prevládajúci sloh,Autor,Chránený celok,Vlastnícka forma názov
+1654,Žilina,Žilina,Bánová,KAŠTIEĽ,kaštieľ,1316,1,KAŠTIEĽ,"blokový,solitér",Sv.Jána Bosca nám.,1,1,"408,418,419,420,421,422,423,424,425,426,427",1.pol.19.st.,klasicizmus,,,Súkromné vlastníctvo občanov
+1655,Žilina,Žilina,Bánová,SÚSOŠIE NA STĹPE,Trojičný stĺp,1317,1,STĹP S ARCHITEKTÚROU,,,,,1,1821,klasicizmus,,,Vlastníctvo cirkvi a cirk. organizácií
+1656,Žilina,Žilina,Bánová,SÚSOŠIE NA STĹPE,Trojičný stĺp,1317,2,SÚSOŠIE,sv.Trojica,,,,1,1821,klasicizmus,,,Vlastníctvo cirkvi a cirk. organizácií
+1657,Žilina,Žilina,Bánová,SÚSOŠIE NA STĹPE,Trojičný stĺp,1317,3,SOCHA,sv.Florián,,,,1,1821,klasicizmus,,,Vlastníctvo cirkvi a cirk. organizácií
+1658,Žilina,Žilina,Bytčica,KOSTOL,kostol sv.Imricha,1328,1,KOSTOL,r.k.sv.Imricha,Hlavná ul.,410,13,1,1844,klasicizmus,,,Vlastníctvo cirkvi a cirk. organizácií
+1659,Žilina,Žilina,Bytčica,KAŠTIEĽ S AREÁLOM,kaštieľ Bytčica,1329,1,KAŠTIEĽ,,Dlhá ul.,"605,625",3,343,2/4 17.st.,renesancia,,,Spoločnosť s ručením obmedzeným
+1660,Žilina,Žilina,Bytčica,KAŠTIEĽ S AREÁLOM,kaštieľ Bytčica,1329,2,PARK,,Dlhá ul.,,,"341,345-pozemok,347-pozemok,348,349",,,,,Spoločnosť s ručením obmedzeným
+1661,Žilina,Žilina,Bytčica,KAŠTIEĽ S AREÁLOM,kaštieľ Bytčica,1329,3,STAVBA HOSPODÁRSKA,murovaná+liatina,Dlhá ul.,623,2,344,19./20.st.,hrazdená architektúra,,,Spoločnosť s ručením obmedzeným
+1662,Žilina,Žilina,Bytčica,KAŠTIEĽ S AREÁLOM,kaštieľ Bytčica,1329,4,OPLOTENIE-FRAGMENT,kamenné,Dlhá ul.,,,349,19./20.st.,,,,Spoločnosť s ručením obmedzeným
+1663,Žilina,Žilina,Bytčica,KAŠTIEĽ,kaštieľ,1330,1,KAŠTIEĽ,"blokový,solitér",Dlhá ul.,6,9,369,1.pol.19.st.,klasicizmus,,,Súkromné vlastníctvo občanov
+1664,Žilina,Žilina,Trnové,KOSTOL DREVENÝ,kostol sv.Juraja,1384,1,KOSTOL DREVENÝ,r.k.sv.Juraja,Cintorínska ul.,,,1275,1615,renesancia,,,Vlastníctvo cirkvi a cirk. organizácií
+1665,Žilina,Žilina,Žilina,KOSTOL A ZVONICA,kostol sv.Trojice,1393,1,KOSTOL,r.k.sv.Trojice,Horný val,215,1,1,1.pol.15.st.,gotika,,MPR,Vlastníctvo cirkvi a cirk. organizácií
+1666,Žilina,Žilina,Žilina,KOSTOL A ZVONICA,kostol sv.Trojice,1393,2,ZVONICA,,Horný val,,0,2,1530,renesancia,,MPR,Vlastníctvo cirkvi a cirk. organizácií
+1683,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1406,1,DOM MEŠTIANSKY,radový,Mariánske nám.,189,16,221,14.-15.st.,stredovek,,MPR,Akciová spoločnosť
+1667,Žilina,Žilina,Žilina,KLÁŠTOR FRANTIŠKÁNOV,konzervatórium,1394,1,KONVENT FRANTIŠKÁNOV,,Hurbanova ul.,343,12,"1295/1,1295/2,1295/3,1295/4",1730-1734,barok,,,Vlastníctvo cirkvi a cirk. organizácií
+1668,Žilina,Žilina,Žilina,KLÁŠTOR FRANTIŠKÁNOV,konzervatórium,1394,2,KOSTOL,r.k.sv.Barbory,Hurbanova ul.,342,14,1294,1723-1728,barok,,,Vlastníctvo cirkvi a cirk. organizácií
+1669,Žilina,Žilina,Žilina,KLÁŠTOR JEZUITOV,jezitský kláštor,1395,1,KLÁŠTOR JEZUITOV,,Mariánske nám.,158,23,229/1-2,1743,barok,,MPR,Vlastníctvo cirkvi a cirk. organizácií
+1670,Žilina,Žilina,Žilina,KLÁŠTOR JEZUITOV,jezitský kláštor,1395,2,KOSTOL,r.k.sv.Pavla,Mariánske nám.,159,23,228,1743,barok,,MPR,Vlastníctvo cirkvi a cirk. organizácií
+1671,Žilina,Žilina,Žilina,SOCHA NA STĹPE,Mariánsky stĺp,1396,1,STĹP S RELIÉFOM,"valcový,sv.Florián",Mariánske nám.,,,5712,1738,barok,,MPR,Samospráva miest a obcí
+1672,Žilina,Žilina,Žilina,SOCHA NA STĹPE,Mariánsky stĺp,1396,2,SOCHA,Panna Mária Immaculata,Mariánske nám.,,,5712,1738,barok,,MPR,Samospráva miest a obcí
+1673,Žilina,Žilina,Žilina,KOSTOL,evanjelický kostol,1397,1,KOSTOL,ev.a.v.,Rázusova ul.,1291,2,1242,1935-1936,funkcionalizmus,Harminc M.M.,,Vlastníctvo cirkvi a cirk. organizácií
+1674,Žilina,Žilina,Žilina,SYNAGÓGA,Behrensova neologická synagóga,1398,1,SYNAGÓGA,neologická,Hurbanova ul.,220,11,358/1-2,1928-31,funkcionalizmus,Behrens Peter,,Vlastníctvo cirkvi a cirk. organizácií
+1675,Žilina,Žilina,Žilina,COLNICA A KAPLNKA,Kráľovská colnica,1399,1,COLNICA,solitér,,,,2927,1763,barok neskorý,,,Akciová spoločnosť
+1676,Žilina,Žilina,Žilina,COLNICA A KAPLNKA,Kráľovská colnica,1399,2,KAPLNKA,,,,,2926,,,,,Vlastníctvo cirkvi a cirk. organizácií
+1677,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1400,1,DOM MEŠTIANSKY,"prejazdový,nárožný",Mariánske nám.,196,9,211,14.st.,renesancia,,MPR,Akciová spoločnosť
+1678,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1401,1,DOM MEŠTIANSKY,"priechodový,radový",Mariánske nám.,195,10,212,14.st.,stredovek,Krušinský Vladimír-rekonštrukcia 1991-92,MPR,Súkromné vlastníctvo občanov
+1679,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1402,1,DOM MEŠTIANSKY,"priechodový,radový",Mariánske nám.,193,12,215,14.-15.st.,stredovek,,MPR,Spoločnosť s ručením obmedzeným
+1680,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1403,1,DOM MEŠTIANSKY,"priechodový,radový",Mariánske nám.,192,13,218,14.-15.st.,stredovek,,MPR,Spoločnosť s ručením obmedzeným
+1681,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1404,1,DOM MEŠTIANSKY,"priechodový,radový",Mariánske nám.,191,14,219,koniec 16.st.,novoklasicizmus,,MPR,Súkromné vlastníctvo občanov
+1682,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1405,1,DOM MEŠTIANSKY,"prejazdový,radový",Mariánske nám.,190,15,220/1,15.st.,stredovek,,MPR,Súkromné vlastníctvo občanov
+1684,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1407,1,DOM MEŠTIANSKY,"prejazdový,radový",Mariánske nám.,188,17,222,koniec 15.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1685,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1408,1,DOM MEŠTIANSKY,"prejazdový,nárožný",Mariánske nám.,187,18,223,15.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1686,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1409,1,DOM MEŠTIANSKY,"prejazdový,nárožný",Mariánske nám.,162,19,224,14.-15.st.,renesancia,,MPR,Rozpočtová organizácia
+1687,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1410,1,DOM MEŠTIANSKY,"prejazdový,radový",Mariánske nám.,161,20,226,14.-15.st.,renesancia neskorá,,MPR,Spoločnosť s ručením obmedzeným
+1688,Žilina,Žilina,Žilina,DOM SPOLKOVÝ,budova gazdovského spolku,1411,1,DOM SPOLKOVÝ,"prejazdový,radový",Mariánske nám.,160,21,227,1928,funkcionalizmus,Scheer M.M.,MPR,Akciová spoločnosť
+1689,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1412,1,DOM MEŠTIANSKY,"prejazdový,radový",Mariánske nám.,51,28,129,15./16.st.,renesancia,,MPR,Spoločnosť s ručením obmedzeným
+1690,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1413,1,DOM MEŠTIANSKY,"prejazdový,radový",Mariánske nám.,50,29,132,17.st.,renesancia neskorá,,MPR,Súkromné vlastníctvo občanov
+1691,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1414,1,DOM MEŠTIANSKY,"prejazdový,radový",Mariánske nám.,49,30,133/1,pol.17.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1692,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,Mestský dom,1415,1,DOM MEŠTIANSKY,"prejazdový,radový",Mariánske nám.,48,31,134/1,14.st.,renesancia neskorá,,MPR,Spoločnosť s ručením obmedzeným
+1693,Žilina,Žilina,Žilina,BANKA,Banka Tatra,1416,1,BANKA,"halová,nárožná",Mariánske nám.,"47,1470",32,"135/1,135/2",14.st.,novoklasicizmus,,MPR,Akciová spoločnosť
+1694,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,Folkmanovský dom,1417,1,DOM MEŠTIANSKY,"prejazdový,nárožný",Bottova ul.,35,1,90,1.pol.16.st.,gotika,,MPR,Súkromné vlastníctvo občanov
+1695,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1419,1,DOM MEŠTIANSKY,"priechodový,radový",Hodžova ul.,210,4,151/1,kon.13.st.-pol.14.st,renesancia,,MPR,Spoločnosť s ručením obmedzeným
+1696,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1420,1,DOM MEŠTIANSKY,"prejazdový,radový",Hodžova ul.,209,6,152,14.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1697,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1421,1,DOM MEŠTIANSKY,"prejazdový,radový",Hodžova ul.,208,8,155,14.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1698,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1422,1,DOM MEŠTIANSKY,"prejazdový,radový",Hodžova ul.,206,12,159,koniec 15.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1699,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1423,1,DOM MEŠTIANSKY,"prejazdový,nárožný",Hodžova ul.,204,16,161,15.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1700,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1425,1,DOM MEŠTIANSKY,"prejazdový,radový",Horný val,12,25,26,1.pol.17.st.,barok,,MPR,Súkromné vlastníctvo občanov
+1701,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,1426,1,DOM MEŠTIANSKY,"priechodový,radový",Horný val,13,27,31,2.pol.17.st.,barok,,MPR,Súkromné vlastníctvo občanov
+1702,Žilina,Žilina,Budatín,HRAD,Budatínsky zámok,1427,1,HRAD,,Topoľová ul.,1,1,1,13.st.,romanika,Lux - prestavba 1921-23,,vyšší územný celok
+1703,Žilina,Žilina,Budatín,HRAD,Budatínsky zámok,1427,2,PARK,,Topoľová ul.,,,"4/1-2,5/1,5/3-6,6,14/1-3,20/1-3",18.st.,prírodnokrajinársky,,,vyšší územný celok
+1704,Žilina,Žilina,Budatín,HRAD,Budatínsky zámok,1427,3,STAVBA HOSPODÁRSKA,,Topoľová ul.,3,,2,1745,klasicizmus,,,vyšší územný celok
+1705,Žilina,Žilina,Budatín,HRAD,Budatínsky zámok,1427,4,BUDOVA,solitér,Topoľová ul.,2,,3/1-2,2.pol.19.st.,klasicizmus,,,vyšší územný celok
+1706,Žilina,Žilina,Žilina,KOSTOL S AREÁLOM,opevnený kostol sv.Štefana,1428,1,KOSTOL,r.k.sv.Štefana Kráľa,Závodská cesta,2845,11,3787,pol.13.st.,romanika neskorá,,OP,Vlastníctvo cirkvi a cirk. organizácií
+1707,Žilina,Žilina,Žilina,KOSTOL S AREÁLOM,opevnený kostol sv.Štefana,1428,2,KAPLNKA,r.k.sv.Cyrila a Metoda,Závodská cesta,8438,11A,3786,2.pol.16.st.,renesancia,,OP,Vlastníctvo cirkvi a cirk. organizácií
+1708,Žilina,Žilina,Žilina,KOSTOL S AREÁLOM,opevnený kostol sv.Štefana,1428,3,MÚR HRADBOVÝ,,Závodská cesta,2845,11,3788,pol.16.st.,renesancia,,OP,Vlastníctvo cirkvi a cirk. organizácií
+1709,Žilina,Žilina,Žilina,KOSTOL S AREÁLOM,opevnený kostol sv.Štefana,1428,4,BRÁNA,severná,Závodská cesta,2845,11,3788,pol.16.st.,renesancia,,OP,Vlastníctvo cirkvi a cirk. organizácií
+1710,Žilina,Žilina,Žilina,KOSTOL S AREÁLOM,opevnený kostol sv.Štefana,1428,5,BAŠTA SEVEROVÝCHODNÁ,otvorená,Závodská cesta,2845,11,3788,pol.16.st.,renesancia,,OP,Vlastníctvo cirkvi a cirk. organizácií
+1711,Žilina,Žilina,Žilina,KOSTOL S AREÁLOM,opevnený kostol sv.Štefana,1428,6,BAŠTA SEVEROZÁPADNÁ,otvorená,Závodská cesta,2845,11,3788,pol.16.st.,renesancia,,OP,Vlastníctvo cirkvi a cirk. organizácií
+1712,Žilina,Žilina,Žilina,KOSTOL S AREÁLOM,opevnený kostol sv.Štefana,1428,7,KOSTNICA ZÁKLADY,"skúmaná,prezentovaná",Závodská cesta,2845,11,3788,prelom 14. a 15.st.,,,OP,Vlastníctvo cirkvi a cirk. organizácií
+1713,Žilina,Žilina,Žilina,KOSTOL S AREÁLOM,opevnený kostol sv.Štefana,1428,8,CINTORÍN PRÍKOSTOLNÝ,skúmaný čiastočne,Závodská cesta,2845,11,3788,pol.13.st.,,,OP,Vlastníctvo cirkvi a cirk. organizácií
+1714,Žilina,Žilina,Žilina,BUDOVA ADMINISTRATÍVNA,Remeselnícky d.Gábora Barossa,1436,1,BUDOVA ADMINISTRATÍVNA,nárožná,Kálov ul.,655,10,1701,1909-1911,secesia,,,Akciová spoločnosť
+1715,Žilina,Žilina,Žilina,BUDOVA ADMIN.A PAM.TAB.,Ministers.pre správu Slovenska,1437,1,BUDOVA ADMINISTRATÍVNA PAM.,"chodbová,Šrobárova vláda",Hodžova ul.,201,20,188,19./20.st.,historizmus,,MPR,Súkromné vlastníctvo občanov
+1716,Žilina,Žilina,Žilina,BUDOVA ADMIN.A PAM.TAB.,Ministers.pre správu Slovenska,1437,2,TABUĽA PAMÄTNÁ,1.Šrobárova vláda,Hodžova ul.,,,188,,,Ihriský Vojtech,MPR,Súkromné vlastníctvo občanov
+1717,Žilina,Žilina,Žilina,ŠKOLA,"Bývalá reálka J.Palárika,VŠD",1438,1,ŠKOLA,chodbová,Hurbanova ul.,236,15,1268/2,1910-1913,secesia,"Alpár Ignác, Marothy (sochár-výtvarná výzdoba)",,Príspevková organizácia
+1718,Žilina,Žilina,Bánová,MOHYLNÍK,Mohylník Dúbrava-Kalinové,2138,1,MOHYLNÍK,skúmané čiastočne,,,,južne od mc Bánová,9.st.,veľkomoravské obdobie,,,Štát. hospodárska organizácia
+1719,Žilina,Žilina,Zástranie,HRADISKO VÝŠINNÉ,hradisko Veľký Stránik,2147,1,HRADISKO VÝŠINNÉ,skúmané čiastočne,,,,"3841/1-2,3841/4,3841/10,3841/12,3841/21-22",12.-10.st.pnl,doba bronzová-lužická kultúra,,,Poľnohosp. družstvo
+1720,Žilina,Žilina,Závodie,HRADISKO,Veľké hradisko,2148,1,HRADISKO,neskúmané,,,,,latén,doba laténska-púchovská kultúra,,,Štát. hospodárska organizácia
+1721,Žilina,Žilina,Žilina,DIVADLO,Grand Bio Univerzum,3279,1,DIVADLO,,Vuruma J. ul.,139,4,250,1920-1925,secesia,,MPR,Príspevková organizácia
+1722,Žilina,Žilina,Žilina,POMNÍK S BUSTOU,Pomník MUDr.Ivana Hálka,3302,1,POMNÍK S BUSTOU,Hálek Ivan MUDr.,,,,2240,1968,,Bíroš S.,,Príspevková organizácia
+1723,Žilina,Žilina,Žilina,HROB SPOLOČNÝ S NÁHROBNÍKOM,hrob 32 umučených antifašistov,3303,1,HROB SPOLOČNÝ S NÁHROBNÍKOM,umučení antifašisti-32,,,0,4958/1,"1949,1964",,,,Štát. hospodárska organizácia
+1724,Žilina,Žilina,Žilina,CINTORÍN VOJNOVÝ,Cintorín padlých sov.armády,3304,1,CINTORÍN VOJNOVÝ,sov.armáda,,,,4899/1,1946-1948,,,,obce a mestá
+1725,Žilina,Žilina,Bytčica,TABUĽA PAMÄTNÁ S RELIÉFOM,"Prírodovedec,zakl.gym.Klášt.pZ",3306,1,TABUĽA PAMÄTNÁ S RELIÉFOM,Zaymus Romuald Čestislav,Hlavná ul.,450,4,337,1964,,,,Vlastníctvo cirkvi a cirk. organizácií
+1726,Žilina,Žilina,Žilina,DOM MEŠTIANSKY A PAM.TAB.,Dom Dušana Makovického,3307,1,DOM MEŠTIANSKY PAMÄTNÝ,nárožný,Horný val,41,20,100,15.st.,novoklasicizmus,,MPR,vyšší územný celok
+1727,Žilina,Žilina,Žilina,DOM MEŠTIANSKY A PAM.TAB.,Dom Dušana Makovického,3307,2,TABUĽA PAMÄTNÁ,Makovický Dušan,Horný val,41,20,100,30.4.1970,,,MPR,vyšší územný celok
+1728,Žilina,Žilina,Žilina,RADNICA,Stará radnica,10036,1,RADNICA,nárožná,Mariánske nám.,34,1,136,15.st.,eklektizmus,,MPR,Samospráva miest a obcí
+1729,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10037,1,DOM MEŠTIANSKY,"priechodový,radový",Mariánske nám.,33,2,137,17.st.,eklektizmus,,MPR,Výrobné družstvo
+1730,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10038,1,DOM MEŠTIANSKY,"priechodový,radový",Mariánske nám.,32,3,138,15.st.,eklektizmus,,MPR,Akciová spoločnosť
+1731,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,"Lekáreň ""K zlatému orlovi""",10040,1,DOM MEŠTIANSKY,"sieňový,radový",Mariánske nám.,28,7,147,15.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1732,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10041,1,DOM MEŠTIANSKY,"prejazdový,nárožný",Mariánske nám.,27,8,148/1,15.st.,renesancia,,MPR,"Nadácia,záujmové združenie,fond,TJ"
+1733,Žilina,Žilina,Žilina,HOSTINEC,hotel Panský dom,10042,1,HOSTINEC,"prejazdový,nárožný",Mariánske nám.,157,24,230,2.pol.14.st.-15.st.,barok klasicizujúci,,MPR,Spoločnosť s ručením obmedzeným
+1734,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10043,1,DOM MEŠTIANSKY,"prejazdový,nárožný",Mariánske nám.,54,25,124,2.pol.16.st.,barok,,MPR,Súkromné vlastníctvo občanov
+1735,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10044,1,DOM MEŠTIANSKY,"prejazdový,radový",Mariánske nám.,53,26,125,17.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1736,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10045,1,DOM MEŠTIANSKY,"priechodový,nárožný",Hodžova ul.,211,2,149,14./15.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1737,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10046,1,DOM MEŠTIANSKY,"prejazdový,radový",Hodžova ul.,207,10,156,14.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1738,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10047,1,DOM MEŠTIANSKY,nárožný,Vuruma J. ul.,156,1,231,16.st.,eklektizmus,,MPR,Súkromné vlastníctvo občanov
+1739,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10048,1,DOM MEŠTIANSKY,"priechodový,radový",Bottova ul.,38,7,96,15./16.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1740,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10049,1,DOM MEŠTIANSKY,"priechodový,radový",Bottova ul.,39,9,98,zač.16.st.,renesancia,,MPR,Spoločnosť s ručením obmedzeným
+1741,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,výrobňa perníkov,10050,1,DOM MEŠTIANSKY,"priechodový,radový",Bottova ul.,40,11,99,1.pol.16.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1742,Žilina,Žilina,Žilina,DOM BYTOVÝ,nájomný dom,10051,1,DOM BYTOVÝ,"pavlačový,nárožný",Horný val ,21,12,80,zač.20.st.,secesia,,MPR,Súkromné vlastníctvo občanov
+1743,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,Skalkov dom,10052,1,DOM MEŠTIANSKY,"priechodový,radový",Horný val,10,21,22,pol.17.st.,renesancia,,MPR,Súkromné vlastníctvo občanov
+1744,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,meštiansky dom,10053,1,DOM MEŠTIANSKY,"priechodový,radový",Horný val,11,23,25,pol.18.st.,barok,,MPR,Súkromné vlastníctvo občanov
+1745,Žilina,Žilina,Žilina,DOM BYTOVÝ,nájomný dom,10054,1,DOM BYTOVÝ,"chodbový,nárožný",Dolný val,212,1,150,po r.1912.,secesia,"Bert, Kovács (stavitelia z Trenčína)",MPR,Súkromné vlastníctvo občanov
+1746,Žilina,Žilina,Žilina,DOM BYTOVÝ,obchod a dom Bena Marera,10061,1,DOM BYTOVÝ,"chodbový,nárožný",Hodžova ul.,200,9,201,1911,secesia,,MPR,Akciová spoločnosť
+1747,Žilina,Žilina,Žilina,DOM MEŠTIANSKY,Lombardiniovský dom,10063,1,DOM MEŠTIANSKY,"prejazdový,radový",Horný val,9,19,21,1.pol.17.st.,renesancia,,MPR,Spoločnosť s ručením obmedzeným
+1748,Žilina,Žilina,Žilina,TRŽNICA,tržnica s pasážou,10064,1,TRŽNICA,radová,Horný val,72,35,324,1941-1942,funkcionalizmus,"Čapka Ferdinand, Šesták M.",MPR,Spoločnosť s ručením obmedzeným
+1749,Žilina,Žilina,Žilina,BANKA,Finančný palác,10959,1,BANKA,nárožná,Hodžova ul.,219,11,189,1930-1931,funkcionalizmus,Scheer Michal Maximilián,MPR,Akciová spoločnosť
+1750,Žilina,Žilina,Žilina,FARA,stará fara,11566,1,FARA,r.k.,Dolný val,214,,168,15.-16.st.,barok,,MPR,Vlastníctvo cirkvi a cirk. organizácií
+1751,Žilina,Žilina,Žilina,PALÁC MESTSKÝ S AREÁLOM,"Rosenfeldov palác,pioniersky d",11600,1,PALÁC MESTSKÝ,"prejazdový,radový",Hurbanova ul.,335,28,1285,1907,secesia,Rauter Mikuláš (?),,Samospráva miest a obcí
+1752,Žilina,Žilina,Žilina,PALÁC MESTSKÝ S AREÁLOM,"Rosenfeldov palác,pioniersky d",11600,2,OPLOTENIE S BRÁNOU,"murovaná konštrukcia,kov",Hurbanova ul.,335,28,1285,1907,secesia,Rauter Mikuláš (?),,obce a mestá
+1753,Žilina,Žilina,Žilina,PALÁC MESTSKÝ S AREÁLOM,"Rosenfeldov palác,pioniersky d",11600,3,STUDŇA,kamenná,Hurbanova ul.,335,28,1285,18.st.?,,,,Samospráva miest a obcí
+1754,Žilina,Žilina,Žilina,ELEKTRÁREŇ,parná elektráreň,11788,1,BUDOVA ADMINISTRATÍVNA,nárožná,Republiky ul.,998,5,1823/1,1941-1943,funkcionalizmus,"Bednárik František Eduard, Čapka Ferdinand",,Akciová spoločnosť
+1755,Žilina,Žilina,Žilina,ELEKTRÁREŇ,parná elektráreň,11788,2,CIACHOVŇA,solitér,Republiky ul.,998,5,1823/3,1908,historizmus,,,vyšší územný celok
+1756,Žilina,Žilina,Žilina,VILA,vila Dr.Rudolfa Sterna,12036,1,VILA,solitér,Kálov ul.,358,19,1334,1926,moderna,Mattusch K.,,Spoločnosť s ručením obmedzeným
+1757,Žilina,Žilina,Žilina,KAPLNKA MOROVÁ,kaplnka na Starom cintoríne,12122,1,KAPLNKA MOROVÁ,sv.Magdalény,Rázusa Martina ul.,8896,,1092,kon.17.st.,barok,,,Samospráva miest a obcí
+1,Turčianske Teplice,Abramová,Abramová,KOSTOL,kostol sv.Kozmu a Damiána,529,1,KOSTOL,r.k.sv.Kozmu a Damiána,,,0,233,1375,gotika,,,Vlastníctvo cirkvi a cirk. organizácií
+2,Turčianske Teplice,Abramová,Abramová,KÚRIA,kúria,530,1,KÚRIA,solitér,,74,74,214/15,2.pol.17.st.,renesancia,,,Súkromné vlastníctvo občanov
+3,Námestovo,Babín,Babín,KRÍŽ S KORPUSOM NA PILIERI,cintorínsky kríž,2627,1,PILIER,"štvorboký,kamenný",,,,2/1,1833,ľudová práca,,,Vlastníctvo cirkvi a cirk. organizácií
+4,Námestovo,Babín,Babín,KRÍŽ S KORPUSOM NA PILIERI,cintorínsky kríž,2627,2,KRÍŽ S KORPUSOM,Ukrižovaný Kristus,,,,2/1,1833,ľudová práca,,,Vlastníctvo cirkvi a cirk. organizácií
+5,Námestovo,Babín,Babín,NÁHROBNÍKY-SÚBOR,súbor náhrobníkov,2628,1,NÁHROBNÍK S KRÍŽOM A RELIÉFOM,"Ukrižovaný Kristus,Pieta",,,,2/1,19./20.st.,ľudová práca,,,Samospráva miest a obcí
+6,Námestovo,Babín,Babín,NÁHROBNÍKY-SÚBOR,súbor náhrobníkov,2628,2,NÁHROBNÍK S RELIÉFOM-FRAGMENT,"Panna Mária,Kristus-Pieta",,,,2/1,19./20.st.,ľudová práca,,,Samospráva miest a obcí

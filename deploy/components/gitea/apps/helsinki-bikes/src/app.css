@@ -1,0 +1,42 @@
+/* The application's own layout, over the token variables the SDK sets from design-tokens.json. The
+   screens are laid out by the SDK's primitives (Page, Grid, Card, Split); what is here is only what
+   they do not cover. */
+
+/* T-2924: each overview number carries its colour from the design tokens. */
+.app-tile {
+  border-left: 4px solid var(--app-tone, var(--jc-color-accent, #0000bf));
+}
+.app-tile[data-tone="success"] { --app-tone: var(--jc-color-success, #059669); }
+.app-tile[data-tone="danger"] { --app-tone: var(--jc-color-danger, #dc2626); }
+.app-tile .jc-tile-value { color: var(--app-tone, var(--jc-color-accent, #0000bf)); }
+
+.app-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+  margin-top: var(--jc-space-2, 0.5rem);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+}
+.app-legend-ramp {
+  flex: 0 1 10rem;
+  height: 0.6rem;
+  border-radius: var(--jc-radius-sm, 4px);
+}
+
+/* A station's status as a coloured chip: ink on a tint of the status colour, its border in the colour
+   itself. White on the success green read 3.8:1 (WCAG 1.4.3, T-2946), and a city's tokens can make
+   that colour lighter still. */
+.app-chip {
+  --app-chip-tone: var(--jc-color-muted, #64748b);
+  display: inline-block;
+  padding: 0 var(--jc-space-2, 0.5rem);
+  border-radius: 999px;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  font-weight: 600;
+  color: var(--jc-color-ink, #1a1a1a);
+  background: color-mix(in srgb, var(--app-chip-tone) 16%, var(--jc-color-surface, #ffffff));
+  border: 1px solid var(--app-chip-tone);
+}
+.app-chip[data-status="working"] { --app-chip-tone: var(--jc-color-success, #059669); }

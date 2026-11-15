@@ -1,0 +1,419 @@
+{
+ "success": true,
+ "result": {
+  "records": [
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Turisme",
+    "wi": "0",
+    "types": "Xoc contra element estàtic",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000001",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Gir indegut o sense precaució",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Col.lisió lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000002",
+    "causes": "Alcoholèmia"
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Motocicleta",
+    "wi": "0",
+    "types": "Caiguda (dues rodes)",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000003",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": null,
+    "vehicles": "Motocicleta|Motocicleta",
+    "wi": "1",
+    "types": "Atropellament",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000004",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Gir indegut o sense precaució",
+    "vehicles": "Turisme",
+    "wi": "0",
+    "types": "Xoc contra element estàtic",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000005",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Gir indegut o sense precaució",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Caiguda (dues rodes)",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000006",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": null,
+    "vehicles": "Turisme",
+    "wi": "0",
+    "types": "Xoc contra element estàtic",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000007",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Motocicleta|Motocicleta|Turisme",
+    "wi": "1",
+    "types": "Atropellament",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000008",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Turisme|Turisme|Turisme",
+    "wi": "0",
+    "types": "Abast",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000009",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "No determinada",
+    "vehicles": "Autobús|Autobús",
+    "wi": "0",
+    "types": "Caiguda interior vehicle",
+    "pd": "0",
+    "pi": "1",
+    "id": "2025S000010",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Abast",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000011",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Veh. mobilitat personal amb motor|Veh. mobilitat personal amb motor",
+    "wi": "0",
+    "types": "Col.lisió frontal",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000012",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Col.lisió fronto-lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000013",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Gir indegut o sense precaució",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Col.lisió fronto-lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000014",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Abast",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000015",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Desobeir semàfor|Gir indegut o sense precaució",
+    "vehicles": "Motocicleta|Veh. mobilitat personal amb motor",
+    "wi": "0",
+    "types": "Caiguda (dues rodes)",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000016",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Camió rígid <= 3,5 tones|Camió rígid <= 3,5 tones",
+    "wi": "1",
+    "types": "Atropellament",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000017",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "No respectar distàncies",
+    "vehicles": "Motocicleta|Motocicleta",
+    "wi": "0",
+    "types": "Abast",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000018",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Desobeir semàfor",
+    "vehicles": "Motocicleta|Taxi",
+    "wi": "0",
+    "types": "Col.lisió fronto-lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000019",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Abast",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000020",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Canvi de carril sense precaució",
+    "vehicles": "Furgoneta|Motocicleta",
+    "wi": "0",
+    "types": "Col.lisió lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000021",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Avançament defectuós/improcedent|Canvi de carril sense precaució",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Col.lisió lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000022",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "No determinada",
+    "vehicles": "Camió rígid > 3,5 tones|Furgoneta",
+    "wi": "0",
+    "types": "Col.lisió lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000023",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Gir indegut o sense precaució",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Col.lisió lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000024",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "No respectar distàncies",
+    "vehicles": "Motocicleta|Turisme|Turisme",
+    "wi": "0",
+    "types": "Abast multiple",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000025",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Manca d'atenció a la conducció",
+    "vehicles": "Turisme|Veh. mobilitat personal amb motor",
+    "wi": "0",
+    "types": "Col.lisió fronto-lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000026",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Desobeir semàfor",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Col.lisió fronto-lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000027",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": null,
+    "vehicles": "Motocicleta",
+    "wi": "0",
+    "types": "Altres",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000028",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Altres",
+    "vehicles": "Autobús articulat|Autobús articulat",
+    "wi": "0",
+    "types": "Caiguda interior vehicle",
+    "pd": "0",
+    "pi": "1",
+    "id": "2025S000029",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Gir indegut o sense precaució",
+    "vehicles": "Autobús|Motocicleta",
+    "wi": "0",
+    "types": "Caiguda (dues rodes)",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000030",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "No determinada",
+    "vehicles": "Motocicleta|Motocicleta",
+    "wi": "0",
+    "types": "Caiguda (dues rodes)",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000056",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Avançament defectuós/improcedent",
+    "vehicles": "Motocicleta|Turisme",
+    "wi": "0",
+    "types": "Col.lisió lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000059",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Canvi de carril sense precaució",
+    "vehicles": "Bicicleta|Motocicleta",
+    "wi": "0",
+    "types": "Col.lisió fronto-lateral",
+    "pd": "0",
+    "pi": "0",
+    "id": "2025S000130",
+    "causes": null
+   },
+   {
+    "wd": "0",
+    "drivers": "Desobeir semàfor",
+    "vehicles": "Motocicleta|Turisme|Turisme",
+    "wi": "0",
+    "types": "Col.lisió fronto-lateral",
+    "pd": "0",
+    "pi": "1",
+    "id": "2025S001982",
+    "causes": null
+   }
+  ],
+  "fields": [
+   {
+    "type": "text",
+    "id": "id"
+   },
+   {
+    "type": "text",
+    "id": "types"
+   },
+   {
+    "type": "text",
+    "id": "causes"
+   },
+   {
+    "type": "text",
+    "id": "drivers"
+   },
+   {
+    "type": "text",
+    "id": "vehicles"
+   },
+   {
+    "type": "text",
+    "id": "pi"
+   },
+   {
+    "type": "text",
+    "id": "pd"
+   },
+   {
+    "type": "text",
+    "id": "wi"
+   },
+   {
+    "type": "text",
+    "id": "wd"
+   }
+  ]
+ }
+}

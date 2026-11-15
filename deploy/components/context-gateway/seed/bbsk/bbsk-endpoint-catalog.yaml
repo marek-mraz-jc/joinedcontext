@@ -1,0 +1,37 @@
+# The organization's own catalogue door (T-5493, T-4746 owner addendum): one NGSI-LD query finds
+# the datasets this organization publishes. The Portal writes it as the project's slice of the
+# catalogue; it is a dataset of the organization itself, so it publishes to its CKAN. No
+# policyRef: the Portal's write and the public read are both Policies of its space.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: catalog
+  namespace: bbsk
+  title: { sk: Banskobystrický kraj – katalóg dát, en: Banská Bystrica Region – data catalogue }
+  description:
+    sk: Vyhľadajte dataset projektu podľa názvu, témy alebo miesta (type=Dataset, q=searchText~=…, georel=near) a pokračujte na jeho vlastný prístupový bod.
+    en: Find a dataset of the project by its title, theme or place (type=Dataset, q=searchText~=…, georel=near), then go on to its own Endpoint.
+spec:
+  contextSpaceRef: catalog
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-catalog:catalog-portal-write
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-catalog:catalog-public-read
+  slug: yv3idzveqbqzrkzocxghmn3rcdzmxgg4
+  audience: public
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, mcp]
+  catalog:
+    # Off the catalogue (T-5788, owner order 2026-10-26: an empty dataset leaves it): on 2026-10-26
+    # dev and prod hold no record in it (typeList []).
+    # The harvest feeds leave it out (EP-139); publish it again once prod holds data.
+    harvest: false
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Records of public datasets and Endpoints only: no record names a person.
+    personalData: does-not-contain
+    license: CC0
+    themes: [GOVE]
+    keywords:
+      sk: [katalóg dát, otvorené dáta, DCAT-AP, NGSI-LD]
+      en: [data catalogue, open data, DCAT-AP, NGSI-LD]
+    spatial: [SK032]
+    frequency: CONT

@@ -1,0 +1,28 @@
+# Slovakia's national open data (T-4340): data about the whole country rather than one city or
+# region, published under the platform's own name. Its first space is the air quality of every
+# Slovak station.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  name: slovensko
+  namespace: org
+  title:
+    sk: Slovensko — otvorené dáta
+    en: Slovakia, open data
+  description:
+    sk: Otvorené dáta za celé Slovensko, ktoré platforma joinedcontext zbiera z národných a európskych zdrojov.
+    en: Open data about the whole of Slovakia, which the joinedcontext platform collects from national and European sources.
+spec:
+  organizationRef: hel
+  # Who publishes this data, the did:web assigner of its Apps' Policies (PF-108); describes, grants nothing.
+  domain: joinedcontext.com
+  # The same quotas as every demo project (T-2873, PF-73): the mechanism stays, nobody reaches it.
+  quotas:
+    contextSpaces: 100
+    residentPipelines: 100
+    publicEndpoints: 100
+    apps: 100
+    ingestEventsPerSecond: 500
+    agentRunsPerDay: 2000
+    entitiesPerSpace: 1000000
+    requestsPerMinute: 6000

@@ -1,0 +1,18 @@
+# One PointOfInterest per place of health care of a legal person in Prague, from NRPZS (T-5691).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: nrpzs-health-care
+  namespace: praha
+  title: { en: Health care providers, cs: Poskytovatelé zdravotních služeb }
+spec:
+  class: auto
+  # ÚZIS renews the file on the first of each month; one read a week keeps up.
+  period: 168h
+  schedule: '0 3 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: nrpzs-health-care }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  # The run passed at 128 MiB over the 28 MB file and failed at 96 MiB (T-5691).
+  quotas: { maxMemoryMb: 256, cpuMillicores: 200 }

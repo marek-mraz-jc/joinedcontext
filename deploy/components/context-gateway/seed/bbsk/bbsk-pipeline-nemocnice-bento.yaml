@@ -1,0 +1,34 @@
+# The mapping of the nemocnice pipeline (PL-03): one PointOfInterest per general or specialised hospital
+# of the region's health-care register, keyed by its facility number (IdZZ). The DataSource asks
+# for the hospitals only and never for the register's professional representative, telephone or
+# e-mail, which name or reach a person.
+
+pipeline:
+  processors:
+    - mapping: |
+        map kind {
+          root = match this {
+            "všeobecná nemocnica" => "general",
+            "špecializovaná nemocnica" => "specialised",
+            _ => null,
+          }
+        }
+        root = this.features.or([]).filter(f -> f.properties.IdZZ.or("").string().re_match("^[0-9A-Z-]+$") && f.properties.Druh_zariadenia.or("").apply("kind") != null).map_each(f -> f.properties.assign({ "_geometry": f.geometry.or(null) })).map_each(p -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("PointOfInterest", "bbsk.sk", env("JC_SPACE"), p.IdZZ),
+          "type": "PointOfInterest",
+          "category": { "type": "Property", "value": ["hospital"] },
+          "name": { "type": "Property", "value": p."Vlastný_názov_zariadenia".or(p."Názov_poskytovateľa").string().trim() },
+          "hospitalKind": { "type": "Property", "value": p.Druh_zariadenia.apply("kind") },
+          "operatorName": if p."Názov_poskytovateľa".or("").trim() == "" { null } else { { "type": "Property", "value": p."Názov_poskytovateľa".trim() } },
+          "legalId": if p."IČO".or("").string().re_match("^[0-9]{8}$") { { "type": "Property", "value": p."IČO" } } else { null },
+          "medicalSpecialties": if p."Odborné_zameranie".or("").trim() == "" { null } else { { "type": "Property", "value": p."Odborné_zameranie".trim() } },
+          "address": if p.Ulica_poskytovania.or("").trim() == "" { null } else { { "type": "Property", "value": {
+            "streetAddress": p.Ulica_poskytovania.trim(),
+            "postalCode": p."PSČ_poskytovania".or("").string().re_replace_all(" +", "").trim(),
+            "addressLocality": p.Mesto_poskytovania.or("").trim(),
+            "addressCountry": "SK"
+          }.filter(f -> f.value != "") } },
+          "location": if p._geometry == null { null } else { { "type": "GeoProperty", "value": p._geometry } },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj, opendata.bbsk.sk (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata.bbsk.sk/" }
+        }.filter(entry -> entry.value != null))

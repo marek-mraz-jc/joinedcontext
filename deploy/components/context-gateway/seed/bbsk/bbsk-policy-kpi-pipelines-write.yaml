@@ -1,0 +1,18 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: kpi-pipelines-write
+  namespace: bbsk
+  title: { sk: Kanál zapisuje ukazovatele, en: The computing pipeline writes the indicators }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-kpi }
+  assigner: did:web:bbsk.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # queryBatch and deleteBatch are the stale-indicator sweep of Pipeline ukazovatele (PL-64): it
+  # reads the indicators with their timestamps and removes those not rewritten for 21 days.
+  operations: [upsertBatch, createBatch, queryBatch, deleteBatch]
+  # The indicator type, named: only indicators are written here, and a grant that names no type
+  # is matched against nothing on a read (PL-45).
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator

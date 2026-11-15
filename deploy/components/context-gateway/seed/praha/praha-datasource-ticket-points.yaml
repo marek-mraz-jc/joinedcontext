@@ -1,0 +1,15 @@
+# ROPID's register of places that sell PID tickets, 443 on 2026-09-25. No key. CC BY 4.0, read from the Prague catalogue
+# (LKOD dataset e599b1a7) and pid.cz/opendata.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: pid-ticket-points
+  namespace: praha
+  title: { en: PID ticket points, cs: Prodejní místa jízdenek PID }
+spec:
+  type: http
+  http:
+    url: https://data.pid.cz/pointsOfSale/json/pointsOfSale.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

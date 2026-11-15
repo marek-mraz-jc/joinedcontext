@@ -1,0 +1,88 @@
+---
+{{- $this := index .Values "artifact-store" "store" -}}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem` -> the data volume, /logs and
+#       /tmp are the only writable paths
+# - [x] Health probes -> /health on the S3 port
+# - [x] Graceful shutdown -> stateless process over a volume
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required -> no API access at all
+# - [x] Named ports -> s3
+# - [ ] Ingress with TLS -> deliberately absent: nothing outside the mesh reaches the store,
+#       and a browser gets bytes through a gateway path where policy and audit apply (PF-32)
+
+# The objects are named after the component, not after the engine behind it: RustFS is a
+# values change away from Garage or a cloud bucket (ADR-N-015), and every consumer addresses
+# `artifact-store.<namespace>.svc`.
+nameOverride: artifact-store
+
+{{- $images := index .Values.images "artifact-store" }}
+image:
+  repository: {{ $images.store.repository }}
+  tag: {{ $images.store.tag | quote }}
+  digest: {{ $images.store.digest }}
+  pullPolicy: IfNotPresent
+
+bootstrapImage:
+  repository: {{ $images.bootstrap.repository }}
+  tag: {{ $images.bootstrap.tag | quote }}
+  digest: {{ $images.bootstrap.digest }}
+
+bucket: {{ $this.bucket | default "jc-artifacts" | quote }}
+region: {{ $this.region | default "us-east-1" | quote }}
+
+{{- $objectLock := $this.objectLock | default dict }}
+objectLock:
+  enabled: {{ $objectLock.enabled | default false }}
+  defaultRetentionDays: {{ $objectLock.defaultRetentionDays | default 0 }}
+
+{{- if has "wasm-host" .Values.components }}
+appsBucket:
+  enabled: true
+  name: {{ index .Values "wasm-host" "bucket" | default "apps" | quote }}
+  retiredPrefix: apps/retired/
+  retiredExpiryDays: 90
+{{- end }}
+{{- $pgBackups := dig "postgres" "cluster" "backups" dict .Values }}
+{{- $appsBackups := dig "apps-db" "cluster" "backups" dict .Values }}
+{{- $pgToStore := and (has "postgres" .Values.components) ($pgBackups.enabled | default false) (eq ($pgBackups.target | default "") "artifact-store") }}
+{{- $appsToStore := and (has "apps-db" .Values.components) ($appsBackups.enabled | default false) (eq ($appsBackups.target | default "") "artifact-store") }}
+backupBucket:
+  enabled: {{ or $pgToStore $appsToStore }}
+  name: {{ ($this.backupBucket | default dict).name | default "postgres-backups" | quote }}
+  credentialsSecret: postgres-backup-artifact-store
+  # apps-db archives under its own prefix with a key that reaches that prefix only (T-5662):
+  # it serves tenant Apps, so it never holds the key to the platform database's backups.
+  prefixUsers:
+  {{- if $appsToStore }}
+    - prefix: {{ index .Values "apps-db" "cluster" "name" | quote }}
+      credentialsSecret: apps-db-backup-artifact-store
+  {{- else }} []
+  {{- end }}
+{{- $fileCache := $this.fileCache | default dict }}
+fileCache:
+  prefix: {{ $fileCache.prefix | default "filecache/" | quote }}
+  expiryDays: {{ $fileCache.expiryDays | default 1 }}
+
+storage:
+  size: {{ (($this.storage | default dict).size) | default "10Gi" | quote }}
+  # The volume is the only durability there is: one node, one disk, and the store says so at
+  # start-up (`storage_class_zero_redundancy`). Erasure coding across nodes is a sizing
+  # decision that changes this chart, not a value.
+  storageClass: {{ $global.storage.storageClass.rwo | default "" | quote }}
+
+console:
+  enabled: {{ (($this.console | default dict).enabled) | default false }}
+
+podSecurityContext:
+  # The process creates its data directory on first start, so the volume has to be writable by
+  # the pod's group: a storage class that ignores `fsGroup` leaves the store in CrashLoop with
+  # "mkdir: cannot create directory '/data/rustfs0': Permission denied".
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

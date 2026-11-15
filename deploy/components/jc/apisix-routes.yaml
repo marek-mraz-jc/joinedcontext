@@ -1,0 +1,36 @@
+---
+# jc serves every module on one host, jc.{domain}, in slug mode: the Portal at the root,
+# kaisatsu (identity) under /id, dataroom (catalogue) under /opendata, daiya (dashboards)
+# under /dashboards. jc authenticates every caller itself (kaisatsu sessions and bearers), so the
+# edge proxies anonymous requests and refuses the mounts that stay inside the pod
+# (apisix-plugins.yaml). `subDomain` puts jc.{domain} on the edge Ingress and its certificate.
+jc:
+  name: jc
+  description: joinedcontext in one binary (Portal, identity, catalogue, dashboards)
+  upstream: jc.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "jc") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  # Host mode (jc.server.mode: host): the Portal's host; the other hosts are routed by
+  # defaults/environment/apisix-routes.yaml.gotmpl.
+  subDomain: '{{ if (eq (dig "jc" "server" "mode" "slug" .Values) "host") }}portal{{ else }}jc{{ end }}'
+  uri: '/*'
+  priority: 1
+  # The assistant streams its answer and an import uploads a file: longer than a page read.
+  timeout:
+    connect: 6
+    send: 120
+    read: 120
+# kaisatsu's realm through the headless Service jc-pods, which lists a pod before it is Ready. At
+# boot jc serves kaisatsu first, then builds the Portal, which reads the realm's discovery at its
+# public issuer https://jc.{domain}/id/realms/jc. Through `jc` that read would wait for the very
+# readiness the Portal gives, and jc stops on the failed read: a crash loop on every start.
+jc-identity:
+  name: jc-identity
+  description: jc identity (kaisatsu), reachable while the pod starts
+  upstream: jc-pods.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "jc") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  subDomain: '{{ if (eq (dig "jc" "server" "mode" "slug" .Values) "host") }}idm{{ else }}jc{{ end }}'
+  uri: '{{ if (eq (dig "jc" "server" "mode" "slug" .Values) "host") }}/*{{ else }}/id/*{{ end }}'
+  priority: 5
+  pluginConfig: jc
+  timeout:
+    connect: 6
+    send: 60
+    read: 60

@@ -1,0 +1,19 @@
+# Ten layers of the city's nature information system (luontotietojärjestelmä, LTJ_avoin_*) in one open WFS
+# answer in WGS84 (T-5823): the protected sites, the nature conservation programme and the sites valued for
+# flying squirrels, birds, bats, plants and geology. typeNames=(a)(b)... reads several layers; a comma
+# would be a join GeoServer refuses. No key. CC-BY-4.0, read from the HRI catalogue (helsingin-luontotietojarjestelma).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-nature
+  namespace: helsinki
+  title:
+    en: Nature information system, protected and valuable sites
+    fi: Luontotietojärjestelmä, suojellut ja arvokkaat kohteet
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=%28avoindata:LTJ_avoin_rauhoitettu_luonnonsuojelualueet%29%28avoindata:LTJ_avoin_rauhoitettu_Natura_aluemaiset%29%28avoindata:LTJ_avoin_rauhoitettu_luonnonmuistomerkit%29%28avoindata:LTJ_avoin_rauhoitettu_suojellut_luontotyypit%29%28avoindata:LTJ_avoin_rauhoitettavat_luonnonsuojeluohjelma%29%28avoindata:LTJ_avoin_arvo_liito_orava_ydinalueet%29%28avoindata:LTJ_avoin_arvo_tarkeat_lintualueet%29%28avoindata:LTJ_avoin_arvo_tarkeat_lepakkoalueet%29%28avoindata:LTJ_avoin_arvokkaat_kasvikohteet%29%28avoindata:LTJ_avoin_arvokkaat_geologiset_aluemaiset%29
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

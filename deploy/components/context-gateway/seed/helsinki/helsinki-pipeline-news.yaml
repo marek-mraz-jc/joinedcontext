@@ -1,0 +1,14 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: hel-news
+  namespace: helsinki
+  title: { en: City news from the hel.fi RSS feed }
+spec:
+  class: auto
+  period: 30m
+  schedule: '*/30 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-news-rss }
+  targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

@@ -1,0 +1,19 @@
+# Traffic counters, last full hour of Žilina from the city's open data portal into zilina-doprava through its one Endpoint (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: scitace
+  namespace: zilina
+  title:
+    sk: Sčítače dopravy, posledná hodina
+    en: Traffic counters, last full hour
+spec:
+  class: auto
+  # The portal closes an hour bucket a few minutes after the hour; minute 12 finds the last one closed.
+  period: 1h
+  schedule: '12 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: zilina-opendata-portal }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-doprava:zilina-doprava
+  output: { type: TrafficFlowObserved, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

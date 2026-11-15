@@ -1,0 +1,17 @@
+# One PointOfInterest per record of `hel-environmental-permit-sites`, written into the city space (T-5822).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: environmental-permit-sites
+  namespace: helsinki
+  title: { en: Environmental permit sites }
+spec:
+  class: auto
+  # The city updates the register as permits are granted or end; daily is the layer's own refresh.
+  period: 24h
+  schedule: '50 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-environmental-permit-sites }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

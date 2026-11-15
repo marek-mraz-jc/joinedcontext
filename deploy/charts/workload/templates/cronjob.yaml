@@ -1,0 +1,39 @@
+{{- range .Values.cronJobs }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "workload.labels" $ | nindent 4 }}
+spec:
+  schedule: {{ .schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: {{ .activeDeadlineSeconds | default 1800 }}
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            {{- toYaml .podLabels | nindent 12 }}
+          annotations:
+            {{- if .mesh }}
+            # A meshed callee (cluster-authenticated inbound) refuses an unmeshed client: the proxy
+            # runs as a native sidecar, which Kubernetes stops when the job container ends.
+            linkerd.io/inject: enabled
+            config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+            {{- else }}
+            # A Job pod with a mesh proxy never completes.
+            linkerd.io/inject: disabled
+            mesh.joinedcontext.com/opt-out-reason: "a Job pod with a Linkerd proxy never completes: the proxy outlives the job container"
+            {{- end }}
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          {{- toYaml .podSpec | nindent 10 }}
+{{- end }}

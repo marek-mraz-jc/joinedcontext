@@ -1,0 +1,27 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: pipelines-write
+  namespace: bratislava
+  title: { sk: Kanály zapisujú priestor bratislava, en: The pipelines write the space bratislava }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is each read; create and query let a stream start from nothing and check itself. No
+  # delete: a source that returns nothing fails its run and leaves the entities (T-5271).
+  # Only the types the model declares; each batch adds its own here.
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: AirQualityObserved
+        - type: TrafficFlowObserved
+        - type: CrowdFlowObserved
+        - type: BikeHireDockingStation
+        - type: GtfsAgency
+        - type: GtfsRoute
+        - type: GtfsStop
+        - type: OnStreetParking
+        - type: AdministrativeArea
+        - type: PointOfInterest
+        - type: KeyPerformanceIndicator

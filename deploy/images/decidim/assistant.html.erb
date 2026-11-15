@@ -1,0 +1,7 @@
+<%# The platform's assistant on every public page (T-6449): the launcher of the deployment the
+    environment names, in the page's language and the organization's colour. %>
+<% if ENV["ASSISTANT_ORIGIN"].present? %>
+  <%# Below 640 px the cookie banner's buttons fill the width: room under them for the launcher. %>
+  <style>@media (max-width: 640px) { .cookies__container { padding-bottom: 76px; } }</style>
+  <%= tag.script(src: "#{ENV["ASSISTANT_ORIGIN"]}/d/#{ENV.fetch("ASSISTANT_PUBLIC_ID")}/embed.js", defer: true, data: { lang: I18n.locale, color: current_organization.colors["primary"] }) %>
+<% end %>

@@ -1,0 +1,100 @@
+{% ckan_extends %}
+
+{#
+  The home page (T-3009): the installation's name and tagline over one search, what changed
+  last as cards, and the ways in by publisher and keyword. It replaces CKAN's sample page
+  ("Welcome to CKAN", a 420 x 220 placeholder), which no deployment ever filled in.
+#}
+{% block primary_content %}
+  {% set stats = h.get_site_statistics() %}
+  {% set dataset_type = h.default_package_type() %}
+  <div role="main">
+    <section class="jc-hero" aria-labelledby="jc-hero-title">
+      <div class="container">
+        <h1 id="jc-hero-title">{{ h.jc_site_title() }}</h1>
+        <p class="jc-hero-lead">{{ h.jc_site_tagline() }}</p>
+        <form class="jc-hero-search" role="search" method="get" action="{{ h.url_for(dataset_type ~ '.search') }}">
+          <label for="jc-hero-q">{{ h.jc_t('hero_search') }}</label>
+          <div class="jc-hero-field">
+            <input id="jc-hero-q" class="form-control" type="search" name="q" autocomplete="off" placeholder="{{ h.jc_t('hero_placeholder') }}">
+            <button class="btn btn-primary" type="submit">{{ h.jc_t('search') }}</button>
+          </div>
+        </form>
+        <ul class="jc-hero-stats">
+          <li><strong>{{ h.jc_number(stats.dataset_count) }}</strong> {{ h.jc_t('datasets') }}</li>
+          <li><strong>{{ h.jc_number(stats.organization_count) }}</strong> {{ h.jc_t('publishers') }}</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="container"><div class="jc-home">
+      <div class="jc-main">
+      {# The EU themes the datasets carry, each a search (T-5294); left out while none does. #}
+      {% set topics = h.jc_topic_tiles() %}
+      {% if topics %}
+        <section aria-labelledby="jc-topics-title">
+          <h2 id="jc-topics-title">{{ h.jc_t('by_topic') }}</h2>
+          <ul class="jc-topics">
+            {% for topic in topics %}
+              <li><a href="{{ topic.url }}"><span class="jc-topic-name">{{ topic.label }}</span><span class="jc-count">{{ h.jc_rows(topic.count, 'datasets_n') }}</span></a></li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
+      <section aria-labelledby="jc-recent-title">
+        <div class="jc-home-head">
+          <h2 id="jc-recent-title">{{ h.jc_t('recent') }}</h2>
+          <a href="{{ h.url_for(dataset_type ~ '.search') }}">{{ h.jc_t('all_datasets') }} →</a>
+        </div>
+        {% set recent = h.jc_recent(6) %}
+        {% if recent %}
+          <ul class="jc-cards">
+            {% for pkg in recent %}
+              <li class="jc-card">
+                {% if pkg.organization %}<p class="jc-card-org">{{ pkg.organization.title or pkg.organization.name }}</p>{% endif %}
+                <h3><a href="{{ h.url_for(pkg.type ~ '.read', id=pkg.name) }}">{{ h.dataset_display_name(pkg) }}</a></h3>
+                {% set notes = h.markdown_extract(h.get_translated(pkg, 'notes'), extract_length=180) %}
+                {% if notes %}<p class="jc-card-text">{{ notes }}</p>{% endif %}
+                <div class="jc-card-foot">
+                  {% for format in h.jc_format_chips(pkg) %}<span class="jc-chip">{{ format }}</span>{% endfor %}
+                  {% set updated = h.jc_updated(pkg) %}
+                  {% if updated %}
+                    <time datetime="{{ updated.isoformat() }}">{{ h.jc_t('updated') }} {{ h.render_datetime(updated) }}</time>
+                  {% endif %}
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="jc-empty">{{ h.jc_t('no_datasets') }}</p>
+        {% endif %}
+      </section>
+      </div>
+
+      <div class="jc-side">
+        {% set publishers = h.get_facet_items_dict('organization', search_facets, limit=8) if search_facets else [] %}
+        {% if publishers %}
+          <section aria-labelledby="jc-publishers-title">
+            <h2 id="jc-publishers-title">{{ h.jc_t('by_publisher') }}</h2>
+            <ul class="jc-facet">
+              {% for item in publishers %}
+                <li><a href="{{ h.url_for(dataset_type ~ '.search', organization=item.name) }}"><span>{{ item.display_name }}</span><span class="jc-count">{{ item.count }}</span></a></li>
+              {% endfor %}
+            </ul>
+          </section>
+        {% endif %}
+        {% set tags = h.get_facet_items_dict('tags', search_facets, limit=12) if search_facets else [] %}
+        {% if tags %}
+          <section aria-labelledby="jc-tags-title">
+            <h2 id="jc-tags-title">{{ h.jc_t('by_keyword') }}</h2>
+            <ul class="jc-tags">
+              {% for tag in tags %}
+                <li><a class="tag" href="{{ h.url_for(dataset_type ~ '.search', tags=tag.name) }}">{{ tag.display_name }}</a></li>
+              {% endfor %}
+            </ul>
+          </section>
+        {% endif %}
+      </div>
+    </div></div>
+  </div>
+{% endblock %}

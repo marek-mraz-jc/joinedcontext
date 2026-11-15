@@ -1,0 +1,37 @@
+{% extends "page.html" %}
+
+{# The connector's public pages (T-4315): /connector, /privacy, /terms and /support, the words
+   from plugin.py PAGES in the page's language. The connector page carries the "Connect an AI
+   assistant" card; every page names the contact and links the other three. #}
+{% set page = h.jc_page(jc_name) %}
+
+{% block subtitle %}{{ page.title }}{% endblock %}
+
+{% block breadcrumb_content %}
+  <li class="active"><a href="{{ h.url_for('jc_pages.' ~ page.name) }}">{{ page.title }}</a></li>
+{% endblock %}
+
+{% block primary %}
+  <div class="primary col-12" role="main"><article class="module-content jc-page">
+    <h1 class="page-heading">{{ page.title }}</h1>
+    {% if page.name == 'connector' %}<p class="jc-connector-status">{{ h.jc_t('connector_status') }}</p>{% endif %}
+    {% for section in page.sections %}
+      {% if section.heading %}<h2>{{ section.heading }}</h2>{% endif %}
+      {% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+    {% endfor %}
+    {% if page.name == 'connector' %}{% snippet "snippets/jc_mcp_install.html" %}{% endif %}
+    {% if page.email %}
+      <h2>{{ h.jc_t('contact') }}</h2>
+      <p><a href="mailto:{{ page.email }}">{{ page.email }}</a></p>
+    {% endif %}
+    <nav aria-label="{{ h.jc_t('about_site') }}">
+      <ul class="list-inline">
+        {% for name in page.pages if name != page.name %}
+          <li class="list-inline-item"><a href="{{ h.url_for('jc_pages.' ~ name) }}">{{ h.jc_page(name).title }}</a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+  </article></div>
+{% endblock %}
+
+{% block secondary %}{% endblock %}

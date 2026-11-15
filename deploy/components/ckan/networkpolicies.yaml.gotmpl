@@ -1,0 +1,67 @@
+{{- /* The catalogue reaches the realm only when it signs people in through it (T-0403,
+       OPS-26). With `global.ckan.sso` off there is nothing on the internet CKAN calls, and
+       this file renders empty — the egress opens with the feature and not before it. */}}
+{{- if .Values.global.ckan.sso }}
+ckan-sso:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: ckan
+  policyTypes:
+    - Egress
+  egress:
+    # The realm's discovery document, its token endpoint and its userinfo endpoint. The
+    # issuer is a public host: an edge in front of the cluster on 443, or the cluster's own
+    # public address, which the node rewrites to the ingress controller's pod on its container
+    # port (8443 for Traefik, 443 for ingress-nginx) before this rule is evaluated, as for the
+    # harvest. That pod is the one private address CKAN reaches over HTTPS (F-R2DEP2-012).
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [traefik, kube-system, ingress-nginx]
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [traefik, ingress-nginx]
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+{{- end }}
+{{- /* Every catalogue beside `catalogue` (T-4636): the default instance's policies, each pod
+       selector moved to the instance's release, so its pods reach their own Solr, Redis and
+       databases and no other instance's. Each becomes the Helm release
+       networkpolicies-ckan-{name}-{short}, inside Helm's 53 characters for a 16-character name,
+       so every policy of the two files needs a short name here. */}}
+{{- $short := dict
+      "ckan" "ckan" "ckan-solr" "solr" "ckan-redis" "redis" "postgres-from-ckan" "postgres"
+      "apisix-egress-to-ckan" "apisix" "ckan-api-token" "token" "ckan-harvest" "harvest"
+      "ckan-allow-linkerd" "l5d" "ckan-solr-allow-linkerd" "solr-l5d" "ckan-redis-allow-linkerd" "redis-l5d"
+      "postgres-linkerd-from-ckan" "postgres-l5d" "apisix-linkerd-egress-to-ckan" "apisix-l5d"
+      "ckan-linkerd-control-plane" "l5d-cp" "ckan-solr-linkerd-control-plane" "solr-l5d-cp"
+      "ckan-redis-linkerd-control-plane" "redis-l5d-cp" "ckan-api-token-linkerd-control-plane" "token-l5d-cp"
+      "ckan-harvest-linkerd-control-plane" "harvest-l5d-cp" }}
+{{- $mesh := and ($.Values.global.serviceMesh.enable | default false) (eq ($.Values.global.serviceMesh.type | default "") "linkerd") }}
+{{- $files := list "networkpolicies.yaml" }}
+{{- if $mesh }}{{ $files = append $files "networkpolicies-linkerd.yaml" }}{{ end }}
+{{- range $c := $.Values.global.catalogues | default list }}
+{{- range $file := $files }}
+{{- $policies := readFile (printf "../../components/ckan/%s" $file) | replace "instance: ckan-catalogue" (printf "instance: ckan-%s" $c.name) | fromYaml }}
+{{- range $policyName, $policy := $policies }}
+{{- if not (hasKey $short $policyName) }}
+{{- fail (printf "components/ckan/networkpolicies.yaml.gotmpl: policy %s has no short name for the further catalogues (T-4636)" $policyName) }}
+{{- end }}
+ckan-{{ $c.name }}-{{ index $short $policyName }}:
+  {{- $policy | toYaml | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,19 @@
+# The charging points of Endolla Barcelona into the space barcelona every five minutes (T-5262):
+# one EVChargingStation per point with its free ports now.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: ev-charging
+  namespace: barcelona
+  title:
+    ca: Punts de recàrrega elèctrica, cada 5 minuts
+    es: Puntos de recarga eléctrica, cada 5 minutos
+    en: EV charging points, every 5 min
+spec:
+  class: auto
+  period: 300s
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-ev-charging }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:barcelona:barcelona
+  output: { type: EVChargingStation, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

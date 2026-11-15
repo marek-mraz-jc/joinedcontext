@@ -1,0 +1,99 @@
+# The groundwater dataset of Barcelona in the city's CKAN organisation: the piezometers and wells
+# the city reads and their newest reading as NGSI-LD (with 30 days of history), CSV, GeoJSON by
+# OGC API Features, OData and MCP (T-5263, EP-118).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: groundwater
+  namespace: barcelona
+  title:
+    ca: Aigües subterrànies de Barcelona
+    es: Aguas subterráneas de Barcelona
+    en: Groundwater in Barcelona
+  description:
+    ca: Els piezòmetres i pous de Barcelona i la seva darrera mesura (fondària de l'aigua i cota piezomètrica), amb 400 dies d'història.
+    es: Los piezómetros y pozos de Barcelona y su última medida (profundidad del agua y cota piezométrica), con 400 días de historia.
+    en: Barcelona's piezometers and wells and their newest reading (depth to the water and its height above sea level), with 30 days of history.
+spec:
+  contextSpaceRef: barcelona
+  slug: 6cy6upunqzvimnf3zxiivp5jo4yarmyf
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-groundwater
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [ENVI]
+    keywords:
+      ca: [aigües subterrànies, piezòmetre, aqüífer]
+      es: [aguas subterráneas, piezómetro, acuífero]
+      en: [groundwater, piezometer, aquifer]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: MONTHLY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/piezometres_detall
+        title:
+          ca: Detall de les mesures dels piezòmetres i pous (Open Data BCN)
+          en: Readings of the piezometers and wells (Open Data BCN)
+        description:
+          ca: Fondària de l'aigua i cota piezomètrica de cada mesura, CC BY 4.0.
+          en: Depth to the water and its height above sea level per reading, CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/piezometres_equipaments
+        title:
+          ca: Relació de piezòmetres i pous (Open Data BCN)
+          en: Piezometers and wells (Open Data BCN)
+        description:
+          ca: Nom, ubicació, aqüífer i fondària de cada pou, CC BY 4.0.
+          en: Name, place, aquifer and depth of each well, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: groundwater }
+    # Declared charts replace the automatic ones (T-5432): each well holds one reading (the newest
+    # 2026-07) with no observedAt, so a 7-day history is empty; the newest depth is drawn per well.
+    visualizations:
+      - name: water-table-per-well
+        title:
+          ca: Fondària de l'aigua per pou
+          sk: Hĺbka hladiny podľa vrtu
+          en: Depth to water per well
+        description:
+          ca: La fondària de l'aigua sota la superfície (m) de la lectura més recent de cada pou.
+          sk: Hĺbka hladiny pod povrchom (m) z najnovšieho merania každého vrtu.
+          en: The depth to water below ground (m) of each well's newest reading.
+        data:
+          source: odata
+          entitySet: PhreaticObserved
+          $select: name,waterTable,dateObserved
+        spec:
+          $schema: https://vega.github.io/schema/vega-lite/v5.json
+          data: { name: source }
+          mark: { type: bar }
+          encoding:
+            'y':
+              field: name
+              type: nominal
+              sort: x
+              title: null
+            x: { field: waterTable, type: quantitative, title: null }
+            tooltip:
+              - field: name
+                type: nominal
+              - field: waterTable
+                type: quantitative
+                format: '.2f'
+              - field: dateObserved
+                type: temporal

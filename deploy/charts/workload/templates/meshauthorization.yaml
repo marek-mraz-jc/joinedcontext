@@ -1,0 +1,77 @@
+{{- /*
+Who may call the workload's port inside the mesh (Architecture/13 §6, PF-46). A meshed call
+arrives on the proxy's inbound port, so a NetworkPolicy on the app's port never sees it; this
+Server makes the proxy itself refuse every identity the AuthorizationPolicy does not name.
+Rendered only for a meshed workload that names its clients. With no HTTPRoute on the Server,
+Linkerd keeps authorizing the kubelet's probes. Each `extraPorts` entry ({name, port, clients})
+renders one more such Server for another port of the workload, named `<fullname>-<name>`, with
+clients of its own.
+*/ -}}
+{{- $auth := .Values.meshAuthorization | default dict }}
+{{- $servers := list }}
+{{- if $auth.clients }}
+{{- $port := required "meshAuthorization.port names the port the clients call" $auth.port }}
+{{- $servers = append $servers (dict "suffix" "api" "port" $port "clients" $auth.clients "includeSelf" $auth.includeSelf) }}
+{{- end }}
+{{- range $auth.extraPorts }}
+{{- $servers = append $servers (dict "suffix" (required "meshAuthorization.extraPorts[].name" .name) "port" (required "meshAuthorization.extraPorts[].port" .port) "clients" (required "meshAuthorization.extraPorts[].clients" .clients) "includeSelf" false) }}
+{{- end }}
+{{- if .Values.serviceMesh.enabled }}
+{{- range $servers }}
+{{- $name := printf "%s-%s" (include "workload.fullname" $) .suffix }}
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "workload.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "workload.selectorLabels" $ | nindent 6 }}
+  port: {{ .port }}
+  proxyProtocol: HTTP/1
+  # What the AuthorizationPolicy below does not name is refused.
+  accessPolicy: deny
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: {{ $name }}-clients
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "workload.labels" $ | nindent 4 }}
+spec:
+  identityRefs:
+    {{- if .includeSelf }}
+    # The workload's own identity, for a call it makes to itself through its Service.
+    - kind: ServiceAccount
+      name: {{ include "workload.serviceAccountName" $ }}
+      namespace: {{ $.Release.Namespace }}
+    {{- end }}
+    {{- range .clients }}
+    - kind: ServiceAccount
+      name: {{ required "meshAuthorization clients[].serviceAccount" .serviceAccount }}
+      namespace: {{ required "meshAuthorization clients[].namespace" .namespace }}
+    {{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "workload.labels" $ | nindent 4 }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: {{ $name }}
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: {{ $name }}-clients
+{{- end }}
+{{- end }}

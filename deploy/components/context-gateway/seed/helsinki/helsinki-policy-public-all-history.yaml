@@ -1,0 +1,22 @@
+# The history of public-all's types that keep one (T-4372): the same entities and Attributes, read
+# over time as far back as the space keeps them. The space's other types keep no history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-all-history
+  namespace: helsinki
+  title: { en: 'Public read: everything in the space (history)' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: role, id: public }
+  operations: [queryTemporal, retrieveTemporal]
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: BikeHireDockingStation
+        - type: OffStreetParking
+        - type: GtfsDailyDepartures
+    - entities:
+        - type: WaterQualityObserved
+      propertyNames: [dataProvider, dateObserved, location, name, source, temperature]

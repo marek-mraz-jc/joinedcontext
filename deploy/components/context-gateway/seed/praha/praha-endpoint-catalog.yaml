@@ -1,0 +1,40 @@
+# The organization's own catalogue door (T-5493, T-4746 owner addendum): one NGSI-LD query finds
+# the datasets this organization publishes. The Portal writes it as the project's slice of the
+# catalogue; it is a dataset of the organization itself, so it publishes to its CKAN. No
+# policyRef: the Portal's write and the public read are both Policies of its space.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: catalog
+  namespace: praha
+  title: { cs: Praha – katalog dat, en: Prague – data catalogue }
+  description:
+    cs: Vyhledejte datovou sadu projektu podle názvu, tématu nebo místa (type=Dataset, q=searchText~=…, georel=near) a pokračujte na její vlastní přístupový bod.
+    en: Find a dataset of the project by its title, theme or place (type=Dataset, q=searchText~=…, georel=near), then go on to its own Endpoint.
+spec:
+  contextSpaceRef: catalog
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:praha.eu:praha-catalog:catalog-portal-write
+    - urn:ngsi-ld:Policy:praha.eu:praha-catalog:catalog-public-read
+  slug: y5jpwu6f5gpo5cgcldtwuiqrskoh4doa
+  audience: public
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, mcp]
+  catalog:
+    # Off the catalogue (T-6071, as T-5788: an empty dataset leaves it): on 2026-10-29 dev and prod
+    # hold no record in it (typeList []), and the three city catalogues shared one CKAN package name.
+    # The harvest feeds leave it out (EP-139); publish it again once prod holds data.
+    harvest: false
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Records of public datasets and Endpoints only: no record names a person.
+    personalData: does-not-contain
+    # Open data under the Czech act on free access to information (DCAT-AP-CZ, API/08 section 3).
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC0
+    themes: [GOVE]
+    keywords:
+      cs: [katalog dat, otevřená data, DCAT-AP, NGSI-LD]
+      en: [data catalogue, open data, DCAT-AP, NGSI-LD]
+    spatial: [CZ010]
+    frequency: CONT

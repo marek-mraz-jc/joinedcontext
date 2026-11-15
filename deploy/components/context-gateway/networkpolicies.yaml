@@ -1,0 +1,139 @@
+---
+context-gateway:
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner
+        # The Portal on JC_PORTAL_GATEWAY_URL: the access check before every App build (AP-132),
+        # Subscriptions (T-0931) and the assistant's reads, each with the person's own token;
+        # the Portal's egress already names this pod (T-2944).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        # A shard of the WASM host: an App's one outgoing origin, with the caller's token (AP-147, T-3361).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+        # A published App's pod calls its endpoint on this Service in the cluster, never through
+        # the public host (AP-134). Every project's apps namespace is the Portal's, created with
+        # this label (AP-116, AP-117), and only an App pod carries the other one.
+        - namespaceSelector:
+            matchLabels:
+              joinedcontext.com/managed-by: joinedcontext-portal
+          podSelector:
+            matchLabels:
+              joinedcontext.com/app: "true"
+      ports:
+        - protocol: TCP
+          port: 8080
+    # The Prometheus that scrapes /metrics (components/monitoring), from its own namespace only
+    # (T-3771).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-broker-broker
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 9090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+    # The running workspace previews, read from the Portal's internal listener
+    # (Architecture/06 §7.2); the other half is portal-internal-from-context-gateway.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 9090
+    # `search_documents` asks the assistant's internal search (AG-119, T-4659); the other half
+    # is the assistant's ingress rule naming this pod.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Each MCP tool call, as an OTLP log record to the collector for the projects' Activity
+    # (T-5322); the other half is the collector's ingress rule naming this pod.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-collector
+          componentNamespace: observability
+      ports:
+        - protocol: TCP
+          port: 4318
+    # The git-sync sidecar clones the configuration repository out of the forge (T-0278).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The gateway reads the running workspace previews from the Portal's internal listener
+# (Architecture/06 §7.2). The list holds manifests with `secretRef`s and no secret, and this
+# policy is who may ask for it: the gateway and nothing else.
+portal-internal-from-context-gateway:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 9090

@@ -1,0 +1,90 @@
+# The mapping of the noise pipelines of the space (T-5378, PL-03): one NoiseZone per polygon of the
+# city's 2022 noise survey (meluselvitys), from the open WFS layers Meluselvitys_2022_Helsinki_*_LAeq_*_NPM
+# of kartta.hel.fi. The noise-roads-* pipelines read the streets and roads layers a band group each
+# (the day layer is 37 MB, 17,727 polygons, on 2026-10-26), noise-rail reads the railway, metro and
+# tram layers of the day and the night in one answer. All of them share this mapping text.
+#
+# The layer (the feature id before its dot) gives the source and the period: LAeq 7-22 is the day and
+# LAeq 22-7 the night of the Finnish guideline values (VNp 993/1992). The survey's other maps are left
+# out: Lden and Ln are the EU directive's indicators of the same computation, maantiet_major the
+# directive's subset of the roads, yhteismelu the sum of the sources and hiljaiset_alueet its quiet areas.
+# A band is 5 dB (db_lo, db_hi); the loudest has no upper bound. An area is keyed by its source, its
+# period and the layer's row id.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a polygon of a layer this mapping does not name, without a
+# row id, without an outline, with a band outside 0-120 dB or not 5 dB wide, or whose first vertex lies
+# outside Helsinki's box (the city plus about 5 km) is dropped, and so is a second polygon of one key;
+# the log line counts each reason. An answer that is not a feature list, holds no polygon, or where
+# fewer than half the polygons survive (a projection or schema change) fails the run, so the areas
+# already written stay.
+#
+# `expiresAt` (NGSI-LD 4.22): an area leaves every read 21 days after the layer last listed it, three
+# weekly runs, so a polygon the city renumbers does not stay twice.
+pipeline:
+  processors:
+    # A throw skips the steps after it, so the runner refuses the run and nothing is written.
+    - try:
+        - mapping: |
+            let lease = (now().ts_unix() + 1814400).ts_format("2006-01-02T15:04:05Z", "UTC")
+            let layers = {
+              "Meluselvitys_2022_Helsinki_kadut_ja_maantiet_LAeq_7-22_NPM": ["roadTraffic", "day"],
+              "Meluselvitys_2022_Helsinki_kadut_ja_maantiet_LAeq_22-7_NPM": ["roadTraffic", "night"],
+              "Meluselvitys_2022_Helsinki_juna_LAeq_7-22_NPM": ["railway", "day"],
+              "Meluselvitys_2022_Helsinki_juna_LAeq_22-7_NPM": ["railway", "night"],
+              "Meluselvitys_2022_Helsinki_metro_LAeq_7-22_NPM": ["metro", "day"],
+              "Meluselvitys_2022_Helsinki_metro_LAeq_22-7_NPM": ["metro", "night"],
+              "Meluselvitys_2022_Helsinki_raitiovaunu_LAeq_7-22_NPM": ["tram", "day"],
+              "Meluselvitys_2022_Helsinki_raitiovaunu_LAeq_22-7_NPM": ["tram", "night"]
+            }
+            let words = {
+              "roadTraffic": ["Katu- ja tieliikenne", "Road traffic"], "railway": ["Junaliikenne", "Railway"],
+              "metro": ["Metro", "Metro"], "tram": ["Raitioliikenne", "Tram"],
+              "day": ["päivä 7–22", "day 7–22"], "night": ["yö 22–7", "night 22–7"]
+            }
+            let features = this.features.catch(null)
+            let rows = if $features.type() != "array" || $features.length() == 0 {
+              throw("kartta.hel.fi answered no polygon of the noise survey")
+            } else { $features }.map_each(f -> {
+              "layer": f.id.catch("").string().re_replace_all("\\.[0-9]+$", ""),
+              "n": f.properties.id.catch(null),
+              "lo": f.properties.db_lo.catch(null),
+              "hi": f.properties.db_hi.catch(null),
+              "g": f.geometry.catch(null),
+              "v": if f.geometry.type.catch("") == "Polygon" { f.geometry.coordinates.index(0).index(0).catch(null) } else if f.geometry.type.catch("") == "MultiPolygon" { f.geometry.coordinates.index(0).index(0).index(0).catch(null) } else { null }
+            })
+            let known = $rows.filter(r -> $layers.keys().contains(r.layer) && r.n.type() == "number" && r.lo.type() == "number" && r.lo >= 0 && r.lo <= 120 && (r.hi == null || (r.hi.type() == "number" && r.hi == r.lo + 5)))
+            let inside = $known.filter(r -> r.v.type() == "array" && r.v.length() >= 2 && r.v.index(0).type() == "number" && r.v.index(1).type() == "number" && r.v.index(0) >= 24.7 && r.v.index(0) <= 25.4 && r.v.index(1) >= 60.0 && r.v.index(1) <= 60.4)
+            let unique = $inside.map_each(r -> r.merge({ "key": "%v-%v-%v".format($layers.get(r.layer).index(0), $layers.get(r.layer).index(1), r.n.int64()) })).unique(r -> r.key)
+            meta read = $rows.length()
+            meta unknown = $rows.length() - $known.length()
+            meta outside = $known.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            let entities = if $unique.length() * 2 < $rows.length() {
+              throw("only %v of %v noise polygons have a known layer, a row id, a 5 dB band and an outline in Helsinki".format($unique.length(), $rows.length()))
+            } else { $unique }.map_each(r -> {
+              "source": $layers.get(r.layer).index(0),
+              "period": $layers.get(r.layer).index(1),
+              "band": if r.hi == null { ["yli %v dB".format(r.lo), "%v dB or more".format(r.lo)] } else { ["%v–%v dB".format(r.lo, r.hi), "%v–%v dB".format(r.lo, r.hi)] },
+              "r": r
+            }).map_each(a -> {
+              "id": "urn:ngsi-ld:NoiseZone:%v:%v:noise-%v".format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), a.r.key),
+              "type": "NoiseZone",
+              "expiresAt": $lease,
+              "name": { "type": "LanguageProperty", "languageMap": {
+                "fi": "%v, %v: %v".format($words.get(a.source).index(0), $words.get(a.period).index(0), a.band.index(0)),
+                "en": "%v, %v: %v".format($words.get(a.source).index(1), $words.get(a.period).index(1), a.band.index(1))
+              } },
+              "noiseLevelLow": { "type": "Property", "value": a.r.lo, "unitCode": "2N" },
+              "noiseLevelHigh": if a.r.hi != null { { "type": "Property", "value": a.r.hi, "unitCode": "2N" } } else { null },
+              "assessmentPeriod": { "type": "Property", "value": a.period },
+              "noiseSource": { "type": "Property", "value": a.source },
+              "location": { "type": "GeoProperty", "value": a.r.g },
+              "dataProvider": { "type": "Property", "value": "City of Helsinki, Urban Environment Division, Environmental Services" },
+              "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:" + a.r.layer }
+            }.filter(entry -> entry.value != null))
+            # 50 areas per write, so one request stays under the broker's 4 MiB body limit.
+            root = range(0, ($entities.length() / 50).ceil().int64()).map_each(i -> $entities.slice(i * 50, [(i + 1) * 50, $entities.length()].min()))
+        - log:
+            level: INFO
+            message: 'noise: read ${! meta("read") } polygons, dropped ${! meta("unknown") } of an unknown layer or without a row id or a 5 dB band, ${! meta("outside") } without an outline in Helsinki, ${! meta("duplicate") } duplicates'
+        - unarchive: { format: json_array }

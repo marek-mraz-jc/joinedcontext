@@ -1,0 +1,41 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: exclude-acme-solver-from-mesh
+  annotations:
+    # Only the live Pod: cert-manager creates the solver Pod directly.
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Keep the ACME HTTP-01 Solver Out of the Mesh
+    policies.kyverno.io/category: Linkerd
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      cert-manager answers an HTTP-01 challenge with a short-lived Pod that
+      serves one random token to the public internet. In a namespace annotated
+      for Linkerd injection it is meshed like everything else, and the request
+      from the ingress controller then fails ("connection refused" on the
+      solver port, 503 to Let's Encrypt), so no certificate is ever issued.
+      The solver has no identity to protect and talks to nobody inside the
+      cluster, so it is excluded from the mesh, with the reason the
+      justify-linkerd-inject-opt-out policy asks for.
+spec:
+  background: false
+  rules:
+    - name: acme-solver-unmeshed
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE]
+              selector:
+                matchLabels:
+                  acme.cert-manager.io/http01-solver: 'true'
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              linkerd.io/inject: disabled
+              mesh.joinedcontext.com/opt-out-reason: >-
+                cert-manager HTTP-01 solver: public, single-token, no in-cluster
+                callers; meshing it breaks certificate issuance.

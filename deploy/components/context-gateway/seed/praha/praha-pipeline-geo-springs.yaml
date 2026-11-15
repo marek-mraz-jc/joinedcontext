@@ -1,0 +1,19 @@
+# One PointOfInterest per record of the IPR layer Oázy chladu – studánky, prameny into the city space (T-5269).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-springs
+  namespace: praha
+  title:
+    en: 'Cool spots: wells and springs'
+    cs: Oázy chladu – studánky, prameny
+spec:
+  class: auto
+  # IPR republishes its layers a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '40 2 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-springs }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

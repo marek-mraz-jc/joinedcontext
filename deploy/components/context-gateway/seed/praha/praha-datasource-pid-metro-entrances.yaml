@@ -1,0 +1,16 @@
+# IPR Praha's geoportal item 62106cae6acf4507b988c0e745f55bba (Pražská integrovaná doprava - vstupy do metra), 341
+# entrances on 2026-10-24, served by its ArcGIS Hub download as GeoJSON in WGS 84. No key. CC BY 4.0,
+# "datový podklad © IPR Praha" (T-5423).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-pid-metro-entrances
+  namespace: praha
+  title: { en: Metro entrances (IPR Praha), cs: Vstupy do metra (IPR Praha) }
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/62106cae6acf4507b988c0e745f55bba_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 120s

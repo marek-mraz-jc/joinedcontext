@@ -1,0 +1,8 @@
+---
+node-storage:
+  local-path:
+    # The helper image k3s's own local-storage addon ships (k3s v1.33); the provisioner pulls it
+    # for each volume's setup and teardown. Re-pin with the cluster's k3s upgrade.
+    repository: 'rancher/mirrored-library-busybox'
+    tag: '1.37.0'
+    digest: 'sha256:101b4afd76732482eff9b95cae5f94bcf295e521fbec4e01b69c5421f3f3f3e5'

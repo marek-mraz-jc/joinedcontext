@@ -1,0 +1,17 @@
+# One PointOfInterest per place of the IPR layer Pošty into the city space (T-5682).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: point-post-offices
+  namespace: praha
+  title: { en: Post offices, cs: Pošty }
+spec:
+  class: auto
+  # IPR republishes its layers a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '25 3 * * 4'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-point-post-offices }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

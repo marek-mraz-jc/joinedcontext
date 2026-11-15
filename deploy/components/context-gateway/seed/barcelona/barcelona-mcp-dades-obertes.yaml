@@ -1,0 +1,26 @@
+# Barcelona's public data as one read-only MCP connector (T-5367, ADR-N-043), named in the city's
+# own language: `https://{domain}/api/mcp/barcelona/dades-obertes`. It selects every public
+# Endpoint of the project barcelona, so each dataset a later batch adds joins without an edit here;
+# every call is still that Endpoint's own call under its anonymous Policy, and a public server
+# lists read tools only, whoever calls (EP-141).
+apiVersion: joinedcontext.com/v1alpha1
+kind: McpServer
+metadata:
+  name: dades-obertes
+  namespace: barcelona
+  # What an AI client reads as serverInfo and initialize.instructions (EP-92).
+  title:
+    ca: Barcelona — dades obertes
+    es: Barcelona — datos abiertos
+    en: Barcelona, open data
+  description:
+    ca: "Dades obertes de l'Ajuntament de Barcelona (Open Data BCN), només de lectura: l'agenda d'activitats i els equipaments de la ciutat. Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0. Citeu la font."
+    es: 'Datos abiertos del Ayuntamiento de Barcelona (Open Data BCN), solo lectura: la agenda de actividades y los equipamientos de la ciudad. Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0. Cite la fuente.'
+    en: "Read-only open data of Barcelona City Council (Open Data BCN): the city's events agenda and its public facilities. Start with list_endpoints or search, then query_entities naming one endpoint, with a small limit. Texts are in Catalan and Spanish. Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0; credit it when you quote it."
+spec:
+  # Every public Endpoint of the project, resolved on each call (MF-55, T-5367): a new one joins
+  # without an edit here, one that stops being public leaves.
+  select:
+    projects: [barcelona]
+    accessLevel: [public]
+  audience: public

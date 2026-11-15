@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: SharedSpaceReference
+metadata:
+  name: city-bikes
+  namespace: helsinki-mobility
+  title: { en: City-bike stations shared by the helsinki project }
+spec:
+  # The helsinki project's bikes endpoint, by name: the loader resolves the slug of whatever
+  # environment this lands in (EP-77).
+  endpointRef: { project: helsinki, name: helsinki-bikes }
+  alias: city-bikes

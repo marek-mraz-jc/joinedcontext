@@ -1,0 +1,48 @@
+{{- $user := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "reaper.fullname" .) }}
+{{- /*
+  The bound on the ClusterRole in rbac.yaml (T-4775). RBAC cannot name a label, so `delete` on
+  namespaces is every namespace: kube-system, the database's, the Portal's. The reaper's own
+  script only deletes a namespace carrying sandbox.joinedcontext.com/lifecycle with the value
+  `unmanaged` or `preview` (reap.sh), and this native admission policy holds its token to the
+  same rule, so a stolen token or a changed script removes a sandbox and nothing else. The API
+  server evaluates it for every request, with no webhook that can fail open.
+*/}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "reaper.fullname" . }}
+  labels:
+    {{- include "reaper.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["namespaces"]
+        operations: ["DELETE"]
+  matchConditions:
+    - name: the-reaper
+      expression: request.userInfo.username == {{ $user | quote }}
+  variables:
+    # The namespace being deleted: the API server sends it as oldObject; the kyverno CLI that
+    # tests this offline sends it as object.
+    - name: sides
+      expression: "[object, oldObject].filter(o, o != null)"
+  validations:
+    - expression: >-
+        size(variables.sides) > 0 && variables.sides.all(n, has(n.metadata.labels)
+          && "sandbox.joinedcontext.com/lifecycle" in n.metadata.labels
+          && n.metadata.labels["sandbox.joinedcontext.com/lifecycle"] in ["unmanaged", "preview"])
+      messageExpression: >-
+        "The sandbox reaper may only delete a namespace labelled sandbox.joinedcontext.com/lifecycle=unmanaged or preview, not " + request.name + " (OPS-44)."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "reaper.fullname" . }}
+  labels:
+    {{- include "reaper.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "reaper.fullname" . }}
+  validationActions: [Deny]

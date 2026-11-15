@@ -1,0 +1,4 @@
+html { color-scheme: light; }
+body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: #fff; }
+#chart { width: 100%; }
+#chart .vega-embed { width: 100%; }

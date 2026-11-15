@@ -1,0 +1,17 @@
+# Stage reads prod's public Endpoint banskabystrica-verejne for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-banskabystrica-verejne
+  namespace: banskabystrica
+  title: Prod banskabystrica-verejne
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/rpfqszwlbp5bonvg7kckhdsne5qedjor
+  information:
+    - entities:
+        - type: EVChargingStation
+        - type: PointOfInterest
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

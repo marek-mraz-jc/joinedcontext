@@ -1,0 +1,40 @@
+---
+# Meshed traffic reaches a pod on its Linkerd inbound proxy (4143), so every rule of
+# networkpolicies.yaml has its half here (T-5314: caller egress and callee ingress on 4143; the
+# callee's ingress half is in networkpolicies.yaml.gotmpl with the caller list), and embedder,
+# which declares an egress policy, reaches the control plane (8080, 8086, 8090).
+embedder-server-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: embedder-server
+    app.kubernetes.io/instance: embedder-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+jc-linkerd-egress-to-embedder:
+  componentNamespace: jc
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: embedder-server
+              app.kubernetes.io/instance: embedder-server
+          componentNamespace: embedder
+      ports:
+        - protocol: TCP
+          port: 4143

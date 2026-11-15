@@ -1,0 +1,44 @@
+# Projected economic dependency index of Bratislava, 2022-2050: one public dataset of the hub (T-5274), item 6f60d1fc03c44278b1c407e8b692884b, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-prognozovany-vyvoj-indexu-ba-v-rokoch-2022-2050-ba
+  namespace: bratislava
+  title:
+    sk: Prognózovaný vývoj indexu ekonomického zaťaženia obyvateľstva BA v rokoch 2022 – 2050
+    en: Projected economic dependency index of Bratislava, 2022-2050
+  description:
+    sk: 'Ukazovatele tabuľky „Prognózovaný vývoj indexu ekonomického zaťaženia obyvateľstva BA v rokoch 2022 – 2050“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Projected economic dependency index of Bratislava, 2022-2050”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 7aw2f5hhdrgka5yzww7y76x4azwrv2aa
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-prognozovany-vyvoj-indexu-ba-v-rokoch-2022-2050-ba
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/6f60d1fc03c44278b1c407e8b692884b
+        title:
+          sk: Prognózovaný vývoj indexu ekonomického zaťaženia obyvateľstva BA v rokoch 2022 – 2050
+          en: Projected economic dependency index of Bratislava, 2022-2050
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Prognózovaný vývoj indexu ekonomického zaťaženia obyvateľstva BA v rokoch 2022 – 2050. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Projected economic dependency index of Bratislava, 2022-2050. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

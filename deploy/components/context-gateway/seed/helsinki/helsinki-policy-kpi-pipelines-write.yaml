@@ -1,0 +1,18 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: kpi-pipelines-write
+  namespace: helsinki
+  title: { en: The KPI pipelines write the indicator space }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki-kpi }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: serviceAccount, id: pipelines }
+  # deleteBatch, as in bbsk and zilina: the pipelines account removes indicators no pipeline
+  # writes any more (owner 2026-10-06, option b of T-2985; no person gets a delete grant).
+  operations: [upsertBatch, createBatch, queryBatch, deleteBatch]
+  # The indicator type, named: a grant that names no type is matched against nothing on a
+  # read, and the steward saw an empty Explore (PL-45).
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator

@@ -1,0 +1,19 @@
+# SHMÚ's automatic weather stations, one JSON file every five minutes (T-4153), CC BY 4.0
+# (opendata.shmu.sk README.txt; NKOD dataset 9bdd8179-9cb0-46c6-a0d0-a52e50d2e2bc).
+#
+# The file's name changes with every file (`data/{yyyymmdd}/aws1min - {timestamp}.json`) and the
+# host sends its certificate without the intermediate, so the three requests that find and read
+# the newest file live in the mapping (pipeline-pocasie-bento.yaml), each with that intermediate
+# pinned. This source only starts one run per schedule tick.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: shmu-aws1min
+  namespace: banskabystrica
+  title: { sk: Automatické meteorologické stanice SHMÚ, en: SHMÚ automatic weather stations }
+spec:
+  type: generate
+  input:
+    mapping: root = ""
+    count: 1
+    interval: ''

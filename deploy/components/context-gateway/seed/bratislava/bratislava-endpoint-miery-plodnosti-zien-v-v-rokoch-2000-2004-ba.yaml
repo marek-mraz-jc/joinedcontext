@@ -1,0 +1,44 @@
+# Fertility rates of women in Bratislava's districts, 2000-2004: one public dataset of the hub (T-5274), item 5d9d0cb1d3cd4ce1bc086f115ef4b66c, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-miery-plodnosti-zien-v-v-rokoch-2000-2004-ba
+  namespace: bratislava
+  title:
+    sk: Miery plodnosti žien v okresoch Bratislavy v rokoch 2000 – 2004
+    en: Fertility rates of women in Bratislava's districts, 2000-2004
+  description:
+    sk: 'Ukazovatele tabuľky „Miery plodnosti žien v okresoch Bratislavy v rokoch 2000 – 2004“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Fertility rates of women in Bratislava's districts, 2000-2004”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: eoitaxiorgdqvfdkgrv4zwxzhklgqu7m
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-miery-plodnosti-zien-v-v-rokoch-2000-2004-ba
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/5d9d0cb1d3cd4ce1bc086f115ef4b66c
+        title:
+          sk: Miery plodnosti žien v okresoch Bratislavy v rokoch 2000 – 2004
+          en: Fertility rates of women in Bratislava's districts, 2000-2004
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Miery plodnosti žien v okresoch Bratislavy v rokoch 2000 – 2004. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Fertility rates of women in Bratislava's districts, 2000-2004. Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

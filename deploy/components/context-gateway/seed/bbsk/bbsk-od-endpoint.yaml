@@ -1,0 +1,50 @@
+# The space's one door, public: every row is the publisher's open data under the licence its
+# `dataProvider` names. A member of the project's public MCP server, which the public assistant reads.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bbsk-otvorene-data
+  namespace: bbsk
+  title:
+    sk: Banskobystrický kraj — tabuľky katalógu
+    en: Banská Bystrica Region, catalogue tables
+  description:
+    sk: Všetky otvorené dáta Banskobystrického samosprávneho kraja z katalógu (opendata.bbsk.sk).
+    en: Every dataset of the Banská Bystrica Self-Governing Region in the catalogue (opendata.bbsk.sk).
+spec:
+  contextSpaceRef: bbsk-otvorene-data
+  policyRefs:
+  - urn:ngsi-ld:Policy:bbsk.sk:bbsk-otvorene-data:otvorene-data-pipelines-write
+  - urn:ngsi-ld:Policy:bbsk.sk:bbsk-otvorene-data:otvorene-data-read
+  - urn:ngsi-ld:Policy:bbsk.sk:bbsk-otvorene-data:otvorene-data-read-history
+  slug: 6b4yqhzqieutqcoeew5rnxrx5udqeert
+  audience: public
+  enabledRepresentations:
+  - ngsi-ld
+  - csv
+  - websocket
+  - ogc-features
+  - odata
+  - mcp
+  catalog:
+    license: CC_BYSA_4_0
+    themes:
+    - GOVE
+    - REGI
+    frequency: DAILY
+    keywords:
+      sk:
+      - Banskobystrický kraj
+      - školy
+      - sociálne služby
+      - cesty
+      - kultúra
+      en:
+      - Banská Bystrica Region
+      - schools
+      - social services
+      - roads
+      - culture
+    spatial:
+    - SK032
+    personalData: does-not-contain

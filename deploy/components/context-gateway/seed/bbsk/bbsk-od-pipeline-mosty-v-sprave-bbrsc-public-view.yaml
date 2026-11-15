@@ -1,0 +1,24 @@
+# One Bridge per row of "Mosty v správe BBRSC (public view)" (T-4255); the name of the bbsk-registre class.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-mosty-v-sprave-bbrsc-public-view
+  namespace: bbsk
+  title:
+    sk: Mosty v správe BBRSC (public view)
+    en: Mosty v správe BBRSC (public view)
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 34 3 * * 1
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-mosty-v-sprave-bbrsc-public-view
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: Bridge
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

@@ -1,0 +1,90 @@
+# The mapping of the nature pipeline of the space (T-5823, PL-03): one NatureSite per site of ten
+# layers of the city's nature information system (luontotietojärjestelmä), the open WFS layers
+# LTJ_avoin_* of kartta.hel.fi, read in one answer (1,511 sites, 4.6 MB on 2026-10-27): the protected
+# sites (nature reserves, Natura 2000 areas, natural monuments, protected habitat types), the sites of
+# the nature conservation programme and the sites valued for flying squirrels, birds, bats, plants
+# and geology.
+#
+# A site is keyed by the system's row id (id), unique across the layers and kept across its
+# republish; the site code (tunnus) repeats between layers. The layer is the first part of the
+# feature id (LTJ_avoin_arvo_tarkeat_lintualueet.fid-...). Read: the name (nimi), the value class in
+# the system's own words (arvoluokan_selite), the area (pinta_ala_ha) and the description
+# (kohdeteksti, HTML: each tag becomes a space, the entities their letters). Nothing else of the layers is read:
+# kuvaus and huom are empty on every site, metadata, datanomistaja and paivitetty_tietopalveluun are
+# the city's bookkeeping.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a site of a layer this mapping does not know, without a row
+# id or an outline, or whose outline starts outside Helsinki's box (the city plus about 5 km), is
+# dropped, and so is a second site of one id; an area that is not a positive number is left out of
+# the site. The log line counts each reason. An answer that is not a feature list, holds no site, or
+# where fewer than half the sites survive (a projection or schema change) fails the run, so the sites
+# already written stay.
+#
+# `expiresAt` (NGSI-LD 4.22): a site leaves every read three days after the system last listed it.
+pipeline:
+  processors:
+    # A throw skips the steps after it, so the runner refuses the run and nothing is written.
+    - try:
+        - mapping: |
+            let lease = (now().ts_unix() + 259200).ts_format("2006-01-02T15:04:05Z", "UTC")
+            let layers = {
+              "LTJ_avoin_rauhoitettu_luonnonsuojelualueet": "natureReserve",
+              "LTJ_avoin_rauhoitettu_Natura_aluemaiset": "natura2000",
+              "LTJ_avoin_rauhoitettu_luonnonmuistomerkit": "naturalMonument",
+              "LTJ_avoin_rauhoitettu_suojellut_luontotyypit": "protectedHabitat",
+              "LTJ_avoin_rauhoitettavat_luonnonsuojeluohjelma": "conservationProgramme",
+              "LTJ_avoin_arvo_liito_orava_ydinalueet": "flyingSquirrelCore",
+              "LTJ_avoin_arvo_tarkeat_lintualueet": "birdArea",
+              "LTJ_avoin_arvo_tarkeat_lepakkoalueet": "batArea",
+              "LTJ_avoin_arvokkaat_kasvikohteet": "valuablePlantSite",
+              "LTJ_avoin_arvokkaat_geologiset_aluemaiset": "geologicalSite"
+            }
+            let features = this.features.catch(null)
+            let rows = if $features.type() != "array" || $features.length() == 0 {
+              throw("kartta.hel.fi answered no site of the nature information system")
+            } else { $features }.map_each(f -> {
+              "layer": f.id.catch("").string().split(".").index(0),
+              "key": f.properties.id.catch(null),
+              "p": f.properties.catch({}),
+              "g": f.geometry.catch(null),
+              "v": match f.geometry.type.catch("") {
+                "Point" => f.geometry.coordinates.catch(null),
+                "Polygon" => f.geometry.coordinates.index(0).index(0).catch(null),
+                "MultiPolygon" => f.geometry.coordinates.index(0).index(0).index(0).catch(null),
+                _ => null
+              }
+            })
+            let known = $rows.filter(r -> $layers.get(r.layer).catch(null) != null && r.key.type() == "number" && r.key > 0)
+            let inside = $known.filter(r -> r.v.type() == "array" && r.v.length() >= 2 && r.v.index(0).type() == "number" && r.v.index(1).type() == "number" && r.v.index(0) >= 24.7 && r.v.index(0) <= 25.4 && r.v.index(1) >= 60.0 && r.v.index(1) <= 60.4)
+            let unique = $inside.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unknown = $rows.length() - $known.length()
+            meta outside = $known.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            let entities = if $unique.length() * 2 < $rows.length() {
+              throw("only %v of %v sites have a known layer, a row id and an outline in Helsinki".format($unique.length(), $rows.length()))
+            } else { $unique }.map_each(r -> {
+              "name": r.p.nimi.catch(null),
+              "value": r.p.arvoluokan_selite.catch(null),
+              "area": r.p.pinta_ala_ha.catch(null),
+              "text": if r.p.kohdeteksti.type() == "string" { r.p.kohdeteksti.re_replace_all("<[^>]*>", " ").unescape_html().re_replace_all("\\s+", " ").trim() } else { "" },
+              "r": r
+            }).map_each(a -> {
+              "id": "urn:ngsi-ld:NatureSite:%v:%v:nature-%v".format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), a.r.key.int64()),
+              "type": "NatureSite",
+              "expiresAt": $lease,
+              "name": if a.name.type() == "string" && a.name.trim() != "" { { "type": "LanguageProperty", "languageMap": { "fi": a.name.trim() } } } else { null },
+              "natureSiteCategory": { "type": "Property", "value": $layers.get(a.r.layer) },
+              "valueClass": if a.value.type() == "string" && a.value.trim() != "" { { "type": "Property", "value": a.value.trim() } } else { null },
+              "areaHectares": if a.area.type() == "number" && a.area > 0 { { "type": "Property", "value": (a.area * 100).round() / 100, "unitCode": "HAR" } } else { null },
+              "description": if a.text != "" { { "type": "LanguageProperty", "languageMap": { "fi": a.text } } } else { null },
+              "location": { "type": "GeoProperty", "value": a.r.g },
+              "dataProvider": { "type": "Property", "value": "City of Helsinki, Urban Environment Division" },
+              "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:%v".format(a.r.layer) }
+            }.filter(entry -> entry.value != null))
+            # 100 sites per write, at most about 0.8 MB of outlines, well under the broker's 4 MiB body limit.
+            root = range(0, ($entities.length() / 100).ceil().int64()).map_each(i -> $entities.slice(i * 100, [(i + 1) * 100, $entities.length()].min()))
+        - log:
+            level: INFO
+            message: 'nature: read ${! meta("read") } sites, dropped ${! meta("unknown") } of an unknown layer or without a row id, ${! meta("outside") } without an outline in Helsinki, ${! meta("duplicate") } duplicates'
+        - unarchive: { format: json_array }

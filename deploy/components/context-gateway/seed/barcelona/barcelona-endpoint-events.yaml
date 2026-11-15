@@ -1,0 +1,83 @@
+# The Ajuntament's activity agendas as one public dataset (T-5265): every current and upcoming
+# activity as a Smart Data Models Event, refreshed daily from Open Data BCN.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: barcelona-events
+  namespace: barcelona
+  title:
+    ca: Agenda d'activitats de Barcelona
+    es: Agenda de actividades de Barcelona
+    en: Barcelona activity agenda
+  description:
+    ca: "Les activitats de l'agenda diària, l'agenda cultural i l'agenda esportiva de l'Ajuntament de Barcelona: nom, dia d'inici i de fi, categoria, lloc i telèfon. Font: Open Data BCN, CC BY 4.0."
+    es: 'Las actividades de la agenda diaria, la agenda cultural y la agenda deportiva del Ayuntamiento de Barcelona: nombre, día de inicio y fin, categoría, lugar y teléfono. Fuente: Open Data BCN, CC BY 4.0.'
+    en: "The activities of Barcelona City Council's daily, cultural and sports agendas: name, first and last day, category, place and telephone. Source: Open Data BCN, CC BY 4.0."
+spec:
+  contextSpaceRef: barcelona
+  slug: vydunm2sshzoh3h7dpcpl6frgmxrhp6i
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-events
+  # ical: the calendars a person subscribes to, /api/endpoint/{slug}/ical/v1/{name}.ics, one per output of
+  # representations.ical (EP-125, EP-159).
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata, ical]
+  representations:
+    ical:
+      - name: vsetky
+        title:
+          ca: Totes les activitats de Barcelona
+          es: Todas las actividades de Barcelona
+          en: All activities in Barcelona
+        lang: ca
+        timezone: Europe/Madrid
+        sources:
+          - type: Event
+            preset: sdm-event
+            mapping:
+              SUMMARY:
+                firstOf: [name, type]
+  # The catalogue entry (EP-62..EP-65): one dataset in the Barcelona catalogue, one resource per
+  # representation, and a DataStore mirror of the CSV rows reloaded on every publish run.
+  catalog:
+    # Off the catalogue (T-5788, owner order 2026-10-26: an empty dataset leaves it): on 2026-10-26
+    # prod held 0 Event and its iCal feed no event (dev 6985): its prod runs write nothing.
+    # The harvest feeds leave it out (EP-139); publish it again once prod holds data.
+    harvest: false
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [EDUC]
+    keywords:
+      ca: [agenda, activitats, cultura, esports]
+      es: [agenda, actividades, cultura, deportes]
+      en: [events, culture, sport, leisure]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: DAILY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/agenda-diaria
+        title: { ca: Agenda diària, en: Daily agenda }
+        description:
+          ca: Activitats de l'agenda diària de Barcelona, CC BY 4.0.
+          en: Barcelona's daily agenda of activities, CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/agenda-cultural
+        title: { ca: Agenda cultural, en: Cultural agenda }
+        description:
+          ca: Activitats de l'agenda cultural de Barcelona, CC BY 4.0.
+          en: Barcelona's cultural agenda, CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/agenda-activitats-esportives
+        title: { ca: Agenda d'activitats esportives, en: Sports activities agenda }
+        description:
+          ca: Activitats esportives de Barcelona, CC BY 4.0.
+          en: Barcelona's sports activities agenda, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: agenda }

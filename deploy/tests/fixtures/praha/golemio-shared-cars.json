@@ -1,0 +1,117 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "geometry": {
+    "coordinates": [
+     14.48588,
+     50.100166
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "id": "cesky-carsharing-8AB4387",
+    "name": "Toyota Toyota Yaris",
+    "res_url": "https://www.anytimecar.cz/",
+    "company": {
+     "name": "Anytime",
+     "web": "https://www.anytimecar.cz/"
+    },
+    "availability": {
+     "description": "ihned",
+     "id": 1
+    },
+    "fuel": {
+     "description": "hybrid",
+     "id": 5
+    },
+    "updated_at": "2026-10-25T15:24:00.229Z"
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "coordinates": [
+     14.444788,
+     50.101415
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "id": "cesky-carsharing-9P48966",
+    "name": "Audi A3",
+    "res_url": "https://bolt.eu/cs-cz/drive/",
+    "company": {
+     "name": "Bolt",
+     "web": "https://bolt.eu/cs-cz/drive/"
+    },
+    "availability": {
+     "description": "ihned",
+     "id": 1
+    },
+    "fuel": {
+     "description": "benzín",
+     "id": 1
+    },
+    "updated_at": "2026-10-25T15:24:00.229Z"
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "coordinates": [
+     14.393055,
+     50.079638
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "id": "cesky-carsharing-7SA7592",
+    "name": "Škoda Scala",
+    "res_url": "https://www.car4way.cz/",
+    "company": {
+     "name": "car4way",
+     "web": "https://www.car4way.cz/"
+    },
+    "availability": {
+     "description": "ihned",
+     "id": 1
+    },
+    "fuel": {
+     "description": "benzín",
+     "id": 1
+    },
+    "updated_at": "2026-10-25T15:24:00.229Z"
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "coordinates": [
+     14.493055,
+     50.008918
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "id": "cesky-carsharing-9P49571",
+    "name": "Audi A3",
+    "res_url": "https://bolt.eu/cs-cz/drive/",
+    "company": {
+     "name": "Bolt",
+     "web": "https://bolt.eu/cs-cz/drive/"
+    },
+    "availability": {
+     "description": "ihned",
+     "id": 1
+    },
+    "fuel": {
+     "description": "benzín",
+     "id": 1
+    },
+    "updated_at": "2026-10-25T15:24:00.229Z"
+   },
+   "type": "Feature"
+  }
+ ]
+}

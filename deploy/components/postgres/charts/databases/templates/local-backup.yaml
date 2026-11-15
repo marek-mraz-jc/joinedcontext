@@ -1,0 +1,238 @@
+{{- /*
+A nightly pg_dumpall of the cluster onto a volume of the node, kept `keepDays` days. It is the
+stopgap while an instance has no object store for CNPG's base backups and WAL archive
+(smartcity until the owner's S3 keys exist, T-4678): it survives a dropped table or a broken
+migration, not the loss of the node, so an instance with it still has no off-site backup.
+The dump is age-encrypted before it touches the volume (T-5839, CC-06): to each of
+`ageRecipients` (the operator's keys; restore with `age -d -i <key>`) and to the drill key, the
+generated Secret `{cluster}-local-backup-key` the monthly drill opens it with (files/age.py, as
+the image has python3-cryptography and no `age`).
+*/ -}}
+{{- /* The dump Job's spec, for the CronJob (mode "dump") and the Job of the apply (mode "bind"):
+(dict "root" $ "mode" m "keepDays" n "size" q "exclude" list "recipients" list). */}}
+{{- define "database.localBackupJob" -}}
+{{- $r := .root }}
+{{- $name := printf "%s-local-backup" $r.Values.cluster.name }}
+backoffLimit: 2
+template:
+  metadata:
+    labels:
+      {{- include "database.selectorLabels" $r | nindent 6 }}
+      app.kubernetes.io/component: database-local-backup
+      joinedcontext.com/psql-client: "true"
+  spec:
+    restartPolicy: Never
+    automountServiceAccountToken: false
+    securityContext:
+      {{- include "database.localBackupPodSecurityContext" $r | nindent 6 }}
+    volumes:
+    - name: home
+      emptyDir: {}
+    - name: backup
+      persistentVolumeClaim:
+        claimName: {{ $name }}
+    - name: age
+      configMap:
+        name: {{ $name }}-age
+    - name: key
+      secret:
+        secretName: {{ $name }}-key
+        defaultMode: 0440
+    containers:
+    - name: dump
+      image: {{ $r.Values.roleJob.image }}
+      securityContext:
+        {{- toYaml $r.Values.securityDefaults.securityContext | nindent 8 }}
+      volumeMounts:
+      - name: home
+        mountPath: /tmp
+      - name: backup
+        mountPath: /backup
+      - name: age
+        mountPath: /opt/age
+        readOnly: true
+      - name: key
+        mountPath: /key
+        readOnly: true
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { cpu: 500m, memory: 512Mi }
+      env:
+      - name: HOME
+        value: /tmp
+      - name: PGHOST
+        value: {{ $r.Values.cluster.name }}-rw.{{ $r.Release.Namespace }}.svc.cluster.local
+      - name: PGUSER
+        valueFrom:
+          secretKeyRef:
+            name: {{ $r.Values.cluster.name }}-superuser
+            key: username
+      - name: PGPASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: {{ $r.Values.cluster.name }}-superuser
+            key: password
+      - name: KEEP_DAYS
+        value: {{ .keepDays | quote }}
+      - name: VOLUME_SIZE
+        value: {{ .size | quote }}
+      - name: MODE
+        value: {{ .mode }}
+      - name: EXCLUDE_DATABASES
+        value: {{ join " " .exclude | quote }}
+      - name: AGE_RECIPIENTS
+        value: {{ join " " .recipients | quote }}
+      command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        # The Job of the apply is there to bind the volume (below): it dumps only when the
+        # volume holds no dump of the last 20 h, so an hourly apply writes no dump of its own.
+        if [ "$MODE" = bind ] && [ -n "$(find /backup -name '*.sql.gz.age' -mmin -1200)" ]; then
+          echo "a dump of the last 20 h is on the volume: none at this apply"
+          ls -l /backup
+          exit 0
+        fi
+        # Retention first, so tonight's dump has the room the old ones leave.
+        # The plain *.sql.gz of before T-5839 go the same way.
+        find /backup \( -name '*.sql.gz' -o -name '*.sql.gz.age' -o -name '*.counts' -o -name '*.part' \) -mtime +"$KEEP_DAYS" -delete
+        case "$VOLUME_SIZE" in
+          *Ti) max=$((${VOLUME_SIZE%Ti} * 1099511627776)) ;;
+          *Gi) max=$((${VOLUME_SIZE%Gi} * 1073741824)) ;;
+          *Mi) max=$((${VOLUME_SIZE%Mi} * 1048576)) ;;
+          *[!0-9]*) echo "localBackup.cap $VOLUME_SIZE: give it in Mi, Gi or Ti, e.g. 10Gi" >&2; exit 1 ;;
+          *) max=$VOLUME_SIZE ;;
+        esac
+        # local-path does not enforce the volume's size, and the volume sits on the disk
+        # Postgres runs on: the dump stops at what is left of localBackup.size, and does not
+        # start when that much would leave the node's disk under 10 % free.
+        room=$((max - $(du -sk /backup | cut -f1) * 1024))
+        if [ "$room" -le 0 ]; then
+          echo "the dumps on the volume fill the $VOLUME_SIZE of localBackup.cap: raise it or lower localBackup.keepDays" >&2
+          exit 1
+        fi
+        df -Pk /backup | awk 'NR == 2 { print $2, $4 }' > /tmp/df
+        read -r disk free < /tmp/df
+        if [ $(((free * 1024 - room) * 10)) -lt $((disk * 1024)) ]; then
+          echo "a dump of up to $room bytes would leave the node's disk under 10 % free ($((free / 1024)) MiB free): free the disk or lower localBackup.size" >&2
+          exit 1
+        fi
+        file=/backup/$(date -u +%Y-%m-%dT%H%MZ).sql.gz.age
+        # Every table's rows just before the dump, `database.schema.table|rows`: the monthly
+        # drill restores the dump and holds its tables to these (dr-drill.sh, T-5556).
+        tables="SELECT schemaname || '.' || relname, (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', schemaname, relname), false, true, '')))[1]::text FROM pg_stat_user_tables ORDER BY 1"
+        set --
+        for db in $EXCLUDE_DATABASES; do set -- "$@" "--exclude-database=$db"; done
+        count_all() {
+          for db in $(psql -X -At -d postgres -c "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' ORDER BY 1"); do
+            case " $EXCLUDE_DATABASES " in *" $db "*) continue ;; esac
+            psql -X -At -d "$db" -c "$tables" | sed "s|^|$db.|"
+          done
+        }
+        count_all > /tmp/counts
+        # pipefail is not POSIX: a failed pg_dumpall would hide behind gzip's exit 0. The dump is
+        # sealed in the pipe, so no plain byte of it reaches the volume.
+        # shellcheck disable=SC2086 # one word per recipient
+        { pg_dumpall --clean --if-exists "$@" || echo FAILED > /tmp/failed; } | gzip \
+          | { python3 /opt/age/age.py encrypt --identity-file /key/key $AGE_RECIPIENTS || echo FAILED > /tmp/sealed; } \
+          | head -c $((room + 1)) > "$file.part"
+        bytes=$(wc -c < "$file.part")
+        if [ "$bytes" -gt "$room" ]; then
+          rm -f "$file.part"
+          echo "the dump outgrew the $room bytes left of the $VOLUME_SIZE cap and was deleted: raise localBackup.cap or name the large databases in localBackup.excludeDatabases" >&2
+          exit 1
+        fi
+        if [ -e /tmp/failed ]; then rm -f "$file.part"; echo "pg_dumpall failed" >&2; exit 1; fi
+        if [ -e /tmp/sealed ]; then rm -f "$file.part"; echo "the dump could not be encrypted (age.py above): nothing was written" >&2; exit 1; fi
+        # pg_dumpall takes each database's snapshot when it reaches it, minutes after the counts on
+        # a large instance: a table written meanwhile (sessions, subscriptions) restores between
+        # its two counts. A table that changed gets `|rows after` as a third field (T-6725, jc-prod
+        # 2026-11-11: subscriptions 70 before, 52 in the dump).
+        count_all > /tmp/counts-after
+        awk -F'|' 'NR == FNR { after[$1] = $2; next }
+          { print $0 (($1 in after) && after[$1] != $2 ? "|" after[$1] : "") }' /tmp/counts-after /tmp/counts > /tmp/counts-both
+        cp /tmp/counts-both "$file.counts"
+        mv "$file.part" "$file"
+        ls -l /backup
+        # One dump over 80 % of the volume leaves no room for the next night's: the job fails
+        # (PostgresBackupStale) while this dump is still whole.
+        if [ $((bytes * 100)) -gt $((max * 80)) ]; then
+          echo "the dump is $bytes bytes, over 80 % of the $VOLUME_SIZE cap: raise localBackup.cap" >&2
+          exit 1
+        fi
+{{- end }}
+{{- with .Values.localBackup }}
+{{- if .enabled }}
+{{- $name := printf "%s-local-backup" $.Values.cluster.name }}
+{{- /* values.schema.json holds each name to [a-z_][a-z0-9_]*: the script splits on spaces. */}}
+{{- $exclude := .excludeDatabases | default list }}
+{{- $recipients := .ageRecipients | default list }}
+{{- if not $recipients }}
+{{- fail "localBackup.ageRecipients is empty: name the operator's age1... public key(s) the nightly dump is encrypted to, or the dump opens only with the in-cluster drill key" }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-age
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "database.labels" $ | nindent 4 }}
+data:
+  age.py: |
+    {{- $.Files.Get "files/age.py" | nindent 4 }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "database.labels" $ | nindent 4 }}
+  annotations:
+    # The dumps outlive an uninstall of the release: they are the thing to restore from.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .size }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "database.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: database-local-backup
+spec:
+  schedule: {{ .schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      {{- include "database.localBackupJob" (dict "root" $ "mode" "dump" "keepDays" .keepDays "size" (.cap | default .size) "exclude" $exclude "recipients" $recipients) | nindent 6 }}
+---
+# The first dump, at every apply: local-path binds the volume only for a pod that mounts it, so
+# without one the PVC stays Pending until the night and `helm --wait` fails the release. Gone
+# 10 min after it finishes, so the next apply creates it again (a Job's template is immutable).
+# It dumps only when no dump of the last 20 h is on the volume (MODE bind).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-now
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "database.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: database-local-backup
+spec:
+  ttlSecondsAfterFinished: 600
+  {{- include "database.localBackupJob" (dict "root" $ "mode" "bind" "keepDays" .keepDays "size" (.cap | default .size) "exclude" $exclude "recipients" $recipients) | nindent 2 }}
+{{- end }}
+{{- end }}

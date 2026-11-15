@@ -1,0 +1,17 @@
+# One BudgetLine per record of `mhmp-budget`, written into the city space (T-2785).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: budget
+  namespace: praha
+  title: { en: City budget 2026 }
+spec:
+  class: auto
+  # The adjusted amounts change with each budget measure, published monthly; a nightly read keeps the page current.
+  period: 24h
+  schedule: '55 3 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: mhmp-budget }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: BudgetLine, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

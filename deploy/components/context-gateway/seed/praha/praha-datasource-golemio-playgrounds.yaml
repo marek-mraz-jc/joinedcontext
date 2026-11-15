@@ -1,0 +1,19 @@
+# Golemio's /v2/playgrounds (Operátor ICT, a.s.): 153 records on 2026-10-22; Golemio refreshes it on the 1st of each month. The key travels as the
+# X-Access-Token header from the secret `golemio`, never as a value here (CC-06, MF-35). Terms: the
+# Golemio API Keys service, attribution "Golemio, Operátor ICT, a.s.", no licence named (T-5268).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: golemio-playgrounds
+  namespace: praha
+  title: { en: Playgrounds (Golemio), cs: Dětská hřiště (Golemio) }
+spec:
+  type: http
+  http:
+    url: https://api.golemio.cz/v2/playgrounds?limit=10000
+    verb: GET
+    headers: { Accept: application/json }
+    authorization:
+      header: X-Access-Token
+      headerRef: { name: golemio, key: token }
+    timeout: 60s

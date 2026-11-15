@@ -1,0 +1,989 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:PublicInvestment a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "PublicInvestment" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:zauzivanyNazovUpraveny ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nUTS1CODE ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:aktivne ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:lAU1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:gEOMLATBACKUP ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nM2 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:oficialnyNazov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:lONJitter ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:aktualnyStav ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vecnaOblast ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:uradOvZPOvZP ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:index ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fLAT ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fACC ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:celkovaZazmluvnenaSuma ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nUTS3CODE ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:aktualnyStavUpraveny ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iDN2 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fLON ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rozpocetAktualny ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:miestoRealizacieProjektu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iCOPrijimatela ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:okresKraj ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:identifier ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:kodOkresuKraja ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:lAU1CODE ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dOW ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nM4 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nM3 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rokZaradenia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:obstaravaciaCena ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:adresa ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nazovPrijimatela ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:uradOvZPICO ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:oBJECTID1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nUTS3 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:miestoRealizacieProjektuObec ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rok ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iDN3 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vYMERA ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:okresNazov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iDN4 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nUTS2 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:uroven ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:sektorOvZPUpraveny ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typObce ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:kodObce ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:gEOMLONBACKUP ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nazovKraja ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:zauzivanyNazov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:obecNUTS ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rokText ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:lATJitter ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:kategoria ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iCOOrganizacia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:platnostProjektuOd ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:sUMCerpanieSpolu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:datumZaniku ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:poznamka ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iDProjektu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nUTS1 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:cerpanieSpolu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:lAU2 ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nUTS2CODE ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iCO ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:lAU2CODE ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:kodKraja ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rozsahUzemiaProjektu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:miestoRealizacieProjektuKraj ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:obecNazov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:zauzivanyNazovKratky ],
+        jc:Entity ;
+    skos:definition "A public investment project, with its place where the source has one." ;
+    skos:exactMatch jc:PublicInvestment ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:upstream_source "https://smart-data-models.github.io/dataModel.CPSV-AP/Cost/schema.json" .
+
+jc:adresa a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "adresa" ;
+    skos:definition "The source column `Adresa`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:aktivne a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "aktivne" ;
+    skos:definition "The source column `Aktívne`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:aktualnyStav a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "aktualnyStav" ;
+    skos:definition "The source column `Aktuálny_stav`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:aktualnyStavUpraveny a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "aktualnyStavUpraveny" ;
+    skos:definition "The source column `Aktuálny_stav_upravený`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:celkovaZazmluvnenaSuma a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "celkovaZazmluvnenaSuma" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Celková_zazmluvnená_suma`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:cerpanieSpolu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "cerpanieSpolu" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Čerpanie_spolu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dOW a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dOW" ;
+    rdfs:range jc:datetime ;
+    skos:definition "The source column `DOW`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:date_or_datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date_or_datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:datumZaniku a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "datumZaniku" ;
+    skos:definition "The source column `Dátum_zániku`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:decimal a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:decimal ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:double a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:double ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:fACC a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fACC" ;
+    skos:definition "The source column `FACC`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:fLAT a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fLAT" ;
+    skos:definition "The source column `F_LAT`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:fLON a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fLON" ;
+    skos:definition "The source column `F_LON`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:gEOMLATBACKUP a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "gEOMLATBACKUP" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `GEOM_LAT_BACKUP`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:gEOMLONBACKUP a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "gEOMLONBACKUP" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `GEOM_LON_BACKUP`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iCO a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iCO" ;
+    skos:definition "The source column `IČO`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iCOOrganizacia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iCOOrganizacia" ;
+    skos:definition "The source column `IČO_organizácia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iCOPrijimatela a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iCOPrijimatela" ;
+    skos:definition "The source column `IČO_prijímateľa`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iDN2 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iDN2" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `IDN2`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iDN3 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iDN3" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `IDN3`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iDN4 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iDN4" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `IDN4`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iDProjektu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iDProjektu" ;
+    skos:definition "The source column `ID_projektu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:identifier a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "identifier" ;
+    skos:definition "The source column `Kód_projektu`, `ID_IA`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:index a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "index" ;
+    skos:definition "The source column `Index_`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:jsonpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:jsonpointer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpointer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:kategoria a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "kategoria" ;
+    skos:definition "The source column `Kategória`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:kodKraja a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "kodKraja" ;
+    skos:definition "The source column `Kód_kraja`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:kodObce a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "kodObce" ;
+    skos:definition "The source column `Kód_obce`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:kodOkresuKraja a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "kodOkresuKraja" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Kód_okresu_kraja`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:lATJitter a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "lATJitter" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `LAT_jitter`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:lAU1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "lAU1" ;
+    skos:definition "The source column `LAU1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:lAU1CODE a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "lAU1CODE" ;
+    skos:definition "The source column `LAU1_CODE`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:lAU2 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "lAU2" ;
+    skos:definition "The source column `LAU2`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:lAU2CODE a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "lAU2CODE" ;
+    skos:definition "The source column `LAU2_CODE`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:lONJitter a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "lONJitter" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `LON_jitter`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:miestoRealizacieProjektu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "miestoRealizacieProjektu" ;
+    skos:definition "The source column `Miesto_realizácie_projektu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:miestoRealizacieProjektuKraj a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "miestoRealizacieProjektuKraj" ;
+    skos:definition "The source column `Miesto_realizácie_projektu_kraj`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:miestoRealizacieProjektuObec a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "miestoRealizacieProjektuObec" ;
+    skos:definition "The source column `Miesto_realizácie_projektu_obec`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nM2 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nM2" ;
+    skos:definition "The source column `NM2`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nM3 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nM3" ;
+    skos:definition "The source column `NM3`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nM4 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nM4" ;
+    skos:definition "The source column `NM4`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nUTS1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nUTS1" ;
+    skos:definition "The source column `NUTS1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nUTS1CODE a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nUTS1CODE" ;
+    skos:definition "The source column `NUTS1_CODE`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nUTS2 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nUTS2" ;
+    skos:definition "The source column `NUTS2`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nUTS2CODE a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nUTS2CODE" ;
+    skos:definition "The source column `NUTS2_CODE`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nUTS3 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nUTS3" ;
+    skos:definition "The source column `NUTS3`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nUTS3CODE a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nUTS3CODE" ;
+    skos:definition "The source column `NUTS3_CODE`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The source column `Názov_projektu`, `Názov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:nazovKraja a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nazovKraja" ;
+    skos:definition "The source column `Názov_kraja`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:nazovPrijimatela a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nazovPrijimatela" ;
+    skos:definition "The source column `Názov_prijímateľa`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:oBJECTID1 a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "oBJECTID1" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `OBJECTID_1`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:obecNUTS a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "obecNUTS" ;
+    skos:definition "The source column `Obec_NUTS`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:obecNazov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "obecNazov" ;
+    skos:definition "The source column `Obec_názov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:obstaravaciaCena a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "obstaravaciaCena" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Obstarávacia_cena`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:oficialnyNazov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "oficialnyNazov" ;
+    skos:definition "The source column `Oficiálny_názov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:okresKraj a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "okresKraj" ;
+    skos:definition "The source column `Okres_Kraj`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:okresNazov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "okresNazov" ;
+    skos:definition "The source column `Okres_názov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:platnostProjektuOd a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "platnostProjektuOd" ;
+    rdfs:range jc:datetime ;
+    skos:definition "The source column `Platnosť_projektu_od`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:poznamka a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "poznamka" ;
+    skos:definition "The source column `Poznámka`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rok a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rok" ;
+    skos:definition "The source column `Rok`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rokText a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rokText" ;
+    skos:definition "The source column `Rok_text`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rokZaradenia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rokZaradenia" ;
+    skos:definition "The source column `Rok_zaradenia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rozpocetAktualny a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rozpocetAktualny" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Rozpočet_aktuálny`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rozsahUzemiaProjektu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rozsahUzemiaProjektu" ;
+    skos:definition "The source column `Rozsah_územia_projektu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:sUMCerpanieSpolu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "sUMCerpanieSpolu" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `SUM_Čerpanie_spolu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:sektorOvZPUpraveny a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "sektorOvZPUpraveny" ;
+    skos:definition "The source column `Sektor_OvZP_upraveny`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:sparqlpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:sparqlpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:time a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:time ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:typObce a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typObce" ;
+    skos:definition "The source column `typ_obce`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:uradOvZPICO a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "uradOvZPICO" ;
+    skos:definition "The source column `Úrad_OvZP_IČO`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:uradOvZPOvZP a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "uradOvZPOvZP" ;
+    skos:definition "The source column `Úrad_OvZP_OvZP`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uroven a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "uroven" ;
+    skos:definition "The source column `Úroveň`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:vYMERA a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vYMERA" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `VYMERA`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:vecnaOblast a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vecnaOblast" ;
+    skos:definition "The source column `Vecná_oblasť`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:zauzivanyNazov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "zauzivanyNazov" ;
+    skos:definition "The source column `Zaužívaný_názov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:zauzivanyNazovKratky a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "zauzivanyNazovKratky" ;
+    skos:definition "The source column `Zaužívaný_názov_krátky`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:zauzivanyNazovUpraveny a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "zauzivanyNazovUpraveny" ;
+    skos:definition "The source column `Zaužívaný_názov_upravený`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicInvestment> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+
+<https://joinedcontext.com/models/sdm/extensions/PublicInvestment> a owl:Ontology ;
+    rdfs:label "PublicInvestment" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "PublicInvestment, an extension of dataModel.CPSV-AP/Cost" ;
+    skos:definition "A public investment project, with its place where the source has one. Extends dataModel.CPSV-AP/Cost: CPSV-AP Cost is the official model of an amount a public body pays or charges (value, currency, identifier); no subject holds a contract, order, invoice, grant or procurement." .
+

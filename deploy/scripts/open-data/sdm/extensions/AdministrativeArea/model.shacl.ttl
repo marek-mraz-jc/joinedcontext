@@ -1,0 +1,196 @@
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix ns1: <https://w3id.org/linkml/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sdm: <https://smartdatamodels.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://joinedcontext.com/models/sdm/extensions/AdministrativeArea> ns1:generator_version "linkml-1.11.1" .
+
+jc:AdministrativeArea a sh:NodeShape ;
+    rdfs:comment "A region, district or municipality: its boundary or centroid and its NUTS and LAU codes." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 28 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NM3`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 15 ;
+            sh:path jc:nM3 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NUTS3_CODE`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 21 ;
+            sh:path jc:nUTS3CODE ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `F_LAT`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 5 ;
+            sh:path jc:fLAT ],
+        [ sh:description "The service the row was read from." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:order 1 ;
+            sh:path sdm:source ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `IDN2`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 7 ;
+            sh:path jc:iDN2 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `LAU1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 10 ;
+            sh:path jc:lAU1 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `FACC`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 4 ;
+            sh:path jc:fACC ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NUTS1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 16 ;
+            sh:path jc:nUTS1 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NUTS3`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 20 ;
+            sh:path jc:nUTS3 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NM2`, `NM4`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 22 ;
+            sh:path sdm:name ],
+        [ sh:description "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:order 2 ;
+            sh:path jc:isPartOf ],
+        [ sh:datatype xsd:dateTime ;
+            sh:description "The source column `DOW`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path jc:dOW ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `IDN4`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 9 ;
+            sh:path jc:iDN4 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NM2`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 14 ;
+            sh:path jc:nM2 ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 27 ;
+            sh:path geojson:geometry ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `LAU1_CODE`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 11 ;
+            sh:path jc:lAU1CODE ],
+        [ sh:datatype xsd:string ;
+            sh:description "Who published the row, with the credit its licence asks for." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 0 ;
+            sh:path sdm:dataProvider ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NUTS1_CODE`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 17 ;
+            sh:path jc:nUTS1CODE ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `F_LON`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 6 ;
+            sh:path jc:fLON ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `typ_obce`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 23 ;
+            sh:path jc:typObce ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NUTS2_CODE`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 19 ;
+            sh:path jc:nUTS2CODE ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `IDN3`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 8 ;
+            sh:path jc:iDN3 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `LAU2`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 12 ;
+            sh:path jc:lAU2 ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source column `VYMERA`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 24 ;
+            sh:path jc:vYMERA ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NUTS2`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 18 ;
+            sh:path jc:nUTS2 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `LAU2_CODE`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 13 ;
+            sh:path jc:lAU2CODE ] ;
+    sh:targetClass jc:AdministrativeArea .
+
+ngsi-ld:Entity a sh:NodeShape ;
+    rdfs:comment "The root every NGSI-LD entity class specialises." ;
+    sh:closed true ;
+    sh:ignoredProperties ( jc:fLON sdm:name sdm:source jc:dOW jc:nUTS2 jc:typObce jc:iDN3 jc:nUTS2CODE jc:lAU2 rdf:type jc:nUTS3CODE jc:nUTS3 jc:iDN4 jc:isPartOf sdm:dataProvider jc:nM2 jc:lAU1 jc:iDN2 jc:fLAT jc:nM3 jc:lAU1CODE jc:nUTS1CODE jc:fACC jc:nUTS1 jc:lAU2CODE jc:vYMERA ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass ngsi-ld:Entity .
+

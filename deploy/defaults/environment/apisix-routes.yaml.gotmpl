@@ -1,0 +1,212 @@
+routes:
+{{- /* jc's import window (jc.server.importWindow) routes nothing to jc: its listener is the pod's loopback. */}}
+{{- $jcWindow := dig "jc" "server" "importWindow" false .Values }}
+{{ include "jc.configFiles" (dict "components" (ternary (without .Values.components "jc") .Values.components $jcWindow) "file" "apisix-routes.yaml" "global" .) | nindent 2 }}
+{{- /* Every catalogue beside `catalogue` (T-4636): the default instance's two routes, on its own
+       host and to its own Service; the /ckan redirect stays the default instance's. */}}
+{{- if has "ckan" .Values.components }}
+{{- $ckan := tpl (readFile "../../components/ckan/apisix-routes.yaml") . | fromYaml }}
+{{- $seen := dict }}
+{{- range $c := .Values.global.catalogues | default list }}
+{{- /* A repeated name is catalogues-guard.yaml.gotmpl's to report, after this file. */}}
+{{- if not (hasKey $seen (toString $c.name)) }}
+{{- $_ := set $seen (toString $c.name) true }}
+{{- range $key := list "ckan" "ckan-webassets" }}
+{{- $route := deepCopy (index $ckan $key) }}
+{{- $_ := set $route "name" (printf "%s-%s" $key $c.name) }}
+{{- $_ = set $route "subDomain" (index $c "subDomain" | default "") }}
+{{- $_ = set $route "upstream" (printf "ckan-%s.%s" $c.name (trimPrefix "ckan." $route.upstream)) }}
+  {{ $key }}-{{ $c.name }}:
+    {{- $route | toYaml | nindent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- /* jc in host mode (components/jc, jc.server.mode: host): every other old host name to jc, which
+       picks the module by the Host header; the routes `jc` (portal.) and `jc-identity` (idm.) come
+       from components/jc/apisix-routes.yaml. "" is the apex. */}}
+{{- if and (has "jc" .Values.components) (eq (dig "jc" "server" "mode" "slug" .Values) "host") }}
+{{- $ns := include "jc.namespace" (dict "global" .Values.global "suffix" "jc") }}
+{{- range $host := .Values.jc.server.hosts | default list }}
+{{- $upstream := index ($.Values.jc.server.hostUpstreams | default dict) $host }}
+{{- if and (not (has $host (list "portal" "idm"))) (or $upstream (not $jcWindow)) }}
+  jc-host-{{ $host | default "apex" }}:
+    name: jc-host-{{ $host | default "apex" }}
+    description: jc on {{ if $host }}{{ $host }}.{{ end }}{domain}
+    upstream: {{ $upstream | default (printf "jc.%s.svc.cluster.local:8080" $ns) }}
+    {{- if $host }}
+    subDomain: {{ $host }}
+    {{- else }}
+    # The apex by name: a route with no host answers every Host, so a pod reaching the edge could
+    # name a host jc serves inside the pod only (broker., streams., localhost:8080) (T-6705).
+    host: {{ $.Values.global.domain | quote }}
+    {{- end }}
+    {{- with index ($.Values.jc.server.hostTls | default dict) $host }}
+    tlsSecret: {{ . }}
+    {{- end }}
+    uri: '/*'
+    priority: 1
+    pluginConfig: jc
+    timeout:
+      connect: 6
+      send: 120
+      read: 120
+{{- if eq $host "api" }}
+  # Browser apps read the endpoint surface across origins (the catalogue's viz iframe, Apps on
+  # *.apps): old prod's context-endpoint `cors`, the same origins, methods and headers. Never `*`:
+  # only `https://<sub>.{domain}`, the dots escaped by ${DOMAIN_RE} (T-1679), no credentials.
+  jc-host-api-endpoint:
+    name: jc-host-api-endpoint
+    description: jc's endpoint surface on api.{domain}, readable by the platform's own origins
+    upstream: {{ $upstream | default (printf "jc.%s.svc.cluster.local:8080" $ns) }}
+    subDomain: api
+    {{- with index ($.Values.jc.server.hostTls | default dict) $host }}
+    tlsSecret: {{ . }}
+    {{- end }}
+    uri: '/api/endpoint/*'
+    priority: 2
+    pluginConfig: jc
+    plugins:
+      cors:
+        allow_origins_by_regex:
+          - '^https://[^@/]+\.${DOMAIN_RE}$'
+        allow_methods: 'GET,HEAD,OPTIONS'
+        allow_headers: 'Authorization,Content-Type'
+        # What a browser page may read of the answer, as old prod's endpoint rule: how many records
+        # a query matched (the catalogue grid's total, the map's "N without position", T-4333) and
+        # where a cut temporal answer continues (T-5414). Counts and ranges are no credential.
+        expose_headers: 'NGSILD-Results-Count,Content-Range,Link'
+        allow_credential: false
+    timeout:
+      connect: 6
+      send: 120
+      read: 120
+  {{- with $.Values.jc.server.trustedProxies }}
+  # jc's pipelines write their Endpoints on api.{domain} from the pod network through the edge,
+  # all from one pod address: on jc's 600/60 s per-address bucket every pipeline's upsert shared
+  # one budget (T-6676, ~80 429 a minute at 15:50Z). Old prod counted the endpoint surface per
+  # bearer and address at 1200/60 s; the pod network gets that here, never an unlimited route;
+  # every other source keeps the routes above.
+  jc-host-api-endpoint-pod:
+    name: jc-host-api-endpoint-pod
+    description: jc's endpoint surface for the pod network, counted per bearer as on old prod
+    upstream: {{ $upstream | default (printf "jc.%s.svc.cluster.local:8080" $ns) }}
+    subDomain: api
+    {{- with index ($.Values.jc.server.hostTls | default dict) $host }}
+    tlsSecret: {{ . }}
+    {{- end }}
+    uri: '/api/endpoint/*'
+    vars: [["remote_addr", "ipmatch", {{ . | toJson }}]]
+    priority: 3
+    pluginConfig: jc
+    plugins:
+      limit-count:
+        count: 1200
+        time_window: 60
+        key_type: var_combination
+        key: '$http_authorization $remote_addr'
+        rejected_code: 429
+        policy: local
+        show_limit_quota_header: true
+    timeout:
+      connect: 6
+      send: 120
+      read: 120
+  {{- end }}
+  # An MCP call is a JSON POST, which the GET-only rule refuses at the preflight: old prod's
+  # named-MCP `cors` (the Portal's public /connect page lists a server's tools, T-4949).
+  jc-host-api-mcp:
+    name: jc-host-api-mcp
+    description: jc's MCP servers on api.{domain}, callable from the platform's own origins
+    upstream: {{ $upstream | default (printf "jc.%s.svc.cluster.local:8080" $ns) }}
+    subDomain: api
+    {{- with index ($.Values.jc.server.hostTls | default dict) $host }}
+    tlsSecret: {{ . }}
+    {{- end }}
+    uri: '/api/mcp*'
+    priority: 2
+    pluginConfig: jc
+    plugins:
+      cors:
+        allow_origins_by_regex:
+          - '^https://[^@/]+\.${DOMAIN_RE}$'
+        allow_methods: 'POST,OPTIONS'
+        allow_headers: 'Content-Type,Accept,Mcp-Protocol-Version,Mcp-Session-Id'
+        expose_headers: 'Mcp-Session-Id,Retry-After'
+        allow_credential: false
+        max_age: 600
+    timeout:
+      connect: 6
+      send: 120
+      read: 300
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $jcWindow }}
+{{- with $.Values.jc.server.trustedProxies }}
+  # jc's own back channel (the Portal's code exchange, pipelines' client credentials) reaches
+  # idm.{domain} from the pod network through the edge, all from one pod address. On jc-identity
+  # it shared one remote_addr bucket, so a pipeline's token refetch storm starved every sign-in
+  # (T-6676, 15:38Z: 8 of 8 code exchanges 429). Stopgap until the back channel stays inside the
+  # pod: token requests from the pod network jc trusts as its proxies get a bucket per client
+  # (client_id form field, or the basic-auth user), never an unlimited route; every other source
+  # keeps jc-identity's 600/60 s per address.
+  jc-identity-pod-token:
+    name: jc-identity-pod-token
+    description: token requests from the pod network, counted per client instead of per address
+    upstream: jc-pods.{{ $ns }}.svc.cluster.local:8080
+    subDomain: idm
+    uri: /realms/*/protocol/openid-connect/token
+    vars: [["remote_addr", "ipmatch", {{ . | toJson }}]]
+    priority: 6
+    pluginConfig: jc
+    plugins:
+      limit-count:
+        count: 600
+        time_window: 60
+        key_type: var_combination
+        key: '$post_arg_client_id $remote_user'
+        rejected_code: 429
+        policy: local
+        show_limit_quota_header: true
+    timeout:
+      connect: 6
+      send: 60
+      read: 60
+{{- end }}
+{{- end }}
+{{- if not $jcWindow }}
+  # Every App host to jc, whose Portal serves App `{name}` alone on `{name}.apps.{domain}`
+  # (bins/jc edge-session-design S4a); `host`, not `subDomain`, so the edge certificate's names
+  # stay prod's (each App host has its own, global.ingress.appHosts).
+  jc-apps:
+    name: jc-apps
+    description: jc's Portal on every App host
+    upstream: jc.{{ $ns }}.svc.cluster.local:8080
+    host: '*.apps.{{ .Values.global.domain }}'
+    uri: '/*'
+    priority: 2
+    pluginConfig: jc-apps
+    timeout:
+      connect: 6
+      send: 120
+      read: 120
+  # An App's old address on the apex moves to its host, as the Portal's edge file had it: no
+  # upstream, no login, the query kept.
+  jc-apps-moved:
+    name: jc-apps-moved
+    description: an App's old path on the apex, moved to its own host
+    upstream: jc.{{ $ns }}.svc.cluster.local:8080
+    host: {{ .Values.global.domain | quote }}
+    uri: '/apps/*'
+    priority: 2
+    pluginConfig: jc
+    plugins:
+      redirect:
+        regex_uri:
+          - '^/apps/([a-z0-9]([-a-z0-9]*[a-z0-9])?)(?:/(.*))?$'
+          - 'https://$1.apps.{{ .Values.global.domain }}/$3'
+        ret_code: 308
+        append_query_string: true
+{{- end }}
+{{- end }}

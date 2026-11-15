@@ -1,0 +1,29 @@
+{{- $ns := include "preview.namespace" . }}
+{{- /*
+  One host, one certificate by HTTP-01 from the ingress-shim: no wildcard, no DNS API token
+  (CLAUDE.md cluster rules). The Certificate and its Secret live in the namespace and go with it.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: preview
+  namespace: {{ $ns }}
+  labels:
+    {{- include "preview.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer | quote }}
+spec:
+  ingressClassName: {{ .Values.ingressClass | quote }}
+  tls:
+    - hosts: [{{ include "preview.host" . | quote }}]
+      secretName: preview-tls
+  rules:
+    - host: {{ include "preview.host" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: portal
+                port: { number: 8080 }

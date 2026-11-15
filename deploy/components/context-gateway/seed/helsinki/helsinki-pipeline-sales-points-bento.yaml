@@ -1,0 +1,75 @@
+# The mapping of the sales-points pipeline (PL-03, T-5254): one PointOfInterest per HSL ticket sales point,
+# named in Finnish, Swedish and English as HSL names it. `serviceCategory` says which kind of point it is
+# (the register's `Tyyppi`); `fareZone` is HSL's own zone letter of the point; `description` is the
+# register's note per language (the payment methods a machine takes). The register's yes/no product
+# columns stay out: HSL's ticket range changes and the columns do not say which ticket a word means.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a point without a position, outside Finland's box (HSL sells
+# tickets in 24 kiosks beyond its own area, as far as Tampere and Hanko, so Finland's box is the one that
+# catches a 0,0 or a swapped pair here), of a kind the register did not have on 2026-10-22, marked out of
+# use, without an id or a Finnish name, or a second record of one id or of one name at one place (~10 m grid) is dropped and counted by
+# reason in a WARN line of the run. An answer with no point fails the run, so the stored points stay.
+
+pipeline:
+  processors:
+    # One `try`: a refused answer stops at its throw, so no later step writes over it (Bento runs later
+    # processors on an errored message otherwise).
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("the HSL sales points answer is %d bytes, more than the 16 MiB read".format(content().length())) } else { this }
+        - mapping: |
+            root = if this.features.or([]).length() == 0 { throw("the HSL sales points answer holds no point: the run fails and the stored points stay") } else { this }
+        - mapping: |
+            let kinds = { "Myyntipiste": "ticketSalesPoint", "Palvelupiste": "ticketServicePoint", "Kertalippuautomaatti": "ticketMachine", "Monilippuautomaatti": "ticketMachine", "Pysäköintiautomaatti": "ticketParkingMeter" }
+            let rows = this.features.map_each(f -> {
+              "f": f,
+              "lon": f.geometry.coordinates.index(0).number().catch(null),
+              "lat": f.geometry.coordinates.index(1).number().catch(null)
+            }).map_each(r -> r.merge({
+              "reason": if r.lon == null || r.lat == null || r.f.geometry.type.or("") != "Point" { "noLocation" }
+                else if r.lon < 19.0 || r.lon > 31.6 || r.lat < 59.5 || r.lat > 70.1 { "outOfArea" }
+                else if $kinds.get(r.f.properties.Tyyppi.or("").string()) == null { "unknownCode" }
+                else if r.f.properties."käytössä".or("kyllä") == "ei" { "notInUse" }
+                else if r.f.properties.ID.or(null) == null { "noId" }
+                else if r.f.properties.Nimi.or("").string().trim() == "" { "noName" }
+                else { null }
+            }))
+            let valid = $rows.filter(r -> r.reason == null)
+            let kept = $valid.unique(r -> r.f.properties.ID.string()).unique(r -> "%v|%v|%v".format(r.f.properties.Nimi.or(""), (r.lon * 10000).round(), (r.lat * 10000).round()))
+            let reasons = $rows.filter(r -> r.reason != null).map_each(r -> r.reason)
+            root.dropped = {
+              "noLocation": $reasons.filter(x -> x == "noLocation").length(),
+              "outOfArea": $reasons.filter(x -> x == "outOfArea").length(),
+              "unknownCode": $reasons.filter(x -> x == "unknownCode").length(),
+              "notInUse": $reasons.filter(x -> x == "notInUse").length(),
+              "noId": $reasons.filter(x -> x == "noId").length(),
+              "noName": $reasons.filter(x -> x == "noName").length(),
+              "duplicate": $valid.length() - $kept.length()
+            }
+            root.entities = $kept.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:hsl-sales-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.f.properties.ID.string()),
+              "type": "PointOfInterest",
+              "name": { "type": "LanguageProperty", "languageMap": { "fi": r.f.properties.Nimi.or(""), "sv": r.f.properties.Namn.or(""), "en": r.f.properties.Name.or("") }.filter(e -> e.value.string().trim() != "") },
+              "serviceCategory": { "type": "Property", "value": $kinds.get(r.f.properties.Tyyppi.string()) },
+              "address": if r.f.properties.Osoite.or("").string().trim() == "" { null } else {
+                { "type": "Property", "value": {
+                  "streetAddress": r.f.properties.Osoite.string().trim(),
+                  "postalCode": r.f.properties.Postinum.or(null).string().catch(null),
+                  "addressLocality": r.f.properties.Kaupunki.or(null),
+                  "addressCountry": "FI"
+                }.filter(e -> e.value != null && e.value != "" && e.value != "null") }
+              },
+              "description": { "type": "LanguageProperty", "languageMap": { "fi": r.f.properties.Lisatieto.or(""), "sv": r.f.properties.Informatio.or(""), "en": r.f.properties.Addition.or("") }.filter(e -> e.value.string().trim() != "") },
+              "fareZone": if r.f.properties.Vyohyke.or("").string().re_match("^[A-D]$") { { "type": "Property", "value": r.f.properties.Vyohyke } },
+              "url": if r.f.properties.Linkki.or("").string().re_match("^https?://") { { "type": "Property", "value": r.f.properties.Linkki } },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [ r.lon, r.lat ] } },
+              "dataProvider": { "type": "Property", "value": "Helsinki Region Transport (HSL)" },
+              "source": { "type": "Property", "value": "https://hri.fi/data/en_GB/dataset/hsl-n-myyntipisteet" }
+            }.filter(e -> e.value != null && !(e.value.type() == "object" && e.value.languageMap.or({"x": 1}).keys().length() == 0)))
+        - switch:
+            - check: this.dropped.values().sum() > 0
+              processors:
+                - log:
+                    level: WARN
+                    message: 'sales-points: ${! json("entities").length() } points written, dropped by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.entities

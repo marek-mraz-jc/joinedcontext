@@ -1,0 +1,164 @@
+/* The App's own layout over the token variables the SDK sets from design-tokens.json; the screens
+   are laid out by the SDK's primitives (Page, Grid, Card), this is only what they do not cover. */
+
+html,
+body {
+  background: var(--jc-color-surface, #ffffff);
+  color: var(--jc-color-ink, #1a1a1a);
+  /* Native controls (the date pickers) follow the reader's scheme. */
+  color-scheme: light dark;
+}
+
+.app-summary {
+  font-size: var(--jc-font-size-lg, 1.125rem);
+  line-height: 1.5;
+  margin: 0;
+  max-width: 60rem;
+}
+.app-note {
+  color: var(--jc-color-muted, #64748b);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+.app-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--jc-space-3, 0.75rem);
+}
+.app-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+  min-width: 0;
+}
+.app-filters select {
+  font: inherit;
+  font-size: var(--jc-font-size-md, 0.875rem);
+  padding: var(--jc-space-2, 0.5rem);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-card, #fff);
+  color: var(--jc-color-ink, #0f172a);
+  max-width: 100%;
+}
+.app-filters .app-check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+  color: var(--jc-color-ink, #0f172a);
+  font-size: var(--jc-font-size-md, 0.875rem);
+}
+.app-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem) var(--jc-space-4, 1rem);
+  margin: var(--jc-space-3, 0.75rem) 0 0;
+  padding: 0;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-ink, #0f172a);
+}
+.app-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--jc-space-1, 0.25rem);
+}
+.app-swatch {
+  display: inline-block;
+  width: 1rem;
+  height: 0.75rem;
+  border-radius: 2px;
+}
+.app-swatch.app-dot {
+  width: 0.75rem;
+  border-radius: 50%;
+}
+.app-link {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--jc-color-accent, #0000bf);
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: left;
+}
+.app-places {
+  margin: 0;
+  padding-left: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-2, 0.5rem);
+}
+.app-places li {
+  display: flex;
+  flex-direction: column;
+}
+.app-places span {
+  color: var(--jc-color-muted, #64748b);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+.maplibregl-popup-content p {
+  margin: 0 0 var(--jc-space-1, 0.25rem);
+  color: #0f172a;
+}
+
+/* Roles and edits (T-3826): the reader's role, the kept origins side by side, the history. */
+.app-filters input {
+  font: inherit;
+  font-size: var(--jc-font-size-md, 0.875rem);
+  padding: var(--jc-space-2, 0.5rem);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-card, #fff);
+  color: var(--jc-color-ink, #0f172a);
+  max-width: 100%;
+}
+.app-error {
+  color: var(--jc-color-danger, #b91c1c);
+  font-weight: 600;
+}
+.app-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.app-role {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: 999px;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+.app-danger {
+  border-color: var(--jc-color-danger, #b91c1c);
+}
+.app-table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.app-table table,
+.app-history {
+  width: 100%;
+  border-collapse: collapse;
+}
+.app-table th,
+.app-table td,
+.app-history th,
+.app-history td {
+  padding: 0.375rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+  overflow-wrap: anywhere;
+}
+.app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-1, 0.25rem);
+}

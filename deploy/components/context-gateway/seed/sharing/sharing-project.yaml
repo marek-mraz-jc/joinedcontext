@@ -1,0 +1,18 @@
+# The App sharing matrix's test project (T-4911), dev only: see README.md.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  name: sharing
+  namespace: org
+  title: { en: App sharing matrix (test) }
+spec:
+  organizationRef: hel
+  quotas:
+    contextSpaces: 100
+    residentPipelines: 100
+    publicEndpoints: 100
+    apps: 100
+    ingestEventsPerSecond: 500
+    agentRunsPerDay: 2000
+    entitiesPerSpace: 1000000
+    requestsPerMinute: 6000

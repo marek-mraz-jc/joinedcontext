@@ -1,0 +1,44 @@
+# Passengers at M. R. Štefánik Airport by kind of traffic: one public dataset of the hub (T-5435), item a5f1b093ad82432792ff709314a1b2f7, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-cestujuci-letisko
+  namespace: bratislava
+  title:
+    sk: Počet odbavených cestujúcich na letisku M. R. Štefánika v Bratislave podľa druhu dopravy
+    en: Passengers at M. R. Štefánik Airport by kind of traffic
+  description:
+    sk: 'Ukazovatele tabuľky „Počet odbavených cestujúcich na letisku M. R. Štefánika v Bratislave podľa druhu dopravy“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Passengers at M. R. Štefánik Airport by kind of traffic”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: iqikc4i7nnmmanprkzuukmpom7ih6ax6
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-cestujuci-letisko
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [TRAN]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/a5f1b093ad82432792ff709314a1b2f7
+        title:
+          sk: Počet odbavených cestujúcich na letisku M. R. Štefánika v Bratislave podľa druhu dopravy
+          en: Passengers at M. R. Štefánik Airport by kind of traffic
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet odbavených cestujúcich na letisku M. R. Štefánika v Bratislave podľa druhu dopravy. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Passengers at M. R. Štefánik Airport by kind of traffic. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

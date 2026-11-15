@@ -1,0 +1,73 @@
+# The designated flood areas of the IPR Praha geoportal (T-5429): Q5, Q20, Q50, Q100 and the Vltava and
+# Berounka zones and the flood areas of the small streams (T-5683), FloodZone of the space praha-mesto read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-zaplavova-uzemi
+  namespace: praha
+  title: { cs: Záplavová území — Praha, en: Flood areas — Prague }
+  description:
+    cs: 'Záplavová území Q5, Q20, Q50 a Q100 záplavové území Vltavy a Berounky s jeho zónami (aktivní, průtočná, neprůtočná, chráněná) a záplavová území drobných vodních toků (aktivní zóna a Q100). Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'The flood areas Q5, Q20, Q50 and Q100 the flood area of the Vltava and Berounka with its zones (active, flow-through, standing water, protected) and the flood areas of the small streams (active zone and Q100). Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: b4ebzrxxvbkqberzjsgyvk4nq6jgrqtz
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zaplavova-uzemi
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Mapped areas and lines: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [ENVI]
+    keywords:
+      cs: [Praha, povodně, záplavová území, Vltava]
+      en: [Prague, floods, flood areas, Vltava]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/c4ef1880cd5d4e62896f8cb845217881_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Záplavové území Q5 (IPR Praha), en: Flood area Q5 (IPR Praha) }
+        description:
+          cs: Záplavové území Q5 z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area Q5 from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/fc295e699c5346de9cf6a7e1e634726b_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Záplavové území Q20 (IPR Praha), en: Flood area Q20 (IPR Praha) }
+        description:
+          cs: Záplavové území Q20 z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area Q20 from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/040756d41d294971ad730304b792cb03_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Záplavové území Q50 (IPR Praha), en: Flood area Q50 (IPR Praha) }
+        description:
+          cs: Záplavové území Q50 z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area Q50 from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/c9dc5fa395b2478a8db0a7cc5be0e447_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Záplavové území Q100 (IPR Praha), en: Flood area Q100 (IPR Praha) }
+        description:
+          cs: Záplavové území Q100 z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area Q100 from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/7a4bf2d99de44645ac5768f65d8a9692_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Záplavové území Vltavy a Berounky (IPR Praha)
+          en: Flood area of the Vltava and Berounka (IPR Praha)
+        description:
+          cs: Záplavové území Vltavy a Berounky z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area of the Vltava and Berounka from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/TIV_CUR_TIV_VDS_ZAPLAVA_DVT_P/FeatureServer/0?f=json
+        title:
+          cs: Záplavové území drobných vodních toků (IPR Praha)
+          en: Flood areas of the small streams (IPR Praha)
+        description:
+          cs: Záplavová území drobných vodních toků (aktivní zóna a Q100) z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The flood areas of the small streams (active zone and Q100) from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

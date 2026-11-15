@@ -1,0 +1,1031 @@
+{
+ "type": "FeatureCollection",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "EPSG:4326"
+  }
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "id": 3685,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.959896,
+     60.169716
+    ]
+   },
+   "properties": {
+    "FID": 3685,
+    "route_vari": "1017_1",
+    "route_id": "1017",
+    "direction_": 0,
+    "stop_seque": 1,
+    "stop_id": "1080703",
+    "stop_code": "H0095",
+    "stop_heads": "Kruunuvuorenranta",
+    "stop_name": "Meritullintori",
+    "stop_desc": "Meritullintori",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1080703.html",
+    "location_t": 0,
+    "parent_sta": " ",
+    "wheelchair": 0,
+    "route_shor": "17",
+    "route_long": "Meritullintori-Kruunuvuorenranta",
+    "route_type": "4",
+    "vehicle_ty": "4",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/b17.html",
+    "shape_id": "1017_20230501_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 3686,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.012165,
+     60.166072
+    ]
+   },
+   "properties": {
+    "FID": 3686,
+    "route_vari": "1017_1",
+    "route_id": "1017",
+    "direction_": 0,
+    "stop_seque": 2,
+    "stop_id": "1080702",
+    "stop_code": "H0094",
+    "stop_heads": " ",
+    "stop_name": "Kruunuvuorenranta",
+    "stop_desc": "Saaristolaivastonk.",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1080702.html",
+    "location_t": 0,
+    "parent_sta": " ",
+    "wheelchair": 0,
+    "route_shor": "17",
+    "route_long": "Meritullintori-Kruunuvuorenranta",
+    "route_type": "4",
+    "vehicle_ty": "4",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/b17.html",
+    "shape_id": "1017_20230501_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 21009,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.042398,
+     60.314029
+    ]
+   },
+   "properties": {
+    "FID": 21009,
+    "route_vari": "4625_10",
+    "route_id": "4625",
+    "direction_": 0,
+    "stop_seque": 8,
+    "stop_id": "4600216",
+    "stop_code": "V6016",
+    "stop_heads": "Rekolanmäki via Peijas",
+    "stop_name": "Tarhurintie",
+    "stop_desc": "Talvikkitie",
+    "zone_id": "C",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/4600216.html",
+    "location_t": 0,
+    "parent_sta": " ",
+    "wheelchair": 2,
+    "route_shor": "625",
+    "route_long": "Tikkurila-Koivukylä-Peijas-Rekolanmäki",
+    "route_type": "701",
+    "vehicle_ty": "3",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/b625.html",
+    "shape_id": "4625_20251103_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14535,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.6375,
+     60.155101
+    ]
+   },
+   "properties": {
+    "FID": 14535,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 1,
+    "stop_id": "2413601",
+    "stop_code": "E0021",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Kivenlahti",
+    "stop_desc": "Seitsenmerenreitti",
+    "zone_id": "C",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2413601.html",
+    "location_t": 0,
+    "parent_sta": "2000111",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14536,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.653288,
+     60.150075
+    ]
+   },
+   "properties": {
+    "FID": 14536,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 2,
+    "stop_id": "2411601",
+    "stop_code": "E0019",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Espoonlahti",
+    "stop_desc": "Espoonlahdenkatu",
+    "zone_id": "C",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2411601.html",
+    "location_t": 0,
+    "parent_sta": "2000110",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14537,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.669851,
+     60.141529
+    ]
+   },
+   "properties": {
+    "FID": 14537,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 3,
+    "stop_id": "2412601",
+    "stop_code": "E0017",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Soukka",
+    "stop_desc": "Soukantori",
+    "zone_id": "C",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2412601.html",
+    "location_t": 0,
+    "parent_sta": "2000109",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14538,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.691547,
+     60.149839
+    ]
+   },
+   "properties": {
+    "FID": 14538,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 4,
+    "stop_id": "2441603",
+    "stop_code": "E0015",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Kaitaa",
+    "stop_desc": "Iivisniementie",
+    "zone_id": "C",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2441603.html",
+    "location_t": 0,
+    "parent_sta": "2000108",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14539,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.709391,
+     60.152376
+    ]
+   },
+   "properties": {
+    "FID": 14539,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 5,
+    "stop_id": "2441601",
+    "stop_code": "E0013",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Finnoo",
+    "stop_desc": "Meritie",
+    "zone_id": "C",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2441601.html",
+    "location_t": 0,
+    "parent_sta": "2000107",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14540,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.739485,
+     60.159788
+    ]
+   },
+   "properties": {
+    "FID": 14540,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 6,
+    "stop_id": "2314601",
+    "stop_code": "E0011",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Matinkylä",
+    "stop_desc": "Suomenlahdentie",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2314601.html",
+    "location_t": 0,
+    "parent_sta": "2000106",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14541,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.763266,
+     60.170497
+    ]
+   },
+   "properties": {
+    "FID": 14541,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 7,
+    "stop_id": "2214603",
+    "stop_code": "E0009",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Niittykumpu",
+    "stop_desc": "Niittykatu 2",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2214603.html",
+    "location_t": 0,
+    "parent_sta": "2000105",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14542,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.780567,
+     60.174588
+    ]
+   },
+   "properties": {
+    "FID": 14542,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 8,
+    "stop_id": "2214601",
+    "stop_code": "E0007",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Urheilupuisto",
+    "stop_desc": "Koivu-Mankkaan tie",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2214601.html",
+    "location_t": 0,
+    "parent_sta": "2000104",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14543,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.803463,
+     60.175017
+    ]
+   },
+   "properties": {
+    "FID": 14543,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 9,
+    "stop_id": "2211601",
+    "stop_code": "E0005",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Tapiola",
+    "stop_desc": "Merituulentie 1",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2211601.html",
+    "location_t": 0,
+    "parent_sta": "2000103",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14544,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.823515,
+     60.184516
+    ]
+   },
+   "properties": {
+    "FID": 14544,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 10,
+    "stop_id": "2222603",
+    "stop_code": "E0003",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Aalto-yliopisto (M)",
+    "stop_desc": "Otaniementie 12",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2222603.html",
+    "location_t": 0,
+    "parent_sta": "2000102",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14545,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.82936,
+     60.175405
+    ]
+   },
+   "properties": {
+    "FID": 14545,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 11,
+    "stop_id": "2222601",
+    "stop_code": "E0001",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Keilaniemi",
+    "stop_desc": "Keilaniementie 3",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/2222601.html",
+    "location_t": 0,
+    "parent_sta": "2000101",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14546,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.85361,
+     60.163538
+    ]
+   },
+   "properties": {
+    "FID": 14546,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 12,
+    "stop_id": "1310603",
+    "stop_code": "H0011",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Koivusaari",
+    "stop_desc": "Sotkatie 11",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1310603.html",
+    "location_t": 0,
+    "parent_sta": "1000119",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14547,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.87857,
+     60.159362
+    ]
+   },
+   "properties": {
+    "FID": 14547,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 13,
+    "stop_id": "1310601",
+    "stop_code": "H0013",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Lauttasaari",
+    "stop_desc": "Gyldénintie 2a",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1310601.html",
+    "location_t": 0,
+    "parent_sta": "1000118",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14548,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.915567,
+     60.163178
+    ]
+   },
+   "properties": {
+    "FID": 14548,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 14,
+    "stop_id": "1201601",
+    "stop_code": "H0015",
+    "stop_heads": "Vuosaari via Rautatientori",
+    "stop_name": "Ruoholahti",
+    "stop_desc": "Itämerenkatu 14",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1201601.html",
+    "location_t": 0,
+    "parent_sta": "1000101",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14549,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.931215,
+     60.16883
+    ]
+   },
+   "properties": {
+    "FID": 14549,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 15,
+    "stop_id": "1040601",
+    "stop_code": "H0017",
+    "stop_heads": "Vuosaari via Itäkeskus",
+    "stop_name": "Kamppi",
+    "stop_desc": "Urho Kekkosen katu",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1040601.html",
+    "location_t": 0,
+    "parent_sta": "1000102",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14550,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.939846,
+     60.170379
+    ]
+   },
+   "properties": {
+    "FID": 14550,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 16,
+    "stop_id": "1020601",
+    "stop_code": "H0019",
+    "stop_heads": "Vuosaari via Itäkeskus",
+    "stop_name": "Rautatientori",
+    "stop_desc": "Asema-aukio",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1020601.html",
+    "location_t": 0,
+    "parent_sta": "1000103",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14551,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.947915,
+     60.172009
+    ]
+   },
+   "properties": {
+    "FID": 14551,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 17,
+    "stop_id": "1020603",
+    "stop_code": "H0021",
+    "stop_heads": "Vuosaari via Itäkeskus",
+    "stop_name": "Helsingin yliopisto",
+    "stop_desc": "Fabianinkatu",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1020603.html",
+    "location_t": 0,
+    "parent_sta": "1000104",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14552,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.950188,
+     60.180481
+    ]
+   },
+   "properties": {
+    "FID": 14552,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 18,
+    "stop_id": "1111601",
+    "stop_code": "H0023",
+    "stop_heads": "Vuosaari via Itäkeskus",
+    "stop_name": "Hakaniemi",
+    "stop_desc": "Toinen linja",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1111601.html",
+    "location_t": 0,
+    "parent_sta": "1000105",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14553,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.959708,
+     60.187124
+    ]
+   },
+   "properties": {
+    "FID": 14553,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 19,
+    "stop_id": "1121601",
+    "stop_code": "H0025",
+    "stop_heads": "Vuosaari via Itäkeskus",
+    "stop_name": "Sörnäinen",
+    "stop_desc": "Pengerkatu",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1121601.html",
+    "location_t": 0,
+    "parent_sta": "1000106",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14554,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.977068,
+     60.187389
+    ]
+   },
+   "properties": {
+    "FID": 14554,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 20,
+    "stop_id": "1100601",
+    "stop_code": "H0027",
+    "stop_heads": "Vuosaari via Itäkeskus",
+    "stop_name": "Kalasatama",
+    "stop_desc": "Hermannin rantatie 1",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1100601.html",
+    "location_t": 0,
+    "parent_sta": "1000107",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14555,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.008191,
+     60.188834
+    ]
+   },
+   "properties": {
+    "FID": 14555,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 21,
+    "stop_id": "1420601",
+    "stop_code": "H0029",
+    "stop_heads": "Vuosaari via Itäkeskus",
+    "stop_name": "Kulosaari",
+    "stop_desc": "Ukko-Pekan porras 2",
+    "zone_id": "A",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1420601.html",
+    "location_t": 0,
+    "parent_sta": "1000108",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14556,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.030764,
+     60.194802
+    ]
+   },
+   "properties": {
+    "FID": 14556,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 22,
+    "stop_id": "1431601",
+    "stop_code": "H0031",
+    "stop_heads": "Vuosaari via Itäkeskus",
+    "stop_name": "Herttoniemi",
+    "stop_desc": "Hiihtomäentie 13",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1431601.html",
+    "location_t": 0,
+    "parent_sta": "1000109",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14557,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.044593,
+     60.205676
+    ]
+   },
+   "properties": {
+    "FID": 14557,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 23,
+    "stop_id": "1431603",
+    "stop_code": "H0033",
+    "stop_heads": "Vuosaari via Itäkeskus",
+    "stop_name": "Siilitie",
+    "stop_desc": "Siilitie 2",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1431603.html",
+    "location_t": 0,
+    "parent_sta": "1000110",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14558,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.077784,
+     60.210024
+    ]
+   },
+   "properties": {
+    "FID": 14558,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 24,
+    "stop_id": "1453601",
+    "stop_code": "H0035",
+    "stop_heads": "Vuosaari via Rastila",
+    "stop_name": "Itäkeskus",
+    "stop_desc": "Tallinnanaukio 2",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1453601.html",
+    "location_t": 0,
+    "parent_sta": "1000111",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14559,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.093072,
+     60.214693
+    ]
+   },
+   "properties": {
+    "FID": 14559,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 25,
+    "stop_id": "1452601",
+    "stop_code": "H0037",
+    "stop_heads": "Vuosaari via Rastila",
+    "stop_name": "Puotila",
+    "stop_desc": "Puotilan metrotori 4",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1452601.html",
+    "location_t": 0,
+    "parent_sta": "1000115",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14560,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.120661,
+     60.205509
+    ]
+   },
+   "properties": {
+    "FID": 14560,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 26,
+    "stop_id": "1541601",
+    "stop_code": "H0039",
+    "stop_heads": "Vuosaari",
+    "stop_name": "Rastila",
+    "stop_desc": "Karavaanisilta 3",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1541601.html",
+    "location_t": 0,
+    "parent_sta": "1000116",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 14561,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.143076,
+     60.207216
+    ]
+   },
+   "properties": {
+    "FID": 14561,
+    "route_vari": "31M1_1",
+    "route_id": "31M1",
+    "direction_": 0,
+    "stop_seque": 27,
+    "stop_id": "1541603",
+    "stop_code": "H0041",
+    "stop_heads": " ",
+    "stop_name": "Vuosaari",
+    "stop_desc": "Mustankivenkatu",
+    "zone_id": "B",
+    "stop_url": "http://aikataulut.hsl.fi/pysakit/fi/1541603.html",
+    "location_t": 0,
+    "parent_sta": "1000117",
+    "wheelchair": 1,
+    "route_shor": "M1",
+    "route_long": "Kivenlahti - Vuosaari",
+    "route_type": "1",
+    "vehicle_ty": "1",
+    "route_url": "http://aikataulut.hsl.fi/linjat/fi/bM1.html",
+    "shape_id": "31M1_20221203_1"
+   }
+  }
+ ]
+}

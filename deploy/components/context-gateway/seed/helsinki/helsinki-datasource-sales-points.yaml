@@ -1,0 +1,18 @@
+# HSL's ticket sales points (T-5254): kiosks, service points, ticket machines and parking meters that sell
+# HSL tickets, from HSL's open data hub as GeoJSON in WGS84. No key. CC-BY-4.0, read from the HRI catalogue
+# (package hsl-n-myyntipisteet). About 850 points, 0.9 MB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-sales-points
+  namespace: helsinki
+  title:
+    en: HSL ticket sales points
+    fi: HSL:n myyntipisteet
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/f9388fc8a8f848fda3bc584b607afe97_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

@@ -1,0 +1,10 @@
+---
+# The wasm Apps' job tokens on dev (AP-159, T-3539): the federated mechanism is seen working
+# here (T-2868, a throwaway federated-jwt client got a token, a wrong ServiceAccount got
+# invalid_client), so the token service and the job identities' namespace are on, and the
+# Portal provisions each App's appjob ServiceAccount and client there.
+wasm-host:
+  tokens:
+    enabled: true
+  identities:
+    enabled: true

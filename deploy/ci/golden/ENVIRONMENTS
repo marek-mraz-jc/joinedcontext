@@ -1,0 +1,7 @@
+local
+production
+staging
+recovery-test
+addons
+minimal
+broker-only

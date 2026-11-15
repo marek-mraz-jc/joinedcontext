@@ -1,0 +1,861 @@
+{
+ "meta": {
+  "count": 10,
+  "next": null,
+  "previous": null
+ },
+ "data": [
+  {
+   "id": "helsinki:agpg4hzprq",
+   "name": {
+    "fi": "Kinaporin päivätanssit"
+   },
+   "short_description": {
+    "fi": "Kinaporin päivätansseissa on aina live bändi."
+   },
+   "start_time": "0026-09-23T11:20:11Z",
+   "end_time": "2026-12-23T13:00:00Z",
+   "event_status": "EventScheduled",
+   "location": {
+    "id": "tprek:48547",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      24.962286,
+      60.18901
+     ]
+    },
+    "name": {
+     "fi": "Kinaporin seniorikeskus/Palvelukeskus",
+     "sv": "Kinaborgs seniorcenter / Servicecentral",
+     "en": "Kinapori Senior Centre / Service Centre"
+    },
+    "street_address": {
+     "fi": "Kinaporinkatu 7-9 A",
+     "sv": "Kinaborgsgatan 7-9 A",
+     "en": "Kinaporinkatu 7-9 A"
+    },
+    "postal_code": "00500",
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p1278",
+     "name": {
+      "fi": "tanssi",
+      "sv": "dans",
+      "en": "dance (performing arts)"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": true,
+     "offer_price_groups": [],
+     "price": null,
+     "info_url": {
+      "fi": ""
+     },
+     "description": null
+    }
+   ],
+   "info_url": {
+    "fi": ""
+   },
+   "super_event": null,
+   "provider_contact_info": null,
+   "last_modified_time": "2026-05-28T10:26:38.105396Z"
+  },
+  {
+   "id": "hkm:3466",
+   "name": {
+    "fi": "Lasten kaupunki",
+    "sv": "Barnens stad",
+    "en": "Children’s Town"
+   },
+   "short_description": {
+    "fi": "Senaatintorin kulmalla Helsingin vanhimmissa kortteleissa sijaitsee siniharmaa Sederholmin talo, jok…",
+    "sv": "Vid Senatstorgets hörn i Helsingfors äldsta kvarter finns det blågrå Sederholmska huset som blev…",
+    "en": "Near the Senate Square, in the oldest city blocks of Helsinki, you can find the blue-grey Sederholm …"
+   },
+   "start_time": "2001-01-01T09:00:00Z",
+   "end_time": "2050-12-31T17:00:00Z",
+   "event_status": "EventRescheduled",
+   "location": {
+    "id": "tprek:8663",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      24.95398,
+      60.16886
+     ]
+    },
+    "name": {
+     "fi": "Helsingin kaupunginmuseo",
+     "sv": "Helsingfors stadsmuseum",
+     "en": "Helsinki City Museum"
+    },
+    "street_address": {
+     "fi": "Aleksanterinkatu 16",
+     "sv": "Alexandersgatan 16",
+     "en": "Aleksanterinkatu 16"
+    },
+    "postal_code": "00170",
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p22039",
+     "name": {
+      "fi": "arki",
+      "sv": "vardag",
+      "en": "everyday"
+     }
+    },
+    {
+     "id": "yso:p360",
+     "name": {
+      "fi": "kulttuuritapahtumat",
+      "sv": "kulturevenemang",
+      "en": "cultural events"
+     }
+    },
+    {
+     "id": "yso:p4679",
+     "name": {
+      "fi": "helsinkiläiset",
+      "sv": "helsingforsare",
+      "en": "Helsinki residents"
+     }
+    },
+    {
+     "id": "yso:p4934",
+     "name": {
+      "fi": "museot",
+      "sv": "museer",
+      "en": "museums"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": true,
+     "offer_price_groups": [],
+     "price": null,
+     "info_url": null,
+     "description": {
+      "fi": "Vapaa pääsy",
+      "sv": "Fritt inträde",
+      "en": "Free entry"
+     }
+    }
+   ],
+   "info_url": {
+    "fi": "https://www.helsinginkaupunginmuseo.fi/nayttelyt/lasten-kaupunki/",
+    "sv": "https://www.helsinginkaupunginmuseo.fi/sv/utstallningar/barnens-stad/",
+    "en": "https://www.helsinginkaupunginmuseo.fi/en/exhibitions/childrens-town/"
+   },
+   "super_event": null,
+   "provider_contact_info": null,
+   "last_modified_time": "2025-12-09T15:16:37.216695Z",
+   "publisher": "ahjo:u4804001010"
+  },
+  {
+   "id": "helsinki:agp5dhl25y",
+   "name": {
+    "fi": "Minä ja maailmankaikkeus",
+    "sv": "Jag och världsalltet",
+    "en": "The Universe and I"
+   },
+   "short_description": {
+    "fi": "Observatorion perusnäyttely kutsuu kaikki vauvasta vaariin sukeltamaan avaruuden ihmeisiin ja Observatoriorakennuksen vaiheikkaaseen historiaan. ",
+    "sv": "Kasta dig in i rymdens under och Observatoriebyggnadens brokiga historia! Med undantag av tornen och planetariet ligger utställningen på huvudvåningen.",
+    "en": "Dive into the world of astronomy and the history of the Observatory building!"
+   },
+   "start_time": "2003-01-01T10:00:00Z",
+   "end_time": "2030-12-31T14:00:00Z",
+   "event_status": "EventScheduled",
+   "location": {
+    "id": "tprek:30092",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      24.951674,
+      60.161884
+     ]
+    },
+    "name": {
+     "fi": "Tiedemuseo Liekin observatorio",
+     "sv": "Vetenskapsmuseet Lågans observatorium",
+     "en": "Observatory of the Helsinki University Museum Flame"
+    },
+    "street_address": {
+     "fi": "Kopernikuksentie 1",
+     "sv": "Kopernikusvägen 1",
+     "en": "Kopernikuksentie 1"
+    },
+    "postal_code": "00130",
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p2240",
+     "name": {
+      "fi": "tiede",
+      "sv": "vetenskap",
+      "en": "science"
+     }
+    },
+    {
+     "id": "yso:p3754",
+     "name": {
+      "fi": "tähtitiede",
+      "sv": "astronomi",
+      "en": "astronomy"
+     }
+    },
+    {
+     "id": "yso:p4402",
+     "name": {
+      "fi": "avaruus",
+      "sv": "rymden",
+      "en": "outer space"
+     }
+    },
+    {
+     "id": "yso:p5121",
+     "name": {
+      "fi": "näyttelyt",
+      "sv": "utställningar",
+      "en": "exhibitions"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": false,
+     "offer_price_groups": [],
+     "price": {
+      "fi": "https://www.helsinki.fi/fi/tiedemuseo-liekki/tule-meille/aukioloajat-ja-paasymaksut",
+      "sv": "https://www.helsinki.fi/sv/vetenskapsmuseet-lagan/besok-oss/oppettider-och-intradesavgifter",
+      "en": "https://www.helsinki.fi/en/helsinki-university-museum-flame/visit-us/opening-hours-and-ticket-prices"
+     },
+     "info_url": {
+      "fi": "https://www.helsinki.fi/fi/tiedemuseo-liekki/tule-meille/aukioloajat-ja-paasymaksut",
+      "sv": "https://www.helsinki.fi/sv/vetenskapsmuseet-lagan/besok-oss/oppettider-och-intradesavgifter",
+      "en": "https://www.helsinki.fi/en/helsinki-university-museum-flame/visit-us/opening-hours-and-ticket-prices"
+     },
+     "description": {
+      "fi": "",
+      "sv": "",
+      "en": ""
+     }
+    }
+   ],
+   "info_url": {
+    "fi": "https://www.helsinki.fi/fi/tiedemuseo-liekki/nayttelyt/mina-ja-maailmankaikkeus",
+    "sv": "https://www.helsinki.fi/sv/vetenskapsmuseet-lagan/utstallningar/jag-och-varldsalltet",
+    "en": "https://www.helsinki.fi/en/helsinki-university-museum-flame/exhibitions/universe-and-i"
+   },
+   "super_event": null,
+   "provider_contact_info": null,
+   "last_modified_time": "2026-08-05T11:09:46.648937Z"
+  },
+  {
+   "id": "helsinki:afzapzc5sq",
+   "name": {
+    "fi": "Tunteita ja eleganssia",
+    "en": "Emotions and Elegance"
+   },
+   "short_description": {
+    "fi": "Valokuvaaja Eino Partanen (1902–1962) kuvasi viipurilaista teatteria 10 vuoden ajan vuosina 1929–39. ",
+    "en": "Photographer Eino Partanen (1902–1962) recorded the Viipuri theatre scene for a period of ten years 1929–1939. "
+   },
+   "start_time": "2019-12-31T22:01:00Z",
+   "end_time": "2026-12-31T21:59:00Z",
+   "event_status": "EventScheduled",
+   "location": {
+    "id": "helsinki:internet",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      24.941486,
+      60.170576
+     ]
+    },
+    "name": {
+     "fi": "Internet",
+     "sv": "Internet",
+     "en": "Internet"
+    },
+    "street_address": null,
+    "postal_code": null,
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki",
+     "ru": "Helsinki",
+     "zh_hans": "Helsinki",
+     "ar": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p16866",
+     "name": {
+      "fi": "valokuvanäyttelyt",
+      "sv": "fotoutställningar",
+      "en": "photography exhibitions"
+     }
+    },
+    {
+     "id": "yso:p20405",
+     "name": {
+      "fi": "Internet",
+      "sv": "internet",
+      "en": "Internet"
+     }
+    },
+    {
+     "id": "yso:p2625",
+     "name": {
+      "fi": "teatteritaide",
+      "sv": "teaterkonst",
+      "en": "theatre (art forms)"
+     }
+    },
+    {
+     "id": "yso:p26626",
+     "name": {
+      "fi": "etäosallistuminen",
+      "sv": "deltagande på distans",
+      "en": "remote participation"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": true,
+     "offer_price_groups": [],
+     "price": null,
+     "info_url": {
+      "fi": "",
+      "en": ""
+     },
+     "description": null
+    }
+   ],
+   "info_url": {
+    "fi": "https://www.teatterimuseo.fi/fi/Tunteita-ja-eleganssia",
+    "en": "https://www.teatterimuseo.fi/en/Emotions-and-Elegance"
+   },
+   "super_event": null,
+   "provider_contact_info": null,
+   "last_modified_time": "2025-12-10T11:20:47.762867Z"
+  },
+  {
+   "id": "helsinki:agpg4hzhzq",
+   "name": {
+    "fi": "Kinaporin päivätanssit"
+   },
+   "short_description": {
+    "fi": "Kinaporin päivätansseissa on aina live bändi."
+   },
+   "start_time": "2026-12-23T11:00:00Z",
+   "end_time": "2026-12-23T13:00:00Z",
+   "event_status": "EventScheduled",
+   "location": {
+    "id": "tprek:48547",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      24.962286,
+      60.18901
+     ]
+    },
+    "name": {
+     "fi": "Kinaporin seniorikeskus/Palvelukeskus",
+     "sv": "Kinaborgs seniorcenter / Servicecentral",
+     "en": "Kinapori Senior Centre / Service Centre"
+    },
+    "street_address": {
+     "fi": "Kinaporinkatu 7-9 A",
+     "sv": "Kinaborgsgatan 7-9 A",
+     "en": "Kinaporinkatu 7-9 A"
+    },
+    "postal_code": "00500",
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p1278",
+     "name": {
+      "fi": "tanssi",
+      "sv": "dans",
+      "en": "dance (performing arts)"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": true,
+     "offer_price_groups": [],
+     "price": null,
+     "description": null,
+     "info_url": {
+      "fi": ""
+     }
+    }
+   ],
+   "info_url": {
+    "fi": ""
+   },
+   "super_event": {
+    "@id": "https://api.hel.fi/linkedevents/v1/event/helsinki:agpg4hzprq/"
+   },
+   "provider_contact_info": null,
+   "last_modified_time": "2026-05-28T10:26:36.119532Z",
+   "publisher": "bad publisher id"
+  },
+  {
+   "id": "test:outside-helsinki",
+   "name": {
+    "fi": "Kinaporin päivätanssit"
+   },
+   "short_description": {
+    "fi": "Kinaporin päivätansseissa on aina live bändi."
+   },
+   "start_time": "0026-09-23T11:20:11Z",
+   "end_time": "2026-12-23T13:00:00Z",
+   "event_status": "EventScheduled",
+   "location": {
+    "id": "tprek:48547",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      23.76,
+      61.5
+     ]
+    },
+    "name": {
+     "fi": "Kinaporin seniorikeskus/Palvelukeskus",
+     "sv": "Kinaborgs seniorcenter / Servicecentral",
+     "en": "Kinapori Senior Centre / Service Centre"
+    },
+    "street_address": {
+     "fi": "Kinaporinkatu 7-9 A",
+     "sv": "Kinaborgsgatan 7-9 A",
+     "en": "Kinaporinkatu 7-9 A"
+    },
+    "postal_code": "00500",
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p1278",
+     "name": {
+      "fi": "tanssi",
+      "sv": "dans",
+      "en": "dance (performing arts)"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": true,
+     "offer_price_groups": [],
+     "price": null,
+     "info_url": {
+      "fi": ""
+     },
+     "description": null
+    }
+   ],
+   "info_url": {
+    "fi": ""
+   },
+   "super_event": null,
+   "provider_contact_info": null,
+   "last_modified_time": "2026-05-28T10:26:38.105396Z"
+  },
+  {
+   "id": "test:swapped",
+   "name": {
+    "fi": "Lasten kaupunki",
+    "sv": "Barnens stad",
+    "en": "Children’s Town"
+   },
+   "short_description": {
+    "fi": "Senaatintorin kulmalla Helsingin vanhimmissa kortteleissa sijaitsee siniharmaa Sederholmin talo, jok…",
+    "sv": "Vid Senatstorgets hörn i Helsingfors äldsta kvarter finns det blågrå Sederholmska huset som blev…",
+    "en": "Near the Senate Square, in the oldest city blocks of Helsinki, you can find the blue-grey Sederholm …"
+   },
+   "start_time": "2001-01-01T09:00:00Z",
+   "end_time": "2050-12-31T17:00:00Z",
+   "event_status": "EventRescheduled",
+   "location": {
+    "id": "tprek:8663",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      60.16886,
+      24.95398
+     ]
+    },
+    "name": {
+     "fi": "Helsingin kaupunginmuseo",
+     "sv": "Helsingfors stadsmuseum",
+     "en": "Helsinki City Museum"
+    },
+    "street_address": {
+     "fi": "Aleksanterinkatu 16",
+     "sv": "Alexandersgatan 16",
+     "en": "Aleksanterinkatu 16"
+    },
+    "postal_code": "00170",
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p22039",
+     "name": {
+      "fi": "arki",
+      "sv": "vardag",
+      "en": "everyday"
+     }
+    },
+    {
+     "id": "yso:p360",
+     "name": {
+      "fi": "kulttuuritapahtumat",
+      "sv": "kulturevenemang",
+      "en": "cultural events"
+     }
+    },
+    {
+     "id": "yso:p4679",
+     "name": {
+      "fi": "helsinkiläiset",
+      "sv": "helsingforsare",
+      "en": "Helsinki residents"
+     }
+    },
+    {
+     "id": "yso:p4934",
+     "name": {
+      "fi": "museot",
+      "sv": "museer",
+      "en": "museums"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": true,
+     "offer_price_groups": [],
+     "price": null,
+     "info_url": null,
+     "description": {
+      "fi": "Vapaa pääsy",
+      "sv": "Fritt inträde",
+      "en": "Free entry"
+     }
+    }
+   ],
+   "info_url": {
+    "fi": "https://www.helsinginkaupunginmuseo.fi/nayttelyt/lasten-kaupunki/",
+    "sv": "https://www.helsinginkaupunginmuseo.fi/sv/utstallningar/barnens-stad/",
+    "en": "https://www.helsinginkaupunginmuseo.fi/en/exhibitions/childrens-town/"
+   },
+   "super_event": null,
+   "provider_contact_info": null,
+   "last_modified_time": "2025-12-09T15:16:37.216695Z"
+  },
+  {
+   "id": "test:year-0026",
+   "name": {
+    "fi": "Minä ja maailmankaikkeus",
+    "sv": "Jag och världsalltet",
+    "en": "The Universe and I"
+   },
+   "short_description": {
+    "fi": "Observatorion perusnäyttely kutsuu kaikki vauvasta vaariin sukeltamaan avaruuden ihmeisiin ja Observatoriorakennuksen vaiheikkaaseen historiaan. ",
+    "sv": "Kasta dig in i rymdens under och Observatoriebyggnadens brokiga historia! Med undantag av tornen och planetariet ligger utställningen på huvudvåningen.",
+    "en": "Dive into the world of astronomy and the history of the Observatory building!"
+   },
+   "start_time": "0026-09-23T10:00:00Z",
+   "end_time": "2030-12-31T14:00:00Z",
+   "event_status": "EventScheduled",
+   "location": {
+    "id": "tprek:30092",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      24.951674,
+      60.161884
+     ]
+    },
+    "name": {
+     "fi": "Tiedemuseo Liekin observatorio",
+     "sv": "Vetenskapsmuseet Lågans observatorium",
+     "en": "Observatory of the Helsinki University Museum Flame"
+    },
+    "street_address": {
+     "fi": "Kopernikuksentie 1",
+     "sv": "Kopernikusvägen 1",
+     "en": "Kopernikuksentie 1"
+    },
+    "postal_code": "00130",
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p2240",
+     "name": {
+      "fi": "tiede",
+      "sv": "vetenskap",
+      "en": "science"
+     }
+    },
+    {
+     "id": "yso:p3754",
+     "name": {
+      "fi": "tähtitiede",
+      "sv": "astronomi",
+      "en": "astronomy"
+     }
+    },
+    {
+     "id": "yso:p4402",
+     "name": {
+      "fi": "avaruus",
+      "sv": "rymden",
+      "en": "outer space"
+     }
+    },
+    {
+     "id": "yso:p5121",
+     "name": {
+      "fi": "näyttelyt",
+      "sv": "utställningar",
+      "en": "exhibitions"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": false,
+     "offer_price_groups": [],
+     "price": {
+      "fi": "https://www.helsinki.fi/fi/tiedemuseo-liekki/tule-meille/aukioloajat-ja-paasymaksut",
+      "sv": "https://www.helsinki.fi/sv/vetenskapsmuseet-lagan/besok-oss/oppettider-och-intradesavgifter",
+      "en": "https://www.helsinki.fi/en/helsinki-university-museum-flame/visit-us/opening-hours-and-ticket-prices"
+     },
+     "info_url": {
+      "fi": "https://www.helsinki.fi/fi/tiedemuseo-liekki/tule-meille/aukioloajat-ja-paasymaksut",
+      "sv": "https://www.helsinki.fi/sv/vetenskapsmuseet-lagan/besok-oss/oppettider-och-intradesavgifter",
+      "en": "https://www.helsinki.fi/en/helsinki-university-museum-flame/visit-us/opening-hours-and-ticket-prices"
+     },
+     "description": {
+      "fi": "",
+      "sv": "",
+      "en": ""
+     }
+    }
+   ],
+   "info_url": {
+    "fi": "https://www.helsinki.fi/fi/tiedemuseo-liekki/nayttelyt/mina-ja-maailmankaikkeus",
+    "sv": "https://www.helsinki.fi/sv/vetenskapsmuseet-lagan/utstallningar/jag-och-varldsalltet",
+    "en": "https://www.helsinki.fi/en/helsinki-university-museum-flame/exhibitions/universe-and-i"
+   },
+   "super_event": null,
+   "provider_contact_info": null,
+   "last_modified_time": "2026-08-05T11:09:46.648937Z"
+  },
+  {
+   "id": "test:no-position",
+   "name": {
+    "fi": "Kinaporin päivätanssit"
+   },
+   "short_description": {
+    "fi": "Kinaporin päivätansseissa on aina live bändi."
+   },
+   "start_time": "0026-09-23T11:20:11Z",
+   "end_time": "2026-12-23T13:00:00Z",
+   "event_status": "EventScheduled",
+   "location": {
+    "id": "tprek:48547",
+    "position": null,
+    "name": {
+     "fi": "Kinaporin seniorikeskus/Palvelukeskus",
+     "sv": "Kinaborgs seniorcenter / Servicecentral",
+     "en": "Kinapori Senior Centre / Service Centre"
+    },
+    "street_address": {
+     "fi": "Kinaporinkatu 7-9 A",
+     "sv": "Kinaborgsgatan 7-9 A",
+     "en": "Kinaporinkatu 7-9 A"
+    },
+    "postal_code": "00500",
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p1278",
+     "name": {
+      "fi": "tanssi",
+      "sv": "dans",
+      "en": "dance (performing arts)"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": true,
+     "offer_price_groups": [],
+     "price": null,
+     "info_url": {
+      "fi": ""
+     },
+     "description": null
+    }
+   ],
+   "info_url": {
+    "fi": ""
+   },
+   "super_event": null,
+   "provider_contact_info": null,
+   "last_modified_time": "2026-05-28T10:26:38.105396Z"
+  },
+  {
+   "id": "hkm:3466",
+   "name": {
+    "fi": "Lasten kaupunki",
+    "sv": "Barnens stad",
+    "en": "Children’s Town"
+   },
+   "short_description": {
+    "fi": "Senaatintorin kulmalla Helsingin vanhimmissa kortteleissa sijaitsee siniharmaa Sederholmin talo, jok…",
+    "sv": "Vid Senatstorgets hörn i Helsingfors äldsta kvarter finns det blågrå Sederholmska huset som blev…",
+    "en": "Near the Senate Square, in the oldest city blocks of Helsinki, you can find the blue-grey Sederholm …"
+   },
+   "start_time": "2001-01-01T09:00:00Z",
+   "end_time": "2050-12-31T17:00:00Z",
+   "event_status": "EventRescheduled",
+   "location": {
+    "id": "tprek:8663",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      24.95398,
+      60.16886
+     ]
+    },
+    "name": {
+     "fi": "Helsingin kaupunginmuseo",
+     "sv": "Helsingfors stadsmuseum",
+     "en": "Helsinki City Museum"
+    },
+    "street_address": {
+     "fi": "Aleksanterinkatu 16",
+     "sv": "Alexandersgatan 16",
+     "en": "Aleksanterinkatu 16"
+    },
+    "postal_code": "00170",
+    "address_locality": {
+     "fi": "Helsinki",
+     "sv": "Helsingfors",
+     "en": "Helsinki"
+    }
+   },
+   "keywords": [
+    {
+     "id": "yso:p22039",
+     "name": {
+      "fi": "arki",
+      "sv": "vardag",
+      "en": "everyday"
+     }
+    },
+    {
+     "id": "yso:p360",
+     "name": {
+      "fi": "kulttuuritapahtumat",
+      "sv": "kulturevenemang",
+      "en": "cultural events"
+     }
+    },
+    {
+     "id": "yso:p4679",
+     "name": {
+      "fi": "helsinkiläiset",
+      "sv": "helsingforsare",
+      "en": "Helsinki residents"
+     }
+    },
+    {
+     "id": "yso:p4934",
+     "name": {
+      "fi": "museot",
+      "sv": "museer",
+      "en": "museums"
+     }
+    }
+   ],
+   "offers": [
+    {
+     "is_free": true,
+     "offer_price_groups": [],
+     "price": null,
+     "info_url": null,
+     "description": {
+      "fi": "Vapaa pääsy",
+      "sv": "Fritt inträde",
+      "en": "Free entry"
+     }
+    }
+   ],
+   "info_url": {
+    "fi": "https://www.helsinginkaupunginmuseo.fi/nayttelyt/lasten-kaupunki/",
+    "sv": "https://www.helsinginkaupunginmuseo.fi/sv/utstallningar/barnens-stad/",
+    "en": "https://www.helsinginkaupunginmuseo.fi/en/exhibitions/childrens-town/"
+   },
+   "super_event": null,
+   "provider_contact_info": null,
+   "last_modified_time": "2025-12-09T15:16:37.216695Z",
+   "publisher": "ahjo:u4804001010"
+  }
+ ]
+}

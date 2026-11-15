@@ -1,0 +1,24 @@
+---
+# The automount is off, and the pod mounts the same API token itself: a projected
+# serviceAccountToken with no audience is the API server's. No reason, so refused.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: projected-token-without-a-reason
+  namespace: dev
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: app
+      image: nginx:1.27
+      volumeMounts:
+        - name: kube-api-token
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+  volumes:
+    - name: kube-api-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 3600

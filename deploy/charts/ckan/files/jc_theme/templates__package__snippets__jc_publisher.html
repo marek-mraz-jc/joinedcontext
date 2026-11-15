@@ -1,0 +1,14 @@
+{# The dataset's publisher as one line: badge, name and words, linked to the publisher's page. #}
+{% set jc = h.jc_org(organization) %}
+{% set url = h.url_for(organization.type ~ '.read', id=organization.name) %}
+{# The picture repeats the name link beside it (T-5108, axe link-name): out of the tab order and the
+   screen reader, so a keyboard meets the publisher once, by its name. #}
+<div class="col-12">
+  <section class="jc-publisher module">
+    <a href="{{ url }}" class="jc-publisher-image" tabindex="-1" aria-hidden="true"><img src="{{ jc.image or h.url_for_static('/base/images/placeholder-organization.png') }}" alt=""></a>
+    <div class="jc-publisher-text">
+      <a href="{{ url }}" class="jc-publisher-name">{{ organization.title or organization.name }}</a>
+      {% if jc.description %}<p>{{ h.markdown_extract(jc.description, 240) }}</p>{% endif %}
+    </div>
+  </section>
+</div>

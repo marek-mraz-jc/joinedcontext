@@ -1,0 +1,7 @@
+---
+prometheus:
+  stack:
+    # 92.9.0 (2026-10-15) is the newest release past the 7-day cooldown on 2026-10-22 (T-5154).
+    repository: https://prometheus-community.github.io/helm-charts
+    chart: prometheus-community/kube-prometheus-stack
+    version: '92.9.0'

@@ -14,6 +14,9 @@ name: smoke
 on:
   push:
     branches: [jc-portal-1]
+    # Not for a change only the deployment code (ci.yml's deploy jobs gate it) or the docs touch;
+    # deploy/rehearsal is the single-host form these shards start, so it still runs them (T-6986).
+    paths: ["**", "!deploy/**", "deploy/rehearsal/**", "!docs/**"]
   workflow_dispatch:
 permissions: { contents: read }
 # One run per ref at a time and never cancelled: with cancel-in-progress every merge cancelled the

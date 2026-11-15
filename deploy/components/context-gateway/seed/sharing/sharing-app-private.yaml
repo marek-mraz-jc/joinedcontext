@@ -1,0 +1,29 @@
+# The App sharing matrix (T-4911): one of five copies of the sharing-probe bundle the Portal image
+# ships (portal apps/sharing-probe); the five differ only in visibility.
+# Only its owner opens it: the owner annotation names demo.author's fixed Keycloak id (demo-users.yaml, T-5712).
+# Without one only the project's administrators would open it (F-BNT3-009).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: sharing-private
+  namespace: sharing
+  title: { en: Sharing probe (private) }
+  description:
+    en: 'Test page of the App sharing matrix, visibility private: who opens it and how many city-bike stations it shows them.'
+  annotations:
+    joinedcontext.com/shipped-with: portal
+    joinedcontext.com/owner: de300000-0000-4000-8000-00000000000d # demo.author
+spec:
+  kind: ui
+  source:
+    path: ./apps/sharing-private
+  # The Portal parses `build` for every App, a shipped one too (dev: "missing field `build`", T-5774).
+  build: { node: '22' }
+  visibility: private
+  lifecycle: published
+  dataNeeds:
+    - contextSpaceRef: { kind: ContextSpace, name: sharing-bikes }
+      types: [BikeHireDockingStation]
+      attrs: [name, location]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld]

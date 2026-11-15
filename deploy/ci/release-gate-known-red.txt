@@ -1,0 +1,11 @@
+# Release gate known reds (T-5899): a case red on dev today that a task owns. A stage whose red cases all
+# match a line here passes; any other red case, or a case green in the last green record and red now, keeps
+# the gate red. Each line: <task id> <regex>, the regex full-matching "<stage>::<case>: <detail>" as
+# report.md lists it. Remove a line in the task that fixes it; report.md lists entries that matched nothing.
+#
+# The three catalogue Endpoints take turns as the "0 entities" row and the two rows without a dataset.
+T-5317 dev-smoke::catalogue (\(no dataset\)|catalog) \((emzask3o|wna4brin|y5jpwu6f)[a-z2-7]*\): .*
+# The summary is red whenever a row is; a new row is red on its own line above.
+T-5317 dev-smoke::catalogue: \d+ datasets, \d+ complete, .*
+# helsinki-feedback ServiceRequest rows without a name (first release gate run, c97c4488, 2026-10-28).
+T-5451 dev-smoke::catalogue helsinki-feedback \(gv24bicw[a-z2-7]*\): data (urn:ngsi-ld:ServiceRequest:\S+ has no name(; )?)+( \(\+\d+ more\))?

@@ -1,0 +1,25 @@
+---
+{{- $this := .Values.keycloak.app }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage -> not applicable, uses external database
+# - [x] 2+ Replicas or HorizontalPodAutoscaler
+# - [x] Rolling updates `maxUnavailable: 0`, `maxSurge: 25%` -> not applicable, is statefulset
+# - [x] PodDisruptionBudget (at least `minAvailable: 1`)
+
+resources:
+  requests:
+    cpu: "2000m"
+    memory: "4096Mi"
+  limits:
+    cpu: "4000m"
+    memory: "8192Mi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+
+podDisruptionBudget:
+  minAvailable: 1

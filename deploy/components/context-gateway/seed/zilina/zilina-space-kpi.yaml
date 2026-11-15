@@ -1,0 +1,43 @@
+# What was decided to be measured for Žilina: KeyPerformanceIndicator entities computed from zilina-mesto and zilina-verejne, with their formula and provenance (PF-54, PF-55).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: zilina-kpi
+  namespace: zilina
+  title:
+    sk: Žilina — ukazovatele
+    en: Žilina, indicators
+  description:
+    sk: Ukazovatele mesta Žilina vypočítané z otvorených dát, s vzorcom a pôvodom.
+    en: The indicators of the city of Žilina computed from open data, with their formula and provenance.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: zilina-kpi
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: key-performance-indicator }
+  defaultLocale: sk
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: KeyPerformanceIndicator
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        calculationFormula: { record: onChange, heartbeat: P7D }
+        calculationPeriod: { record: onChange, heartbeat: P7D }
+        computedBy: { record: onChange, heartbeat: P7D }
+        derivedFrom: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        title: { record: onChange, heartbeat: P7D }
+        # updatedAt is the run's own clock, new on every run: no history of its own (DM-132, T-5848).
+        updatedAt: { record: never }
+  # The space's place (T-4525): the catalogue's Dataset carries it, so georel=near finds the space.
+  # the city of Žilina with a margin; a KeyPerformanceIndicator outside it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area
+      entityType: KeyPerformanceIndicator
+      kind: area
+      attribute: location
+      bbox: [18.55, 49.1, 18.95, 49.35]

@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "reaper.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reaper.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+{{- /*
+  Namespaces are cluster-scoped, so this is a ClusterRole and there is no way to make it a
+  Role. What bounds it instead is the verb list: `list` and `delete`, on namespaces and on
+  nothing else. It cannot read a Secret, cannot create anything, and cannot touch a workload
+  directly; the workloads go because the namespace around them does.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "reaper.fullname" . }}
+  labels:
+    {{- include "reaper.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ['']
+    resources: [namespaces]
+    verbs: [list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "reaper.fullname" . }}
+  labels:
+    {{- include "reaper.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "reaper.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "reaper.fullname" . }}
+    namespace: {{ .Release.Namespace }}

@@ -1,0 +1,47 @@
+# PF-56, PF-61: the role every signed-in person of the organization holds. It reads every
+# project kind and changes nothing; `read` is a verb of its own since PF-59, and `approve`
+# implies none of it, so without this role an approver's own Portal answers 404 on every list.
+# `Role` and `RoleBinding` are not here on purpose: who holds which role is read by the
+# administrator who grants it (org-admin), not by everyone who signs in.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: viewer
+  namespace: org
+spec:
+  rules:
+    - kinds:
+        - Organization
+        - Project
+        - ContextSpace
+        - DataModel
+        - Mapping
+        - Policy
+        - ScopeDefinition
+        - Endpoint
+        - ModelProjection
+        - SharedSpaceReference
+        - ContextSourceRegistration
+        - ServiceAccount
+        - Pipeline
+        - DataSource
+        - MqttBroker
+        - App
+        - CkanInstance
+        # The knowledge assistant's sources and deployments (MF-51, MF-52, T-3057).
+        - KnowledgeSource
+        - AssistantDeployment
+        - McpServer
+        - Blueprint
+        - AgentProfile
+        - DataSpaceParticipant
+        - DataOffer
+        - DataAgreement
+        - SyncSource
+        - Bundle
+        - UiSchema
+        - Subscription
+        - Entity
+        - Dashboard
+        - Layer
+      verbs: [read]

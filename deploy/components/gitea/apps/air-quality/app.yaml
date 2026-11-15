@@ -1,0 +1,76 @@
+# The air-quality reference app (AP-34, AP-39). Hand written, so no generated-by annotation.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: air-quality
+  namespace: helsinki
+  title:
+    fi: "Ilmanlaatu"
+    en: "Air quality"
+  description:
+    fi: "Asemat, niiden viimeisimmät arvot ja 24 tunnin historia; ylläpitäjä lisää ja korjaa asemia."
+    en: "Stations, their latest values and 24 hours of history; a steward adds and corrects stations."
+spec:
+  kind: ui-rust
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_air-quality.git
+      ref: main
+  build:
+    rust: "1.90"
+    node: "22"
+  # `roles` is refused on a ui-rust App (AP-94), so every person of the project opens it and
+  # reads; the backend asks the Portal's `/me` for the roles and offers the form to a steward
+  # only (Architecture/16 §13, AP-109).
+  visibility: project
+  # A reference app ships with the platform, so its publication is the commit that adds it and
+  # its review is the pull request; there is no earlier state for it to sit in (AP-20).
+  lifecycle: published
+  # The Portal frames it in the apps catalogue, which is what `embeddable` is for (AP-12).
+  embeddable: true
+  roles:
+    - name: viewer
+      title: { en: "Viewer", fi: "Katselija" }
+      description: "Reads every station, its latest values and a day of history."
+    - name: steward
+      title: { en: "Steward", fi: "Ylläpitäjä" }
+      description: "Also adds stations, corrects their name, position and note, and removes the stations a steward added."
+  # Each role goes to its default group, `{app}-{role}`, committed beside the App under
+  # grants/users/groups/ (AP-118, ADR-N-031): who holds a role is that group's members.
+  access:
+    - role: viewer
+      subjects: [{ group: air-quality-viewer }]
+    - role: steward
+      subjects: [{ group: air-quality-steward }]
+  dataNeeds:
+    # Everyone the app admits reads the stations: `AirQualityObserved` of the `helsinki` model.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [AirQualityObserved]
+      attrs: [name, location, dateObserved, pm10, pm25, airQualityIndex, stewardNote, source]
+      operations: [queryEntity, retrieveEntity, retrieveTemporal]
+      temporalQ:
+        window: P1D
+      representations: [ngsi-ld, ogc-features]
+    # The steward's record form (AP-09, red lane on purpose): a station's name, position and
+    # note. The measured values, `dateObserved` and `source` are the pipeline's and stay
+    # read-only.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [AirQualityObserved]
+      attrs: [name, location, stewardNote]
+      operations: [createEntity, updateAttrs]
+      roles: [steward]
+    # A steward removes only a station a steward added: those carry no `source`, and the gateway
+    # evaluates this filter against the stored entity before it forwards the delete (R45).
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [AirQualityObserved]
+      operations: [deleteEntity]
+      q: "!source"
+      roles: [steward]
+  limits:
+    maxFileRows: 5000

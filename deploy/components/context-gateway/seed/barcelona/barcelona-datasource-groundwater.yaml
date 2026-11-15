@@ -1,0 +1,19 @@
+# Open Data BCN's groundwater readings (dataset piezometres_detall, CC BY 4.0): every reading of the
+# city's piezometers and wells since 2000, one resource the city rewrites about once a month. About
+# 420 KB; the mapping refuses more than 2 MiB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-groundwater
+  namespace: barcelona
+  title:
+    ca: Piezòmetres i pous, mesures (Open Data BCN)
+    es: Piezómetros y pozos, medidas (Open Data BCN)
+    en: Piezometers and wells, readings (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/dataset/15427ab9-65ab-42ae-be8a-f2f69c0a7c54/resource/2c64d077-3cb8-4d82-9de3-458a35267d74/download
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 30s

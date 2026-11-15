@@ -1,0 +1,37 @@
+# The mapping of the districts pipeline (T-5274): one AdministrativeArea per city district (mestská
+# časť) of Bratislava, 17 of them, from the hub's layer "Mestská časť". The id and `districtCode`
+# are the district's ZÚJ code (základná územná jednotka), the key the national registers use and
+# the statistics pipeline's indicators carry, so an indicator names its district without a lookup.
+# Nothing here deletes.
+pipeline:
+  processors:
+    - mapping: |
+        # Plausibility (owner 2026-10-22T18:10Z): the city has 17 districts; a layer with another
+        # count, a district without a ZÚJ code or name, or an outline with a vertex outside
+        # Bratislava and 1 km around it fails the run and writes nothing.
+        let features = this.features.or([])
+        let codes = $features.map_each(f -> f.properties.ZUJ.or("").string())
+        let outside = $features.filter(f -> f.geometry.coordinates.or([]).flatten().any(p -> p.index(0) < 16.93 || p.index(0) > 17.3 || p.index(1) < 47.99 || p.index(1) > 48.28)).map_each(f -> f.properties.NAZOV_UTJ.or("?"))
+        root = if content().length() > 2097152 {
+          throw("the districts layer is %d bytes, more than the 2 MiB read".format(content().length()))
+        } else if this.error.or(null) != null {
+          throw("the hub refused the districts layer: %s".format(this.error.message.or("no reason given")))
+        } else if $features.length() != 17 {
+          throw("the districts layer holds %d districts, not 17: nothing is written".format($features.length()))
+        } else if $codes.any(c -> !c.re_match("^5[0-9]{5}$")) || $codes.unique().length() != 17 {
+          throw("a district has no ZÚJ code or shares one: nothing is written")
+        } else if $features.any(f -> f.properties.NAZOV_UTJ.or("").trim() == "" || f.geometry.type.or("") != "Polygon") {
+          throw("a district has no name or no polygon: nothing is written")
+        } else if $outside.length() > 0 {
+          throw("the outline of %s leaves Bratislava: nothing is written".format($outside.join(", ")))
+        } else {
+          $features.map_each(f -> {
+            "id": "urn:ngsi-ld:%v:%v:%v:district-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.ZUJ.string()),
+            "type": "AdministrativeArea",
+            "name": { "type": "Property", "value": f.properties.NAZOV_UTJ.trim() },
+            "districtCode": { "type": "Property", "value": f.properties.ZUJ.string() },
+            "location": { "type": "GeoProperty", "value": f.geometry },
+            "dataProvider": { "type": "Property", "value": "Hlavné mesto SR Bratislava, data.bratislava.sk (CC BY 4.0)" },
+            "source": { "type": "Property", "value": "https://data.bratislava.sk/datasets/f1daafc79a9247e8b93241aa005fbea3" }
+          })
+        }

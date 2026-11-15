@@ -1,0 +1,12 @@
+---
+pipeline-runner:
+  runner:
+    repository: 'ghcr.io/warpstreamlabs/bento'
+    tag: '1.22.0'
+    digest: 'sha256:ef674bebae45793c982c350d8f37c2c7661133c1dc65a5517fb977b36dc09841'
+  # The platform image's `jc-token-sidecar` (T-1508): the build the wasm Apps' token service
+  # runs the same binary from (components/wasm-host/images.yaml), as one repository is one build.
+  tokens:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-platform'
+    tag: 'main'
+    digest: 'sha256:a43cb1a1dca5a1e2de60f586341b2b66a8d9d07c66af6ea50e5a52510cd5dbe8'

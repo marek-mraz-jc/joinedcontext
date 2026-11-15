@@ -1,0 +1,21 @@
+# The steward may create, correct and remove the attribute history journey's own station
+# (T-5326, portal ui/e2e/live/attribute-history.spec.ts): create, partial update and delete of
+# AirQualityObserved, only for ids whose last part starts with `t5326-`, the run id the journey
+# mints. The air-quality pipeline stays the only writer of every real station. Decided by id on
+# each write; the per-attribute access table reads types alone, so the steward's Correct values
+# tab shows on a real station too and the broker refuses the save.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: steward-history-journey
+  namespace: helsinki
+  title: { en: The steward corrects and removes the attribute history journey's test station }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: user, id: de300000-0000-4000-8000-000000000001 } # demo.steward
+  operations: [createEntity, updateAttrs, deleteEntity]
+  information:
+    - entities:
+        - type: AirQualityObserved
+          idPattern: ^urn:ngsi-ld:AirQualityObserved:[a-z0-9.-]+:helsinki:t5326-[a-z0-9-]+$

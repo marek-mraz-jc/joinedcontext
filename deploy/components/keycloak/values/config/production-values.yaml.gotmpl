@@ -1,0 +1,9 @@
+---
+{{- $this := .Values.keycloak.config }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [ ] Resources (requests and limits)
+# - [ ] Larger Storage
+# - [ ] 2+ Replicas or HorizontalPodAutoscaler
+# - [ ] Rolling updates `maxUnavailable: 0`, `maxSurge: 25%`
+# - [ ] PodDisruptionBudget (at least `minAvailable: 1`)

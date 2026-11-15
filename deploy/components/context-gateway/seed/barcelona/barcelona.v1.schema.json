@@ -1,0 +1,3152 @@
+{
+  "$id": "https://joinedcontext.com/models/barcelona/barcelona",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": true,
+  "definitions": {
+    "AdministrativeArea": {
+      "additionalProperties": false,
+      "description": "One district (10) or barri (73) of Barcelona, its outline and its code, as the Smart Data Model extension AdministrativeArea (PointOfInterest base).",
+      "properties": {
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "districtCode": {
+          "description": "The city's own two-digit code of the area: the district number 01..10, or for a barri its number 01..73, which runs across the whole city.",
+          "pattern": "^[0-9]{2}$",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "divisionLevel": {
+          "$ref": "#/definitions/DivisionLevel",
+          "description": "Which of the city's two divisions the area belongs to; for a statistics indicator also the whole city.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refParentDistrict": {
+          "description": "The district a barri belongs to.",
+          "pattern": "^urn:ngsi-ld:AdministrativeArea:",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship",
+          "x-ngsi-ld-relationship": {
+            "cardinality": "many-to-one",
+            "inverse": "neighbourhoods",
+            "onDelete": "restrict",
+            "target": "AdministrativeArea",
+            "unique": false
+          }
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "districtCode",
+        "divisionLevel",
+        "id",
+        "type"
+      ],
+      "title": "AdministrativeArea",
+      "type": "object"
+    },
+    "AirQualityObserved": {
+      "additionalProperties": false,
+      "description": "One air-quality station of Barcelona and its hourly means.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "areaServed": {
+          "description": "Where the entity is as the city names it: the barri of a station, a well or a tourist flat, the place of a work (a street and number, a square, a park).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "blackCarbon": {
+          "description": "Black carbon, the hour's mean at the station. A property of this model: the Smart Data Model AirQualityObserved names no black carbon attribute. The city's file gives it in ng/m\u00b3 under a \u00b5g/m\u00b3 label; the pipeline divides by 1000.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "ug/m3"
+          }
+        },
+        "co": {
+          "description": "Carbon monoxide, the hour's mean at the station, in mg/m\u00b3 as the city measures it.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "mg/m3"
+          }
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObserved": {
+          "description": "The end of the period the entity's newest readings cover, UTC: the hour of an air-quality mean, the local day of a weather station's values, the day of a well's reading, a traffic state's report, a charging point's newest port change.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "no": {
+          "description": "Nitrogen monoxide, the hour's mean at the station.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "ug/m3"
+          }
+        },
+        "no2": {
+          "description": "Nitrogen dioxide, the hour's mean at the station.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "ug/m3"
+          }
+        },
+        "nox": {
+          "description": "Nitrogen oxides (NO + NO2 as NO2), the hour's mean at the station.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "ug/m3"
+          }
+        },
+        "o3": {
+          "description": "Ozone, the hour's mean at the station.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "ug/m3"
+          }
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "pm10": {
+          "description": "Particulate matter up to 10 \u00b5m, the hour's mean at the station.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "ug/m3"
+          }
+        },
+        "pm25": {
+          "description": "Particulate matter up to 2.5 \u00b5m, the hour's mean at the station.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "ug/m3"
+          }
+        },
+        "so2": {
+          "description": "Sulphur dioxide, the hour's mean at the station.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "ug/m3"
+          }
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "stationCode": {
+          "description": "The station's code in the network that runs it: the Catalan air-quality network (XVPCA, the city's codi_eoi, such as `8019043`), the Meteocat weather network (such as `D5`) or the Catalan water agency's well register (ACA, such as `08019-0148`).",
+          "examples": [
+            "8019043",
+            "D5",
+            "08019-0148"
+          ],
+          "pattern": "^[0-9A-Z][0-9A-Z-]{1,15}$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "dateObserved",
+        "id",
+        "type"
+      ],
+      "title": "AirQualityObserved",
+      "type": "object"
+    },
+    "BikeLane": {
+      "additionalProperties": false,
+      "description": "One segment of Barcelona's bike network as the city's map layer draws it, open (carril-bici) or under construction (carrils-bici-en-construccio), with its line and length.",
+      "properties": {
+        "bikeLaneState": {
+          "$ref": "#/definitions/BikeLaneState",
+          "description": "Whether the lane is open to cycling or still under construction, from the dataset it is read from.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "laneLength": {
+          "description": "The length of the bike lane's line in metres, summed over its points on a local plane (83,550 m a degree of longitude and 111,050 m a degree of latitude at 41.4\u00b0 N).",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "m"
+          }
+        },
+        "localId": {
+          "description": "The source's own identifier of the record: a bike lane's segment code in the city's map layer (GL4683814), an accident's police file number (2025S000001).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "bikeLaneState",
+        "id",
+        "type"
+      ],
+      "title": "BikeLane",
+      "type": "object"
+    },
+    "BikeLaneState": {
+      "description": "Which of the city's two bike lane layers the segment is read from.",
+      "enum": [
+        "inService",
+        "underConstruction"
+      ],
+      "title": "BikeLaneState",
+      "type": "string",
+      "x-enum-descriptions": {
+        "inService": "Open to cycling (carril-bici).",
+        "underConstruction": "Being built (carrils-bici-en-construccio)."
+      }
+    },
+    "CalculationFrequency": {
+      "description": "",
+      "enum": [
+        "monthly",
+        "yearly"
+      ],
+      "title": "CalculationFrequency",
+      "type": "string",
+      "x-enum-descriptions": {
+        "monthly": "A new value every month.",
+        "yearly": "A new value every year."
+      }
+    },
+    "ChargingStationStatus": {
+      "description": "The EVChargingStation `status` values the port states map to, a subset of the Smart Data Model's enum.",
+      "enum": [
+        "working",
+        "full",
+        "outOfService"
+      ],
+      "title": "ChargingStationStatus",
+      "type": "string",
+      "x-enum-descriptions": {
+        "full": "No port free and at least one IN_USE.",
+        "outOfService": "Every port OUT_OF_ORDER, UNAVAILABLE or UNKNOWN.",
+        "working": "At least one port AVAILABLE."
+      }
+    },
+    "CityWork": {
+      "additionalProperties": false,
+      "description": "One work on Barcelona's public space, in execution, stopped or finished within 30 days, with its outline, its dates and its promoter. The constructor is left out.",
+      "properties": {
+        "areaServed": {
+          "description": "Where the entity is as the city names it: the barri of a station, a well or a tourist flat, the place of a work (a street and number, a square, a park).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "awardAmount": {
+          "description": "The budget the work was awarded for, in euros.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "contractingAuthority": {
+          "description": "The work's promoter, a public body, utility or company; left out when it may name a person.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "The description as the city publishes it, in Catalan (a work, a statistics dataset).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "endDate": {
+          "description": "The last day, local midnight in Europe/Madrid: of an event (absent when the agenda gives none) or the planned last day of a work on the public space.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refDistrict": {
+          "description": "The district the work lies in, when it lies in one district only.",
+          "pattern": "^urn:ngsi-ld:AdministrativeArea:",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship",
+          "x-ngsi-ld-relationship": {
+            "cardinality": "many-to-one",
+            "inverse": "cityWorks",
+            "onDelete": "restrict",
+            "target": "AdministrativeArea",
+            "unique": false
+          }
+        },
+        "seeAlso": {
+          "description": "The work's page on the city's works site.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "startDate": {
+          "description": "The first day, local midnight in Europe/Madrid: of an event (the agenda publishes the day, its hours sit in a free-text timetable) or of a work on the public space.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "tenderAmount": {
+          "description": "The budget the work was put out to tender with, in euros.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "territorialArea": {
+          "description": "Every district the work touches, by name, separated by \"; \".",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "workCategory": {
+          "description": "The city's kind of work, in Catalan (Urbanitzaci\u00f3, Serveis, Clavegueram...).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "workNumber": {
+          "description": "The city's code of the work, such as 05-2025G0074 (district, year, number).",
+          "pattern": "^[0-9]{2}-[0-9]{4}[A-Z][0-9]{4}$",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "workState": {
+          "$ref": "#/definitions/WorkState",
+          "description": "Where the work stands, in the Smart Data Model's terms.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "workStateLabel": {
+          "description": "The work's state as the city writes it, in Catalan (En execuci\u00f3, Aturada, Finalitzada).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "workNumber",
+        "workState",
+        "startDate",
+        "endDate",
+        "id",
+        "type"
+      ],
+      "title": "CityWork",
+      "type": "object"
+    },
+    "ContactPoint": {
+      "additionalProperties": false,
+      "description": "The value of `contactPoint`: how to reach the organizer, never an entity of its own.",
+      "properties": {
+        "telephone": {
+          "description": "A telephone number as the agenda writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "title": "ContactPoint",
+      "type": "object"
+    },
+    "CountedVehicleType": {
+      "description": "The Smart Data Model vehicleType a counter counts, where it counts one kind only.",
+      "enum": [
+        "bicycle"
+      ],
+      "title": "CountedVehicleType",
+      "type": "string",
+      "x-enum-descriptions": {
+        "bicycle": "A counter of the bicycle network (Bicis)."
+      }
+    },
+    "CrossingType": {
+      "description": "The three kinds of crossing marking the city's typology names.",
+      "enum": [
+        "stripes",
+        "blocks",
+        "cycle"
+      ],
+      "title": "CrossingType",
+      "type": "string",
+      "x-enum-descriptions": {
+        "blocks": "A crossing marked with painted square blocks (Pas de tacs).",
+        "cycle": "A crossing for bicycles (Pas de bicicletes).",
+        "stripes": "Painted bars across the road, the zebra crossing (Pas de pastilles)."
+      }
+    },
+    "DayExtremes": {
+      "additionalProperties": false,
+      "description": "The value of `dayMaximum` or `dayMinimum`: the forecast extremes of one day, never an entity of its own.",
+      "properties": {
+        "temperature": {
+          "description": "The air temperature forecast as the day's highest or lowest.",
+          "maximum": 50,
+          "minimum": -40,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "Cel"
+          }
+        }
+      },
+      "title": "DayExtremes",
+      "type": "object"
+    },
+    "DivisionLevel": {
+      "description": "",
+      "enum": [
+        "city",
+        "district",
+        "neighbourhood"
+      ],
+      "title": "DivisionLevel",
+      "type": "string",
+      "x-enum-descriptions": {
+        "city": "The whole city (statistics only).",
+        "district": "A district (districte), 10 of them.",
+        "neighbourhood": "A barri, 73 of them, each inside one district."
+      }
+    },
+    "EVChargingStation": {
+      "additionalProperties": false,
+      "description": "One public charging point of the Endolla Barcelona network run by B:SM, its ports, socket kinds and how many are free now, every five minutes (Open Data BCN informacio-punts-recarrega-electric, which carries the port states of estat-ports-recarrega-electric too).",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "allowedVehicleType": {
+          "description": "What may park there, the section's own kind first; at a charging point, what its sockets serve (car for Type 2, CCS and CHAdeMO and for a car park's household sockets, motorcycle for the 3.6 kW household sockets).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "availableCapacity": {
+          "description": "The ports free now (port status AVAILABLE); never more than capacity.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "capacity": {
+          "description": "How many vehicles the charging point charges at once, one per port the city lists; how many guests a tourist flat's licence admits (its places).",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObserved": {
+          "description": "The end of the period the entity's newest readings cover, UTC: the hour of an air-quality mean, the local day of a weather station's values, the day of a well's reading, a traffic state's report, a charging point's newest port change.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "network": {
+          "description": "The brand of the charging network (Endolla Barcelona).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "openingHours": {
+          "description": "When the charging point may be used, in schema.org's syntax (Mo-Su 00:00-24:00).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "operator": {
+          "description": "Who runs the charging point (Barcelona de Serveis Municipals S.A.).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "socketNumber": {
+          "description": "The ports of the charging point.",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "socketType": {
+          "description": "The kinds of socket, in Smart Data Models' words: CCS_TYPE_2 is CCS/SAE, CHADEMO CHAdeMO, MENNEKES and a wall outlet over 3.7 kW Type2, a wall outlet up to 3.7 kW Wall_Euro.",
+          "items": {
+            "$ref": "#/definitions/SocketType"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ChargingStationStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The state of the charging point from its ports: working while one is free, full when none is free and one charges, outOfService when every port is out of order, unavailable or unknown.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "dateObserved",
+        "id",
+        "type"
+      ],
+      "title": "EVChargingStation",
+      "type": "object"
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "description": "The root every NGSI-LD entity class specialises.",
+      "properties": {
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "Event": {
+      "additionalProperties": false,
+      "description": "One activity of the Ajuntament's agendas (agenda di\u00e0ria, agenda cultural, agenda d'activitats esportives), the day it starts and ends, where it happens and its category.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "An Event's main category first, one of the platform's fifteen event codes (music, theatre-dance, film, exhibition-museum, festival-fair, sport, outdoor-nature, education-talk, children-family, hobby-workshop, food-market, history-heritage, faith-tradition, health-wellness, community-civic), then the Smart Data Models category it falls under where one fits, read from the first words of the Catalan name and absent when no rule matches. A PointOfInterest's family in the city's facility register first (culture-leisure, sports, education, social-services, public-administration, markets-shopping, information-centres, religious-services, environment, animals-plants, cemeteries, media, utility-companies, restaurants), then the register's own kind in Catalan (Biblioteques, Poliesportius); a fountain is drinking-fountain or ornamental-fountain alone; a dog area of the city's parks carries animals-plants, dog-area, a tree of local interest environment, local-interest-tree. An OnStreetParking's kind of regulated parking, from the section type (AZL blue zone, VM green zone, VR residents, DUM loading, BUS coaches).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "contactPoint": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContactPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The public telephone line the agenda or the facility register lists.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "endDate": {
+          "description": "The last day, local midnight in Europe/Madrid: of an event (absent when the agenda gives none) or the planned last day of a work on the public space.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "startDate": {
+          "description": "The first day, local midnight in Europe/Madrid: of an event (the agenda publishes the day, its hours sit in a free-text timetable) or of a work on the public space.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "subCategory": {
+          "description": "The Smart Data Models sub-category where the name says it (music, theater).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "startDate",
+        "id",
+        "type"
+      ],
+      "title": "Event",
+      "type": "object"
+    },
+    "KeyPerformanceIndicator": {
+      "additionalProperties": false,
+      "description": "One indicator of the city's statistics (Departament d'Estad\u00edstica, Open Data BCN) for one barri, district or the whole city: the newest period's value, its history one row per period. Read daily from Open Data BCN.",
+      "properties": {
+        "area": {
+          "description": "The name of the area the value describes, a barri, a district or the whole city.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "calculatedBy": {
+          "description": "The organization that computes the value.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "calculationFrequency": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CalculationFrequency"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How often the source publishes a new period.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "calculationPeriod": {
+          "$ref": "#/definitions/KpiPeriod",
+          "description": "The period the value covers, its first and last day.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "The description as the city publishes it, in Catalan (a work, a statistics dataset).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dimensionKey": {
+          "description": "Which breakdown of the dataset the value is: each kept column and its value as the source writes it, such as SEXE=2; total when the dataset has no breakdown.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "districtCode": {
+          "description": "The city's own two-digit code of the area: the district number 01..10, or for a barri its number 01..73, which runs across the whole city.",
+          "pattern": "^[0-9]{2}$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "divisionLevel": {
+          "$ref": "#/definitions/DivisionLevel",
+          "description": "Which of the city's two divisions the area belongs to; for a statistics indicator also the whole city.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "kpiValue": {
+          "description": "The indicator's value for its period, with the unit as `unitCode` (UN/CEFACT: C62 a count, EUR euros, MTK square metres) and the period's last day as `observedAt`, so the history holds one value per period.",
+          "type": "number",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "organization": {
+          "description": "The organization the indicator describes.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "process": {
+          "description": "The statistics dataset the value comes from, its Open Data BCN title in Catalan.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refArea": {
+          "description": "The district or barri (AdministrativeArea) the value describes; none for the whole city.",
+          "pattern": "^urn:ngsi-ld:AdministrativeArea:",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship",
+          "x-ngsi-ld-relationship": {
+            "cardinality": "many-to-one",
+            "inverse": "indicators",
+            "onDelete": "restrict",
+            "target": "AdministrativeArea",
+            "unique": false
+          }
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "statisticsTable": {
+          "description": "The Open Data BCN dataset the value comes from, such as pad_mdbas, which `source` links to.",
+          "pattern": "^[a-z0-9_-]+$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "kpiValue",
+        "calculationPeriod",
+        "divisionLevel",
+        "id",
+        "type"
+      ],
+      "title": "KeyPerformanceIndicator",
+      "type": "object"
+    },
+    "KpiPeriod": {
+      "additionalProperties": false,
+      "description": "The value of `calculationPeriod`, never an entity of its own.",
+      "properties": {
+        "from": {
+          "description": "The first day of the period.",
+          "format": "date",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "to": {
+          "description": "The last day of the period.",
+          "format": "date",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "KpiPeriod",
+      "type": "object"
+    },
+    "MeasurementType": {
+      "description": "What a PhreaticObserved measures (Smart Data Models' enum).",
+      "enum": [
+        "depth",
+        "volume",
+        "quality",
+        "other"
+      ],
+      "title": "MeasurementType",
+      "type": "string"
+    },
+    "OnStreetParking": {
+      "additionalProperties": false,
+      "description": "One regulated surface parking section of B:SM (blue, green, residents, loading or coach zone), its curb lines, its places and its rate and timetable codes (Open Data BCN trams-aparcament-superficie).",
+      "properties": {
+        "allowedVehicleType": {
+          "description": "What may park there, the section's own kind first; at a charging point, what its sockets serve (car for Type 2, CCS and CHAdeMO and for a car park's household sockets, motorcycle for the 3.6 kW household sockets).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "An Event's main category first, one of the platform's fifteen event codes (music, theatre-dance, film, exhibition-museum, festival-fair, sport, outdoor-nature, education-talk, children-family, hobby-workshop, food-market, history-heritage, faith-tradition, health-wellness, community-civic), then the Smart Data Models category it falls under where one fits, read from the first words of the Catalan name and absent when no rule matches. A PointOfInterest's family in the city's facility register first (culture-leisure, sports, education, social-services, public-administration, markets-shopping, information-centres, religious-services, environment, animals-plants, cemeteries, media, utility-companies, restaurants), then the register's own kind in Catalan (Biblioteques, Poliesportius); a fountain is drinking-fountain or ornamental-fountain alone; a dog area of the city's parks carries animals-plants, dog-area, a tree of local interest environment, local-interest-tree. An OnStreetParking's kind of regulated parking, from the section type (AZL blue zone, VM green zone, VR residents, DUM loading, BUS coaches).",
+          "items": {
+            "$ref": "#/definitions/StreetParkingCategory"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "tariffCode": {
+          "description": "The B:SM rate (ID_TARIFA) and timetable (ID_HORARIO) codes of the section, joined as rate/timetable, kept as published (custom; Open Data BCN tarifes- and horaris-aparcament-superficie).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "totalSpotNumber": {
+          "description": "The parking places of the section as B:SM counts them (PLACES).",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "zoneCode": {
+          "description": "The section type as B:SM codes it (AZL, VM, VR, DUM, BUS), kept as published (custom).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "OnStreetParking",
+      "type": "object"
+    },
+    "PedestrianCrossing": {
+      "additionalProperties": false,
+      "description": "One pedestrian or cycle crossing painted on Barcelona's streets, from the city's street inventory, with its kind, its painted area and its barri. Smart Data Models has no crossing model; the class is the project's own, with SDM's common names where they exist (location, dataProvider, source).",
+      "properties": {
+        "crossingType": {
+          "$ref": "#/definitions/CrossingType",
+          "description": "How the crossing is marked, from the city's typology (infraestructures-tipologia-pas-vianants).",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "crossingTypeLabel": {
+          "description": "The crossing's kind as the city writes it, in Catalan (Pas de pastilles, Pas de tacs, Pas de bicicletes).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "markedArea": {
+          "description": "The painted area of the crossing in square metres (unitCode MTK).",
+          "maximum": 500,
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "m2"
+          }
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refNeighbourhood": {
+          "description": "The barri the crossing lies in; none for a crossing on the city's edge.",
+          "pattern": "^urn:ngsi-ld:AdministrativeArea:",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship",
+          "x-ngsi-ld-relationship": {
+            "cardinality": "many-to-one",
+            "inverse": "pedestrianCrossings",
+            "onDelete": "restrict",
+            "target": "AdministrativeArea",
+            "unique": false
+          }
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "crossingType",
+        "id",
+        "type"
+      ],
+      "title": "PedestrianCrossing",
+      "type": "object"
+    },
+    "PhreaticObserved": {
+      "additionalProperties": false,
+      "description": "One piezometer or well of Barcelona and its newest groundwater reading.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "aquifer": {
+          "description": "The groundwater body (massa d'aigua) the well reaches, as the water agency names it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "areaServed": {
+          "description": "Where the entity is as the city names it: the barri of a station, a well or a tourist flat, the place of a work (a street and number, a square, a park).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObserved": {
+          "description": "The end of the period the entity's newest readings cover, UTC: the hour of an air-quality mean, the local day of a weather station's values, the day of a well's reading, a traffic state's report, a charging point's newest port change.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "investigationDepth": {
+          "description": "The depth of the well or piezometer in metres. A fixed property of the well, written without a unit code so its rows are never read as a measurement stamped on receipt.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "measurementType": {
+          "description": "What the well's readings measure; `depth` for each of the city's wells.",
+          "items": {
+            "$ref": "#/definitions/MeasurementType"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "piezometricLevel": {
+          "description": "The height of the water above sea level at the newest reading (below 0 where the sea draws the aquifer down). A property of this model: PhreaticObserved has only the depth.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "m"
+          }
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "stationCode": {
+          "description": "The station's code in the network that runs it: the Catalan air-quality network (XVPCA, the city's codi_eoi, such as `8019043`), the Meteocat weather network (such as `D5`) or the Catalan water agency's well register (ACA, such as `08019-0148`).",
+          "examples": [
+            "8019043",
+            "D5",
+            "08019-0148"
+          ],
+          "pattern": "^[0-9A-Z][0-9A-Z-]{1,15}$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "waterTable": {
+          "description": "The depth from the surface to the water in the well at the newest reading.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "m"
+          }
+        }
+      },
+      "required": [
+        "dateObserved",
+        "id",
+        "type"
+      ],
+      "title": "PhreaticObserved",
+      "type": "object"
+    },
+    "PointOfInterest": {
+      "additionalProperties": false,
+      "description": "One facility of the city's register (Guia BCN equipaments): a library, a sports hall, a school, a market, a social services centre; its family, where it is and its telephone.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "An Event's main category first, one of the platform's fifteen event codes (music, theatre-dance, film, exhibition-museum, festival-fair, sport, outdoor-nature, education-talk, children-family, hobby-workshop, food-market, history-heritage, faith-tradition, health-wellness, community-civic), then the Smart Data Models category it falls under where one fits, read from the first words of the Catalan name and absent when no rule matches. A PointOfInterest's family in the city's facility register first (culture-leisure, sports, education, social-services, public-administration, markets-shopping, information-centres, religious-services, environment, animals-plants, cemeteries, media, utility-companies, restaurants), then the register's own kind in Catalan (Biblioteques, Poliesportius); a fountain is drinking-fountain or ornamental-fountain alone; a dog area of the city's parks carries animals-plants, dog-area, a tree of local interest environment, local-interest-tree. An OnStreetParking's kind of regulated parking, from the section type (AZL blue zone, VM green zone, VR residents, DUM loading, BUS coaches).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "contactPoint": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContactPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The public telephone line the agenda or the facility register lists.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "PointOfInterest",
+      "type": "object"
+    },
+    "PostalAddress": {
+      "additionalProperties": false,
+      "description": "The value of `address`: a postal address, never an entity of its own (Smart Data Models' common schema).",
+      "properties": {
+        "addressCountry": {
+          "description": "The country, as an ISO 3166-1 alpha-2 code.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "addressLocality": {
+          "description": "The town or the municipality.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "district": {
+          "description": "The city district (districte) the address lies in.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "postalCode": {
+          "description": "The postal code.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "streetAddress": {
+          "description": "The street and the house number, or for a station its square, park or street corner.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "title": "PostalAddress",
+      "type": "object"
+    },
+    "RoadAccident": {
+      "additionalProperties": false,
+      "description": "One road accident the Gu\u00e0rdia Urbana handled (accidents-gu-bcn), its hour, place and the people injured or dead as counts, with its kinds, causes and the kinds of vehicle involved from the four detail tables joined by file number; nothing about a person.",
+      "properties": {
+        "accidentCause": {
+          "description": "The causes the police file names, in Catalan: the mediate causes (accidents-causes-gu-bcn, Alcohol\u00e8mia), then the drivers' causes (accidents_causa_conductor_gu_bcn, Gir indegut o sense precauci\u00f3).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "accidentDate": {
+          "description": "The hour of the accident, UTC: the police file gives the local day and hour only, so the minutes are 00.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "accidentKind": {
+          "description": "The kinds of the accident the police file names, in Catalan as the city writes them (Col.lisi\u00f3 lateral, Abast, Atropellament), from accidents-tipus-gu-bcn.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "accidentType": {
+          "description": "The Smart Data Model codes of accidentKind where a code means the same: 1 frontal, 2 frontal-lateral, 3 side collision, 4 collision (Abast, Abast multiple, Encal\u00e7), 5 pedestrian hit, 8 impact with an obstacle (Xoc contra element est\u00e0tic); a kind with no such code has none.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "areaServed": {
+          "description": "Where the entity is as the city names it: the barri of a station, a well or a tourist flat, the place of a work (a street and number, a square, a park).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "deadCount": {
+          "description": "The people dead, as the police file counts them (morts).",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "localId": {
+          "description": "The source's own identifier of the record: a bike lane's segment code in the city's map layer (GL4683814), an accident's police file number (2025S000001).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "numPassengersDead": {
+          "description": "The passengers dead, a count from accidents-persones-gu-bcn.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "numPassengersInjured": {
+          "description": "The passengers injured and alive, a count from accidents-persones-gu-bcn.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "numPedestrianDead": {
+          "description": "The pedestrians dead, a count from accidents-persones-gu-bcn.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "numPedestrianInjured": {
+          "description": "The pedestrians injured and alive, a count from accidents-persones-gu-bcn.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "pedestrianCause": {
+          "description": "The pedestrian's cause the police file names, in Catalan (Creuar per fora pas de vianants).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "pedestriansInvolved": {
+          "description": "True when the police file names a pedestrian's cause; absent otherwise, since the file does not say whether an accident without one involved a pedestrian.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "seriouslyInjured": {
+          "description": "The people seriously injured (lesionats greus).",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "slightlyInjured": {
+          "description": "The people slightly injured (lesionats lleus).",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "status": {
+          "$ref": "#/definitions/RoadAccidentStatus",
+          "description": "The state of the charging point from its ports: working while one is free, full when none is free and one charges, outOfService when every port is out of order, unavailable or unknown.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "totalInjured": {
+          "description": "The people injured and alive, slightly and seriously, as the police file counts them.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "vehicleCount": {
+          "description": "The vehicles the accident involved.",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "vehicleKind": {
+          "description": "The kind of each vehicle involved, once a vehicle, in Catalan as the city writes it (Turisme, Motocicleta), from accidents-vehicles-gu-bcn; no make, model, colour or licence.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "vehiclesInvolved": {
+          "description": "The Smart Data Model code of each vehicleKind where a code means the same (1 bicycle, 3 bus, 4 minibus, 5 car, 7 tram, 11 lorry, 12 moped, 14 motorcycle, 18 van, 20 construction or maintenance vehicle); a personal mobility vehicle, an ambulance or an unreported kind has none.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "status",
+        "accidentDate",
+        "id",
+        "type"
+      ],
+      "title": "RoadAccident",
+      "type": "object"
+    },
+    "RoadAccidentStatus": {
+      "description": "The Smart Data Model RoadAccident status; a police file the city publishes is closed.",
+      "enum": [
+        "archived"
+      ],
+      "title": "RoadAccidentStatus",
+      "type": "string",
+      "x-enum-descriptions": {
+        "archived": "A closed police file of a past accident."
+      }
+    },
+    "SocketType": {
+      "description": "The EVChargingStation `socketType` values the Endolla connector types map to, a subset of the Smart Data Model's enum.",
+      "enum": [
+        "CCS/SAE",
+        "CHAdeMO",
+        "Type2",
+        "Wall_Euro"
+      ],
+      "title": "SocketType",
+      "type": "string",
+      "x-enum-descriptions": {
+        "CCS/SAE": "CCS_TYPE_2, the combined DC socket.",
+        "CHAdeMO": "CHADEMO.",
+        "Type2": "MENNEKES, and a WALL_OUTLET above 3.7 kW (the 22 kW AC outlets).",
+        "Wall_Euro": "A WALL_OUTLET up to 3.7 kW, the household socket."
+      }
+    },
+    "StreetFurniture": {
+      "additionalProperties": false,
+      "description": "One piece of furniture standing on Barcelona's streets, from the city's street inventory: today its speed reducers, each with its kind, its model and its address. Smart Data Models has no street furniture model; the class is the project's own, with SDM's common names where they exist (location, address, dataProvider, source).",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "furnitureType": {
+          "$ref": "#/definitions/StreetFurnitureType",
+          "description": "What the piece of street furniture is, from the model code of the city's street inventory.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "furnitureTypeLabel": {
+          "description": "The piece's model as the city writes it, in Catalan (Coix\u00ed berlin\u00e9s, Banda reductora).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "furnitureType",
+        "id",
+        "type"
+      ],
+      "title": "StreetFurniture",
+      "type": "object"
+    },
+    "StreetFurnitureType": {
+      "description": "The kinds of street furniture the city's street inventory lists that the space carries.",
+      "enum": [
+        "speedCushion",
+        "speedBump"
+      ],
+      "title": "StreetFurnitureType",
+      "type": "string",
+      "x-enum-descriptions": {
+        "speedBump": "A speed bump or rumble band across the lane (Banda reductora).",
+        "speedCushion": "A Berlin cushion: a raised block a car straddles (Coix\u00ed berlin\u00e9s)."
+      }
+    },
+    "StreetParkingCategory": {
+      "description": "The OnStreetParking `category` values the B:SM section types map to, a subset of the Smart Data Model's enum.",
+      "enum": [
+        "blueZone",
+        "greenZone",
+        "feeCharged",
+        "forResidents",
+        "forLoadUnload",
+        "onlyWithPermit"
+      ],
+      "title": "StreetParkingCategory",
+      "type": "string",
+      "x-enum-descriptions": {
+        "blueZone": "AZL, the blue zone anyone parks in for a fee.",
+        "feeCharged": "Parking costs by the time parked (AZL, VM, BUS).",
+        "forLoadUnload": "DUM, urban goods distribution.",
+        "forResidents": "VR, residents of the area only.",
+        "greenZone": "VM and VR, the green zone.",
+        "onlyWithPermit": "VR and DUM, a resident permit or the DUM app registration is needed."
+      }
+    },
+    "TouristRental": {
+      "additionalProperties": false,
+      "description": "One tourist flat (habitatge d'\u00fas tur\u00edstic) the city has licensed, by its licence file: the guests it admits, its Generalitat register number, and the building it is in (street and number, district, barri and point). Floor, door, staircase and block are never written: they locate a household. Smart Data Models' TouristRental is a facility rented to tourists; the licence register names the facility, so no rental dates or tourist.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "areaServed": {
+          "description": "Where the entity is as the city names it: the barri of a station, a well or a tourist flat, the place of a work (a street and number, a square, a park).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "capacity": {
+          "description": "How many vehicles the charging point charges at once, one per port the city lists; how many guests a tourist flat's licence admits (its places).",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "registerNumber": {
+          "description": "The flat's number in the Generalitat's tourism register (Registre de Turisme de Catalunya), HUTB- and six digits, which every advert of the flat must show.",
+          "pattern": "^HUTB-[0-9]{6}$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "TouristRental",
+      "type": "object"
+    },
+    "TrafficFlowObserved": {
+      "additionalProperties": false,
+      "description": "One street section of the city's traffic-state network with its line, its state now and the state forecast for 15 minutes, every five minutes (Open Data BCN trams and transit-relacio-trams); one route of sections with its travel time (itineraris); or one traffic or bicycle counter with its mean working-day intensity of the newest month (aforaments-descriptiu and aforaments-detall).",
+      "properties": {
+        "congested": {
+          "description": "Whether the section is congested now: true for the city's states 4 (very dense) and 5 (congestion), false otherwise, as SDM reads an absent flag (no data and closed included; trafficState tells those apart).",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObserved": {
+          "description": "The end of the period the entity's newest readings cover, UTC: the hour of an air-quality mean, the local day of a weather station's values, the day of a well's reading, a traffic state's report, a charging point's newest port change.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObservedFrom": {
+          "description": "The start of the period a traffic counter's intensity covers, UTC.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObservedTo": {
+          "description": "The end of the period a traffic counter's intensity covers, UTC.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "intensity": {
+          "description": "A traffic counter's mean number of vehicles (or bicycles, at a bicycle counter) a working day of the month dateObservedFrom..dateObservedTo, the city's IMD.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "trafficState": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TrafficState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The city's own traffic state of the section (custom: TrafficFlowObserved has only `congested`), its code 1 to 6 named in English; Open Data BCN dataset trams.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "trafficStateForecast": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TrafficState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The state the city forecasts for the section in 15 minutes, same codes as trafficState (custom).",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "travelTime": {
+          "description": "How long a vehicle takes now to drive the route, in seconds (custom: TrafficFlowObserved has no travel time); Open Data BCN dataset itineraris, its fourth field. Absent while the city reports no reading for the route.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "s"
+          }
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "usualTravelTime": {
+          "description": "The time the city expects for the route now from its history of the same kind of day, in seconds (custom; itineraris, its fifth field, temps previst). travelTime above it means slower traffic than usual.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "s"
+          }
+        },
+        "vehicleType": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CountedVehicleType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "bicycle at a counter of the bicycle network; absent at a counter of motor traffic, which counts every kind.",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "dateObserved",
+        "id",
+        "type"
+      ],
+      "title": "TrafficFlowObserved",
+      "type": "object"
+    },
+    "TrafficState": {
+      "description": "Open Data BCN's traffic state codes 0 to 6, named in English, the Catalan name in each description.",
+      "enum": [
+        "noData",
+        "veryFluid",
+        "fluid",
+        "dense",
+        "veryDense",
+        "congestion",
+        "closed"
+      ],
+      "title": "TrafficState",
+      "type": "string",
+      "x-enum-descriptions": {
+        "closed": "6 tallat.",
+        "congestion": "5 congesti\u00f3.",
+        "dense": "3 dens.",
+        "fluid": "2 fluid.",
+        "noData": "0 sense dades: no reading this period.",
+        "veryDense": "4 molt dens.",
+        "veryFluid": "1 molt fluid."
+      }
+    },
+    "WeatherForecast": {
+      "additionalProperties": false,
+      "description": "Meteocat's forecast for the comarca of Barcelon\u00e8s, one entity per day ahead (day-1 tomorrow, day-2 the day after), as Open Data BCN republishes it.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "areaServed": {
+          "description": "Where the entity is as the city names it: the barri of a station, a well or a tourist flat, the place of a work (a street and number, a square, a park).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateIssued": {
+          "description": "When the meteorological service issued the forecast, UTC (Meteocat's datacreacio, local time in the file).",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dayMaximum": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DayExtremes"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The highest values forecast for the day (Smart Data Models' structured value); Meteocat gives the air temperature.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dayMinimum": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DayExtremes"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The lowest values forecast for the day (Smart Data Models' structured value); Meteocat gives the air temperature.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "validFrom": {
+          "description": "The start of the day a forecast covers, local midnight in Europe/Madrid, as UTC.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "validTo": {
+          "description": "The end of the day a forecast covers, the next local midnight in Europe/Madrid, as UTC.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "weatherType": {
+          "description": "The sky Meteocat forecasts in Catalan, morning then afternoon when they differ (\"sol i n\u00favols alts (mat\u00ed), sol (tarda)\"), read from the symbol table of the same file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "dateIssued",
+        "id",
+        "type"
+      ],
+      "title": "WeatherForecast",
+      "type": "object"
+    },
+    "WeatherObserved": {
+      "additionalProperties": false,
+      "description": "One Meteocat weather station in Barcelona and its newest day's values.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "altitude": {
+          "description": "The station's height above sea level in metres, as the weather service lists it. A fixed property of the station, written without a unit code so its rows are never read as a measurement stamped on receipt.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "areaServed": {
+          "description": "Where the entity is as the city names it: the barri of a station, a well or a tourist flat, the place of a work (a street and number, a square, a park).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "atmosphericPressure": {
+          "description": "The day's mean air pressure at the station's height (not reduced to sea level).",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "hPa"
+          }
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObserved": {
+          "description": "The end of the period the entity's newest readings cover, UTC: the hour of an air-quality mean, the local day of a weather station's values, the day of a well's reading, a traffic state's report, a charging point's newest port change.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "gustSpeed": {
+          "description": "The day's strongest gust at 10 m.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "m/s"
+          }
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "maxTemperature": {
+          "description": "The day's highest air temperature at the station. A property of this model: the Smart Data Model WeatherObserved names only the mean.",
+          "maximum": 50,
+          "minimum": -40,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "Cel"
+          }
+        },
+        "minTemperature": {
+          "description": "The day's lowest air temperature at the station. A property of this model: the Smart Data Model WeatherObserved names only the mean.",
+          "maximum": 50,
+          "minimum": -40,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "Cel"
+          }
+        },
+        "name": {
+          "description": "The name as the city publishes it, in Catalan (a station, an event, a facility, a street section and its stretch, a street address, a district or barri, a work, a tourist flat by its register number).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "precipitation": {
+          "description": "The day's precipitation, in millimetres (litres per square metre).",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "mm"
+          }
+        },
+        "relativeHumidity": {
+          "description": "The day's mean relative humidity, as a fraction (0.57 is 57 %).",
+          "maximum": 1,
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "1"
+          }
+        },
+        "solarRadiation": {
+          "description": "The day's mean global solar irradiance: the day's irradiation the city gives in MJ/m\u00b2, times 10^6 / 86400.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "W/m2"
+          }
+        },
+        "source": {
+          "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "stationCode": {
+          "description": "The station's code in the network that runs it: the Catalan air-quality network (XVPCA, the city's codi_eoi, such as `8019043`), the Meteocat weather network (such as `D5`) or the Catalan water agency's well register (ACA, such as `08019-0148`).",
+          "examples": [
+            "8019043",
+            "D5",
+            "08019-0148"
+          ],
+          "pattern": "^[0-9A-Z][0-9A-Z-]{1,15}$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "temperature": {
+          "description": "The day's mean air temperature at the station.",
+          "maximum": 50,
+          "minimum": -40,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "Cel"
+          }
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "windDirection": {
+          "description": "The day's mean wind direction at 10 m, in degrees from north.",
+          "maximum": 360,
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "deg"
+          }
+        },
+        "windSpeed": {
+          "description": "The day's mean wind speed at 10 m.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "m/s"
+          }
+        }
+      },
+      "required": [
+        "dateObserved",
+        "id",
+        "type"
+      ],
+      "title": "WeatherObserved",
+      "type": "object"
+    },
+    "WorkState": {
+      "description": "The Smart Data Model CityWork workState values the city's states map to.",
+      "enum": [
+        "open",
+        "other",
+        "completed"
+      ],
+      "title": "WorkState",
+      "type": "string",
+      "x-enum-descriptions": {
+        "completed": "Finished (Finalitzada).",
+        "open": "In execution (En execuci\u00f3).",
+        "other": "Stopped (Aturada)."
+      }
+    }
+  },
+  "metamodel_version": "1.12.0",
+  "title": "barcelona",
+  "type": "object",
+  "version": null,
+  "x-generator-version": "linkml-1.12.0"
+}

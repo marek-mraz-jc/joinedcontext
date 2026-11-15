@@ -1,0 +1,111 @@
+---
+{{- $global := .Values.global }}
+{{- $web := .Values.decidim.web }}
+{{- $images := index .Values.images "decidim" "web" }}
+{{- $pg := printf "postgres-cluster-rw.%s.svc.cluster.local" .Values.postgres.cluster.namespace }}
+{{- $host := printf "%s.%s" $web.subDomain $global.domain }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem` (the image runs as 10001)
+# - [x] Health probes -> /up (Rails' own health check, excluded from force_ssl)
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> none: Decidim touches no API server
+# - [x] Secrets by reference only: database, SECRET_KEY_BASE, the realm client, SMTP
+# - [x] Ingress with TLS -> the edge route on participacia.{domain}
+
+fullnameOverride: decidim-web
+nameOverride: decidim-web
+
+# One claim for attachments, mounted by Sidekiq too: RollingUpdate keeps both pods on the claim's node.
+updateStrategy: RollingUpdate
+
+serviceAccount:
+  create: false
+  automountServiceAccountToken: false
+
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+containerPort: 3000
+service:
+  enabled: true
+  type: ClusterIP
+  port: 3000
+  targetPort: 3000
+  name: http
+
+probes:
+  readiness:
+    path: /up
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  liveness:
+    path: /up
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+    # Puma boots the eager-loaded application in 20-40 s (kind, T-6316).
+    initialDelaySeconds: 60
+
+{{- $ctx := dict "global" $global "web" $web "pg" $pg "host" $host }}
+
+{{- $env := (tpl (readFile "../env.yaml.tpl") $ctx | fromYaml).env }}
+env:
+  {{- range $env }}{{ if hasKey . "value" }}
+  {{ .name }}: {{ .value | quote }}
+  {{- end }}{{ end }}
+envSecret:
+  {{- range $env }}{{ if hasKey . "valueFrom" }}
+  {{ .name }}: { secret: {{ .valueFrom.secretKeyRef.name }}, key: {{ .valueFrom.secretKeyRef.key }} }
+  {{- end }}{{ end }}
+
+# Migrations, the one organization (images/decidim/bootstrap.rb), then the city's site when the
+# environment asks for it (images/decidim/site.rb), before puma starts.
+extraInitContainers:
+  - name: migrate
+    image: {{ $images.repository }}:{{ $images.tag }}@{{ $images.digest }}
+    imagePullPolicy: IfNotPresent
+    command: ["sh", "-c", "mkdir -m 700 -p \"$TMPDIR\" && bin/rails db:migrate && bin/rails runner db/joinedcontext_bootstrap.rb && if [ \"$DECIDIM_SITE_CONTENT\" = true ]; then bin/rails runner db/joinedcontext_site.rb; fi"]
+    env:
+      {{- $env | toYaml | nindent 6 }}
+    securityContext:
+      {{- .Values.securityDefaults.securityContext | toYaml | nindent 6 }}
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { cpu: '1', memory: 1Gi }
+    volumeMounts:
+      - { name: tmp, mountPath: /tmp }
+      - { name: rails-tmp, mountPath: /code/tmp }
+      - { name: rails-log, mountPath: /code/log }
+      # The site's logo and images are attachments.
+      - { name: files, mountPath: /code/storage }
+
+persistence:
+  enabled: true
+  size: 5Gi
+  mountPath: /code/storage
+  storageClass: "{{ $global.storage.storageClass.rwo | default "" }}"
+
+extraVolumes:
+  - name: rails-tmp
+    emptyDir: { sizeLimit: 512Mi }
+  - name: rails-log
+    emptyDir: { sizeLimit: 64Mi }
+extraVolumeMounts:
+  - { name: rails-tmp, mountPath: /code/tmp }
+  - { name: rails-log, mountPath: /code/log }
+
+# One SELinux level on web and Sidekiq: they share the local-path volume, and a pod with its own
+# random level relabels it away from the other (T-6298), which broke every image on stage.
+podSecurityContext:
+  {{ merge (dict "runAsUser" 10001 "runAsGroup" 10001 "fsGroup" 10001 "seLinuxOptions" (dict "level" "s0:c311,c742")) .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

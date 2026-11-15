@@ -1,0 +1,31 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  name: bratislava
+  namespace: org
+  title: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+  description:
+    sk: Otvorené údaje hlavného mesta SR Bratislavy (data.bratislava.sk) ako údaje NGSI-LD podľa Smart Data Models.
+    en: The open data of the City of Bratislava (data.bratislava.sk) as NGSI-LD data of the Smart Data Models.
+spec:
+  # The capital's own Organization (ADR-N-058, T-5271): Helsinki's administrators hold nothing here.
+  organizationRef: bratislava
+  # Who publishes this data, the did:web assigner of its Apps' Policies (PF-108); describes, grants nothing.
+  domain: bratislava.sk
+  # The body that publishes the project's catalogue /catalog/bratislava.jsonld (EP-127, API/08 section 6).
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    contactPoint: { name: joinedcontext platform, email: hello@joinedcontext.com }
+  # The same quotas as every demo project (T-2873, PF-73): the mechanism stays, nobody reaches it.
+  # Public Endpoints: one per hub dataset (333 since T-5274) and room for the next batches.
+  quotas:
+    contextSpaces: 100
+    residentPipelines: 100
+    publicEndpoints: 450
+    apps: 100
+    ingestEventsPerSecond: 500
+    agentRunsPerDay: 2000
+    entitiesPerSpace: 1000000
+    requestsPerMinute: 6000

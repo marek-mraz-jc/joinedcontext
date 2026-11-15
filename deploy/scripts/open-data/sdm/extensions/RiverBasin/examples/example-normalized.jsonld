@@ -1,0 +1,130 @@
+{
+  "id": "urn:ngsi-ld:RiverBasin:joinedcontext.com:example:1",
+  "type": "RiverBasin",
+  "aCH": {
+    "type": "Property",
+    "value": 0
+  },
+  "aUT": {
+    "type": "Property",
+    "value": 0
+  },
+  "dOW": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "designatio": {
+    "type": "Property",
+    "value": "designatio"
+  },
+  "fACC": {
+    "type": "Property",
+    "value": "fACC"
+  },
+  "fIDKraj0": {
+    "type": "Property",
+    "value": 0
+  },
+  "fIDSubpovodiaBbsk": {
+    "type": "Property",
+    "value": 0
+  },
+  "gmlId": {
+    "type": "Property",
+    "value": "gmlId"
+  },
+  "iDN2": {
+    "type": "Property",
+    "value": 0
+  },
+  "inspireIdL": {
+    "type": "Property",
+    "value": 0
+  },
+  "inspireIdN": {
+    "type": "Property",
+    "value": "inspireIdN"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "link": {
+    "type": "Property",
+    "value": "link"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "nM2": {
+    "type": "Property",
+    "value": "nM2"
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "nameLangua": {
+    "type": "Property",
+    "value": "nameLangua"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "relatedZ1": {
+    "type": "Property",
+    "value": "relatedZ1"
+  },
+  "relatedZon": {
+    "type": "Property",
+    "value": "relatedZon"
+  },
+  "sOI": {
+    "type": "Property",
+    "value": 0
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "specialise": {
+    "type": "Property",
+    "value": "specialise"
+  },
+  "thematic1": {
+    "type": "Property",
+    "value": "thematic1"
+  },
+  "thematicId": {
+    "type": "Property",
+    "value": "thematicId"
+  },
+  "vYMERA": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "wiseEvolut": {
+    "type": "Property",
+    "value": "wiseEvolut"
+  },
+  "zoneType": {
+    "type": "Property",
+    "value": "zoneType"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/RiverBasin/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

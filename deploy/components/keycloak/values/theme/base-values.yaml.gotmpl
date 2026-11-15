@@ -1,0 +1,8 @@
+---
+# The branding block every face of the platform renders (OPS-46): the login pages take the
+# same colours, fonts and logo as the Portal and the catalogue.
+configMapName: {{ .Values.keycloak.theme.configMapName }}
+# Where the account console's logo and its "Back to the Portal" line lead (T-4203).
+portalUrl: https://portal.{{ .Values.global.domain }}
+branding:
+  {{- .Values.global.branding | default dict | toYaml | nindent 2 }}

@@ -1,0 +1,17 @@
+# One OnStreetParking per record of `hel-parking-places`, written into the city space (T-5286).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: parking-places
+  namespace: helsinki
+  title: { en: Parking places }
+spec:
+  class: auto
+  # The city redraws its street parking map as signs change; a weekly read keeps up.
+  period: 168h
+  schedule: '40 4 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-parking-places }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: OnStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 384, cpuMillicores: 100 }

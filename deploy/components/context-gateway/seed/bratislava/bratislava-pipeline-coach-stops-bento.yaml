@@ -1,0 +1,128 @@
+# The mapping of the coach-stops pipeline (T-5435): the city's list of tourist coach stops
+# (data.bratislava.sk item 14464afe4fa94436b6a460e1fb027c49, "List of tourist bus stops in 2025") as
+# Smart Data Models OnStreetParking. The list names each stop and carries no coordinates: each
+# name is placed by the table below, read from OpenStreetMap through Nominatim on 2026-10-25 and
+# checked by hand against the place the list names (Research/bratislava-open-data.md 6.5). A name
+# the table does not hold is logged and left out, never placed at a guess. The Slovak copy of the
+# list (item 542bc25cad7c42e0b91863572f5f59ab) holds its whole text in one cell and is not read.
+# The bratislava-hub DataSource answers the hub's list of services. Nothing here deletes.
+pipeline:
+  processors:
+    - mapping: |
+        let path = "List_of_Tourist_Buses_in_2025_"
+        let listed = this.services.or([]).map_each(s -> s.name.or(""))
+        root = if content().length() > 1048576 {
+          throw("the hub's list of services is %d bytes, more than the 1 MiB read".format(content().length()))
+        } else if this.error.or(null) != null {
+          throw("the hub refused its list of services: %s".format(this.error.message.or("no reason given")))
+        } else if !$listed.contains($path) {
+          throw("the hub no longer lists the coach stops: nothing is written")
+        } else { { "path": $path } }
+
+    # The path is the constant above, never text of an answer.
+    - branch:
+        request_map: |
+          meta path = this.path
+          root = ""
+        processors:
+          - http:
+              url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/${! @path }/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=false&resultRecordCount=2000&f=json
+              verb: GET
+              headers:
+                Accept: application/json
+                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+              timeout: 30s
+              retries: 2
+        result_map: |
+          root.rows = if content().length() > 262144 {
+            throw("the coach stops answer is over 256 KiB")
+          } else if this.error.or(null) != null {
+            throw("the hub refused the query: %s".format(this.error.message.or("no reason given")))
+          } else if this.exceededTransferLimit.or(false) {
+            throw("the coach stops list holds more than 2,000 rows, more than one read")
+          } else { this.features.or([]).map_each(f -> f.attributes) }
+
+    # Plausibility (owner 2026-10-22T18:10Z): dropped and counted by reason, never guessed at: a
+    # name the table below does not place; a place outside Bratislava and 1 km around it; a count
+    # of places below 0 or above 100; one stop twice (the same name), the first kept.
+    - mapping: |
+        # Folded name: [lat, lon, the OpenStreetMap object the point stands for].
+        let placed = {
+          "hodzovo namestie": [48.148664, 17.10768, "place Hodžovo námestie"],
+          "suche myto - direction center": [48.146751, 17.10694, "way Suché mýto, the lane towards the centre"],
+          "suche myto - direction hodzovo": [48.147702, 17.106965, "way Suché mýto, the lane towards Hodžovo námestie"],
+          "hrad/castle": [48.144314, 17.094782, "way Mudroňova below the castle, the access the list names"],
+          "chatam sofer": [48.141945, 17.090701, "bus stop Chatam Sófer"],
+          "slavin": [48.153902, 17.099586, "the Slavín memorial"],
+          "mala scena": [48.142101, 17.119119, "theatre Malá scéna STU"],
+          "olejkarska": [48.142745, 17.122664, "way Olejkárska"],
+          "slavicie udolie cemetery": [48.15617, 17.067814, "cemetery Slávičie údolie"],
+          "fajnorovo nabrezie": [48.14007, 17.113435, "way Fajnorovo nábrežie"],
+          "lovinskeho": [48.161594, 17.083725, "way Lovinského"],
+          "na hriadkach - sandberg": [48.203057, 16.971071, "way Na hriadkach, Devínska Nová Ves"],
+          "pasienky": [48.166197, 17.142394, "stadium Pasienky"]
+        }
+        map fold {
+          root = this.string().lowercase().replace_all_many([
+            "á", "a", "ä", "a", "č", "c", "ď", "d", "é", "e", "í", "i", "ĺ", "l", "ľ", "l", "ň", "n", "ó", "o",
+            "ô", "o", "ŕ", "r", "š", "s", "ť", "t", "ú", "u", "ý", "y", "ž", "z", ".", ""
+          ]).re_replace_all("\\s+", " ").trim()
+        }
+        map text {
+          root = if this == null { "" } else { this.string().re_replace_all("\\s+", " ").trim() }
+        }
+        let rows = this.rows.or([]).map_each(r -> {
+          "name": r.Name.apply("text"),
+          "kind": r.Category.apply("text"),
+          "note": r.Note.apply("text"),
+          "near": r.Tourist_Spot_Availability.apply("text"),
+          "places": r.Count_.or(null),
+          "at": $placed.get(r.Name.apply("text").apply("fold").replace_all(".", "")).or(null)
+        })
+        map reason {
+          root = if this.name == "" || this.at == null { "not placed" }
+            else if this.at.index(1) < 16.93 || this.at.index(1) > 17.3 || this.at.index(0) < 47.99 || this.at.index(0) > 48.28 { "outside Bratislava" }
+            else if this.places != null && (this.places.type() != "number" || this.places < 0 || this.places > 100) { "out of range" }
+            else { null }
+        }
+        let marked = $rows.map_each(s -> s.assign({ "_drop": s.apply("reason"), "_id": "coach-stop-" + s.name.apply("fold").re_replace_all("[^a-z0-9]+", "-").trim("-") }))
+        let usable = $marked.filter(s -> s._drop == null)
+        let once = $usable.unique(s -> s._id)
+        let tally = $marked.filter(s -> s._drop != null).fold({}, item -> item.tally.assign({ item.value._drop: item.tally.get(item.value._drop).or(0) + 1 }))
+        let dups = $usable.length() - $once.length()
+        meta dropped = (if $dups > 0 { $tally.assign({ "duplicate": $dups }) } else { $tally }).format_json(no_indent: true)
+        meta kept = $once.length().string()
+        meta unplaced = $marked.filter(s -> s._drop == "not placed").map_each(s -> s.name).join(", ")
+        root = if $once.length() == 0 { throw("the coach stops list holds no usable stop: nothing is written") } else { $once }
+    - log:
+        level: INFO
+        message: 'coach-stops: ${! @kept } stops kept, dropped by reason ${! @dropped }'
+    - switch:
+        - check: '@unplaced != ""'
+          processors:
+            - log: { level: WARN, message: 'coach-stops: no place for ${! @unplaced }, left out' }
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44). The list says
+        # "Short-Term Stop" (passengers on and off) or "Long-Term Stop" (a coach waits).
+        let text = [this.near, this.note].filter(s -> s != "")
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("OnStreetParking", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this._id),
+          "type": "OnStreetParking",
+          "name": { "type": "Property", "value": this.name },
+          "category": { "type": "Property", "value": [if this.kind.lowercase().has_prefix("long") { "mediumTerm" } else { "shortTerm" }] },
+          "allowedVehicleType": { "type": "Property", "value": ["bus"] },
+          "totalSpotNumber": if this.places == null { null } else { { "type": "Property", "value": this.places.int64() } },
+          "description": if $text.length() == 0 { null } else { { "type": "Property", "value": $text.join(". ") } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [this.at.index(1), this.at.index(0)] } },
+          "dataProvider": { "type": "Property", "value": "Hlavné mesto SR Bratislava, data.bratislava.sk (CC BY 4.0); poloha: OpenStreetMap (ODbL)" },
+          "source": { "type": "Property", "value": "https://data.bratislava.sk/datasets/14464afe4fa94436b6a460e1fb027c49" }
+        }
+        root = root.filter(entry -> entry.value != null)
+
+    # A run that threw above writes nothing: only a stop that came through is batched for the door.
+    - switch:
+        - check: '!errored()'
+          processors:
+            - archive: { format: json_array }

@@ -1,0 +1,16 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: pipelines-write
+  namespace: slovensko
+  title: { sk: Kanály zapisujú ovzdušie, en: The pipelines write the air-quality space }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: ovzdusie-sk }
+  assigner: did:web:joinedcontext.com
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is what a poll does; create and query are what a stream needs to start from nothing
+  # and to check itself. No delete: a station that stops reporting stays with its last hour.
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: AirQualityObserved

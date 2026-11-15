@@ -1,0 +1,16 @@
+# Residents of the city by age group and sex at year end, 1996 on. No key, CC-BY-SA-4.0 (NKOD, the om70 distribution family).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-om7006rr
+  namespace: zilina
+  title:
+    sk: Vekové skupiny (ŠÚ SR, om7006rr)
+    en: Age groups (ŠÚ SR, om7006rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/om7006rr/SK031B517402/*/*/*/*?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

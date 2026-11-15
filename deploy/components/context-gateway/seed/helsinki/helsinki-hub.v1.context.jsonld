@@ -1,0 +1,114 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Any": {
+      "@id": "linkml:Any"
+    },
+    "CalculationPeriod": {
+      "@id": "jc:CalculationPeriod"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "KeyPerformanceIndicator": {
+      "@id": "jc:KeyPerformanceIndicator"
+    },
+    "Vehicle": {
+      "@id": "sdm:Vehicle"
+    },
+    "calculationFormula": {
+      "@id": "jc:calculationFormula"
+    },
+    "calculationPeriod": {
+      "@id": "jc:calculationPeriod"
+    },
+    "computedBy": {
+      "@id": "jc:computedBy"
+    },
+    "currentValue": {
+      "@id": "jc:currentValue"
+    },
+    "delay": {
+      "@id": "jc:delay",
+      "@type": "xsd:integer"
+    },
+    "derivedFrom": {
+      "@id": "jc:derivedFrom"
+    },
+    "end": {
+      "@id": "jc:end",
+      "@type": "xsd:dateTime"
+    },
+    "fleetVehicleId": {
+      "@id": "sdm:fleetVehicleId"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "heading": {
+      "@id": "sdm:heading",
+      "@type": "xsd:float"
+    },
+    "id": "@id",
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@id": "jc:name"
+    },
+    "nextStop": {
+      "@id": "jc:nextStop",
+      "@type": "@id"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "occupancy": {
+      "@id": "jc:occupancy",
+      "@type": "xsd:integer"
+    },
+    "onRoute": {
+      "@id": "jc:onRoute",
+      "@type": "@id"
+    },
+    "route": {
+      "@id": "sdm:route"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "speed": {
+      "@id": "sdm:speed",
+      "@type": "xsd:float"
+    },
+    "start": {
+      "@id": "jc:start",
+      "@type": "xsd:dateTime"
+    },
+    "title": {
+      "@container": "@language",
+      "@id": "jc:title"
+    },
+    "transportMode": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:transportMode"
+    },
+    "type": "@type",
+    "updatedAt": {
+      "@id": "jc:updatedAt",
+      "@type": "xsd:dateTime"
+    },
+    "vehicleType": {
+      "@id": "sdm:vehicleType"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

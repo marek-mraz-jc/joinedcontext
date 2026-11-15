@@ -1,0 +1,24 @@
+# The four members of HSL's GTFS feed that tell how many trips leave today: the calendars, the
+# lines' modes and the trips, read by their byte ranges (PL-72), never the 76 MB archive and never
+# stop_times.txt. No key. CC-BY-4.0 (HSL open data). T-6467.
+#
+# trips.txt is 1.7 MB packed, 36 MB inflated (380 543 rows on 2026-11-02); 64 MiB holds it with
+# room for 1.7 times that (T-3951).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-gtfs-daily-departures
+  namespace: helsinki
+  title:
+    en: HSL GTFS calendars and trips
+    fi: HSL:n GTFS-kalenterit ja vuorot
+spec:
+  type: http
+  http:
+    url: https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip
+    verb: GET
+    timeout: 60s
+    archive:
+      format: zip
+      members: [calendar.txt, calendar_dates.txt, routes.txt, trips.txt]
+      maxBytes: 67108864

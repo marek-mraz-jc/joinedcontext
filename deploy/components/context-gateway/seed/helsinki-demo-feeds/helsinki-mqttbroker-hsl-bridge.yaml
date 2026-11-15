@@ -1,0 +1,25 @@
+# The HSL bridge's broker (T-5883, ADR-N-048): one client, the dev bridge (demo-feeds
+# hsl-bridge), republishes HSL's live tram positions here with its ServiceAccount's token, so a
+# real feed of about 350 messages a second crosses the platform's MQTT path. A broker of its own
+# keeps the trackers' and sensors' per-client limits as they are: only this broker's one client
+# may publish 1,000 messages a second. On the platform address (8883, SNI), no dedicated port.
+apiVersion: joinedcontext.com/v1alpha1
+kind: MqttBroker
+metadata:
+  name: hsl-bridge
+  namespace: helsinki
+  title:
+    en: HSL tram positions bridged from mqtt.hsl.fi
+    fi: HSL:n raitiovaunujen sijainnit mqtt.hsl.fi:stä
+spec:
+  roles:
+    - name: bridge
+      serviceAccounts: [hsl-bridge]
+      # HSL's own topic under `hsl`: the pipeline's mapping reads mode, operator, vehicle and
+      # next stop from the same levels, and an MQTT filter here may not start with an empty
+      # level, which HSL's leading `/` is.
+      publish:
+        - hsl/hfp/v2/journey/ongoing/vp/tram/#
+      sharedTopics: true
+      reason: One bridge republishes every tram of HSL's feed; no topic level names a device of ours.
+  limits: { maxMessageBytes: 1024, messagesPerSecond: 1000, maxConnections: 2 }

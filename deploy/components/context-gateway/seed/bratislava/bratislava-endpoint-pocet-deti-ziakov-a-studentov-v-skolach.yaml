@@ -1,0 +1,44 @@
+# Children, pupils and students in schools in Bratislava, 2010-2022: one public dataset of the hub (T-5274), item 90893b909be44eb48ff7adb3128ee787, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-deti-ziakov-a-studentov-v-skolach
+  namespace: bratislava
+  title:
+    sk: Počet detí žiakov a študentov v školách v Bratislave za obdobie 2010 – 2022
+    en: Children, pupils and students in schools in Bratislava, 2010-2022
+  description:
+    sk: 'Ukazovatele tabuľky „Počet detí žiakov a študentov v školách v Bratislave za obdobie 2010 – 2022“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Children, pupils and students in schools in Bratislava, 2010-2022”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: a37nbohwspzfitvi6aayrekrnsupjlvt
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-deti-ziakov-a-studentov-v-skolach
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/90893b909be44eb48ff7adb3128ee787
+        title:
+          sk: Počet detí žiakov a študentov v školách v Bratislave za obdobie 2010 – 2022
+          en: Children, pupils and students in schools in Bratislava, 2010-2022
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet detí žiakov a študentov v školách v Bratislave za obdobie 2010 – 2022. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Children, pupils and students in schools in Bratislava, 2010-2022. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

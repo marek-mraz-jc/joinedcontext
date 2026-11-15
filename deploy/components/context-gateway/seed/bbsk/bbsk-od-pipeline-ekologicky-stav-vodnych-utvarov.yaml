@@ -1,0 +1,24 @@
+# One WaterBodyStatus per row of "Ekologický stav vodných útvarov" (T-4255); one row per water body and assessment.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-ekologicky-stav-vodnych-utvarov
+  namespace: bbsk
+  title:
+    sk: Ekologický stav vodných útvarov
+    en: Ekologický stav vodných útvarov
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 10 2 * * 3
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-ekologicky-stav-vodnych-utvarov
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: WaterBodyStatus
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

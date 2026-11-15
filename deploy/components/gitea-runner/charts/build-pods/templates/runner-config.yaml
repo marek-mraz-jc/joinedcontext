@@ -1,0 +1,33 @@
+{{- $forge := required "forge is the forge's in-cluster URL" .Values.forge }}
+{{- range $class, $this := .Values.classes }}
+---
+# The runner configuration of an App's build pod of class {{ $class }} (AP-130): the same walls
+# as the shared runner's, under the label no shared runner carries.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitea-runner-build-{{ $class }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gitea-runner
+    app.kubernetes.io/component: build-pod
+    app.kubernetes.io/part-of: joinedcontext
+data:
+  runner.yaml: |
+    log:
+      level: info
+    runner:
+      file: /tmp/runner/.runner
+      capacity: 1
+      timeout: {{ $this.timeout }}
+      labels: ["{{ $this.label }}:host"]
+      envs:
+        JC_FORGE_URL: {{ $forge | quote }}
+        {{- with $.Values.portalUrl }}
+        JC_PORTAL_URL: {{ . | quote }}
+        {{- end }}
+    # The forge's shared action cache stays off: an App's own cache is its claim at /cache,
+    # which only its own build pods mount (AP-131).
+    cache:
+      enabled: false
+{{- end }}

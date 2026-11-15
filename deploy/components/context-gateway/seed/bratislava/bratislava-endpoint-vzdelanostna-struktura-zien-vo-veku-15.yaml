@@ -1,0 +1,44 @@
+# Educational attainment of women aged 15 and over in Bratislava's city districts (2021 census): one public dataset of the hub (T-5274), item 8a63421f816548da99e782d220182e16, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vzdelanostna-struktura-zien-vo-veku-15
+  namespace: bratislava
+  title:
+    sk: Vzdelanostná štruktúra žien vo veku 15 a viac rokov v mestských častiach BA (SODB 2021)
+    en: Educational attainment of women aged 15 and over in Bratislava's city districts (2021 census)
+  description:
+    sk: 'Ukazovatele tabuľky „Vzdelanostná štruktúra žien vo veku 15 a viac rokov v mestských častiach BA (SODB 2021)“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Educational attainment of women aged 15 and over in Bratislava's city districts (2021 census)”, one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: vegt2pivt3agzjoqjjacuegksic56h7i
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vzdelanostna-struktura-zien-vo-veku-15
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/8a63421f816548da99e782d220182e16
+        title:
+          sk: Vzdelanostná štruktúra žien vo veku 15 a viac rokov v mestských častiach BA (SODB 2021)
+          en: Educational attainment of women aged 15 and over in Bratislava's city districts (2021 census)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Vzdelanostná štruktúra žien vo veku 15 a viac rokov v mestských častiach BA (SODB 2021). Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Educational attainment of women aged 15 and over in Bratislava's city districts (2021 census). Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics }

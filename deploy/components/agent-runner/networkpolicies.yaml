@@ -1,0 +1,204 @@
+---
+# The proxy is called by the Portal (the in-process driver of conversations and `ui` builds) and
+# by the workspace of a `ui-rust` run: a pod the Portal starts in its apps namespace, labelled
+# `joinedcontext.com/run-id` (portal src/agents/kube.rs). It calls the Portal's internal listener, the gateway, the forge, and
+# out on 443: the realm's token endpoint on the cluster's public host (rewritten to the
+# ingress controller's pod before this rule is evaluated, hence 8443 beside 443, the Portal's
+# rule explains it) and the model provider.
+agent-proxy:
+  podSelector:
+    app.kubernetes.io/name: agent-runner-proxy
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        - podSelector:
+            matchExpressions:
+              - key: joinedcontext.com/run-id
+                operator: Exists
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 9090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    # The realm's token endpoint, in-cluster. The proxy mints its own audience-bound token for
+    # every call it makes — the Portal's internal listener, the gateway, the model — from
+    # `JC_OIDC_TOKEN_URL`, which is the ClusterIP service and not the public host, because a pod
+    # cannot dial this node's own public address (images.yaml says the same for the gateway).
+    # Without this rule that grant never leaves the pod: the lookup of a run then fails as a
+    # transport error, the proxy answers `401 invalid run credentials`, and the assistant's first
+    # question of the demo dies on it (T-2420).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    # The model and any public host on 443; 8443 is Traefik's container port behind this
+    # cluster's own public address (kube-proxy DNAT), so it reaches the ingress controller
+    # alone (T-6218).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [traefik, kube-system, ingress-nginx]
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [traefik, ingress-nginx]
+      ports:
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The Portal's internal listener takes the proxy and nobody else (AG-52).
+portal-internal-from-agent-proxy:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - protocol: TCP
+          port: 9090
+
+# The Portal drives a run through the proxy; the gateway answers the proxy's reads.
+portal-egress-to-agent-proxy:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# The Portal drives a workspace's agent server (8000). Each workspace's own rule, which the
+# Portal applies with the Job, admits the Portal from its namespace alone (AG-39).
+portal-egress-to-agent-workspaces:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: joinedcontext.com/run-id
+                operator: Exists
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 8000
+
+gateway-from-agent-proxy:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - protocol: TCP
+          port: 8080
+
+gitea-from-agent-proxy:
+  componentNamespace: gitea
+  podSelector:
+    app.kubernetes.io/name: gitea
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - protocol: TCP
+          port: 3000
+
+# Keycloak lists its callers by name, and the credential proxy is one (T-2420).
+keycloak-from-agent-proxy:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+      ports:
+        - protocol: TCP
+          port: 8080

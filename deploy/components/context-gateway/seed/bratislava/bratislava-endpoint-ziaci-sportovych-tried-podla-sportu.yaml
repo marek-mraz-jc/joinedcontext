@@ -1,0 +1,44 @@
+# Pupils of the sports classes of sports secondary schools by sport: one public dataset of the hub (T-5675), item 92871866e3ba46fb9ab40078e124f73e, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-ziaci-sportovych-tried-podla-sportu
+  namespace: bratislava
+  title:
+    sk: Počet žiakov športových tried stredných športových škôl podľa druhu športu
+    en: Pupils of the sports classes of sports secondary schools by sport
+  description:
+    sk: 'Ukazovatele tabuľky „Počet žiakov športových tried stredných športových škôl podľa druhu športu“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Pupils of the sports classes of sports secondary schools by sport”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: a2g4mjeaybzx3o6t666dpmvfmmzv25ww
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-ziaci-sportovych-tried-podla-sportu
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/92871866e3ba46fb9ab40078e124f73e
+        title:
+          sk: Počet žiakov športových tried stredných športových škôl podľa druhu športu
+          en: Pupils of the sports classes of sports secondary schools by sport
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet žiakov športových tried stredných športových škôl podľa druhu športu. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Pupils of the sports classes of sports secondary schools by sport. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

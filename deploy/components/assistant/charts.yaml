@@ -1,0 +1,4 @@
+---
+assistant:
+  worker:
+    chart: ../../charts/workload

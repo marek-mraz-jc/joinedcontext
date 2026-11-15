@@ -1,0 +1,19 @@
+# One TrafficFlowObserved per counter site, direction and mode (cyclists, motor vehicles) of the
+# day the hub's import closed, once a day (T-5273): three small answers a run.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: counters
+  namespace: bratislava
+  title: { sk: Cyklisti a vozidlá podľa sčítačov za deň, en: Cyclists and vehicles counted per day }
+spec:
+  class: auto
+  # The hub loads the counters once a day about a day late (at 06:40 UTC on 2026-10-23 it held
+  # 2026-10-21): a morning read finds the day before closed.
+  period: 24h
+  schedule: '30 7 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: counters-newest }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: TrafficFlowObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

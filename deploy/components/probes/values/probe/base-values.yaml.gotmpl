@@ -1,0 +1,118 @@
+---
+{{- $probe := .Values.probes.probe -}}
+{{- $global := .Values.global }}
+{{- $pg := and (has "postgres" .Values.components) .Values.postgres }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /healthz (every target finished a round in the last three minutes)
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] Named ports -> metrics
+# - [x] No Secret, and every probe of a public surface is anonymous (T-5103); the pod's token goes
+#       to the API server alone, for `get` on three named Postgres objects (T-5289)
+# - [ ] Ingress with TLS -> not applicable, nothing outside the cluster calls it
+
+fullnameOverride: probe
+nameOverride: probes-probe
+
+{{- $images := index .Values.images "probes" "probe" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+command: ["python3", "/etc/probe/probe.py"]
+
+{{- /* This cluster's own hosts first, then each peer's: api., the catalogue's subDomain, portal. and assistant. */}}
+{{- $catalogue := ((.Values.ckan | default dict).catalogue | default dict).subDomain | default "opendata" }}
+{{- $targets := list }}
+{{- $envs := prepend ($probe.peers | default list) (dict "name" (splitList "." $global.domain | first) "domain" $global.domain) }}
+{{- range $envs }}
+{{- $targets = append $targets (dict "name" .name "api" (printf "https://api.%s" .domain) "catalogue" (printf "https://%s.%s" $catalogue .domain) "portal" (printf "https://portal.%s" .domain) "assistant" (printf "https://assistant.%s" .domain) "assistantId" $probe.assistantId) }}
+{{- end }}
+env:
+  PROBE_TARGETS: {{ $targets | toJson | quote }}
+  PROBE_BUDGET: {{ $probe.budget | quote }}
+  PROBE_DISCOVERY_SECONDS: {{ $probe.discoverySeconds | quote }}
+  PROBE_PORT: "9100"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  {{- if $pg }}
+  PROBE_BACKUPS: {{ dict "namespace" $pg.cluster.namespace "cluster" $pg.cluster.name "localBackup" ($pg.databases.localBackup.enabled | default false) | toJson | quote }}
+  {{- end }}
+
+{{- if $pg }}
+# The newest backup and restore drill of this cluster's Postgres, for the status page (T-5289):
+# `get` on the Cluster, the local dump's CronJob and the drill's result ConfigMap, by name, in the
+# database's namespace. Nothing to list, watch or change.
+serviceAccount:
+  create: true
+  automountServiceAccountToken: true
+
+rbac:
+  namespace: {{ $pg.cluster.namespace | quote }}
+  rules:
+    - apiGroups: ["postgresql.cnpg.io"]
+      resources: ["clusters"]
+      resourceNames: [{{ $pg.cluster.name | quote }}]
+      verbs: ["get"]
+    - apiGroups: ["batch"]
+      resources: ["cronjobs"]
+      resourceNames: [{{ printf "%s-local-backup" $pg.cluster.name | quote }}]
+      verbs: ["get"]
+    - apiGroups: [""]
+      resources: ["configmaps"]
+      resourceNames: [{{ printf "%s-dr-drill" $pg.cluster.name | quote }}]
+      verbs: ["get"]
+
+podAnnotations:
+  security.joinedcontext.com/api-access-reason: >-
+    Reads the age of this cluster's newest Postgres backup and restore drill for the status page
+    (T-5289): get on the Cluster, the local-backup CronJob and the dr-drill ConfigMap, by name.
+{{- end }}
+
+configMap:
+  enabled: true
+  mountPath: /etc/probe
+  data:
+    probe.py: |
+{{ readFile "../../files/probe.py" | indent 6 }}
+
+containerPort: 9100
+
+service:
+  enabled: true
+  port: 9100
+  targetPort: 9100
+  name: metrics
+
+probes:
+  readiness:
+    path: /metrics
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 30
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 30
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

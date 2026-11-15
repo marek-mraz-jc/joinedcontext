@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item 6bceef0c12d84031a0628fab533eecc1 (Vyhrazená stání pro invalidy - sdružená, TSK hl. m. Prahy), 1,455 records on 2026-10-24, served
+# by its ArcGIS Hub download as GeoJSON in WGS 84. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5424).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-ztp-shared
+  namespace: praha
+  title:
+    en: Shared reserved bays for disabled drivers (IPR Praha)
+    cs: Vyhrazená stání pro invalidy - sdružená (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/6bceef0c12d84031a0628fab533eecc1_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 120s

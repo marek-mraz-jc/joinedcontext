@@ -1,0 +1,98 @@
+---
+gitea:
+  forge:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+    # Public path prefix on the primary host (docs Deployment/10 section 2). It ends up in
+    # ROOT_URL, which is where every URL Gitea renders comes from, and in the OIDC callback.
+    pathPrefix: /git
+    # Keycloak group -> forge teams of the organization (PF-79). Read-only teams (PF-80);
+    # the bootstrap Job creates every team named here, under `global.configRepo.owner`.
+    groupTeams:
+      platform-readers:
+        - readers
+    # Projects of layout 2 whose repository members reach through `{slug}-readers` and
+    # `{slug}-writers` (PF-87): the Portal keeps those groups and teams, and this list maps
+    # each group onto its team at the forge's next apply. A project opened later is added here.
+    projectTeams: []
+    # The Keycloak group whose members administer the forge (`--admin-group`, T-1421), so an
+    # operator no longer needs the local `gitea_admin` password. Nobody is in it by default:
+    # add a person in Keycloak. Empty or absent renders no admin group.
+    adminGroup: forge-admins
+    # The forge organization the generated applications live in, apart from the configuration's
+    # (PF-106), e.g. `joinedcontext-apps`. Empty: beside the configuration, as before. Setting it
+    # on a running forge moves every `{project}_{name}` repository there at the next apply; each
+    # App then needs one rebuild, since its packages stay under the old owner (T-2856).
+    appsOrganization: ""
+  sample-apps:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  sample-apps-2:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  sample-apps-3:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  sample-apps-4:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  sample-apps-5:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  sample-apps-6:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  sample-apps-7:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-2:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-3:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-4:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-5:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-6:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-7:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-8:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-9:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-10:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-11:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-12:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-13:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-14:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-15:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  seed-16:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}
+  bootstrap:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "gitea") }}

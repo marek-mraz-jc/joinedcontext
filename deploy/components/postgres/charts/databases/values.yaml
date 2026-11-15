@@ -1,0 +1,47 @@
+---
+cluster:
+  name: postgres-cluster
+roleJob:
+  # The client the role-setup Job runs. The deployment overrides it with the digest pinned in
+  # components/postgres/images.yaml; this default only keeps `helm template` of the bare chart
+  # from failing, and is not what a cluster runs.
+  image: ghcr.io/cloudnative-pg/postgis@sha256:a08a1c1795fcbee5bfc3e935f21be68f08700e4e1e7f3b6af5e11866617d9e61
+# A nightly pg_dumpall onto a node volume (templates/local-backup.yaml): the stopgap while there
+# is no object store for CNPG's backups. Off by default.
+localBackup:
+  enabled: false
+  schedule: '30 2 * * *'
+  keepDays: 7
+  size: 10Gi
+  # What the dumps may fill, when more than `size`: local-path neither enforces nor expands a PVC's
+  # request, so a larger cap goes here, never into `size` (empty: `size`).
+  cap: ''
+  # The dumps' volume class; empty: the cluster's default (T-6718: a Retain class where the dumps
+  # must outlive a deleted claim).
+  storageClass: ''
+  # Databases left out of the dump and its counts, e.g. [antares]: what the drill then restores.
+  excludeDatabases: []
+  # The age1... public keys each dump is encrypted to besides the drill key (T-5839): the
+  # operator's, who restores with `age -d -i <key>`. The render fails when on and empty.
+  ageRecipients: []
+databases:
+  {}
+  # Example database configuration:
+  # apicurio:
+  #   name: 'apicurio'
+  #   user: 'apicurio'
+  #   additionalRoles:
+  #     - name: 'apicurio-readonly'
+  #       type: 'readonly'  # Can be 'readonly' or 'readwrite'
+  #       credentialsSecret:
+  #         name: 'apicurio-readonly-credentials'
+  #         passwordKey: 'password'  # Optional, defaults to 'password'
+  #     - name: 'apicurio-analytics'
+  #       type: 'readwrite'
+  #       credentialsSecret:
+  #         name: 'apicurio-analytics-credentials'
+  #         passwordKey: 'db-password'
+# pg_stat_statements (templates/stat-statements.yaml, T-4904): true when the cluster's parameters
+# make CNPG preload the library, so the Job waits for the restart that loads it.
+statStatements:
+  preloaded: false

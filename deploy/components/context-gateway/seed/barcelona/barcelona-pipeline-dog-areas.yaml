@@ -1,0 +1,20 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: dog-areas
+  namespace: barcelona
+  title:
+    ca: Àrees de gossos de Barcelona, cada setmana
+    es: Áreas para perros de Barcelona, cada semana
+    en: Barcelona dog areas, weekly
+spec:
+  class: auto
+  # The city rewrites the file about twice a year on no fixed day; a weekly run finds it.
+  schedule: '25 6 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-dog-areas }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert, as the equipaments: both write PointOfInterest, so a replace would delete the other's.
+  # An area the file drops leaves by its expiresAt, three weeks after its last listing.
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

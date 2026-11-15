@@ -1,0 +1,240 @@
+{{- $global := .Values.global }}
+{{- range $needed := list "gitea" "agent-runner" "context-gateway" "keycloak" }}
+{{- if not (has $needed $.Values.components) }}
+{{- fail (printf "assistant: needs %s in the environment's components (the forge holds its manifests, the agent proxy its model, the gateway its connectors, Keycloak its identity)" $needed) }}
+{{- end }}
+{{- end }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /healthz (alive), /readyz (the first look at the manifests went through)
+# - [x] Graceful shutdown -> SIGTERM finishes the loop between jobs
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required -> no API token
+# - [x] Named ports -> 8080, the chat route and the probes
+# - [x] Ingress with TLS -> the edge, assistant.{domain} (apisix-routes.yaml)
+
+fullnameOverride: jc-assistant
+nameOverride: assistant-worker
+
+{{- $images := index .Values.images "assistant" "worker" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+# The image's entrypoint is the gateway; the worker is the binary beside it.
+command:
+  - /usr/local/bin/jc-assistant
+
+containerPort: 8080
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  name: http
+
+probes:
+  readiness:
+    path: /readyz
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 10
+
+envSecret:
+  PGPASSWORD:
+    secret: db-assistant
+    key: password
+
+# The chat (API/05, T-3055): the model only through jc-agent-proxy with the service's own
+# client-credentials token, the connectors on the gateway's Endpoint MCP surfaces, the token
+# from the realm's in-cluster Service (a pod cannot dial this node's own public host, T-1500).
+
+env:
+  # As the `assistant` role, which owns its database and runs its own migrations, so the
+  # forced row-level security of every tenant table holds (T-3050).
+  JC_ASSISTANT_DATABASE_URL: "postgresql://assistant:$(PGPASSWORD)@postgres-cluster-rw.{{ .Values.postgres.cluster.namespace }}.svc.cluster.local:5432/assistant"
+  JC_ASSISTANT_ORG_DOMAIN: {{ $global.orgDomain | quote }}
+  JC_ASSISTANT_BIND: "0.0.0.0:8080"
+  JC_ASSISTANT_PROXY_URL: "http://agent-proxy.{{ index .Values "agent-runner" "proxy" "namespace" }}.svc.cluster.local:8080"
+  JC_ASSISTANT_GATEWAY_URL: "http://context-gateway.{{ index .Values "context-gateway" "gateway" "namespace" }}.svc.cluster.local:8080"
+  JC_ASSISTANT_TOKEN_URL: "http://keycloak-app-keycloakx-http.{{ .Values.keycloak.app.namespace }}.svc.cluster.local:80{{ .Values.keycloak.app.pathPrefix | trimSuffix "/" }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/token"
+  JC_ASSISTANT_CLIENT_ID: jc-assistant
+  JC_ASSISTANT_CLIENT_ASSERTION_FILE: /var/run/secrets/jc/keycloak/token
+  JC_ASSISTANT_LLM: {{ .Values.assistant.worker.llm | quote }}
+  # The widget's own host (AG-114): its page asks the chat from there, so the chat admits it
+  # beside each deployment's allowedOrigins.
+  JC_ASSISTANT_PUBLIC_ORIGIN: "https://assistant.{{ $global.domain }}"
+  # Where a public Endpoint answers anyone (the gateway's JC_GATEWAY_PUBLIC_URL, the data host
+  # api.{domain}, ADR-N-052 §2.1): a `catalogue` source's page cites it when the Endpoint
+  # publishes no CKAN dataset (AG-116, T-3225).
+  JC_ASSISTANT_ENDPOINT_URL: "https://api.{{ $global.domain }}"
+  # The Portal a `guide` source's sections link into (the Portal's JC_PORTAL_PUBLIC_URL): without
+  # it the shipped User Guide is not indexed (AG-118, T-3226).
+  JC_ASSISTANT_PORTAL_URL: "https://portal.{{ $global.domain }}"
+{{- if has "functions" .Values.components }}
+  # A deployment with `sandbox: true` filters a long tool result with a script there (AG-112).
+  JC_ASSISTANT_FUNCTIONS_URL: "http://jc-functions.{{ .Values.functions.runtime.namespace }}.svc.cluster.local:8080"
+{{- end }}
+{{- if has "viz" .Values.components }}
+  # The chart renderer (T-4657, ADR-N-053 §2.9): data answers get maps and charts drawn there,
+  # and the widget page may frame it, nothing else.
+  JC_ASSISTANT_VIZ_URL: "https://viz.{{ $global.domain }}"
+{{- end }}
+  # The embedder's ONNX Runtime threads, as many as the CPU limit (T-3053). The model and the
+  # runtime are in the image (JC_ASSISTANT_MODEL_DIR, ORT_DYLIB_PATH).
+  JC_ASSISTANT_EMBED_THREADS: "1"
+  JC_ASSISTANT_REPO_DIR: /repo/current
+  # One level inside the volume, as the gateway's: the assembly renders into a sibling and
+  # swaps it in.
+  JC_ASSISTANT_ASSEMBLY_DIR: /assembly/current
+{{- if eq (toString ($global.configRepo.layout | default 1)) "2" }}
+  JC_ASSISTANT_PROJECTS_DIR: /projects
+{{- end }}
+
+{{- $forge := printf "http://gitea-http.%s.svc.cluster.local:3000/%s/%s.git" .Values.gitea.forge.namespace $global.configRepo.owner $global.configRepo.name }}
+{{- $gitSync := index .Values.images "context-gateway" "git-sync" }}
+{{- $gitSyncEnv := list
+  (dict "name" "GITSYNC_REPO" "value" $forge)
+  (dict "name" "GITSYNC_REF" "value" "main")
+  (dict "name" "GITSYNC_ROOT" "value" "/repo")
+  (dict "name" "GITSYNC_GIT_CONFIG" "value" "safe.directory:/repo")
+  (dict "name" "GITSYNC_LINK" "value" "current")
+  (dict "name" "GITSYNC_DEPTH" "value" "1")
+  (dict "name" "GITSYNC_USERNAME" "value" "git-sync")
+  (dict "name" "GITSYNC_PASSWORD" "valueFrom" (dict "secretKeyRef" (dict "name" "gitea-token-gateway" "key" "token")))
+  (dict "name" "HOME" "value" "/tmp") }}
+{{- $gitSyncSecurity := dict "runAsNonRoot" true "runAsUser" 65533 "runAsGroup" 65533 "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault") }}
+{{- $gitSyncMounts := list (dict "name" "repo" "mountPath" "/repo") (dict "name" "tmp" "mountPath" "/tmp") }}
+{{- /* T-5113: git-sync was OOMKilled at 128Mi on prod (2026-10-21 10:13Z); checkouts holds 64Mi. */}}
+{{- $sidecarResources := dict "requests" (dict "cpu" "10m" "memory" "64Mi") "limits" (dict "cpu" "200m" "memory" "256Mi") }}
+{{- $layout2 := eq (toString ($global.configRepo.layout | default 1)) "2" }}
+{{- $checkouts := index .Values.images "context-gateway" "checkouts" }}
+{{- $checkoutsArgs := list "--org-dir" "/repo/current" "--projects-dir" "/projects" "--forge" (printf "http://gitea-http.%s.svc.cluster.local:3000/%s" .Values.gitea.forge.namespace $global.configRepo.owner) "--token-file" "/var/run/forge/token" }}
+{{- $checkoutsSecurity := dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault") }}
+{{- $checkoutsMounts := list (dict "name" "repo" "mountPath" "/repo" "readOnly" true) (dict "name" "projects" "mountPath" "/projects") (dict "name" "forge-token" "mountPath" "/var/run/forge" "readOnly" true) (dict "name" "tmp" "mountPath" "/tmp") }}
+
+# The manifests, checked out the way the gateway checks them out (its base values explain each
+# piece): git-sync with the forge's read-only token (gitea-token-gateway, T-0399) and, in
+# layout 2, the checkouts sidecar for every registered project. The worker only reads them and
+# assembles the organization into /assembly once a minute.
+extraVolumes:
+  - name: repo
+    emptyDir: {}
+  # The token the `jc-assistant` client proves itself with (PF-47, T-2868): this pod's ServiceAccount,
+  # bound to the realm as its audience so it opens nothing else, ten minutes long; the kubelet
+  # renews it in place and the worker reads it again at every grant.
+  - name: keycloak-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            audience: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}"
+            expirationSeconds: 600
+            path: token
+  - name: assembly
+    emptyDir:
+      sizeLimit: 256Mi
+{{- if $layout2 }}
+  - name: projects
+    emptyDir:
+      sizeLimit: 256Mi
+  - name: forge-token
+    secret:
+      secretName: gitea-token-gateway
+      items:
+        - { key: token, path: token }
+{{- end }}
+
+extraVolumeMounts:
+  - { name: repo, mountPath: /repo, readOnly: true }
+  - { name: keycloak-token, mountPath: /var/run/secrets/jc/keycloak, readOnly: true }
+  - { name: assembly, mountPath: /assembly }
+{{- if $layout2 }}
+  - { name: projects, mountPath: /projects, readOnly: true }
+{{- end }}
+
+extraInitContainers:
+  - name: git-sync-init
+    image: "{{ $gitSync.repository }}:{{ $gitSync.tag }}@{{ $gitSync.digest }}"
+    imagePullPolicy: IfNotPresent
+    env:
+{{ append $gitSyncEnv (dict "name" "GITSYNC_ONE_TIME" "value" "true") | toYaml | indent 6 }}
+    securityContext:
+{{ $gitSyncSecurity | toYaml | indent 6 }}
+    volumeMounts:
+{{ $gitSyncMounts | toYaml | indent 6 }}
+    resources:
+{{ $sidecarResources | toYaml | indent 6 }}
+{{- if $layout2 }}
+  - name: checkouts-init
+    image: "{{ $checkouts.repository }}:{{ $checkouts.tag }}@{{ $checkouts.digest }}"
+    imagePullPolicy: IfNotPresent
+    args:
+{{ append $checkoutsArgs "--once" | toYaml | indent 6 }}
+    env:
+      - { name: HOME, value: /tmp }
+    securityContext:
+{{ $checkoutsSecurity | toYaml | indent 6 }}
+    volumeMounts:
+{{ $checkoutsMounts | toYaml | indent 6 }}
+    resources:
+{{ $sidecarResources | toYaml | indent 6 }}
+{{- end }}
+
+extraContainers:
+  - name: git-sync
+    image: "{{ $gitSync.repository }}:{{ $gitSync.tag }}@{{ $gitSync.digest }}"
+    imagePullPolicy: IfNotPresent
+    # A schedule reads at minute resolution; a minute's sync period is plenty.
+    env:
+{{ concat $gitSyncEnv (list (dict "name" "GITSYNC_PERIOD" "value" "60s") (dict "name" "GITSYNC_HTTP_BIND" "value" ":9092") (dict "name" "GITSYNC_MAX_FAILURES" "value" "-1")) | toYaml | indent 6 }}
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 9092
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    securityContext:
+{{ $gitSyncSecurity | toYaml | indent 6 }}
+    volumeMounts:
+{{ $gitSyncMounts | toYaml | indent 6 }}
+    resources:
+{{ $sidecarResources | toYaml | indent 6 }}
+{{- if $layout2 }}
+  - name: checkouts
+    image: "{{ $checkouts.repository }}:{{ $checkouts.tag }}@{{ $checkouts.digest }}"
+    imagePullPolicy: IfNotPresent
+    args:
+{{ concat $checkoutsArgs (list "--interval" "60") | toYaml | indent 6 }}
+    env:
+      - { name: HOME, value: /tmp }
+    readinessProbe:
+      exec:
+        command: ["test", "-d", "/projects"]
+      periodSeconds: 30
+      timeoutSeconds: 3
+    securityContext:
+{{ $checkoutsSecurity | toYaml | indent 6 }}
+    volumeMounts:
+{{ $checkoutsMounts | toYaml | indent 6 }}
+    resources:
+{{ $sidecarResources | toYaml | indent 6 }}
+{{- end }}
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

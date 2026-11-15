@@ -1,0 +1,17 @@
+# The mapping of the districts pipeline (PL-03): one AdministrativeArea per city district (městská
+# část) of Prague, 57 of them, from the city geoportal (IPR Praha). The id and `districtCode` are
+# the district's RÚIAN code, the key the waste register and the national registers use, so
+# `refDistrict` of a collection point names the district without a lookup.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.features.or([]).filter(f -> f.properties.kod_mc.or("").string().re_match("^[0-9]{6}$") && f.geometry.or(null) != null).map_each(f -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:district-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.kod_mc.string()),
+          "type": "AdministrativeArea",
+          "name": { "type": "LanguageProperty", "languageMap": { "cs": f.properties.nazev_mc.or(f.properties.nazev_1).string() } },
+          "districtCode": { "type": "Property", "value": f.properties.kod_mc.string() },
+          "location": { "type": "GeoProperty", "value": f.geometry },
+          "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata.geoportalpraha.cz/" }
+        })

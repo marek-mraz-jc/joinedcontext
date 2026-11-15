@@ -1,0 +1,6 @@
+---
+ai:
+  app:
+    # Rendered where the environment lists the component (dev, T-4694).
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "ai") }}

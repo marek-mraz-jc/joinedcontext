@@ -1,0 +1,19 @@
+# The history of public-read's types that keep one (T-4372): the same entities and Attributes, read
+# over time as far back as the space keeps them. The space's other types keep no history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-read-history
+  namespace: praha
+  title: { cs: Veřejné čtení (historie), en: Public read (history) }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  operations: [queryTemporal, retrieveTemporal]
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: BikeHireDockingStation
+        - type: AirQualityObserved
+        - type: OffStreetParking

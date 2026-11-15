@@ -1,0 +1,33 @@
+---
+# The images kube-prometheus-stack 92.9.0 names, each pinned by its multi-arch index digest
+# (T-5154). Bump them together with the chart in charts.yaml. Re-pin a digest with:
+#   T=$(curl -s "https://quay.io/v2/auth?service=quay.io&scope=repository:<repo>:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $T" \
+#     -H 'Accept: application/vnd.oci.image.index.v1+json' \
+#     https://quay.io/v2/<repo>/manifests/<tag> | grep -i docker-content-digest
+# (registry.k8s.io answers the same request without a token, after a redirect: curl -L.)
+prometheus:
+  prometheus:
+    repository: 'quay.io/prometheus/prometheus'
+    tag: 'v3.15.0-distroless'
+    digest: 'sha256:b2a413d5a03ea6a76782a508d1c7947440bba3b973931a25676e278431891b01'
+  alertmanager:
+    repository: 'quay.io/prometheus/alertmanager'
+    tag: 'v0.34.1'
+    digest: 'sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a'
+  operator:
+    repository: 'quay.io/prometheus-operator/prometheus-operator'
+    tag: 'v0.94.1'
+    digest: 'sha256:7c88d4e7bae63bd8d0f8da986054337c23b4472fa8d3c6817f5bc4b8407a2d6a'
+  configReloader:
+    repository: 'quay.io/prometheus-operator/prometheus-config-reloader'
+    tag: 'v0.94.1'
+    digest: 'sha256:06b52bd4dbe3ed6dd5905aadaf8b9987d9da4c31d37bb86deaadae68cee2d26b'
+  kubeStateMetrics:
+    repository: 'registry.k8s.io/kube-state-metrics/kube-state-metrics'
+    tag: 'v2.20.0'
+    digest: 'sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b'
+  nodeExporter:
+    repository: 'quay.io/prometheus/node-exporter'
+    tag: 'v1.12.1-distroless'
+    digest: 'sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106'

@@ -1,0 +1,44 @@
+# Accommodation revenues in Bratislava, 2010-2021: one public dataset of the hub (T-5274), item d9da4b401ff84d9a89af148e3079bc6e, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vyvoj-trzieb-za-ubytovanie-v-rokoch
+  namespace: bratislava
+  title:
+    sk: Vývoj tržieb za ubytovanie v Bratislave v rokoch 2010 - 2021
+    en: Accommodation revenues in Bratislava, 2010-2021
+  description:
+    sk: 'Ukazovatele tabuľky „Vývoj tržieb za ubytovanie v Bratislave v rokoch 2010 - 2021“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Accommodation revenues in Bratislava, 2010-2021”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: nwigzo7crc4bllpmneftqlwaseqskpyl
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vyvoj-trzieb-za-ubytovanie-v-rokoch
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ECON]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/d9da4b401ff84d9a89af148e3079bc6e
+        title:
+          sk: Vývoj tržieb za ubytovanie v Bratislave v rokoch 2010 - 2021
+          en: Accommodation revenues in Bratislava, 2010-2021
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Vývoj tržieb za ubytovanie v Bratislave v rokoch 2010 - 2021. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Accommodation revenues in Bratislava, 2010-2021. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

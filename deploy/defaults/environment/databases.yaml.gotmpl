@@ -1,0 +1,33 @@
+databases:
+  {{ include "jc.configFiles" (dict "components" .Values.components "file" "databases.yaml") }}
+  {{- /* Every catalogue beside `catalogue` (T-4636): its catalogue and DataStore databases and its
+         read-only role, as components/ckan/databases.yaml for the default instance. */}}
+  {{- if has "ckan" .Values.components }}
+  {{- range $c := .Values.global.catalogues | default list }}
+  {{- $n := $c.name | replace "-" "_" }}
+  ckan_{{ $n }}:
+    name: 'ckan_{{ $n }}'
+    embedded: true
+    user: 'ckan_{{ $n }}'
+    secret:
+      name: 'db-ckan-{{ $c.name }}'
+      key: 'password'
+    hostServiceName: 'postgres-cluster-rw'
+    port: 5432
+  ckan_datastore_{{ $n }}:
+    name: 'ckan_datastore_{{ $n }}'
+    embedded: true
+    user: 'ckan_{{ $n }}'
+    secret:
+      name: 'db-ckan-{{ $c.name }}'
+      key: 'password'
+    hostServiceName: 'postgres-cluster-rw'
+    port: 5432
+    additionalRoles:
+      - name: 'ckan_datastore_read_{{ $n }}'
+        type: 'readonly'
+        credentialsSecret:
+          name: 'db-ckan-datastore-read-{{ $c.name }}'
+          passwordKey: 'password'
+  {{- end }}
+  {{- end }}

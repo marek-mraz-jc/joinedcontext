@@ -1,0 +1,289 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "coordinates": [
+     14.596967059645575,
+     50.03218042195578
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "accessibility": {
+     "description": "volně",
+     "id": 1
+    },
+    "containers": [
+     {
+      "cleaning_frequency": {
+       "duration": "P4W",
+       "frequency": 4,
+       "id": 14,
+       "pick_days": "Út, St, Pá, Ne",
+       "next_pick": "2026-09-27"
+      },
+      "container_type": "1100 normální HV",
+      "trash_type": {
+       "description": "Papír",
+       "id": 5
+      },
+      "ksnko_id": 4,
+      "container_id": 4,
+      "is_monitored": false
+     },
+     {
+      "cleaning_frequency": {
+       "duration": "P4W",
+       "frequency": 4,
+       "id": 14,
+       "pick_days": "Út, St, Pá, Ne",
+       "next_pick": "2026-09-27"
+      },
+      "container_type": "1100 normální HV",
+      "trash_type": {
+       "description": "Papír",
+       "id": 5
+      },
+      "ksnko_id": 5,
+      "container_id": 5,
+      "is_monitored": false
+     },
+     {
+      "cleaning_frequency": {
+       "duration": "P4W",
+       "frequency": 4,
+       "id": 14,
+       "pick_days": "Út, Čt, Pá, Ne",
+       "next_pick": "2026-09-27"
+      },
+      "container_type": "1100 normální HV",
+      "trash_type": {
+       "description": "Multikomoditní sběr",
+       "id": 9
+      },
+      "ksnko_id": 39586,
+      "container_id": 39586,
+      "is_monitored": false
+     },
+     {
+      "cleaning_frequency": {
+       "duration": "P4W",
+       "frequency": 4,
+       "id": 14,
+       "pick_days": "Út, Čt, Pá, Ne",
+       "next_pick": "2026-09-27"
+      },
+      "container_type": "1100 normální HV",
+      "trash_type": {
+       "description": "Multikomoditní sběr",
+       "id": 9
+      },
+      "ksnko_id": 39587,
+      "container_id": 39587,
+      "is_monitored": false
+     },
+     {
+      "cleaning_frequency": {
+       "duration": "P1W",
+       "frequency": 1,
+       "id": 41,
+       "pick_days": "St",
+       "next_pick": "2026-10-07"
+      },
+      "container_type": "1100 mini H SV",
+      "trash_type": {
+       "description": "Kovy",
+       "id": 3
+      },
+      "last_measurement": {
+       "measured_at_utc": "2026-09-25T10:35:39.000Z",
+       "percent_calculated": 48,
+       "prediction_utc": "2026-10-11T16:35:39.000Z"
+      },
+      "last_pick": "2026-09-09T06:45:02.000Z",
+      "ksnko_id": 2,
+      "container_id": 2,
+      "sensor_code": "2",
+      "sensor_supplier": "Sensority",
+      "sensor_id": "Sensority_2530163262",
+      "is_monitored": true
+     },
+     {
+      "cleaning_frequency": {
+       "duration": "P1W",
+       "frequency": 1,
+       "id": 61,
+       "pick_days": "St",
+       "next_pick": "2026-10-14"
+      },
+      "container_type": "2500 Reflex SV",
+      "trash_type": {
+       "description": "Barevné sklo",
+       "id": 1
+      },
+      "last_measurement": {
+       "measured_at_utc": "2026-09-25T12:14:38.000Z",
+       "percent_calculated": 18,
+       "prediction_utc": "2026-12-22T08:48:57.000Z"
+      },
+      "last_pick": "2026-09-02T09:33:28.000Z",
+      "ksnko_id": 44338,
+      "container_id": 44338,
+      "sensor_code": "44338",
+      "sensor_supplier": "Sensority",
+      "sensor_id": "Sensority_1735905850",
+      "is_monitored": true
+     },
+     {
+      "cleaning_frequency": {
+       "duration": "P1W",
+       "frequency": 1,
+       "id": 61,
+       "pick_days": "St",
+       "next_pick": "2026-10-14"
+      },
+      "container_type": "2500 Reflex SV",
+      "trash_type": {
+       "description": "Barevné sklo",
+       "id": 1
+      },
+      "last_measurement": {
+       "measured_at_utc": "2026-09-25T12:39:36.000Z",
+       "percent_calculated": 32,
+       "prediction_utc": "2026-11-09T20:39:36.000Z"
+      },
+      "last_pick": "2026-09-02T09:38:49.000Z",
+      "ksnko_id": 44339,
+      "container_id": 44339,
+      "sensor_code": "44339",
+      "sensor_supplier": "Sensority",
+      "sensor_id": "Sensority_565378805",
+      "is_monitored": true
+     },
+     {
+      "cleaning_frequency": {
+       "duration": null,
+       "frequency": null,
+       "id": null
+      },
+      "container_type": "240 normální HV",
+      "trash_type": {
+       "description": "Jedlé tuky a oleje",
+       "id": 8
+      },
+      "ksnko_id": 28175,
+      "container_id": 28175,
+      "is_monitored": false
+     },
+     {
+      "cleaning_frequency": {
+       "duration": null,
+       "frequency": null,
+       "id": null
+      },
+      "container_type": "2150 MEVA SV",
+      "trash_type": {
+       "description": "Elektrozařízení",
+       "id": 2
+      },
+      "ksnko_id": 21382,
+      "container_id": 21382,
+      "is_monitored": false
+     }
+    ],
+    "district": "praha-22",
+    "id": 1,
+    "is_monitored": true,
+    "name": "Přátelství 356/61",
+    "station_number": "0022/ 001",
+    "updated_at": "2026-09-25T05:25:15.250Z"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "coordinates": [
+     14.34434369096752,
+     50.04735767344933
+    ],
+    "type": "Point"
+   },
+   "properties": {
+    "accessibility": {
+     "description": "volně",
+     "id": 1
+    },
+    "containers": [
+     {
+      "cleaning_frequency": {
+       "duration": "P5W",
+       "frequency": 5,
+       "id": 15,
+       "pick_days": "Po, Út, Čt, Pá, So",
+       "next_pick": "2026-09-26"
+      },
+      "container_type": "1100 normální HV",
+      "trash_type": {
+       "description": "Papír",
+       "id": 5
+      },
+      "ksnko_id": 3516,
+      "container_id": 3516,
+      "is_monitored": false
+     },
+     {
+      "cleaning_frequency": {
+       "duration": "P4W",
+       "frequency": 4,
+       "id": 14,
+       "pick_days": "Po, Út, Čt, So",
+       "next_pick": "2026-09-26"
+      },
+      "container_type": "1100 normální HV",
+      "trash_type": {
+       "description": "Multikomoditní sběr",
+       "id": 9
+      },
+      "ksnko_id": 37541,
+      "container_id": 37541,
+      "is_monitored": false
+     },
+     {
+      "cleaning_frequency": {
+       "duration": "P1W",
+       "frequency": 1,
+       "id": 61,
+       "pick_days": "St",
+       "next_pick": "2026-10-14"
+      },
+      "container_type": "2500 Reflex SV",
+      "trash_type": {
+       "description": "Barevné sklo",
+       "id": 1
+      },
+      "last_measurement": {
+       "measured_at_utc": "2026-09-25T11:40:07.000Z",
+       "percent_calculated": 8,
+       "prediction_utc": "2027-03-16T23:40:16.000Z"
+      },
+      "last_pick": "2026-07-22T08:02:58.000Z",
+      "ksnko_id": 3517,
+      "container_id": 3517,
+      "sensor_code": "3517",
+      "sensor_supplier": "Sensority",
+      "sensor_id": "Sensority_1356042629",
+      "is_monitored": true
+     }
+    ],
+    "district": "praha-13",
+    "id": 738,
+    "is_monitored": true,
+    "name": "Suchý vršek 2122/33",
+    "station_number": "0013/ 001",
+    "updated_at": "2026-09-25T05:25:15.250Z"
+   }
+  }
+ ]
+}

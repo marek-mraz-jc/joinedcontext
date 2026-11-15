@@ -1,0 +1,18 @@
+# The gtfs-routes pipeline writes GtfsRoute and GtfsAgency in one run (its mapping), but the Policy derived for its own
+# account pl-gtfs-routes grants only the output's one type (PL-20): every GtfsAgency was refused 403 on dev
+# (T-5717, the T-5320 shape). This grants the account both types and nothing else.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: gtfs-routes-account
+  namespace: helsinki
+  title: { en: The gtfs-routes pipeline writes its GtfsRoute and GtfsAgency entities }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: serviceAccount, id: pl-gtfs-routes }
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: GtfsRoute
+        - type: GtfsAgency

@@ -1,0 +1,9 @@
+# `apps.<name>` maps a file's path, `/` written as `__`, to its text (T-2599, AP-75). A release of
+# its own, apart from the bootstrap's: Helm keeps every release in one Secret of at most 1 MiB,
+# and the seed and the applications together outgrew it (T-3175).
+# The ConfigMaps' name before `-<app>`, the same in every release that carries some of the apps.
+configMaps: gitea-sample-apps
+apps: {}
+
+# Regex rewrites (from, to) applied to every seed file, in order (T-4678).
+rewrites: []

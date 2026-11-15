@@ -1,0 +1,48 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-alerts
+  namespace: helsinki
+  title: { en: Helsinki traffic alerts }
+  description:
+    fi: 'Liikennetiedotteet, tietyöt ja HSL:n häiriötiedotteet Helsingin seudulla. Lähteet: Fintraffic / digitraffic.fi ja HSL, CC BY 4.0.'
+    en: "Traffic announcements, road works and HSL's service alerts in the Helsinki area. Sources: Fintraffic / digitraffic.fi and HSL, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: dhiw4735mzyvwkrmszljpxcvvgv32q33
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-alerts
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  # Its own dataset in the hel-fi catalogue (T-4344): one type, every mandatory surface (EP-118).
+  catalog:
+    # Off the catalogue (T-5767, owner order 2026-10-26T06:33Z: an empty dataset leaves it): on dev
+    # none of its 30 current Fintraffic situations reached the broker.
+    # The harvest feeds leave it out (EP-139); publish it again once it holds data.
+    harvest: false
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Fintraffic / digitraffic.fi, CC BY 4.0'
+      sv: 'Källa: Fintraffic / digitraffic.fi, CC BY 4.0'
+      en: 'Source: Fintraffic / digitraffic.fi, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      fi: [liikennetiedotteet, tietyöt, liikenne]
+      sv: [trafikmeddelanden, vägarbeten, trafik]
+      en: [traffic announcements, road works, traffic]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/049
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/092
+    frequency: CONT
+    source:
+      - url: https://www.digitraffic.fi/en/road-traffic/
+        title: { fi: Digitraffic liikennetiedotteet, en: Digitraffic traffic messages }
+        description:
+          fi: Fintrafficin tietyöt ja liikennetiedotteet, CC BY 4.0.
+          en: Fintraffic's road works and traffic announcements, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: traffic-messages }

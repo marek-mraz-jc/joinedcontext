@@ -1,0 +1,16 @@
+# Residents per km² of the city, 1996 on. No key, CC-BY-SA-4.0.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-om7014rr
+  namespace: zilina
+  title:
+    sk: Hustota obyvateľstva (ŠÚ SR, om7014rr)
+    en: Population density (ŠÚ SR, om7014rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/om7014rr/SK031B517402/*/*?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

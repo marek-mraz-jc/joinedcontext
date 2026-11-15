@@ -1,0 +1,17 @@
+# Street lights of Žilina from the city's open data portal into zilina-doprava through its one Endpoint (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: svietidla
+  namespace: zilina
+  title: { sk: Pouličné svietidlá, en: Street lights }
+spec:
+  class: auto
+  # A register: once a day, before dawn, each light written exactly as the portal lists it.
+  period: 24h
+  schedule: '37 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: zilina-opendata-svietidla }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-doprava:zilina-doprava
+  output: { type: Streetlight, mode: replace }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 50 }

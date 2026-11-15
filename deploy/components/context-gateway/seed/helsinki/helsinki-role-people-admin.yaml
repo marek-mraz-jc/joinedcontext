@@ -1,0 +1,12 @@
+# PF-91: creates, edits, disables and deletes the people of the organization's realm; what they
+# may do stays with the bindings. The Portal refuses a people administrator every write on a
+# person who holds a right they lack (PF-93), so this role opens no stronger account.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: people-admin
+  namespace: org
+spec:
+  rules:
+    - kinds: [Person]
+      verbs: [read, create, update, disable, delete]

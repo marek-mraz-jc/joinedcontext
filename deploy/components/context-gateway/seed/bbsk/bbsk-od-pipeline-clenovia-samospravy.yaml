@@ -1,0 +1,24 @@
+# One Person per row of "Členovia samosprávy" (T-4255); public office holders, published under Act 211/2000.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-clenovia-samospravy
+  namespace: bbsk
+  title:
+    sk: Členovia samosprávy
+    en: Členovia samosprávy
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 0 1 * * 0
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-clenovia-samospravy
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: Person
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

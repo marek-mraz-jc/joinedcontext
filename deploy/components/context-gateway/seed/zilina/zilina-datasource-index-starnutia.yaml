@@ -1,0 +1,16 @@
+# The age-structure indices of the city (ageing index, mean age, dependency), as ŠÚ SR computes them, 1996 on. No key, CC-BY-SA-4.0.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-om7052rr
+  namespace: zilina
+  title:
+    sk: Indexy vekového zloženia (ŠÚ SR, om7052rr)
+    en: Age-structure indices (ŠÚ SR, om7052rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/om7052rr/SK031B517402/*/*/*?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

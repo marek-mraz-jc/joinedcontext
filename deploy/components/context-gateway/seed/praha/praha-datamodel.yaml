@@ -1,0 +1,48 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: praha-mesto
+  namespace: praha
+  title: { cs: Praha — městská data, en: Prague city data }
+spec:
+  contextSpaceRef: praha-mesto
+  linkml: ./praha.linkml.yaml
+  version: 1.1.0
+  lifecycle: published
+  classes:
+    - BikeHireDockingStation
+    - AirQualityObserved
+    - PointOfInterest
+    - WasteContainerIsle
+    - WasteContainer
+    - OffStreetParking
+    - AdministrativeArea
+    - BudgetLine
+    - Vehicle
+    - TrafficFlowObserved
+    - EmissionSource
+    - RadonRiskArea
+    - FloodZone
+    - FloodDefence
+    - NoiseZone
+    - WeatherObserved
+    - PublicTransportRoute
+    - GtfsStop
+    - GtfsAccessPoint
+    - FareZone
+    - Garden
+    - Tree
+    - OnStreetParking
+    - ParkingGroup
+    - RestrictedTrafficArea
+    - FareCollectionSystem
+    - BikeLane
+    - RoadSegment
+    - GreenAsset
+    - KeyPerformanceIndicator
+    - CityWork
+  artifacts:
+    jsonSchema: ./praha.v1.schema.json
+    context: ./praha.v1.context.jsonld
+    docs: ./praha.v1.md
+    example: ./praha.v1.example.jsonld

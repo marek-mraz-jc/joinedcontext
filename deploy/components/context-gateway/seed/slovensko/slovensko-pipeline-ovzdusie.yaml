@@ -1,0 +1,21 @@
+# One AirQualityObserved per Slovak station, written into ovzdusie-sk through its one Endpoint (T-4340).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: ovzdusie
+  namespace: slovensko
+  title:
+    sk: Kvalita ovzdušia — Slovensko
+    en: Air quality, Slovakia
+spec:
+  class: auto
+  # EEA publishes each hour about 25 minutes after it ends; a read at minute 40 finds it (PL-26).
+  period: 1h
+  schedule: '40 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: eea-sk-stations }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:ovzdusie-sk:ovzdusie-sk
+  output: { type: AirQualityObserved, mode: upsert }
+  # The files are read one at a time, so one decoded file (about 7,000 rows) is the most it holds of
+  # them; the first run's week of 53 stations (8,883 entities) peaked at 231 MB (VmHWM, 2026-10-16).
+  quotas: { maxMemoryMb: 512, cpuMillicores: 100 }

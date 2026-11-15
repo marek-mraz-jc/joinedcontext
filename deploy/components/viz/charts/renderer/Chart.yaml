@@ -1,0 +1,6 @@
+apiVersion: v2
+name: renderer
+description: The visualization renderer - a static host page and a sandboxed Vega renderer on viz.{domain}
+type: application
+version: 0.1.0
+appVersion: '1.0.0'

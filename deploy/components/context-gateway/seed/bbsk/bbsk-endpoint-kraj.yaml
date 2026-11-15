@@ -1,0 +1,73 @@
+# The one door of the raw space. Not public: these rows are somebody else's published data,
+# mirrored here for the pipelines that read them, and republishing them under our own name at
+# our own URL is not ours to do. The region's open numbers are the indicators, and those have
+# their own public endpoint.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bbsk-kraj
+  namespace: bbsk
+  title:
+    sk: Banskobystrický kraj — zdrojové údaje
+    en: Banská Bystrica Region, raw data
+spec:
+  contextSpaceRef: bbsk-kraj
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:app-bbsk-zaznamy-1
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:app-bbsk-zaznamy-2-steward
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:kraj-public-read
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:kraj-steward-note
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:kraj-steward-read
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kraj:pipelines-write
+  slug: 7u4ns3cdg2mqlx5gmxhk7rqai6pmokdj
+  audience: organization
+  enabledRepresentations: [ngsi-ld, mcp, csv, websocket, ogc-features, odata]
+  # CC BY-SA 4.0: both cubes are read from data.statistics.sk, whose distributions the national
+  # catalogue licenses CC BY-SA 4.0 (om7102rr; zp3803rs is catalogued only as its statdata copy, CC BY
+  # 4.0, and the stricter licence of the distribution actually read is kept). Population from 1993.
+  catalog:
+    publisher:
+      name: { sk: Banskobystrický samosprávny kraj, en: Banská Bystrica Self-Governing Region }
+      uri: https://www.bbsk.sk/
+    license: CC_BYSA_4_0
+    attribution:
+      sk: 'Zdroj: Štatistický úrad SR (DATAcube om7102rr, zp3803rs), CC BY-SA 4.0'
+      en: 'Source: Statistical Office of the SR (DATAcube om7102rr, zp3803rs), CC BY-SA 4.0'
+    themes: [SOCI, ENVI, REGI]
+    keywords:
+      sk: [obyvateľstvo, emisie, tuhé znečisťujúce látky, kraj, okresy]
+      en: [population, emissions, particulate matter, region, districts]
+    spatial:
+      - SK032
+      - https://data.gov.sk/id/lau1/SK0321
+      - https://data.gov.sk/id/lau1/SK0322
+      - https://data.gov.sk/id/lau1/SK0323
+      - https://data.gov.sk/id/lau1/SK0324
+      - https://data.gov.sk/id/lau1/SK0325
+      - https://data.gov.sk/id/lau1/SK0326
+      - https://data.gov.sk/id/lau1/SK0327
+      - https://data.gov.sk/id/lau1/SK0328
+      - https://data.gov.sk/id/lau1/SK0329
+      - https://data.gov.sk/id/lau1/SK032A
+      - https://data.gov.sk/id/lau1/SK032B
+      - https://data.gov.sk/id/lau1/SK032C
+      - https://data.gov.sk/id/lau1/SK032D
+    temporal: { start: '1993-01-01' }
+    frequency: WEEKLY
+    source:
+      - url: https://data.slovensko.sk/datasety/5be7a861-025b-4189-b01f-bd64546304ad
+        title:
+          sk: Stav obyvateľstva (ŠÚ SR, om7102rr)
+          en: Resident population (Statistical Office of the SR, om7102rr)
+        description:
+          sk: Počet obyvateľov podľa pohlavia za kraj a okresy, ročne; distribúcia data.statistics.sk pod CC BY-SA 4.0.
+          en: Residents by sex for the region and its districts, yearly; the data.statistics.sk distribution under CC BY-SA 4.0.
+      - url: https://data.slovensko.sk/datasety/52995c9e8fc3d0bd50b072323d406fde
+        title:
+          sk: Emisie základných znečisťujúcich látok (ŠÚ SR, zp3803rs)
+          en: Emissions of basic pollutants (Statistical Office of the SR, zp3803rs)
+        description:
+          sk: Emisie tuhých látok z veľkých a stredných zdrojov na km², kraj a okresy, 2019 až 2023.
+          en: Solid particulate emissions from large and medium sources per km², the region and its districts, 2019 to 2023.
+    pipelineRef: { kind: Pipeline, name: obyvatelstvo }

@@ -1,0 +1,411 @@
+# The mapping of the statistics-okresy pipeline (T-5274): the hub's tables of the okresy Bratislava I to V as Smart Data Models
+# KeyPerformanceIndicator, one entity per table, figure, breakdown, area and period. One mapping
+# text for every Feature Service statistics table of the matrix (Research/bratislava-open-data.md
+# 6.4): the statistics, statistics-okresy, statistics-mesto and statistics-denne pipelines run the same text
+# and differ only in `tables` below, split by area (the daily tables apart) so that one run fits its memory quota. A table is
+# one line of `tables`, never a pipeline of its own. The bratislava-hub DataSource answers the
+# hub's list of services; a table the list no longer names is logged and left out. Each table is
+# read in pages of 1,000 rows, at most 20; a table that holds more fails instead of writing part
+# of it. A table of events or bookings is read as the hub's own counts and sums per group (T-5671).
+# Nothing here deletes.
+pipeline:
+  processors:
+    - mapping: |
+        # name: the id prefix and the dataset's Endpoint idPattern; path: the Feature Service as the
+        # hub's URL writes it; areas: district (the 17 city districts), okres (Bratislava I to V),
+        # city (Bratislava as a whole), zsj (the census's basic settlement units of the city), obec
+        # (the municipalities of the Bratislava Region) or kraj (the Bratislava region, NUTS 3 SK010);
+        # area: the area column (a zsj's 7-digit code), none for a table of the city alone; label: a
+        # zsj's name column, within: its city district's code column; year: the period column (a
+        # year, a range of years, two ranges compared, a day or a month such as 2018-06), quarter:
+        # its quarter column, month: its month column (1 to 12), spans: the range each year of it
+        # stands for (a model's 1991 is 1991-2021), or fixed: the year or range the table's title or
+        # the item's description names; by: breakdown columns (age, sex,
+        # category), each one segment of the id and one part of the name, or {code, name, optional}:
+        # the id segment from the code column, the name part from the name column (a budget item's
+        # code and title), an optional one left out of both where its cell is empty; abs: the figure
+        # without its sign (an age pyramid writes the men's side negative); only: [column, prefix]
+        # keeps the rows of one breakdown (all school founders, not the districts' own schools);
+        # values: [column, id segment, Slovak label, minimum, maximum], null where no bound holds.
+        # A table of events or bookings asks the hub for sums: group: the columns or expressions
+        # (SUBSTRING of a date) one figure stands for, in the order the hub names its answer
+        # (an expression answers as EXPR_1); stats: [statistic, column or expression, answer
+        # column]; where: the rows counted (the year-end month of a running ledger); labels: a
+        # breakdown code by its Slovak word; past: a period that starts after today is a wrong
+        # date in the ledger, dropped.
+        let tables = [
+          {"name": "buduci-bytovy-fond-v-okresoch-bsk-v", "item": "5581185b07bb4010aa6aa7066aa60343", "path": "Bud%C3%BAci_bytov%C3%BD_fond_v_okresoch_BSK_v_rokoch_2031_-_2051", "title": "Budúci bytový fond v okresoch BSK v rokoch 2031 - 2051", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["POCET_BYTOV_V_TIS", "pocet-bytov-v-tis", "Budúci bytový fond v okresoch BSK v rokoch 2031 - 2051", 0, null]]},
+          {"name": "miera-objasnenosti-trestnych-cinov-v", "item": "661e8890ae104ce1a2344acbc9d82485", "path": "Miera%20objasnenosti%20trestn%C3%BDch%20%C4%8Dinov%20%28v%20%29", "title": "Miera objasnenosti trestných činov (v %)", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Typ"], "values": [["Miera", "miera", "Miera objasnenosti trestných činov (v %)", null, null]]},
+          {"name": "miery-plodnosti-zien-v-okresoch-v", "item": "6b53ee64ea444af2bb69b06f4dbc23df", "path": "Miery_plodnosti_%C5%BEien_v_okresoch_Bratislavy_v_rokoch_2017_%E2%80%93_2021", "title": "Miery plodnosti žien v okresoch Bratislavy v rokoch 2017 – 2021", "areas": "okres", "area": "OKRES", "fixed": "2017-2021", "by": ["VEK"], "values": [["MIERA_PLODNOSTI", "miera-plodnosti", "Miery plodnosti žien v okresoch Bratislavy v rokoch 2017 – 2021", null, null]]},
+          {"name": "migracna-efektivnost-okresov", "item": "4d53dbb2ae334f95a121343390dc0ad7", "path": "Migra%C4%8Dn%C3%A1_efekt%C3%ADvnos%C5%A5_okresov_Bratislavy", "title": "Migračná efektívnosť okresov Bratislavy", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["MIGRACNA_EFEKTIVNOST", "migracna-efektivnost", "Migračná efektívnosť okresov Bratislavy", null, null]]},
+          {"name": "migracne-saldo-okresov-na-1-000", "item": "43315a095c2748eb810c06b14b11171a", "path": "Migra%C4%8Dn%C3%A9_saldo_okresov_Bratislavy_%28na_1_000_obyvate%C4%BEov%29", "title": "Migračné saldo okresov Bratislavy (na 1 000 obyvateľov)", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["MIGRACNE_SALDO", "migracne-saldo", "Migračné saldo okresov Bratislavy (na 1 000 obyvateľov)", null, null]]},
+          {"name": "migracne-saldo-okresov-v-rokoch-2017-ba", "item": "4f26e20da16745e19d28b1404aa5d458", "path": "Migra%C4%8Dn%C3%A9_saldo_okresov_Bratislavy_v_rokoch_2017_%E2%80%93_2021_pod%C4%BEa_veku_a_pohlavia_%28mu%C5%BEi%29", "title": "Migračné saldo okresov Bratislavy v rokoch 2017 – 2021 podľa veku a pohlavia (muži)", "areas": "okres", "area": "OKRES", "fixed": "2017-2021", "by": ["VEK"], "values": [["MIGRACNE_SALDO", "migracne-saldo", "Migračné saldo okresov Bratislavy v rokoch 2017 – 2021 podľa veku a pohlavia (muži)", null, null]]},
+          {"name": "migracne-saldo-okresov-v-veku-a-pohlavia-zeny", "item": "223273ef75cc4e4a9c41afaa7ddda8c8", "path": "Migracne_saldo_okresov_Bratislavy_v_rokoch_2017_%E2%80%93_2021_podla_veku_a_pohlavia_%28zeny%29", "title": "Migračné saldo okresov Bratislavy v rokoch 2017 – 2021 podľa veku a pohlavia (ženy)", "areas": "okres", "area": "OKRES", "fixed": "2017-2021", "by": ["VEK"], "values": [["MIGRACNE_SALDO", "migracne-saldo", "Migračné saldo okresov Bratislavy v rokoch 2017 – 2021 podľa veku a pohlavia (ženy)", null, null]]},
+          {"name": "migracny-obrat-okresov-na-1-000", "item": "c638c7bd87a64996b38d9a4e19a02616", "path": "Migracny_obrat_okresov_Bratislavy_%28na_1_000_obyvatelov%29", "title": "Migračný obrat okresov Bratislavy (na 1 000 obyvateľov)", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["MIGRACNY_OBRAT", "migracny-obrat", "Migračný obrat okresov Bratislavy (na 1 000 obyvateľov)", null, null]]},
+          {"name": "objem-stahovania-medzi-mestskymi", "item": "5f3a8ab37a734f599d0f691f84b43f0e", "path": "Objem_stahovania_medzi_mestskymi_castami_v_ramci_jedneho_okresu", "title": "Objem sťahovania medzi mestskými časťami v rámci jedného okresu", "areas": "okres", "area": "OKRES", "year": "OBDOBIE", "values": [["OBJEM_STAHOVANIA", "objem-stahovania", "Objem sťahovania medzi mestskými časťami v rámci jedného okresu", null, null]]},
+          {"name": "objem-stahovania-medzi-na-1000-obyvatelov", "item": "53d72584395649a7b834b553b9c205f1", "path": "Objem_s%C5%A5ahovania_medzi_mestsk%C3%BDmi_%C4%8Das%C5%A5ami_v_r%C3%A1mci_jedn%C3%A9ho_okresu_na_1000_obyvate%C4%BEov", "title": "Objem sťahovania medzi mestskými časťami v rámci jedného okresu na 1000 obyvateľov", "areas": "okres", "area": "OKRES", "year": "OBDOBIE", "values": [["OBJEM_STAHOVANIA", "objem-stahovania", "Objem sťahovania medzi mestskými časťami v rámci jedného okresu na 1000 obyvateľov", null, null]]},
+          {"name": "ocakavany-vyvoj-domoveho-fondu-v", "item": "ebd798f317fb4f658e95806fe518eceb", "path": "O%C4%8Dak%C3%A1van%C3%BD_v%C3%BDvoj_domov%C3%A9ho_fondu_v_okresoch_BSK_v_rokoch_2031_-_2051", "title": "Očakávaný vývoj domového fondu v okresoch BSK v rokoch 2031 - 2051", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["POCET_DOMOV_V_TIS", "pocet-domov-v-tis", "Očakávaný vývoj domového fondu v okresoch BSK v rokoch 2031 - 2051", 0, null]]},
+          {"name": "podiel-zahranicnej-migracie-v-okresoch", "item": "bcfbe54e9f6b47598da67e198318d560", "path": "Podiel_zahrani%C4%8Dnej_migr%C3%A1cie_v_okresoch_Bratislavy_na_celkovom_migracnom_obrate_v_", "title": "Podiel zahraničnej migrácie v okresoch Bratislavy na celkovom migračnom obrate (v %)", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["PODIEL_ZAHRANICNEJ_MIGRACIE", "podiel-zahranicnej-migracie", "Podiel zahraničnej migrácie v okresoch Bratislavy na celkovom migračnom obrate (v %)", 0, 100]]},
+          {"name": "pocet-mladych-nezamestnanych-podla-veku", "item": "0e2e825e79d948e6a712c2bbd2876ca7", "path": "Po%C4%8Det%20mlad%C3%BDch%20nezamestnan%C3%BDch%20pod%C4%BEa%20veku%20a%20pohlavia", "title": "Počet mladých nezamestnaných podľa veku a pohlavia", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Spolu", "spolu", "Spolu", null, null], ["Spolu___muži", "spolu-muzi", "Spolu - muži", null, null], ["Spolu___ženy", "spolu-zeny", "Spolu - ženy", null, null], ["F16_až_17_rokov", "f16-az-17-rokov", "16 až 17 rokov", null, null], ["F16_až_17_rokov___muži", "f16-az-17-rokov-muzi", "16 až 17 rokov - muži", null, null], ["F16_až_17_rokov___ženy", "f16-az-17-rokov-zeny", "16 až 17 rokov - ženy", null, null], ["F17_až_18_rokov", "f17-az-18-rokov", "17 až 18 rokov", null, null], ["F17_až_18_rokov___muži", "f17-az-18-rokov-muzi", "17 až 18 rokov - muži", null, null], ["F17_až_18_rokov___ženy", "f17-az-18-rokov-zeny", "17 až 18 rokov - ženy", null, null], ["F18_až_19_rokov", "f18-az-19-rokov", "18 až 19 rokov", null, null], ["F18_až_19_rokov___muži", "f18-az-19-rokov-muzi", "18 až 19 rokov - muži", null, null], ["F18_až_19_rokov___ženy", "f18-az-19-rokov-zeny", "18 až 19 rokov - ženy", null, null], ["F19_až_20_rokov", "f19-az-20-rokov", "19 až 20 rokov", null, null], ["F19_až_20_rokov___muži", "f19-az-20-rokov-muzi", "19 až 20 rokov - muži", null, null], ["F19_až_20_rokov___ženy", "f19-az-20-rokov-zeny", "19 až 20 rokov - ženy", null, null], ["F20_až_25_rokov", "f20-az-25-rokov", "20 až 25 rokov", null, null], ["F20_až_25_rokov___muži", "f20-az-25-rokov-muzi", "20 až 25 rokov - muži", null, null], ["F20_až_25_rokov___ženy", "f20-az-25-rokov-zeny", "20 až 25 rokov - ženy", null, null], ["F25_až_30_rokov", "f25-az-30-rokov", "25 až 30 rokov", null, null], ["F25_až_30_rokov___muži", "f25-az-30-rokov-muzi", "25 až 30 rokov - muži", null, null], ["F25_až_30_rokov___ženy", "f25-az-30-rokov-zeny", "25 až 30 rokov - ženy", null, null]]},
+          {"name": "pocet-odbornych-zamestnancov-vo", "item": "35b7350298114d35bc3986274bf02701", "path": "Po%C4%8Det%20odborn%C3%BDch%20zamestnancov%20vo%20vzdel%C3%A1vac%C3%ADch%20in%C5%A1tit%C3%BAci%C3%A1ch%20v%20Bratislave", "title": "Počet odborných zamestnancov vo vzdelávacích inštitúciách v Bratislave", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Typ"], "values": [["Prepočítaný_počet", "prepocitany-pocet", "Prepočítaný počet", 0, null], ["Pedagogickí_zamestnanci", "pedagogicki-zamestnanci", "Pedagogickí zamestnanci", null, null], ["Odborní_zamestnanci", "odborni-zamestnanci", "Odborní zamestnanci", null, null]]},
+          {"name": "pocet-osob-ktorym-bol-poskytnuty", "item": "0256739a1ca1416d96a537edda0ac98d", "path": "Po%C4%8Det%20os%C3%B4b%20%20ktor%C3%BDm%20bol%20poskytnut%C3%BD%20aktiva%C4%8Dn%C3%BD%20pr%C3%ADspevok", "title": "Počet osôb, ktorým bol poskytnutý aktivačný príspevok", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Kategória"], "values": [["Počet", "pocet", "Počet osôb, ktorým bol poskytnutý aktivačný príspevok", 0, null]]},
+          {"name": "pocet-poberatelov-upsvar", "item": "82f235823ddb42fba12dad8e0d305444", "path": "Po%C4%8Det%20poberate%C4%BEov%20-%20%C3%9APSVaR", "title": "Počet poberateľov - ÚPSVaR", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Kategória"], "values": [["Počet", "pocet", "Počet poberateľov - ÚPSVaR", 0, null]]},
+          {"name": "pocet-poberatelov-nahradneho-vyzivneho", "item": "796b652508224c11926bc09e205981f6", "path": "Po%C4%8Det%20poberate%C4%BEov%20n%C3%A1hradn%C3%A9ho%20v%C3%BD%C5%BEivn%C3%A9ho", "title": "Počet poberateľov náhradného výživného", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["NV___neplatené_výživné", "nv-neplatene-vyzivne", "NV - neplatené výživné", null, null], ["NV___neplatené_výživné___z_toho", "nv-neplatene-vyzivne-z-toho", "NV - neplatené výživné - z toho ženy", null, null], ["NV___sirotský_dôchodok", "nv-sirotsky-dochodok", "NV - sirotský dôchodok", null, null], ["NV___sirotský_dôchodok___z_toho", "nv-sirotsky-dochodok-z-toho", "NV - sirotský dôchodok - z toho ženy", null, null]]},
+          {"name": "pocet-poberatelov-prispevku-na-byvanie", "item": "ee14a168b11641639b14675a9ebd2c29", "path": "Po%C4%8Det%20poberate%C4%BEov%20pr%C3%ADspevku%20na%20b%C3%BDvanie", "title": "Počet poberateľov príspevku na bývanie", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Spolu", "spolu", "Spolu", null, null], ["Posudzovaná_osoba_je_vlastník_b", "posudzovana-osoba-je-vlastnik-b", "Posudzovaná osoba je vlastník bytu alebo rodinného domu a súčasne uhrádza náklady spojené s bývaním", null, null], ["Posudzovaná_osoba_je_nájomca_by", "posudzovana-osoba-je-najomca-by", "Posudzovaná osoba je nájomca bytu, rodinného domu alebo obytnej miestnosti a súčasne uhrádza náklady", null, null], ["Posudzovaná_osoba_má_doživotné_", "posudzovana-osoba-ma-dozivotne", "Posudzovaná osoba má doživotné právo užívania", null, null], ["Posudzovaná_osoba_býva_v_zariad", "posudzovana-osoba-byva-v-zariad", "Posudzovaná osoba býva v zariadení sociálnych služieb a súčasne uhrádza náklady spojené s bývaním", null, null], ["Posudzovaná_osoba_je_nájomca__1", "posudzovana-osoba-je-najomca-1", "Posudzovaná osoba je nájomca bytu s viacerými nájomcami a súčasne uhrádza náklady spojené s bývaním", null, null]]},
+          {"name": "pocet-stihanych-a-vysetrovanych-mladych", "item": "4571ebf8a982479987de947a3093b020", "path": "Po%C4%8Det%20st%C3%ADhan%C3%BDch%20a%20vy%C5%A1etrovan%C3%BDch%20mlad%C3%BDch", "title": "Počet stíhaných a vyšetrovaných mladých", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Typ"], "values": [["Spolu", "spolu", "Spolu", null, null], ["Ukončené", "ukoncene", "Ukončené", null, null], ["Deti_do_14_rokov", "deti-do-14-rokov", "Deti do 14 rokov", null, null], ["F14___18_rokov", "f14-18-rokov", "14 - 18 rokov", null, null], ["F19___30_rokov", "f19-30-rokov", "19 - 30 rokov", null, null]]},
+          {"name": "pocet-stihanych-a-podla-vzdelania", "item": "0871c1140cc647e080d13c98cb8bf6b3", "path": "Po%C4%8Det%20st%C3%ADhan%C3%BDch%20a%20vy%C5%A1etrovan%C3%BDch%20mlad%C3%BDch%20pod%C4%BEa%20vzdelania", "title": "Počet stíhaných a vyšetrovaných mladých podľa vzdelania", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Typ"], "values": [["Základná_škola", "zakladna-skola", "Základná škola", null, null], ["Stredná_škola", "stredna-skola", "Stredná škola", null, null], ["Vysoká_škola", "vysoka-skola", "Vysoká škola", null, null]]},
+          {"name": "pocet-uchadzacov-o-zamestnanie", "item": "9563bf8e2cba4d9cb38080e37c344f0a", "path": "Po%C4%8Det%20uch%C3%A1dza%C4%8Dov%20o%20zamestnanie%20%28absolventi%29%20pod%C4%BEa%20po%C4%8Dtu%20mesiacov%20v%20evidencii%20UPS", "title": "Počet uchádzačov o zamestnanie (absolventi) podľa počtu mesiacov v evidencii UPS", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["F0_3_mesiacov", "f0-3-mesiacov", "0-3 mesiacov", null, null], ["F4_6_mesiacov", "f4-6-mesiacov", "4-6 mesiacov", null, null], ["F7_9_mesiacov", "f7-9-mesiacov", "7-9 mesiacov", null, null], ["F10_12_mesiacov", "f10-12-mesiacov", "10-12 mesiacov", null, null], ["F13_18_mesiacov", "f13-18-mesiacov", "13-18 mesiacov", null, null], ["F19_24_mesiacov", "f19-24-mesiacov", "19-24 mesiacov", null, null], ["Nad_24_mesiacov", "nad-24-mesiacov", "Nad 24 mesiacov", null, null], ["Spolu", "spolu", "Spolu", null, null]]},
+          {"name": "predpokladane-migracne-saldo-okresov-do", "item": "c318a7f355514bca830777c0c96bd1d7", "path": "Predpokladane_migracne_saldo_okresov_Bratislavy_do_roku_2035", "title": "Predpokladané migračné saldo okresov Bratislavy do roku 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["MIGRACNE_SALDO", "migracne-saldo", "Predpokladané migračné saldo okresov Bratislavy do roku 2035", null, null]]},
+          {"name": "priemerna-nominalna-mesacna-mzda", "item": "0aa1130738a54da5bac4c3eb4d6c41be", "path": "Priemern%C3%A1%20mesa%C4%8Dn%C3%A1%20mzda%20zamestnanca%20%28v%20%E2%82%AC%29%20v%20stavebn%C3%BDch%20podnikoch%20s%2020%20a%20viac%20zamestnancami", "title": "Priemerná nominálna mesačná mzda zamestnanca (v eurách) v stavebných podnikoch s 20 a viac zamestn.", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Priemerná_mesačná_mzda_zamestna", "priemerna-mesacna-mzda-zamestna", "Priemerná nominálna mesačná mzda zamestnanca (v eurách) v stavebných podnikoch s 20 a viac zamestn.", null, null]]},
+          {"name": "priemerny-evidencny-pocet-zamestnancov", "item": "206afccee9874cdda049fd2fad8c6069", "path": "Priemern%C3%BD%20eviden%C4%8Dn%C3%BD%20po%C4%8Det%20zamestnancov%20v%20stavebn%C3%BDch%20podnikoch%20s%2020%20a%20viac%20zamestnancami", "title": "Priemerný evidenčný počet zamestnancov v stavebných podnikoch s 20 a viac zamestnancami", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Priemerný_evidenčný_počet_zames", "priemerny-evidencny-pocet-zames", "Priemerný evidenčný počet zamestnancov v stavebných podnikoch s 20 a viac zamestnancami", 0, null]]},
+          {"name": "priemerny-vek-obyvatelov-v-okresoch-v", "item": "c3346edaf81c4e1ba6f39bf6ef7f0a6a", "path": "Priemerny_vek_obyvate%C4%BEov_v_okresoch_Bratislavy_v_rokoch_2000_%E2%80%93_2021_", "title": "Priemerný vek obyvateľov v okresoch Bratislavy v rokoch 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Priemerný vek obyvateľov v okresoch Bratislavy v rokoch 2000 – 2021", null, null]]},
+          {"name": "priemerny-vek-pri-sobasi-muzov-v", "item": "89e43a45b12e49ffa078dafa526bc116", "path": "Priemern%C3%BD_vek_pri_sob%C3%A1%C5%A1i_mu%C5%BEov_v_okresoch_Bratislavy_v_obdobiach_rokov_2000_%E2%80%93_2021", "title": "Priemerný vek pri sobáši mužov v okresoch Bratislavy v obdobiach rokov 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "OBDOBIE", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Priemerný vek pri sobáši mužov v okresoch Bratislavy v obdobiach rokov 2000 – 2021", null, null]]},
+          {"name": "priemerny-vek-pri-sobasi-zien-v", "item": "2f365f2e1261411fa72bb0671170a7dd", "path": "Priemern%C3%BD_vek_pri_sob%C3%A1%C5%A1i_%C5%BEien_v_okresoch_Bratislavy_v_obdobiach_rokov_2000_%E2%80%93_2021", "title": "Priemerný vek pri sobáši žien v okresoch Bratislavy v obdobiach rokov 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "OBDOBIE", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Priemerný vek pri sobáši žien v okresoch Bratislavy v obdobiach rokov 2000 – 2021", null, null]]},
+          {"name": "priemerny-vek-zien-pri-v-rokoch-2000-2021-ba", "item": "04189561d47a4f5593a81189ffe90b97", "path": "Priemern%C3%BD_vek_%C5%BEien_pri_naroden%C3%AD_die%C5%A5a%C5%A5a_v_okresoch_Bratislavy_v_rokoch_2000_%E2%80%93_2021", "title": "Priemerný vek žien pri narodení dieťaťa v okresoch Bratislavy v rokoch 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Priemerný vek žien pri narodení dieťaťa v okresoch Bratislavy v rokoch 2000 – 2021", null, null]]},
+          {"name": "priemerny-vek-zien-pri-v-rokoch-2000-2021-2", "item": "3516d562b4a34f63bf66e41bfa1e918b", "path": "Priemern%C3%BD_vek_%C5%BEien_pri_naroden%C3%AD_prv%C3%A9ho_die%C5%A5a%C5%A5a_v_okresoch_Bratislavy_v_rokoch_2000_%E2%80%93_2021", "title": "Priemerný vek žien pri narodení prvého dieťaťa v okresoch Bratislavy v rokoch 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Priemerný vek žien pri narodení prvého dieťaťa v okresoch Bratislavy v rokoch 2000 – 2021", null, null]]},
+          {"name": "prognozovana-zmena-hlavnych-vekovych", "item": "7fbde44412344fe5abbb3b8c452a6873", "path": "Prognozovan%C3%A1_zmena_hlavn%C3%BDch_vekov%C3%BDch_skup%C3%ADn_obyvate%C4%BEstva_okresov_BA_v_rokoch_2022_a_2035", "title": "Prognózovaná zmena hlavných vekových skupín obyvateľstva okresov BA v rokoch 2022 a 2035", "areas": "okres", "area": "OKRES", "fixed": "2022-2035", "by": ["VEK"], "values": [["ZMENA__", "zmena", "Prognózovaná zmena hlavných vekových skupín obyvateľstva okresov BA v rokoch 2022 a 2035", null, null]]},
+          {"name": "prognozovany-celkovy-prirastok", "item": "f58be37254a644c3b1be03c8a2c416db", "path": "Progn%C3%B3zovan%C3%BD_celkov%C3%BD_pr%C3%ADrastok_obyvate%C4%BEov_okresov_Bratislavy_v_rokoch_2022_%E2%80%93_2035", "title": "Prognózovaný celkový prírastok obyvateľov okresov Bratislavy v rokoch 2022 – 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["CELKOVY_PRIRASTOK", "celkovy-prirastok", "Prognózovaný celkový prírastok obyvateľov okresov Bratislavy v rokoch 2022 – 2035", null, null]]},
+          {"name": "prognozovany-index-starnutia", "item": "1866c2404c7340b8bd4234cae38a62f4", "path": "Prognozovany_index_starnutia_obyvatelstva_okresov_Bratislavy_v_rokoch_2022_%E2%80%93_2035", "title": "Prognózovaný index starnutia obyvateľstva okresov Bratislavy v rokoch 2022 – 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["INDEX_STARNUTIA", "index-starnutia", "Prognózovaný index starnutia obyvateľstva okresov Bratislavy v rokoch 2022 – 2035", null, null]]},
+          {"name": "prognozovany-pocet-obyvatelov-okresov-v", "item": "0970f66cb8ed46d384a6b84c525fc87a", "path": "Prognozovany_pocet_obyvatelov_okresov_Bratislavy_v_rokoch_2022_%E2%80%93_2035", "title": "Prognózovaný počet obyvateľov okresov Bratislavy v rokoch 2022 – 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["POCET_OBYVATELOV", "pocet-obyvatelov", "Prognózovaný počet obyvateľov okresov Bratislavy v rokoch 2022 – 2035", 0, null]]},
+          {"name": "prognozovany-priemerny-vek-obyvatelstva", "item": "db832c51bb1f42ffa2c58b4e2ffa359b", "path": "Progn%C3%B3zovan%C3%BD_priemern%C3%BD_vek_obyvate%C4%BEstva_okresov_Bratislavy_v_rokoch_2022_%E2%80%93_2035", "title": "Prognózovaný priemerný vek obyvateľstva okresov Bratislavy v rokoch 2022 – 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["PRIEMERNY_VEK", "priemerny-vek", "Prognózovaný priemerný vek obyvateľstva okresov Bratislavy v rokoch 2022 – 2035", null, null]]},
+          {"name": "prognozovany-prirodzeny-prirastok", "item": "0d24b780f9b84ca09721cdc18b166e8f", "path": "Prognozovany_prirodzeny_prirastok_obyvatelov_okresov_Bratislavy_v_rokoch_2022_%E2%80%93_2035", "title": "Prognózovaný prirodzený prírastok obyvateľov okresov Bratislavy v rokoch 2022 – 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["PRIRODZENY_PRIRASTOK", "prirodzeny-prirastok", "Prognózovaný prirodzený prírastok obyvateľov okresov Bratislavy v rokoch 2022 – 2035", null, null]]},
+          {"name": "prognozovany-vyvoj-indexu-ekonomickeho", "item": "3cba3617a04e46c080455d5b54d148ae", "path": "Progn%C3%B3zovan%C3%BD_v%C3%BDvoj_indexu_ekon_za%C5%A5a%C5%BEenia_obyvate%C4%BEstva_okresov_BA_v_rokoch_2022_%E2%80%93_2035_", "title": "Prognózovaný vývoj indexu ekonomického zaťaženia obyv. okresov BA v rokoch 2022 – 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["INDEX_EKON_ZATAZ", "index-ekon-zataz", "Prognózovaný vývoj indexu ekonomického zaťaženia obyv. okresov BA v rokoch 2022 – 2035", null, null]]},
+          {"name": "prognozovany-vyvoj-strednej-dlzky", "item": "c0fe26d86ed046898639ff14b5d95fe5", "path": "Progn%C3%B3zovan%C3%BD_v%C3%BDvoj_strednej_d%C4%BA%C5%BEky_%C5%BEivota_mu%C5%BEov_pri_naroden%C3%AD_v_okresoch_BA_v_r_2022_%E2%80%93_2035", "title": "Prognózovaný vývoj strednej dĺžky života mužov pri narodení v okresoch BA v r. 2022 – 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["STREDNA_DLZKA_ZIVOTA", "stredna-dlzka-zivota", "Prognózovaný vývoj strednej dĺžky života mužov pri narodení v okresoch BA v r. 2022 – 2035", null, null]]},
+          {"name": "prognozovany-vyvoj-ba-v-r-2022-2035-ba", "item": "e9843de74e394985bba6eee4e4e9b009", "path": "Progn%C3%B3zovan%C3%BD_v%C3%BDvoj_strednej_d%C4%BA%C5%BEky_%C5%BEivota_%C5%BEien_pri_naroden%C3%AD_v_okresoch_BA_v_r_2022_%E2%80%93_2035", "title": "Prognózovaný vývoj strednej dĺžky života žien pri narodení v okresoch BA v r. 2022 – 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["STREDNA_DLZKA_ZIVOTA", "stredna-dlzka-zivota", "Prognózovaný vývoj strednej dĺžky života žien pri narodení v okresoch BA v r. 2022 – 2035", null, null]]},
+          {"name": "prognozovany-vyvoj-uhrnnej-plodnosti-v", "item": "6d4653cb12ef428e882c6bde18b2f98c", "path": "Progn%C3%B3zovan%C3%BD_v%C3%BDvoj_%C3%BAhrnnej_plodnosti_v_okresoch_Bratislavy_do_roku_2035", "title": "Prognózovaný vývoj úhrnnej plodnosti v okresoch Bratislavy do roku 2035", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["UHRNNA_PLODNOST", "uhrnna-plodnost", "Prognózovaný vývoj úhrnnej plodnosti v okresoch Bratislavy do roku 2035", null, null]]},
+          {"name": "saldo-zahranicnej-migracie-okresov-na-1", "item": "a01ff5672a31472890107eb08054c14d", "path": "Saldo_zahrani%C4%8Dnej_migr%C3%A1cie_okresov_Bratislavy_%28na_1_000_obyvate%C4%BEov%29", "title": "Saldo zahraničnej migrácie okresov Bratislavy (na 1 000 obyvateľov)", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["MIGRACNE_SALDO", "migracne-saldo", "Saldo zahraničnej migrácie okresov Bratislavy (na 1 000 obyvateľov)", null, null]]},
+          {"name": "vzdelanostna-struktura-v-okresoch-sodb-2021-ba", "item": "089a837e202d470d8d1368726fda42c8", "path": "Vzdelanostn%C3%A1_%C5%A1trukt%C3%BAra_mu%C5%BEov_vo_veku_15_a_viac_rokov_v_okresoch_Bratislavy_SODB_2021", "title": "Vzdelanostná štruktúra mužov vo veku 15 a viac rokov v okresoch Bratislavy (SODB 2021)", "areas": "okres", "area": "OKRES", "fixed": "2021", "by": ["VZDELANIE"], "values": [["PODIEL", "podiel", "Vzdelanostná štruktúra mužov vo veku 15 a viac rokov v okresoch Bratislavy (SODB 2021)", 0, 100]]},
+          {"name": "vzdelanostna-struktura-v-okresoch-sodb-2021-2", "item": "bf5dfe3703de4673b1cf583717194e86", "path": "Vzdelanostn%C3%A1_%C5%A1trukt%C3%BAra_%C5%BEien_vo_veku_15_a_viac_rokov_v_okresoch_Bratislavy_%28SODB_2021%29", "title": "Vzdelanostná štruktúra žien vo veku 15 a viac rokov v okresoch Bratislavy (SODB 2021)", "areas": "okres", "area": "OKRES", "fixed": "2021", "by": ["VZDELANIE"], "values": [["PODIEL", "podiel", "Vzdelanostná štruktúra žien vo veku 15 a viac rokov v okresoch Bratislavy (SODB 2021)", 0, 100]]},
+          {"name": "vyvoj-miery-registrovanej", "item": "388cffa1b2e548e9b2c44d7b856ed514", "path": "V%C3%BDvoj_miery_registrovanej_nezamestnanosti_v_okresoch_BA_a_na_SR_ku_koncu_rokov_2008_2021", "title": "Vývoj miery registrovanej nezamestnanosti v okresoch BA a na SR ku koncu rokov 2008 - 2021", "areas": "okres", "area": "UZEMIE", "year": "ROK", "values": [["NEZAMESTNANOST_V__", "nezamestnanost-v", "Vývoj miery registrovanej nezamestnanosti v okresoch BA a na SR ku koncu rokov 2008 - 2021", 0, 100]]},
+          {"name": "vyvoj-poctu-obyvatelov-mestskych", "item": "d6feb08928ec4615b6aa8f1b8b6bc6f6", "path": "V%C3%BDvoj_po%C4%8Dtu_obyvate%C4%BEov_mestsk%C3%BDch_okresov_Bratislavy_v_rokoch_2000_%E2%80%93_2021", "title": "Vývoj počtu obyvateľov mestských okresov Bratislavy v rokoch 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["POCET_OBYVATELOV", "pocet-obyvatelov", "Vývoj počtu obyvateľov mestských okresov Bratislavy v rokoch 2000 – 2021", 0, null]]},
+          {"name": "vyvoj-strednej-dlzky-zivota-pri", "item": "59e799f0d0bd4734b38c90dcd15a4d31", "path": "V%C3%BDvoj_strednej_d%C4%BA%C5%BEky_%C5%BEivota_pri_naroden%C3%AD_mu%C5%BEov_v_okresoch_BA_v_obdobiach_rokov_2000_%E2%80%93_2021", "title": "Vývoj strednej dĺžky života pri narodení mužov v okresoch BA v obdobiach rokov 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "OBDOBIE", "values": [["STREDNA_DLZKA_ZIVOTA", "stredna-dlzka-zivota", "Vývoj strednej dĺžky života pri narodení mužov v okresoch BA v obdobiach rokov 2000 – 2021", null, null]]},
+          {"name": "vyvoj-strednej-dlzky-rokov-2000-2021-ba", "item": "95c6c6f38f004692a55bea33d5935927", "path": "V%C3%BDvoj_strednej_dl%C4%BA%C5%BEky_%C5%BEivota_pri_naroden%C3%AD_%C5%BEien_v_okresoch_BA_v_obdobiach_rokov_2000_%E2%80%93_2021", "title": "Vývoj strednej dĺžky života pri narodení žien v okresoch BA v obdobiach rokov 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "OBDOBIE", "values": [["STREDNA_DLZKA_ZIVOTA", "stredna-dlzka-zivota", "Vývoj strednej dĺžky života pri narodení žien v okresoch BA v obdobiach rokov 2000 – 2021", null, null]]},
+          {"name": "vyvoj-uhrnnej-plodnosti-zien-v-okresoch", "item": "a0ba4646f6094d1081c619e76ebacb86", "path": "V%C3%BDvoj_%C3%BAhrnnej_plodnosti_%C5%BEien_v_okresoch_Bratislavy_v_rokoch_2000_%E2%80%93_2021_", "title": "Vývoj úhrnnej plodnosti žien v okresoch Bratislavy v rokoch 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["UHRNNA_PLODNOST", "uhrnna-plodnost", "Vývoj úhrnnej plodnosti žien v okresoch Bratislavy v rokoch 2000 – 2021", null, null]]},
+          {"name": "vyska-mzdy-v-sektore-vzdelavanie", "item": "83a61076cae54912a9b64f471b38a069", "path": "V%C3%BD%C5%A1ka%20mzdy%20v%20sektore%20vzdel%C3%A1vanie%20v%20meste%20Bratislava", "title": "Výška mzdy v sektore \"vzdelávanie\" v meste Bratislava", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Kategória"], "values": [["Hodnota", "hodnota", "Výška mzdy v sektore \"vzdelávanie\" v meste Bratislava", null, null]]},
+          {"name": "zmena-poctu-obyvatelov-v-okresoch-medzi", "item": "7d708f03d1f743e89853b7177264f554", "path": "Zmena_po%C4%8Dtu_obyvate%C4%BEov_v_okresoch_Bratislavy_medzi_rokom_2000_a_2021", "title": "Zmena počtu obyvateľov v okresoch Bratislavy medzi rokom 2000 a 2021", "areas": "okres", "area": "OKRES", "fixed": "2000-2021", "values": [["ZMENA", "zmena", "Zmena počtu obyvateľov v okresoch Bratislavy medzi rokom 2000 a 2021", null, null]]},
+          {"name": "zmena-priemerneho-veku-obyvatelstva", "item": "970eb74db22b488c8175df085641c822", "path": "Zmena_priemern%C3%A9ho_veku_obyvate%C4%BEstva_okresov_Bratislavy_medzi_rokom_2000_a_2021", "title": "Zmena priemerného veku obyvateľstva okresov Bratislavy medzi rokom 2000 a 2021", "areas": "okres", "area": "OKRES", "fixed": "2000-2021", "values": [["ZMENA", "zmena", "Zmena priemerného veku obyvateľstva okresov Bratislavy medzi rokom 2000 a 2021", null, null]]},
+          {"name": "udaje-za-kriminalitu-mladych-podla", "item": "bd9b2f662f394f19abe0547e8ab82b40", "path": "%C3%9Adaje%20za%20kriminalitu%20mlad%C3%BDch%20pod%C4%BEa%20jednotliv%C3%BDch%20druhov", "title": "Údaje za kriminalitu mladých podľa jednotlivých druhov", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Vraždy", "vrazdy", "Vraždy", null, null], ["Lúpeže", "lupeze", "Lúpeže", null, null], ["Úmyselné_ublíženie_na_zdraví", "umyselne-ublizenie-na-zdravi", "Úmyselné ublíženie na zdraví", null, null], ["Ohrozenie_mravnostnej_výchovy_m", "ohrozenie-mravnostnej-vychovy-m", "Ohrozenie mravnostnej výchovy mládeže", null, null], ["Detská_pornografia", "detska-pornografia", "Detská pornografia", null, null], ["Znásilnenie", "znasilnenie", "Znásilnenie", null, null], ["Pohlavné_zneužívanie", "pohlavne-zneuzivanie", "Pohlavné zneužívanie", null, null], ["Týranie_blízkej_osoby", "tyranie-blizkej-osoby", "Týranie blízkej osoby", null, null], ["Krádeže", "kradeze", "Krádeže", null, null], ["Drogy", "drogy", "Drogy", null, null], ["Krátenie_dane", "kratenie-dane", "Krátenie dane", null, null], ["Korupcia", "korupcia", "Korupcia", null, null], ["Sprenevera", "sprenevera", "Sprenevera", null, null], ["Podvody", "podvody", "Podvody", null, null]]},
+          {"name": "uhrnna-rozvodovost-v-okresoch-v-obdobi", "item": "e14e0cfcf0684b6abb803c67cf43843b", "path": "Uhrnna_rozvodovost_v_okresoch_Bratislavy_v_obdobi_rokov_2000_%E2%80%93_2021", "title": "Úhrnná rozvodovosť v okresoch Bratislavy v období rokov 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["UHRNNA_ROZVODOVOST", "uhrnna-rozvodovost", "Úhrnná rozvodovosť v okresoch Bratislavy v období rokov 2000 – 2021", null, null]]},
+          {"name": "uhrnna-sobasnost-muzov-v-okresoch-v", "item": "e4fc51b24eb0421a980fc5c7ab57a7ff", "path": "%C3%9Ahrnn%C3%A1_sob%C3%A1%C5%A1nos%C5%A5_mu%C5%BEov_v_mestsk%C3%BDch_okresoch_Bratislavy_v_obdobiach_rokov_2000_%E2%80%93_2021_", "title": "Úhrnná sobášnosť mužov v okresoch Bratislavy v obdobiach rokov 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "OBDOBIE", "values": [["UHRNNA_SOBASNOST", "uhrnna-sobasnost", "Úhrnná sobášnosť mužov v okresoch Bratislavy v obdobiach rokov 2000 – 2021", null, null]]},
+          {"name": "uhrnna-sobasnost-zien-v-okresoch-v", "item": "51c9d5f5cbae4838afbd2b5a90d01ca1", "path": "%C3%9Ahrnn%C3%A1_sob%C3%A1%C5%A1nos%C5%A5_%C5%BEien_v_okresoch_Bratislavy_v_obdobiach_rokov_2000_%E2%80%93_2021_", "title": "Úhrnná sobášnosť žien v okresoch Bratislavy v obdobiach rokov 2000 – 2021", "areas": "okres", "area": "OKRES", "year": "ROK", "values": [["UHRNNA_SOBASNOST", "uhrnna-sobasnost", "Úhrnná sobášnosť žien v okresoch Bratislavy v obdobiach rokov 2000 – 2021", null, null]]},
+          {"name": "miery-plodnosti-zien-v-v-rokoch-2000-2004-ba", "item": "5d9d0cb1d3cd4ce1bc086f115ef4b66c", "path": "Miery_plodnosti_%C5%BEien_v_okresoch_Bratislavy_v_rokoch_2000_%E2%80%93_2004", "title": "Miery plodnosti žien v okresoch Bratislavy v rokoch 2000 – 2004", "areas": "okres", "area": "OKRES", "fixed": "2000-2004", "by": ["VEK"], "values": [["MIERA_PLODNOSTI", "miera-plodnosti", "Miery plodnosti žien v okresoch Bratislavy v rokoch 2000 – 2004", null, null]]},
+          {"name": "pocet-evidovanych-vodicov", "item": "624e60c6e1554f7cb077a98e758a4867", "path": "Po%C4%8Det%20evidovan%C3%BDch%20vodi%C4%8Dov", "title": "Počet evidovaných vodičov", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Počet_evidovaných_vodičov", "pocet-evidovanych-vodicov", "Počet evidovaných vodičov", 0, null]]},
+          {"name": "pocet-prijatych-ziadosti-o-vydanie", "item": "bdea151a4cac412ba37a749bc751ebd4", "path": "Po%C4%8Det%20prijat%C3%BDch%20%C5%BEiadost%C3%AD%20o%20vydanie%20cestovn%C3%A9ho%20pasu%20ob%C4%8Danom%20pod%C4%BEa%20po%C4%8Dtu%20dn%C3%AD", "title": "Počet prijatých žiadostí o vydanie cestovného pasu občanom podľa počtu dní", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Do_2_dní", "do-2-dni", "Do 2 dní", null, null], ["F30_dní", "f30-dni", "30 dní", null, null], ["Do_10_dní", "do-10-dni", "Do 10 dní", null, null], ["Offline", "offline", "Offline", null, null]]},
+          {"name": "pocet-prijatych-ziadosti-obcanom-podla-veku", "item": "af6b436bcb264f35882c956eec041bf4", "path": "Po%C4%8Det%20prijat%C3%BDch%20%C5%BEiadost%C3%AD%20o%20vydanie%20cestovn%C3%A9ho%20pasu%20ob%C4%8Danom%20pod%C4%BEa%20veku", "title": "Počet prijatých žiadostí o vydanie cestovného pasu občanom podľa veku", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Do_5_rokov", "do-5-rokov", "Do 5 rokov", null, null], ["F5_13_rokov", "f5-13-rokov", "5-13 rokov", null, null], ["Od_13_rokov", "od-13-rokov", "Od 13 rokov", null, null], ["Do_6_rokov", "do-6-rokov", "Do 6 rokov", null, null], ["F6_16_rokov", "f6-16-rokov", "6-16 rokov", null, null], ["Od_16_rokov", "od-16-rokov", "Od 16 rokov", null, null]]},
+          {"name": "pocet-prijatych-ziadosti-obcianskeho-preukazu", "item": "a47a1cfe30894a90b61c945e2a0ddf93", "path": "Po%C4%8Det%20prijat%C3%BDch%20%C5%BEiadost%C3%AD%20o%20vydanie%20ob%C4%8Dianskeho%20preukazu", "title": "Počet prijatých žiadostí o vydanie občianskeho preukazu", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Počet_prijatých_žiadostí_o_vyda", "pocet-prijatych-ziadosti-o-vyda", "Počet prijatých žiadostí o vydanie OP", 0, null], ["Prijaté_žiadosti_o_vydanie_OP__", "prijate-ziadosti-o-vydanie-op", "Prijaté žiadosti o vydanie OP - expresné doručenie", null, null], ["Prijaté_žiadosti_o_vydanie_OP_1", "prijate-ziadosti-o-vydanie-op-1", "Prijaté žiadosti o vydanie OP - doručenie na adresu", null, null]]},
+          {"name": "pocet-stihanych-a-vysetrovanych-osob", "item": "d870c8303165442eb1be3157cc91b0e3", "path": "Po%C4%8Det%20st%C3%ADhan%C3%BDch%20a%20vy%C5%A1etrovan%C3%BDch%20os%C3%B4b", "title": "Počet stíhaných a vyšetrovaných osôb", "areas": "okres", "area": "Obvodné_oddelenie", "year": "Rok", "values": [["Počet_stíhaných_a_vyšetrovaných", "pocet-stihanych-a-vysetrovanych", "Počet stíhaných a vyšetrovaných osôb", 0, null]]},
+          {"name": "pocet-trestnych-cinov-a-pocet-stihanych", "item": "80379c888397485d80a82c1620daf19f", "path": "Po%C4%8Det%20trestn%C3%BDch%20%C4%8Dinov%20a%20po%C4%8Det%20st%C3%ADhan%C3%BDch%20a%20vy%C5%A1etrovan%C3%BDch%20mladistv%C3%BDch%20a%20malolet%C3%BDch%20os%C3%B4b", "title": "Počet trestných činov a počet stíhaných a vyšetrovaných mladistvých a maloletých osôb", "areas": "okres", "area": "Obvodné_oddelenie", "year": "Rok", "values": [["Počet_trestných_činov_spáchanýc", "pocet-trestnych-cinov-spachanyc", "Počet trestných činov spáchaných maloletou stíhanou, vyšetrovanou osobou", 0, null], ["Počet_trestných_činov_spáchan_1", "pocet-trestnych-cinov-spachan-1", "Počet trestných činov spáchaných mladistvou stíhanou, vyšetrovanou osobou", 0, null], ["Počet_maloletých_stíhaných__vyš", "pocet-maloletych-stihanych-vys", "Počet maloletých stíhaných, vyšetrovaných osôb", 0, null], ["Počet_mladistvých_stíhaných__vy", "pocet-mladistvych-stihanych-vy", "Počet mladistvých stíhaných, vyšetrovaných osôb", 0, null]]},
+          {"name": "pocet-trestnych-cinov-a-stihane-a", "item": "83683bcb885d4a178c46eae5c53c8e1a", "path": "Po%C4%8Det%20trestn%C3%BDch%20%C4%8Dinov%20a%20po%C4%8Det%20st%C3%ADhan%C3%BDch%20a%20vy%C5%A1etrovan%C3%BDch%20os%C3%B4b", "title": "Počet trestných činov a stíhané a vyšetrované osoby (alkohol, drogy)", "areas": "okres", "area": "Obvodné_oddelenie", "year": "Rok", "values": [["Počet_trestných_činov_s_vplyvom", "pocet-trestnych-cinov-s-vplyvom", "Počet trestných činov s vplyvom alkoholu", 0, null], ["Počet_trestných_činov_s_vplyv_1", "pocet-trestnych-cinov-s-vplyv-1", "Počet trestných činov s vplyvom drog", 0, null], ["Počet_stíhaných__vyšetrovaných_", "pocet-stihanych-vysetrovanych", "Počet stíhaných, vyšetrovaných s vplyvom alkoholu", 0, null], ["Počet_stíhaných__vyšetrovaných1", "pocet-stihanych-vysetrovanych1", "Počet stíhaných, vyšetrovaných s vplyvom drog", 0, null]]},
+          {"name": "pocet-trestnych-cinov-spachanych", "item": "f3f8467478a24f9e8abe5b000a77df6b", "path": "Po%C4%8Det%20trestn%C3%BDch%20%C4%8Dinov%20sp%C3%A1chan%C3%BDch%20organizovanou%20formou", "title": "Počet trestných činov spáchaných organizovanou formou", "areas": "okres", "area": "Obvodné_oddelenie", "year": "Rok", "values": [["Počet_trestných_činov_spáchanýc", "pocet-trestnych-cinov-spachanyc", "Počet trestných činov spáchaných organizovanou formou", 0, null]]},
+          {"name": "pocet-vydanych-vodicskych-preukazov-a", "item": "ec582a3e5ddd442fa45007faed9983b3", "path": "Po%C4%8Det%20vydan%C3%BDch%20vodi%C4%8Dsk%C3%BDch%20preukazov%20a%20medzin%C3%A1rodn%C3%BDch%20vodi%C4%8Dsk%C3%BDch%20preukazov", "title": "Počet vydaných vodičských preukazov a medzinárodných vodičských preukazov", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Typ"], "values": [["Počet", "pocet", "Počet vydaných vodičských preukazov a medzinárodných vodičských preukazov", 0, null]]},
+          {"name": "pocet-vydanych-stratenych-a-odcudzenych", "item": "2eba89a0477d4f3cb4481aa716ba9173", "path": "Po%C4%8Det%20vydan%C3%BDch%20%20straten%C3%BDch%20a%20odcudzen%C3%BDch%20ob%C4%8Dianskych%20preukazov", "title": "Počet vydaných, stratených a odcudzených občianskych preukazov", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Počet_vydaných_občianskych_preu", "pocet-vydanych-obcianskych-preu", "Počet vydaných občianskych preukazov", 0, null], ["Počet_stratených_občianskych_pr", "pocet-stratenych-obcianskych-pr", "Počet stratených občianskych preukazov", 0, null], ["Počet_odcudzených_občianskych_p", "pocet-odcudzenych-obcianskych-p", "Počet odcudzených občianskych preukazov", 0, null], ["Počet_zničených_občianskych_pre", "pocet-znicenych-obcianskych-pre", "Počet zničených občianskych preukazov", 0, null], ["Počet_poškodených_občianskych_p", "pocet-poskodenych-obcianskych-p", "Počet poškodených občianskych preukazov", 0, null]]},
+          {"name": "pocet-zistenych-objasnenych-aj", "item": "ae77d057365946a48748fbe97f261bf8", "path": "Po%C4%8Det%20zisten%C3%BDch%20%20objasnen%C3%BDch%20a%20dodato%C4%8Dne%20objasnen%C3%BDch%20trestn%C3%BD", "title": "Počet zistených, objasnených (aj dodatočne) trestných činov", "areas": "okres", "area": "Obvodné_oddelenie", "year": "Rok", "values": [["Počet_dodatočne_objasnených_tre", "pocet-dodatocne-objasnenych-tre", "Počet dodatočne objasnených trestných činov", 0, null], ["Počet_objasnených_trestných_čin", "pocet-objasnenych-trestnych-cin", "Počet objasnených trestných činov", 0, null], ["Počet_zistených_trestných_činov", "pocet-zistenych-trestnych-cinov", "Počet zistených trestných činov", 0, null]]},
+          {"name": "pocet-ziadosti-o-vydanie-cestovneho-pasu", "item": "60f68de246e74e6ea07fbc214ce0ffcf", "path": "Po%C4%8Det%20%C5%BEiadost%C3%AD%20o%20vydanie%20cestovn%C3%A9ho%20pasu", "title": "Počet žiadostí o vydanie cestovného pasu", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Počet_žiadostí", "pocet-ziadosti", "Počet žiadostí o vydanie cestovného pasu", 0, null]]},
+          {"name": "sodb-2011-obyvatelstvo-podla-rodinneho", "item": "11df36d644144e1ea350d5d359b2e499", "path": "SODB%202011%20-%20Obyvate%C4%BEstvo%20pod%C4%BEa%20rodinn%C3%A9ho%20stavu", "title": "SODB 2011 - Obyvateľstvo podľa rodinného stavu", "areas": "okres", "area": "Okres", "fixed": "2011", "values": [["Spolu", "spolu", "Spolu", null, null], ["Nikdy_neuzavrel_a__manželstvo_a", "nikdy-neuzavrel-a-manzelstvo-a", "Nikdy neuzavrel(a) manželstvo ani registrované partnerstvo", null, null], ["Ženatý_vydatá", "zenaty-vydata", "Ženatý/vydatá", null, null], ["Rozvedený_á___ktorý_á__opätovne", "rozvedeny-a-ktory-a-opatovne", "Rozvedený(á) (ktorý(á) opätovne neuzavrel(a) manželstvo ani registrované partnerstvo)", null, null], ["Ovdovený_á___ktorý_á__opätovne_", "ovdoveny-a-ktory-a-opatovne", "Ovdovený(á) (ktorý(á) opätovne neuzavrel(a) manželstvo ani registrované partnerstvo)", null, null], ["Nezistený", "nezisteny", "Nezistený", null, null]]},
+          {"name": "sodb-2011-obyvatelstvo-podla-zamestnania", "item": "409bc64821fd4f139a6b242aa576a8c6", "path": "SODB%202011%20-%20Obyvate%C4%BEstvo%20pod%C4%BEa%20zamestnania", "title": "SODB 2011 - Obyvateľstvo podľa zamestnania", "areas": "okres", "area": "Okres", "fixed": "2011", "values": [["Zamestnanie__Spolu_", "zamestnanie-spolu", "Zamestnanie (Spolu)", null, null], ["Riadiaci_pracovníci", "riadiaci-pracovnici", "Riadiaci pracovníci", null, null], ["Špecialisti", "specialisti", "Špecialisti", null, null], ["Technici_a_odborní_pracovníci", "technici-a-odborni-pracovnici", "Technici a odborní pracovníci", null, null], ["Administratívni_pracovníci", "administrativni-pracovnici", "Administratívni pracovníci", null, null], ["Pracovníci_v_službách_a_obchode", "pracovnici-v-sluzbach-a-obchode", "Pracovníci v službách a obchode", null, null], ["Kvalifikovaní_robotníci_v_poľno", "kvalifikovani-robotnici-v-polno", "Kvalifikovaní robotníci v poľnohospodárstve, lesníctve a rybárstve", null, null], ["Kvalifikovaní_robotníci_a_remes", "kvalifikovani-robotnici-a-remes", "Kvalifikovaní robotníci a remeselníci", null, null], ["Operátori_a_montéri_strojov_a_z", "operatori-a-monteri-strojov-a-z", "Operátori a montéri strojov a zariadení", null, null], ["Pomocní_a_nekvalifikovaní_praco", "pomocni-a-nekvalifikovani-praco", "Pomocní a nekvalifikovaní pracovníci", null, null], ["Príslušníci_ozbrojených_síl", "prislusnici-ozbrojenych-sil", "Príslušníci ozbrojených síl", null, null], ["Nezistené", "nezistene", "Nezistené", null, null], ["Neaplikovateľné", "neaplikovatelne", "Neaplikovateľné", null, null]]},
+          {"name": "sodb-2011-pocet-obyvatelov-podla-miesta", "item": "cb4db5a51881414582f8b1324d90493c", "path": "SODB%202011%20-%20Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20miesta%20narodenia", "title": "SODB 2011 - Počet obyvateľov podľa miesta narodenia", "areas": "okres", "area": "Okres", "fixed": "2011", "values": [["Spolu", "spolu", "Spolu", null, null], ["Miesto_narodenia_mimo_SR", "miesto-narodenia-mimo-sr", "Miesto narodenia mimo SR", null, null], ["Miesto_narodenia_mimo_SR___Mimo", "miesto-narodenia-mimo-sr-mimo", "Miesto narodenia mimo SR - Mimo EÚ", null, null], ["Miesto_narodenia_mimo_SR___Iný_", "miesto-narodenia-mimo-sr-iny", "Miesto narodenia mimo SR - Iný členský štát EÚ", null, null], ["Miesto_narodenia_v_SR", "miesto-narodenia-v-sr", "Miesto narodenia v SR", null, null], ["Nezistené", "nezistene", "Nezistené", null, null], ["Iné", "ine", "Iné", null, null]]},
+          {"name": "sodb-2011-pocet-miesta-pracoviska", "item": "7f90e0a0c2964e04a85462acce04d850", "path": "SODB%202011%20-%20Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20miesta%20pracoviska", "title": "SODB 2011 - Počet obyvateľov podľa miesta pracoviska", "areas": "okres", "area": "Okres", "fixed": "2011", "values": [["Slovensko_spolu", "slovensko-spolu", "Slovensko spolu", null, null], ["Bratislavský_kraj", "bratislavsky-kraj", "Bratislavský kraj", null, null], ["Západné_Slovensko", "zapadne-slovensko", "Západné Slovensko", null, null], ["Stredné_Slovensko", "stredne-slovensko", "Stredné Slovensko", null, null], ["Východné_Slovensko", "vychodne-slovensko", "Východné Slovensko", null, null], ["Mimo_územia_členského_štátu", "mimo-uzemia-clenskeho-statu", "Mimo územia členského štátu", null, null], ["Neaplikovateľné__nepracuje_", "neaplikovatelne-nepracuje", "Neaplikovateľné (nepracuje)", null, null]]},
+          {"name": "sodb-2011-pocet-v-zamestnani", "item": "d0807504c1d7468ab1ca27396f2854d0", "path": "SODB%202011%20-%20Po%C4%8Det%20obyvate%C4%BEov%20pod%C4%BEa%20postavenia%20v%20zamestnan%C3%AD", "title": "SODB 2011 - Počet obyvateľov podľa postavenia v zamestnaní", "areas": "okres", "area": "Okres", "fixed": "2011", "values": [["Zamestnanci", "zamestnanci", "Zamestnanci", null, null], ["Zamestnávatelia", "zamestnavatelia", "Zamestnávatelia", null, null], ["Osoby_pracujúce_na_vlastný_účet", "osoby-pracujuce-na-vlastny-ucet", "Osoby pracujúce na vlastný účet", null, null], ["Ostatní___vypomáhajúci_členovia", "ostatni-vypomahajuci-clenovia", "Ostatní („vypomáhajúci členovia domácnosti“ a „člen", null, null], ["Nezistené", "nezistene", "Nezistené", null, null], ["Neaplikovateľné", "neaplikovatelne", "Neaplikovateľné", null, null]]},
+          {"name": "sposobena-skoda-trestnych-cinov-v-1-000", "item": "b666daa5aba14a8eab516b894d3e1687", "path": "Sp%C3%B4soben%C3%A1%20%C5%A1koda%20trestn%C3%BDch%20%C4%8Dinov%20v%201000%20EUR", "title": "Spôsobená škoda trestných činov v 1 000 EUR", "areas": "okres", "area": "Obvodné_oddelenie", "year": "Rok", "values": [["Spôsobená_škoda_trestných_činov", "sposobena-skoda-trestnych-cinov", "Spôsobená škoda trestných činov v 1 000 EUR", null, null]]},
+          {"name": "zamestnavanie-statnych-prislusnikov", "item": "b75a6879cf954ce9bbfdf87bfce7fe6b", "path": "Zamestn%C3%A1vanie%20%C5%A1t%C3%A1tnych%20pr%C3%ADslu%C5%A1n%C3%ADkov%20tret%C3%ADch%20kraj%C3%ADn%20s%20platn%C3%BDm%20povolen%C3%ADm%20na%20zamestnanie%20n", "title": "Zamestnávanie štátnych príslušníkov tretích krajín s platným povolením na zamestnanie v SR", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Počet", "pocet", "Zamestnávanie štátnych príslušníkov tretích krajín s platným povolením na zamestnanie v SR", 0, null]]},
+          {"name": "statisticky-prehlad-priestupkov-na", "item": "cfeb3a7ae9a64afaa4c44b3ab1b8c1c5", "path": "%C5%A0tatistick%C3%BD%20preh%C4%BEad%20priestupkov%20na%20%C3%BAseku%20ob%C4%8Dianskych%20preukazov", "title": "Štatistický prehľad priestupkov na úseku občianskych preukazov", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Počet_všetkých_priestupkov", "pocet-vsetkych-priestupkov", "Počet všetkých priestupkov", 0, null], ["Počet_priestupkov_riešených_blo", "pocet-priestupkov-riesenych-blo", "Počet priestupkov riešených blokovou pokutou", 0, null], ["Počet_priestupkov_riešených_roz", "pocet-priestupkov-riesenych-roz", "Počet priestupkov riešených rozkazným konaním", 0, null], ["Počet_priestupkov_riešených_r_1", "pocet-priestupkov-riesenych-r-1", "Počet priestupkov riešených rozhodnutím", 0, null], ["Počet_priestupkov_riešených_pok", "pocet-priestupkov-riesenych-pok", "Počet priestupkov riešených pokarhaním", 0, null]]},
+          {"name": "nehody-s-nasledkom-na-zdravi", "item": "b72dc2a2559745bdbc29a7a678b7a8e9", "path": "Po%C4%8Det%20dopravn%C3%BDch%20neh%C3%B4d%20s%20n%C3%A1sledkom%20na%20%C5%BEi", "title": "Počet dopravných nehôd s následkom na živote alebo zdraví", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Počet_nehôd", "pocet", "Počet dopravných nehôd s následkom na živote alebo zdraví", 0, null]]},
+          {"name": "nehody-s-usmrtenim", "item": "2715f8c285d84182acd5bebae875ed02", "path": "Po%C4%8Det%20dopravn%C3%BDch%20neh%C3%B4d%20s%20usmrten%C3%ADm%20v%20ces", "title": "Počet dopravných nehôd s usmrtením v cestnej doprave", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Počet_nehôd", "pocet", "Počet dopravných nehôd s usmrtením", 0, null]]},
+          {"name": "dopravne-nehody", "item": "39d5a295afd24560bacd092e80531401", "path": "Po%C4%8Det%20dopravn%C3%BDch%20neh%C3%B4d%20v%20cestnej%20doprave", "title": "Počet dopravných nehôd v cestnej doprave", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Počet_nehôd", "pocet", "Počet dopravných nehôd", 0, null]]},
+          {"name": "dopravne-nehody-druh-vozidla-vinnika", "item": "07c428da9c4b4fbcbdbdae9056d495e1", "path": "Po%C4%8Det%20dopravn%C3%BDch%20neh%C3%B4d%20v%20cestnej%20doprave___", "title": "Počet dopravných nehôd v cestnej doprave (druh vozidla vinníka)", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Malý_motocykel", "maly-motocykel", "Nehody, vinník malý motocykel", 0, null], ["Motocykel", "motocykel", "Nehody, vinník motocykel", 0, null], ["Osobný_automobil", "osobny-automobil", "Nehody, vinník osobný automobil", 0, null], ["Nákladný_automobil", "nakladny-automobil", "Nehody, vinník nákladný automobil", 0, null], ["Autobus", "autobus", "Nehody, vinník autobus", 0, null], ["Traktor", "traktor", "Nehody, vinník traktor", 0, null], ["Bicykel", "bicykel", "Nehody, vinník bicykel", 0, null], ["Dodávka", "dodavka", "Nehody, vinník dodávka", 0, null], ["Ostatné_druhy_vozidiel", "ostatne", "Nehody, vinník iné vozidlo", 0, null], ["Nezadané", "nezadane", "Nehody, vinník nezadaný", 0, null]]},
+          {"name": "dopravne-nehody-kategoria-cesty", "item": "60953eb5610d45d28464b3f6c90cd6be", "path": "Po%C4%8Det%20dopravn%C3%BDch%20neh%C3%B4d%20v%20cestnej%20doprave%20pod%C4%BEa%20kateg%C3%B3rie%20ces", "title": "Počet dopravných nehôd v cestnej doprave podľa kategórie cesty", "areas": "okres", "area": "Okres", "year": "Rok", "values": [["Diaľnica___diaľničný_privádzač", "dialnica", "Nehody na diaľnici a privádzači", 0, null], ["Rýchlostná_cesta___privádzač", "rychlostna-cesta", "Nehody na rýchlostnej ceste a privádzači", 0, null], ["Cesta_I__triedy", "cesta-i", "Nehody na ceste I. triedy", 0, null], ["Cesta_II__triedy", "cesta-ii", "Nehody na ceste II. triedy", 0, null], ["Cesta_III__triedy", "cesta-iii", "Nehody na ceste III. triedy", 0, null], ["Komunikácia_účelová___poľné__le", "ucelova-polna-lesna", "Nehody na účelovej komunikácii (poľnej, lesnej)", 0, null], ["Komunikácia_účelová___ostatné__", "ucelova-ostatna", "Nehody na ostatnej účelovej komunikácii", 0, null], ["Komunikácia_v_km_systéme_nesled", "miestna", "Nehody na komunikácii mimo kilometrovníka (miestnej)", 0, null], ["Nezadané", "nezadane", "Nehody, kategória cesty nezadaná", 0, null]]},
+          {"name": "dopravne-nehody-v-obci-a-mimo-obce", "item": "9fb20b6ffa00433d8d39a77ca5167582", "path": "Po%C4%8Det%20dopravn%C3%BDch%20neh%C3%B4d%20v%20cestnej%20doprave%20pod%C4%BEa%20miesta%20%E2%80%93%20v%20mi", "title": "Počet dopravných nehôd v cestnej doprave podľa miesta (v/mimo obce)", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Miesto"], "values": [["Počet_nehôd", "pocet", "Počet dopravných nehôd", 0, null]]},
+          {"name": "pocet-ziakov-sportovych-tried", "item": "7fe91e633f354199a2bf715124d6e195", "path": "Po%C4%8Det_%C5%BEiakov_%C5%A1portov%C3%BDch_tried_z%C3%A1kladn%C3%BDch_%C5%A1k%C3%B4l_pod%C4%BEa_druhu_%C5%A1portu", "title": "Počet žiakov športových tried základných škôl podľa druhu športu", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Ročník", "Kategória", "Druh_športu"], "values": [["Počet", "pocet", "Počet žiakov", 0, null]]},
+          {"name": "zachytne-bezpecnostne-zariadenia", "item": "62e63d75b79f49f4a17c49436124b085", "path": "tmpsh988bwkaaa", "title": "Typy záchytného bezpečnostného zariadenia podľa triedy cestnej komunikácie a správcu", "areas": "okres", "area": "Okres", "fixed": "2016", "by": ["Trieda_CK", "Typ_záchytného_bezpečnostného_z", "Typ_správcu"], "group": "Okres,Trieda_CK,Typ_záchytného_bezpečnostného_z,Typ_správcu", "stats": [["count", "ObjectId", "n"], ["sum", "CAST(Evidenčná_dĺžka_úseku__m_ AS FLOAT)", "m"]], "values": [["n", "pocet-usekov", "Počet úsekov", 0, null], ["m", "dlzka-m", "Evidenčná dĺžka (m)", 0, null]]},
+          {"name": "pocet-podujati-a-ucastnikov", "item": "569586b3c9b840ed8a1e67ba2107774e", "path": "Po%C4%8Det%20podujat%C3%AD%20a%20%C3%BA%C4%8Dastn%C3%ADkov%20pr%C3%ADle%C5%BEitostnej%20z%C3%A1ujmovej%20%C4%8Dinnosti%20centier%20vo%C4%BEn%C3%A9ho%20%C4%8Dasu%20so%20%C5%A1", "title": "Počet podujatí a účastníkov príležitostnej záujmovej činnosti CVČ so športovým zameraním", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Podujatia_účastníci", "Druh", "Kategória"], "values": [["Počet", "pocet", "Počet podujatí a účastníkov príležitostnej záujmovej činnosti CVČ so športovým zameraním", 0, null]]},
+          {"name": "prispevky-dlzka-zivota-muzi-roky", "item": "e9f329bd12034bbd878a5d502f97d59e", "path": "Pr%C3%ADspevky_k_zmene_strednej_d%C4%BA%C5%BEky_%C5%BEivota_pri_naroden%C3%AD_mu%C5%BEov_v_okresoch_BA_abs", "title": "Príspevky k zmene strednej dĺžky života pri narodení mužov v okresoch BA", "areas": "okres", "area": "OKRES", "fixed": "2000-2019", "by": ["VEK"], "values": [["PRISPEVKY_ROKY", "prispevky-roky", "Príspevok k zmene strednej dĺžky života mužov pri narodení (roky)", null, null]]},
+          {"name": "prispevky-dlzka-zivota-muzi-percenta", "item": "f447cf33877548488049a0a685cb3fec", "path": "Pr%C3%ADspevky_k_zmene_strednej_d%C4%BA%C5%BEky_%C5%BEivota_pri_naroden%C3%AD_mu%C5%BEov_v_okresoch_BA_", "title": "Príspevky k zmene strednej dĺžky života pri narodení mužov v okresoch BA (%)", "areas": "okres", "area": "OKRES", "fixed": "2000-2019", "by": ["VEK"], "values": [["PRISPEVKY__", "prispevky-percenta", "Príspevok k zmene strednej dĺžky života mužov pri narodení (%)", null, null]]},
+          {"name": "prispevky-dlzka-zivota-zeny-roky", "item": "327f2a79bb0a479c9b3a7b0db910616d", "path": "Pr%C3%ADspevky_k_zmene_strednej_d%C4%BA%C5%BEky_%C5%BEivota_%C5%BEien_v_okresoch_Bratislavy_abs", "title": "Príspevky k zmene strednej dĺžky života žien v okresoch Bratislavy", "areas": "okres", "area": "OKRES", "fixed": "2000-2019", "by": ["VEK"], "values": [["PRISPEVOK_ROKY", "prispevok-roky", "Príspevok k zmene strednej dĺžky života žien pri narodení (roky)", null, null]]},
+          {"name": "prispevky-dlzka-zivota-zeny-percenta", "item": "b07d6407f112441b9762816af851261d", "path": "Pr%C3%ADspevky_k_zmene_strednej_d%C4%BA%C5%BEky_%C5%BEivota_%C5%BEien_v_okresoch_Bratislavy_", "title": "Príspevky k zmene strednej dĺžky života žien v okresoch Bratislavy  (%)", "areas": "okres", "area": "OKRES", "fixed": "2000-2019", "by": ["VEK"], "values": [["PRISPEVOK__", "prispevok-percenta", "Príspevok k zmene strednej dĺžky života žien pri narodení (%)", null, null]]},
+          {"name": "ziaci-sportovych-tried-podla-sportu", "item": "92871866e3ba46fb9ab40078e124f73e", "path": "Po%C4%8Det%20%C5%BEiakov%20%C5%A1portov%C3%BDch%20tried%20%C5%A1portov%C3%BDch%20gymn%C3%A1zi%C3%AD%20pod%C4%BEa%20druhu%20%C5%A1portu", "title": "Počet žiakov športových tried stredných športových škôl podľa druhu športu", "areas": "okres", "area": "Okres", "year": "Rok", "by": ["Ročník", "Kategória", "Druh_športu"], "values": [["Počet", "pocet", "Počet žiakov športových tried", 0, null]]}
+        ]
+        let listed = this.services.or([]).map_each(s -> s.name.or(""))
+        let found = $tables.filter(t -> $listed.contains(t.path.unescape_url_query()))
+        let missing = $tables.filter(t -> !$listed.contains(t.path.unescape_url_query())).map_each(t -> t.name)
+        meta missing = $missing.join(", ")
+        root = if content().length() > 1048576 {
+          throw("the hub's list of services is %d bytes, more than the 1 MiB read".format(content().length()))
+        } else if this.error.or(null) != null {
+          throw("the hub refused its list of services: %s".format(this.error.message.or("no reason given")))
+        } else if $found.length() == 0 {
+          throw("the hub lists none of the statistics tables: nothing is written")
+        } else { $found }
+    - switch:
+        - check: '@missing != ""'
+          processors:
+            - log:
+                level: WARN
+                message: 'statistics: the hub no longer lists ${! @missing }, left out of this run'
+    - unarchive: { format: json_array }
+
+    # One table at a time, read in pages of 1,000 rows (the hub's smallest maxRecordCount) until
+    # the hub says no more, at most 20 pages; a table with more fails instead of writing part of
+    # it. The path and the query are the constants above, never text of an answer. A table line
+    # with `group` asks the hub for its sums instead of its rows: one row a group, ordered by the
+    # group so the pages do not overlap.
+    - for_each:
+        - branch:
+            request_map: |
+              meta path = this.path
+              meta query = if this.group.or("") == "" { "where=1%3D1&outFields=*" } else {
+                "where=" + this.where.or("1=1").escape_url_query() +
+                "&groupByFieldsForStatistics=" + this.group.escape_url_query() +
+                "&orderByFields=" + this.group.escape_url_query() +
+                "&outStatistics=" + this.stats.map_each(s -> { "statisticType": s.index(0), "onStatisticField": s.index(1), "outStatisticFieldName": s.index(2) }).format_json(no_indent: true).escape_url_query()
+              }
+              root = { "rows": [], "offset": 0, "more": true }
+            processors:
+              - while:
+                  check: this.more && !errored()
+                  max_loops: 20
+                  processors:
+                    - branch:
+                        request_map: |
+                          meta offset = this.offset.string()
+                          root = ""
+                        processors:
+                          - sleep: { duration: '200ms' }
+                          - http:
+                              url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/${! @path }/FeatureServer/0/query?${! @query }&resultOffset=${! @offset }&resultRecordCount=1000&f=json
+                              verb: GET
+                              headers:
+                                Accept: application/json
+                                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+                              timeout: 30s
+                              retries: 2
+                        result_map: |
+                          root.rows = if content().length() > 4194304 {
+                            throw("the table answer is over 4 MiB")
+                          } else if this.error.or(null) != null {
+                            throw("the hub refused the query: %s".format(this.error.message.or("no reason given")))
+                          } else { root.rows.concat(this.features.or([]).map_each(f -> f.attributes)) }
+                          root.offset = root.offset + 1000
+                          root.more = this.exceededTransferLimit.or(false)
+            result_map: |
+              root.rows = if this.more { throw("the table holds more than 20,000 rows, more than 20 pages") } else { this.rows }
+    # A table the hub refuses is logged and left out of this run; the others still write.
+    - catch:
+        - log: { level: WARN, message: 'statistics: ${! json("name") } not read: ${! error() }' }
+        - mapping: root = deleted()
+    - archive: { format: json_array }
+
+    # Plausibility (owner 2026-10-22T18:10Z): dropped and counted by reason, never guessed at: an
+    # area outside the city; no period; a breakdown cell left empty; a figure that is no number or
+    # lies outside its bounds; one figure twice for the same breakdown, area and period (the first
+    # is kept).
+    - mapping: |
+        # The 17 city districts by their name folded to ASCII, with their ZÚJ code (the
+        # AdministrativeArea id the districts pipeline writes). The hub writes names three ways:
+        # with diacritics, without them and abbreviated ("D. N. Ves", dots dropped: a key with a dot
+        # is a path to `get`); the mosquito table writes č as è and ň as ò (a cp1250 text read as
+        # Latin-1), folded here too, and its 2025 figures with a space between thousands.
+        let districts = {
+          "stare mesto": ["528595", "Staré Mesto"], "podunajske biskupice": ["529311", "Podunajské Biskupice"],
+          "p biskupice": ["529311", "Podunajské Biskupice"], "ruzinov": ["529320", "Ružinov"], "vrakuna": ["529338", "Vrakuňa"],
+          "nove mesto": ["529346", "Nové Mesto"], "raca": ["529354", "Rača"], "vajnory": ["529362", "Vajnory"],
+          "devinska nova ves": ["529371", "Devínska Nová Ves"], "d n ves": ["529371", "Devínska Nová Ves"],
+          "dubravka": ["529389", "Dúbravka"], "karlova ves": ["529397", "Karlova Ves"], "devin": ["529401", "Devín"],
+          "lamac": ["529419", "Lamač"], "zahorska bystrica": ["529427", "Záhorská Bystrica"], "z bystrica": ["529427", "Záhorská Bystrica"],
+          "cunovo": ["529435", "Čunovo"], "jarovce": ["529443", "Jarovce"], "petrzalka": ["529460", "Petržalka"], "rusovce": ["529494", "Rusovce"]
+        }
+        # The five okresy (LAU 1, Bratislava I to V, codes 101 to 105), written in Roman or Arabic
+        # numerals; the city as a whole by its municipality code. A table of the whole region keeps
+        # the Bratislava okresy, a table of Bratislava beside Slovakia the Bratislava rows.
+        let okresy = {
+          "bratislava i": ["101", "Bratislava I"], "bratislava ii": ["102", "Bratislava II"], "bratislava iii": ["103", "Bratislava III"],
+          "bratislava iv": ["104", "Bratislava IV"], "bratislava v": ["105", "Bratislava V"], "bratislava 1": ["101", "Bratislava I"],
+          "bratislava 2": ["102", "Bratislava II"], "bratislava 3": ["103", "Bratislava III"], "bratislava 4": ["104", "Bratislava IV"],
+          "bratislava 5": ["105", "Bratislava V"]
+        }
+        # A table of the region beside Slovakia keeps the region's rows.
+        let kraje = { "bratislavsky kraj": ["sk010", "Bratislavský kraj"] }
+        # A table without an area column ("*") is the city's, and so is its row named after the city.
+        let city = ["582000", "Bratislava"]
+        # A basic settlement unit (ZSJ) by its 7-digit code, named with its city district, kept only
+        # inside one of the 17; a municipality of the region by its name, the hub giving no code.
+        let parts = $districts.values()
+        map fold {
+          root = this.string().lowercase().replace_all_many([
+            "á", "a", "ä", "a", "à", "a", "â", "a", "č", "c", "ç", "c", "ď", "d", "é", "e", "ě", "e", "ë", "e", "í", "i", "ĺ", "l",
+            "ľ", "l", "ň", "n", "ó", "o", "ô", "o", "ö", "o", "ő", "o", "ŕ", "r", "ř", "r", "š", "s", "ť", "t", "ú", "u", "ü", "u",
+            "ű", "u", "ů", "u", "ý", "y", "ž", "z", "è", "c", "ò", "n", ".", ""
+          ]).re_replace_all("\\s+", " ").trim()
+        }
+        map segment {
+          root = this.apply("fold").re_replace_all("[^a-z0-9]+", "-").trim("-")
+        }
+        map number {
+          root = if this == null { null } else { this.string().re_replace_all("[\\s %]", "").replace_all(",", ".").number().catch(null) }
+        }
+        map magnitude {
+          let n = this.apply("number")
+          root = if $n == null { null } else { $n.abs() }
+        }
+        map yearmonth {
+          let y = this.slice(0, 4).number().int64()
+          let m = this.slice(5, 7).number().int64()
+          let february = if $y % 4 == 0 && ($y % 100 != 0 || $y % 400 == 0) { "29" } else { "28" }
+          root = {
+            "from": this + "-01",
+            "to": this + "-" + ["31", $february, "31", "30", "31", "30", "31", "31", "30", "31", "30", "31"].index($m - 1),
+            "slug": this,
+            "label": ["január", "február", "marec", "apríl", "máj", "jún", "júl", "august", "september", "október", "november", "december"].index($m - 1) + " " + $y.string(),
+            "frequency": "monthly"
+          }
+        }
+        map years {
+          let v = this.string().trim()
+          let y = $v.re_find_all("(19|20)[0-9]{2}")
+          root = if $v.re_match("^(19|20)[0-9]{2}$") {
+            { "from": $v + "-01-01", "to": $v + "-12-31", "slug": $v, "label": $v, "frequency": "yearly" }
+          } else if $v.re_match("^(19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2}$") {
+            { "from": $y.index(0) + "-01-01", "to": $y.index(1) + "-12-31", "slug": $y.join("-"), "label": $y.join("–") }
+          } else if $v.re_match("^(19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2} a (19|20)[0-9]{2}\\s*[–-]\\s*(19|20)[0-9]{2}$") {
+            # Two ranges compared ("2017 – 2019 a 2000 – 2002"): the period spans both.
+            {
+              "from": $y.sort().index(0) + "-01-01", "to": $y.sort().index(3) + "-12-31", "slug": $y.join("-"),
+              "label": $y.index(0) + "–" + $y.index(1) + " a " + $y.index(2) + "–" + $y.index(3)
+            }
+          } else if $v.re_match("^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}$") && $v.ts_parse("2006-01-02").catch(null) != null {
+            { "from": $v, "to": $v, "slug": $v, "label": $v, "frequency": "daily" }
+          } else if $v.re_match("^(19|20)[0-9]{2}-(0[1-9]|1[0-2])$") { $v.apply("yearmonth") } else { null }
+        }
+        map quarter {
+          let y = this.index(0)
+          # "3" or the transit table's "3.Q".
+          let q = this.index(1).re_replace_all("^([1-4])\\s*\\.?\\s*[Qq]$", "$1")
+          root = if $y.re_match("^(19|20)[0-9]{2}$") && $q.re_match("^[1-4]$") {
+            {
+              "from": $y + "-" + ["01-01", "04-01", "07-01", "10-01"].index($q.number() - 1),
+              "to": $y + "-" + ["03-31", "06-30", "09-30", "12-31"].index($q.number() - 1),
+              "slug": $y + "-q" + $q,
+              "label": $q + ". štvrťrok " + $y,
+              "frequency": "quarterly"
+            }
+          } else { null }
+        }
+        # A month column holds 1 to 12, with or without a leading zero; anything else is no period.
+        map month {
+          let y = this.index(0)
+          let m = this.index(1).trim_prefix("0")
+          root = if $y.re_match("^(19|20)[0-9]{2}$") && $m.re_match("^([1-9]|1[0-2])$") {
+            {
+              "from": "%s-%02d-01".format($y, $m.number().int64()),
+              "to": "%s-%02d-%s".format($y, $m.number().int64(), if $m == "2" && $y.number().int64() % 4 == 0 && ($y.number().int64() % 100 != 0 || $y.number().int64() % 400 == 0) { "29" } else {
+                ["31", "28", "31", "30", "31", "30", "31", "31", "30", "31", "30", "31"].index($m.number().int64() - 1)
+              }),
+              "slug": "%s-%02d".format($y, $m.number().int64()),
+              "label": "%d/%s".format($m.number().int64(), $y),
+              "frequency": "monthly"
+            }
+          } else { null }
+        }
+        map period {
+          let t = this.table
+          let r = this.row
+          root = if $t.fixed.or("") != "" { $t.fixed.apply("years") }
+            else if $t.spans.or(null) != null { $t.spans.get($r.get($t.year).or("").string().trim()).or("").apply("years") }
+            else if $t.quarter.or("") != "" { [$r.get($t.year).or("").string().trim(), $r.get($t.quarter).or("").string().trim()].apply("quarter") }
+            else if $t.month.or("") != "" { [$r.get($t.year).or("").string().trim(), $r.get($t.month).or("").string().trim()].apply("month") }
+            else { $r.get($t.year).or("").apply("years") }
+        }
+        map areaname {
+          root = if this.table.area.or("") == "" { "*" } else { this.row.get(this.table.area).or("").apply("fold") }
+        }
+        # Each breakdown cell as its id segment and its label; a label read as Latin-1 from cp1250
+        # text ("Raèianska") gets its č and ň back.
+        map breakdown {
+          let r = this.row
+          let labels = this.table.labels.or({})
+          # "Nan" is the hub's word for a category it did not detect: no breakdown.
+          root = this.table.by.or([]).map_each(c -> if c.type() == "string" { { "code": c } } else { c }).map_each(c -> c.assign({
+            "raw": $r.get(c.code).or("").string().trim()
+          })).map_each(c -> c.assign({ "raw": if c.raw.lowercase() == "nan" { "" } else { $labels.get(c.raw).or(c.raw) } })).map_each(c -> {
+            "segment": c.raw.apply("segment"),
+            "label": (if c.name.or("") != "" { $r.get(c.name).or("").string().trim() } else { c.raw }).replace_all_many(["è", "č", "ò", "ň"]),
+            "optional": c.optional.or(false)
+          })
+        }
+        map zsj {
+          let code = this.row.get(this.table.area).or("").string().trim()
+          let name = this.row.get(this.table.label).or("").string().trim()
+          let within = this.row.get(this.table.within).or("").string().trim()
+          let part = this.parts.filter(d -> d.index(0) == $within)
+          root = if $code.re_match("^[0-9]{7}$") && $name != "" && $part.length() > 0 { [$code, $name + " (" + $part.index(0).index(1) + ")"] } else { null }
+        }
+        map obec {
+          let name = this.row.get(this.table.area).or("").string().trim()
+          root = if $name.apply("segment") != "" { [$name.apply("segment"), $name] } else { null }
+        }
+        let cells = this.map_each(t -> t.rows.or([]).filter(r -> if t.only.or(null) == null { true } else {
+          r.get(t.only.index(0)).or("").string().has_prefix(t.only.index(1))
+        }).map_each(r -> t.values.map_each(v -> {
+          "table": t.without("rows", "values"),
+          "value": v,
+          "area": if t.areas == "district" { $districts.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if t.areas == "okres" { $okresy.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if t.areas == "zsj" { { "table": t, "row": r, "parts": $parts }.apply("zsj") }
+            else if t.areas == "obec" { { "table": t, "row": r }.apply("obec") }
+            else if t.areas == "kraj" { $kraje.get({ "table": t, "row": r }.apply("areaname")).or(null) }
+            else if ["*", $city.index(1).lowercase()].contains({ "table": t, "row": r }.apply("areaname")) { $city } else { null },
+          "by": { "table": t, "row": r }.apply("breakdown"),
+          "period": { "table": t, "row": r }.apply("period"),
+          "number": r.get(v.index(0)).apply(if t.abs.or(false) { "magnitude" } else { "number" })
+        }))).flatten().flatten()
+        map reason {
+          let v = this.value
+          root = if this.area == null {
+              { "district": "not a city district", "okres": "not a Bratislava okres", "city": "not Bratislava",
+                "zsj": "not a ZSJ of the city", "obec": "no municipality", "kraj": "not the Bratislava region" }.get(this.table.areas)
+            }
+            else if this.period == null { "no period" }
+            else if this.table.past.or(false) && this.period.from > now().ts_format("2006-01-02") { "in the future" }
+            else if this.by.filter(b -> b.segment == "" && !b.optional).length() > 0 { "no breakdown" }
+            else if this.number == null { "no number" }
+            else if ($v.index(3) != null && this.number < $v.index(3)) || ($v.index(4) != null && this.number > $v.index(4)) { "out of range" }
+            else { null }
+        }
+        let marked = $cells.map_each(c -> c.assign({
+          "_drop": c.apply("reason"),
+          "_id": ([c.table.name, c.value.index(1)].concat(c.by.map_each(b -> b.segment).filter(s -> s != "")).concat([c.area.index(0).or(""), c.period.slug.or("")])).join(".")
+        }))
+        let usable = $marked.filter(c -> c._drop == null)
+        let once = $usable.unique(c -> c._id)
+        let tally = $marked.filter(c -> c._drop != null).fold({}, item -> item.tally.assign({ item.value._drop: item.tally.get(item.value._drop).or(0) + 1 }))
+        let dups = $usable.length() - $once.length()
+        meta dropped = (if $dups > 0 { $tally.assign({ "duplicate": $dups }) } else { $tally }).format_json(no_indent: true)
+        meta kept = $once.length().string()
+        root = if $once.length() == 0 { throw("the statistics tables hold no usable figure: nothing is written") } else { $once }
+    - log:
+        level: INFO
+        message: 'statistics: ${! @kept } figures kept, dropped by reason ${! @dropped }'
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44).
+        let t = this.table
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this._id),
+          "type": "KeyPerformanceIndicator",
+          "name": { "type": "Property", "value": ([this.value.index(2)].concat(this.by.map_each(b -> b.label).filter(l -> l != "")).concat([this.area.index(1), this.period.label])).join(", ") },
+          "description": { "type": "Property", "value": $t.title },
+          "process": { "type": "Property", "value": this.value.index(2) },
+          "category": { "type": "Property", "value": ["quantitative"] },
+          "kpiValue": { "type": "Property", "value": this.number },
+          "calculationPeriod": { "type": "Property", "value": { "from": this.period.from, "to": this.period.to } },
+          # Smart Data Models names hourly to yearly; a period of several years carries none.
+          "calculationFrequency": if this.period.frequency.or("") == "" { null } else { { "type": "Property", "value": this.period.frequency } },
+          "area": { "type": "Property", "value": this.area.index(1) },
+          "organization": { "type": "Property", "value": "Hlavné mesto SR Bratislava" },
+          "dataProvider": { "type": "Property", "value": "Hlavné mesto SR Bratislava, data.bratislava.sk (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://data.bratislava.sk/datasets/" + $t.item }
+        }
+        root = root.filter(entry -> entry.value != null)
+
+    - split: { size: 500 }
+    - archive: { format: json_array }

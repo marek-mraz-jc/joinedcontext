@@ -1,0 +1,56 @@
+# The mapping of the navstevnost pipeline (PL-03, T-2781): one KeyPerformanceIndicator per month per indicator per
+# origin from the monthly tourism cube of ŠÚ SR: `U_CR_0005` visitors and `U_CR_0008` overnight
+# stays, in total, domestic and foreign. `dimensionKey` carries the month and the origin
+# (`7.-VISIT_FOR`); the year-to-date code `1. - 12.` is not asked for.
+# Decoded by the same JSON-stat decoder as every cube stream; nothing is renamed or recomputed.
+
+pipeline:
+  processors:
+    - mapping: |
+        # --- the cube this stream reads ---------------------------------------
+        let cube = "cr3803mr"
+        let area_dim = "cr3803mr_obecagr"
+        let period_dim = "cr3803mr_rok"
+        let indicator_dim = "cr3803mr_ukaz"
+        let key_dims = ["cr3803mr_mes", "cr3803mr_dim3"]
+        let unit_code = "C62"
+        let unit_text = "počet"
+        # A cell times this is in the unit unitCode names: 1000 for a cube stated in thousands
+        # ("v tis. m3"), else 1 (F-BNT1-015).
+        let scale = 1
+        let source_url = "https://data.statistics.sk/api/v2/dataset/cr3803mr/SK0321508438/*/1.,2.,3.,4.,5.,6.,7.,8.,9.,10.,11.,12./U_CR_0005,U_CR_0008/VISIT_TOTAL,VISIT_DOM,VISIT_FOR?lang=sk&type=json"
+        let domain = "banskabystrica.sk"
+        # JSON-stat 2.0, decoded by the index and never by the order. `value` is flat and
+        # row-major over `size`; the position of a code inside a dimension is
+        # `dimension.{name}.category.index`, which is NOT sorted: the period dimension comes back
+        # newest first (`["2024", "2023"]`). Reading it as ascending puts every figure against the
+        # wrong year, and the number is real, so nothing about it looks wrong (T-2304 correction).
+        let ds = this
+        let ids = this.id
+        let sizes = this.size
+        let n = $sizes.length()
+        let codes = $ids.map_each(d -> $ds.dimension.get(d).category.index.key_values().sort_by(kv -> kv.value).map_each(kv -> kv.key))
+        let strides = range(0, $n, 1).map_each(k -> if k + 1 >= $n { 1 } else { $sizes.slice(k + 1, $n).fold(1, t -> t.tally * t.value) })
+        # The publisher's own "last updated", which is what a cell was observed at. A cube with none
+        # yields null and the entity carries no dateObserved rather than an invented one.
+        let updated = $ds.update.or("").ts_parse("2006-01-02").ts_format("2006-01-02T15:04:05Z07:00", "UTC").catch(null)
+        # One entity per cell that carries a number. A cell the publisher left empty is not a zero.
+        root = range(0, $ds.value.length(), 1).map_each(p -> { "at": range(0, $n, 1).map_each(k -> { $ids.index(k): $codes.index(k).index(((p / $strides.index(k)).floor().int64()) % $sizes.index(k)) }).squash(), "cell": $ds.value.index(p) }).filter(c -> c.cell != null).map_each(c -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", $domain, env("JC_SPACE"), [$cube, c.at.get($area_dim), c.at.get($period_dim), c.at.get($indicator_dim)].concat($key_dims.map_each(d -> c.at.get(d))).join("-")),
+          "type": "KeyPerformanceIndicator",
+          "dataSet": { "type": "Property", "value": $cube },
+          "indicator": { "type": "Property", "value": c.at.get($indicator_dim) },
+          "refArea": { "type": "Property", "value": c.at.get($area_dim) },
+          "refPeriod": { "type": "Property", "value": c.at.get($period_dim) },
+          "dimensionKey": if $key_dims.length() == 0 { null } else { { "type": "Property", "value": $key_dims.map_each(d -> c.at.get(d)).join("-") } },
+          # `observedAt` belongs to the attribute, never to the entity: CIM 009 4.5.1 makes it a
+          # core non-reified term, and the broker refuses a whole entity that carries one as an
+          # attribute of its own — 400 per entity, dropped by `drop_on`, so the space stayed empty
+          # in silence (T-2445). A cube that states no update time gets no `observedAt` at all.
+          # A unit with no UN/CEFACT code (a currency) and a cube with no update time leave their
+          # term out rather than write a null the broker refuses.
+          "kpiValue": { "type": "Property", "value": c.cell * $scale, "unitCode": $unit_code, "observedAt": $updated }.filter(entry -> entry.value != null),
+          "unitText": { "type": "Property", "value": $unit_text },
+          "source": { "type": "Property", "value": $source_url },
+          "dateObserved": if $updated == null { null } else { { "type": "Property", "value": $updated } }
+        }.filter(entry -> entry.value != null))

@@ -1,0 +1,18 @@
+# One AdministrativeArea per city district of Bratislava, written into the space (T-5274).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: districts
+  namespace: bratislava
+  title: { sk: Mestské časti, en: City districts }
+spec:
+  class: auto
+  # The division changes a few times a decade; weekly is already more than it needs.
+  period: 168h
+  schedule: '25 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bratislava-districts }
+  # Every stream writes through the one door that evaluates the pipelines-write Policy.
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: AdministrativeArea, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

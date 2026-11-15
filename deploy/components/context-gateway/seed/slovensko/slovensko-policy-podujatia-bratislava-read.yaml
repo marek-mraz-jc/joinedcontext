@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: podujatia-bratislava-read
+  namespace: slovensko
+  title: { sk: 'Verejné čítanie: podujatia v Bratislave', en: 'Public read: events in Bratislava' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: slovensko-podujatia }
+  assigner: did:web:joinedcontext.com
+  assignee: { kind: role, id: public }
+  # The Endpoint slovensko-podujatia-bratislava reads the city's events of the national space by their scope
+  # (/SK/BA/bratislava, written by the events tail from the inventory row's town): the events exist once, the
+  # city is a view, as bbsk-podujatia is for its region (T-5666). Events and their venues, no entity write.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Event
+        - type: PointOfInterest
+  scopeQ: /SK/BA/bratislava

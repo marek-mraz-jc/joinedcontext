@@ -1,0 +1,54 @@
+# The city's dog areas as one public dataset (T-5413): the fenced areas for dogs in Barcelona's parks
+# and squares as Smart Data Models PointOfInterest, refreshed weekly from Open Data BCN.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: dog-areas
+  namespace: barcelona
+  title:
+    ca: Àrees de gossos de Barcelona
+    es: Áreas para perros de Barcelona
+    en: Barcelona dog areas
+  description:
+    ca: "Les àrees tancades per a gossos dels parcs i places de Barcelona: el parc o la plaça, l'adreça, el districte i el punt. Font: Open Data BCN, CC BY 4.0."
+    es: 'Las áreas cerradas para perros de los parques y plazas de Barcelona: el parque o la plaza, la dirección, el distrito y el punto. Fuente: Open Data BCN, CC BY 4.0.'
+    en: 'The fenced dog areas in the parks and squares of Barcelona: the park or square, the address, the district and the point. Source: Open Data BCN, CC BY 4.0.'
+spec:
+  contextSpaceRef: barcelona
+  slug: gikovj7fove6xy3g6ixatxgabdrhkg6m
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-dog-areas
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  catalog:
+    # Off the catalogue (T-5788, owner order 2026-10-26: an empty dataset leaves it): on 2026-10-26
+    # prod held 0 PointOfInterest; dev's read passes the 10 s gateway cut.
+    # The harvest feeds leave it out (EP-139); publish it again once prod holds data.
+    harvest: false
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [ENVI, SOCI]
+    keywords:
+      ca: [gossos, parcs, espais verds, animals]
+      es: [perros, parques, espacios verdes, animales]
+      en: [dogs, parks, green spaces, animals]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: WEEKLY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/arees-esbarjo-gossos-bcn
+        title: { ca: Àrees de gossos i d'esbarjo de gossos, en: Dog and dog recreation areas }
+        description:
+          ca: Les àrees de gossos de la ciutat de Barcelona, CC BY 4.0.
+          en: The dog areas of the city of Barcelona, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: dog-areas }

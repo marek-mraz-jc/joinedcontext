@@ -1,0 +1,20 @@
+# Open Data BCN's hourly air-quality file (dataset qualitat-aire-detall-bcn, CC BY 4.0): every
+# station, pollutant and day of the last four days, rewritten every hour (about :45). The
+# resource's download link answers 302 to this address on the same host; the DataSource names it
+# directly. About 50 KB; the mapping refuses more than 1 MiB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-air-quality
+  namespace: barcelona
+  title:
+    ca: Qualitat de l'aire, dades horàries (Open Data BCN)
+    es: Calidad del aire, datos horarios (Open Data BCN)
+    en: Air quality, hourly data (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/resources/aspb/Qualitat_Aire_Detall.csv
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 30s

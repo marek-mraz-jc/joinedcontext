@@ -1,0 +1,14 @@
+# The one model of the project's catalogue space (DM-61, T-5493): the three types the Portal
+# reconciler writes, as in slovensko's catalogue; a draft that names no slot.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: catalog
+  namespace: banskabystrica
+  title: { sk: Katalóg otvorených dát, en: Open data catalogue }
+spec:
+  contextSpaceRef: catalog
+  linkml: ./catalog.linkml.yaml
+  version: 0.1.0
+  lifecycle: draft
+  classes: [Dataset, DataService, Organization]

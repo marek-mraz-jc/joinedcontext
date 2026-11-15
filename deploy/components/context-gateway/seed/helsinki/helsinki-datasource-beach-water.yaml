@@ -1,0 +1,18 @@
+# Forum Virium Helsinki's beach sensors (Uiras), the newest reading of each, 28 sensors on 2026-09-25 and 14 of them
+# reporting. The file is regenerated hourly. No key. CC-BY-4.0, read from the HRI catalogue (package
+# veden-reaaliaikainen-lampotila-helsingin-uimarannoilla).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: fvh-uiras-beaches
+  namespace: helsinki
+  title:
+    en: Beach water temperature (Forum Virium Helsinki, Uiras)
+    fi: Uimarantojen veden lämpötila (Uiras)
+spec:
+  type: http
+  http:
+    url: https://iot.fvh.fi/opendata/uiras/uiras_latest.geojson
+    verb: GET
+    headers: { Accept: application/geo+json }
+    timeout: 30s

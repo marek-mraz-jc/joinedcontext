@@ -1,0 +1,33 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-air-quality
+  namespace: barcelona
+  title:
+    ca: Lectura pública de la qualitat de l'aire
+    es: Lectura pública de la calidad del aire
+    en: Public read of air quality
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  # The slice the Endpoint air-quality publishes: the stations and their readings, read only, with
+  # the discovery a client needs first (T-4258, EP-116) and the history the space keeps (T-4372).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: AirQualityObserved

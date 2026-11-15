@@ -1,0 +1,49 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-cnpg-operator-pod-labels
+  annotations:
+    policies.kyverno.io/title: Restrict Pod Labels Created by the CloudNativePG Operator
+    policies.kyverno.io/category: NetworkPolicy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      The CloudNativePG operator (postgres-operator-cloudnative-pg) creates the
+      PostgreSQL instance Pods directly. Because NetworkPolicies authorize by the
+      app.kubernetes.io/name label, a CNPG-created Pod carrying a foreign value
+      would inherit that workload's reachability — label spoofing. This restricts
+      the app.kubernetes.io/name values a CNPG-created Pod may carry. Instance
+      Pods that set no name label are unaffected (an absent label cannot spoof a
+      selector).
+spec:
+  background: false
+  rules:
+    - name: cnpg-name-label-allowlist
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE, UPDATE]
+      preconditions:
+        all:
+          - key: "{{ request.userInfo.username | split(@, ':') | [-1] }}"
+            operator: Equals
+            value: postgres-operator-cloudnative-pg
+          - key: '{{ request.object.metadata.labels."app.kubernetes.io/name" || '''' }}'
+            operator: NotEquals
+            value: ''
+      validate:
+        failureAction: KYVERNO_FAILURE_ACTION
+        message: >-
+          CNPG-created Pod sets a non-CloudNativePG app.kubernetes.io/name —
+          possible NetworkPolicy label spoofing. Allowed values: cloudnative-pg,
+          postgresql.
+        deny:
+          conditions:
+            all:
+              - key: '{{ request.object.metadata.labels."app.kubernetes.io/name" }}'
+                operator: NotIn
+                value:
+                  - cloudnative-pg
+                  - postgresql

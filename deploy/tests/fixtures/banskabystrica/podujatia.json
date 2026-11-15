@@ -1,0 +1,125 @@
+[
+ {
+  "id": 117711,
+  "modified_gmt": "2026-09-24T10:41:20",
+  "link": "https://www.banskabystrica.sk/podujatia/den-architektury-4/",
+  "title": {
+   "rendered": "Deň architektúry"
+  },
+  "meta": {
+   "date_start": "2026-10-05",
+   "time_start": "16:00",
+   "date_end": "2026-10-05",
+   "time_end": "19:00",
+   "address_number": "1",
+   "address_street": "Námestie SNP",
+   "address_locality": "Banská Bystrica - Radnica, Cikkerova sieň",
+   "coordinates": {
+    "longitude": 19.1459513,
+    "latitude": 48.7353768
+   }
+  },
+  "event_categories": [
+   98
+  ]
+ },
+ {
+  "id": 116585,
+  "modified_gmt": "2026-08-31T12:30:43",
+  "link": "https://www.banskabystrica.sk/podujatia/vernisaz-vystavy-riaditelia-umelci/",
+  "title": {
+   "rendered": "Vernisáž výstavy Riaditelia umelci"
+  },
+  "meta": {
+   "date_start": "2026-09-30",
+   "time_start": "17:00",
+   "date_end": "2026-09-30",
+   "time_end": "18:00",
+   "address_number": "141/8",
+   "address_street": "Dolná",
+   "address_locality": "Banská Bystrica",
+   "coordinates": {
+    "longitude": 19.1434233,
+    "latitude": 48.7343755
+   }
+  },
+  "event_categories": [
+   98,
+   97,
+   425
+  ]
+ },
+ {
+  "id": 116648,
+  "modified_gmt": "2026-09-02T07:10:19",
+  "link": "https://www.banskabystrica.sk/podujatia/stredoslovenska-galeria-program-september-2026/",
+  "title": {
+   "rendered": "Stredoslovenská galéria – program september 2026"
+  },
+  "meta": {
+   "date_start": "2026-09-09",
+   "time_start": "18:00",
+   "date_end": "2026-09-30",
+   "time_end": "19:00",
+   "address_number": "141/8",
+   "address_street": "Dolná",
+   "address_locality": "Banská Bystrica",
+   "coordinates": {
+    "longitude": 19.1434233,
+    "latitude": 48.7343755
+   }
+  },
+  "event_categories": [
+   459,
+   97
+  ]
+ },
+ {
+  "id": 117447,
+  "modified_gmt": "2026-09-23T05:35:39",
+  "link": "https://www.banskabystrica.sk/podujatia/potulky-s-cestovatelom-maroko/",
+  "title": {
+   "rendered": "Potulky s cestovateľom &#8211; Maroko"
+  },
+  "meta": {
+   "date_start": "2026-10-15",
+   "time_start": "16:30",
+   "date_end": "2026-10-15",
+   "time_end": null,
+   "address_number": "48",
+   "address_street": "Jilemnického",
+   "address_locality": "Banská Bystrica",
+   "coordinates": {
+    "longitude": 19.1272624,
+    "latitude": 48.7303269
+   }
+  },
+  "event_categories": [
+   97
+  ]
+ },
+ {
+  "id": 117687,
+  "modified_gmt": "2026-09-23T13:08:50",
+  "link": "https://www.banskabystrica.sk/podujatia/bezime-so-svetielkom-nadeje/",
+  "title": {
+   "rendered": "BEŽIME so Svetielkom nádeje"
+  },
+  "meta": {
+   "date_start": "2026-09-25",
+   "time_start": null,
+   "date_end": "2026-09-27",
+   "time_end": null,
+   "address_number": null,
+   "address_street": null,
+   "address_locality": "Banská Bystrica",
+   "coordinates": {
+    "longitude": 19.149167,
+    "latitude": 48.7325
+   }
+  },
+  "event_categories": [
+   42
+  ]
+ }
+]

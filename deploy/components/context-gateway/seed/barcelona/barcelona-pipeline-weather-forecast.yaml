@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: weather-forecast
+  namespace: barcelona
+  title:
+    ca: Predicció meteorològica del Barcelonès, cada mitja hora
+    es: Predicción meteorológica del Barcelonès, cada media hora
+    en: Barcelonès weather forecast, every half hour
+spec:
+  class: auto
+  # Open Data BCN lists the file as refreshed every 30 minutes; Meteocat issues a new forecast a
+  # few times a day, and a run that finds the same issue writes nothing new.
+  schedule: '10,40 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-weather-forecast }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Replace: only this pipeline writes WeatherForecast, and a day the newest issue no longer lists
+  # leaves. A file the mapping refuses fails the run and deletes nothing.
+  output: { type: WeatherForecast, mode: replace }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

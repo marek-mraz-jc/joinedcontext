@@ -1,0 +1,25 @@
+# The server component of bike-weather-demand (T-3355, ADR-N-044): wasm32-wasip2, exporting wasi:http,
+# its database and files through jc:app. It reuses the browser's model (../wasm, without
+# wasm-bindgen) for the station models it keeps. Its own workspace and lock, as the App's
+# repository builds it.
+[package]
+name = "bike-weather-demand-server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "EUPL-1.2"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bike-weather-demand = { path = "../wasm", default-features = false }
+jc-app-sdk = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "ef03418872f29c10bf895fdf84aaf899e651f205" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+[workspace]

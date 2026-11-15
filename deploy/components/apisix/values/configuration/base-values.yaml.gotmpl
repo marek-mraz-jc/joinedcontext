@@ -1,0 +1,97 @@
+---
+{{- $this := .Values.apisix.configuration -}}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [ ] Health probes -> not applicable
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [ ] ServiceAccount with least privilege where required
+# - [ ] Named ports -> not applicable
+# - [ ] Ingress with TLS -> not (yet) applicable
+
+plugins:
+{{- range $component, $config := .Values.plugins }}
+  {{ $component }}:
+{{ $config | toYaml | nindent 4 }}
+{{- end }}
+
+routes:
+{{- range $component, $config := .Values.routes }}
+  {{ $component }}:
+{{ $config | toYaml | nindent 4 }}
+{{- end }}
+
+domain: {{ $global.domain }}
+realm: {{ $global.instanceSlug }}
+
+# The Portal composes the served edge file from the base (ADR-N-030, AP-112). An environment
+# without the Portal (addons) keeps the base helm seeds.
+{{- $portal := dig "portal" "portal" dict .Values }}
+composer:
+  enabled: {{ dig "enabled" false $portal }}
+  serviceAccount: portal
+  namespace: {{ dig "namespace" "" $portal | quote }}
+
+# The SAN list is the apex plus every routed subdomain, derived from the same route map the
+# ConfigMap is built from, so a new route can never end up on an uncovered hostname. Several
+# routes share one subdomain (the Portal's three), so the list is de-duplicated.
+{{- $subDomains := list }}
+{{- range $component, $config := .Values.routes }}
+{{- /* A route with `tlsSecret` brings its own certificate (the apisix Ingress names it). */}}
+{{- if and (hasKey $config "subDomain") (not (hasKey $config "tlsSecret")) }}
+{{- $subDomains = append $subDomains $config.subDomain }}
+{{- end }}
+{{- end }}
+{{- $subDomains = $subDomains | uniq | sortAlpha }}
+{{- /* The hosts an Endpoint WebSocket route answers on, from the same route map (T-5931). */}}
+{{- $websocketHosts := list }}
+{{- range $component, $config := .Values.routes }}
+{{- if dig "websocket" false $config }}
+{{- if hasKey $config "subDomain" }}
+{{- $websocketHosts = append $websocketHosts (printf "%s.%s" $config.subDomain $global.domain) }}
+{{- else }}
+{{- $websocketHosts = append $websocketHosts $global.domain }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $websocketHosts = $websocketHosts | uniq | sortAlpha }}
+edge:
+  enabled: {{ $global.ingress.enabled }}
+  secretName: apisix-edge-tls
+  clusterIssuer: {{ $global.ingress.clusterIssuer | quote }}
+  ingressClass: {{ $global.ingress.ingressClass | quote }}
+  hosts:
+    - {{ $global.domain | quote }}
+    {{- range $subDomains }}
+    - {{ printf "%s.%s" . $global.domain | quote }}
+    {{- end }}
+  # A domain the edge is moving to is proven on the staging issuer first (T-2806).
+  {{- $stagingDomain := $global.ingress.stagingDomain | default "" }}
+  stagingHosts:
+    {{- if $stagingDomain }}
+    - {{ $stagingDomain | quote }}
+    {{- range $subDomains }}
+    - {{ printf "%s.%s" . $stagingDomain | quote }}
+    {{- end }}
+    {{- else }} []
+    {{- end }}
+  # Hosts with an Endpoint WebSocket route: Traefik advertises the upgrade on their `/ws`
+  # answers (T-5931).
+  websocketHosts: {{ if $websocketHosts }}{{ $websocketHosts | toJson }}{{ else }}[]{{ end }}
+  # The zone every App host sits in, when its wildcard certificate is on (ADR-N-037 §6).
+  appsWildcard: {{ if dig "ingress" "appsWildcard" "enabled" false $global }}{{ printf "*.apps.%s" $global.domain | quote }}{{ else }}''{{ end }}
+  # App hosts one by one (global.ingress.appHosts): a Certificate `app-{name}` each.
+  appHosts: {{ dig "ingress" "appHosts" list $global | toJson }}
+
+# Authorize the ingress edge to reach the APISIX data plane when the
+# namespace enforces mandatory mTLS via the Linkerd default-inbound-policy.
+# `allowUnauthenticatedIngress` mirrors the global setting: true accepts plaintext
+# from an unmeshed ingress, false requires the ingress controller to be meshed.
+{{- $allowUnauthIngress := false }}
+{{- if hasKey ($global.serviceMesh | default dict) "allowUnauthenticatedIngress" }}
+{{- $allowUnauthIngress = $global.serviceMesh.allowUnauthenticatedIngress }}
+{{- end }}
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+  allowUnauthenticatedIngress: {{ $allowUnauthIngress }}

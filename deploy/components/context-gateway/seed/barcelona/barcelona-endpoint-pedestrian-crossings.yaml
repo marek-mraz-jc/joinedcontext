@@ -1,0 +1,56 @@
+# Barcelona's pedestrian crossings in the city's CKAN organisation: PedestrianCrossing points as
+# NGSI-LD, CSV, GeoJSON by OGC API Features, OData and MCP, refreshed weekly (T-5264, EP-118).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: pedestrian-crossings
+  namespace: barcelona
+  title:
+    ca: Passos de vianants de Barcelona
+    es: Pasos de peatones de Barcelona
+    en: Barcelona pedestrian crossings
+  description:
+    ca: Els passos de vianants i de bicicletes pintats als carrers de Barcelona, amb el seu tipus, la superfície pintada i el barri.
+    es: Los pasos de peatones y de bicicletas pintados en las calles de Barcelona, con su tipo, la superficie pintada y el barrio.
+    en: The pedestrian and cycle crossings painted on Barcelona's streets, with their kind, painted area and neighbourhood (barri).
+spec:
+  contextSpaceRef: barcelona
+  slug: fkwra2eon4a4drzcwjykl77sr3xdfcnc
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-pedestrian-crossings
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      ca: [passos de vianants, via pública, mobilitat]
+      es: [pasos de peatones, vía pública, movilidad]
+      en: [pedestrian crossings, public space, mobility]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: WEEKLY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/infraestructures-inventari-pas-vianants
+        title:
+          ca: Inventari de passos de vianants (Open Data BCN)
+          en: Inventory of pedestrian crossings (Open Data BCN)
+        description:
+          ca: Passos de vianants actuals i retirats, amb el tipus, la superfície i el punt, CC BY 4.0.
+          en: Current and removed crossings with their kind, area and point, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: pedestrian-crossings }

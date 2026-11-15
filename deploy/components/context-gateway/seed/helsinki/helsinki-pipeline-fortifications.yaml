@@ -1,0 +1,17 @@
+# One HeritageArea per strongpoint of `hel-fortifications`, written into the city space (T-5670).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: fortifications
+  namespace: helsinki
+  title: { en: WWI fortifications }
+spec:
+  class: auto
+  # The map was last changed in 2020; weekly is already more than it needs.
+  period: 168h
+  schedule: '10 4 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-fortifications }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: HeritageArea, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

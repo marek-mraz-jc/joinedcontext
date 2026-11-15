@@ -1,0 +1,85 @@
+# The gallery card of the application builder (AP-56, T-0524): "Generate your own app" in the
+# Portal starts an agent run of the `app-builder` profile (POST …/agent-runs), and the form shows
+# only where this Blueprint exists. The template is the App manifest a run files once the app
+# is built, so a Flows run of this card yields the same manifest by hand.
+#
+# The contract every generated app has to meet (ADR-N-019, AP-23, AP-40), stated here where
+# the builder and its reviewer both read it:
+#   - the app is served behind the platform edge under /apps/{name}/;
+#   - the signed-in person arrives as X-Userinfo (base64 JSON); every endpoint call carries
+#     X-Access-Token; a write without it is answered 401;
+#   - no login, session, OIDC, PKCE or token-refresh code, and no OIDC library;
+#   - it listens on JC_BIND_ADDRESS and serves /healthz;
+#   - apps/air-quality in the Portal repository is the model.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: app-from-prompt
+  namespace: org
+  title: { en: "An application from a prompt", fi: "Sovellus kehotteesta", sk: "Aplikácia zo zadania", cs: "Aplikace ze zadání", de: "Eine App aus einer Beschreibung" }
+  description:
+    en: "Describe what the app should show; the builder reads the endpoint's schema and writes the app."
+    sk: "Opíšte, čo má aplikácia ukazovať; zostavovač prečíta schému endpointu a aplikáciu napíše."
+    cs: "Popište, co má aplikace ukazovat; sestavovač přečte schéma endpointu a aplikaci napíše."
+    de: "Beschreiben Sie, was die App zeigen soll; der Builder liest das Schema des Endpoints und schreibt die App."
+spec:
+  version: 1.0.0
+  category: application
+  riskClass: yellow
+  allowedRoles: [portal-approver]
+  parameterSchema:
+    type: object
+    required: [name, kind, prompt, endpoint]
+    additionalProperties: false
+    properties:
+      name: { type: string, title: "App name", x-jc-title: { sk: "Názov aplikácie", cs: "Název aplikace", de: "Name der App" }, pattern: "^[a-z][a-z0-9-]{1,40}$", description: "The path the app is served at: /apps/{name}/.", x-jc-description: { sk: "Adresa, na ktorej sa aplikácia otvorí: /apps/{name}/.", cs: "Adresa, na které se aplikace otevře: /apps/{name}/.", de: "Die Adresse, unter der die App öffnet: /apps/{name}/." } }
+      kind:
+        type: string
+        title: "How it is built and served"
+        x-jc-title: { sk: "Ako sa zostaví a poskytuje", cs: "Jak se sestaví a poskytuje", de: "Wie sie gebaut und bereitgestellt wird" }
+        default: static
+        oneOf:
+          - { const: static, title: "Static (screens only)", x-jc-title: { sk: "Statická (len obrazovky)", cs: "Statická (jen obrazovky)", de: "Statisch (nur Bildschirme)" } }
+          - { const: service, title: "Service (backend only, no screens)", x-jc-title: { sk: "Služba (len backend, bez obrazoviek)", cs: "Služba (jen backend, bez obrazovek)", de: "Dienst (nur Backend, keine Bildschirme)" } }
+          - { const: fullstack, title: "Full stack (Rust backend and React screens)", x-jc-title: { sk: "Celá (backend v Ruste a obrazovky v Reacte)", cs: "Celá (backend v Rustu a obrazovky v Reactu)", de: "Komplett (Rust-Backend und React-Bildschirme)" } }
+      prompt: { type: string, title: "What should the app do", x-jc-title: { sk: "Čo má aplikácia robiť", cs: "Co má aplikace dělat", de: "Was soll die App tun" }, minLength: 10, maxLength: 2000, x-jc-widget: textarea }
+      endpoint:
+        type: string
+        title: "Endpoint it reads"
+        x-jc-title: { sk: "Endpoint, ktorý číta", cs: "Endpoint, který čte", de: "Endpoint, den sie liest" }
+        pattern: "^[a-z][a-z0-9-]{1,60}$"
+        description: "An Endpoint of this project; the app reads only what it publishes."
+        x-jc-description: { sk: "Endpoint tohto projektu; aplikácia číta len to, čo zverejňuje.", cs: "Endpoint tohoto projektu; aplikace čte jen to, co zveřejňuje.", de: "Ein Endpoint dieses Projekts; die App liest nur, was er veröffentlicht." }
+        x-jc-widget: resourcePicker
+        x-jc-options: { plural: endpoints }
+      contextSpace:
+        type: string
+        title: "Context Space behind the endpoint"
+        x-jc-title: { sk: "Kontextový priestor za endpointom", cs: "Kontextový prostor za endpointem", de: "Kontextbereich hinter dem Endpoint" }
+        pattern: "^[a-z][a-z0-9-]{1,60}$"
+        default: helsinki
+        x-jc-widget: resourcePicker
+        x-jc-options: { plural: spaces }
+  templates:
+    - name: app
+      template: |
+        apiVersion: joinedcontext.com/v1alpha1
+        kind: App
+        metadata:
+          name: "{{ name }}"
+          title: { en: "{{ name }}" }
+          annotations:
+            joinedcontext.com/prompt: "{{ prompt }}"
+            joinedcontext.com/endpoint: "{{ endpoint }}"
+        spec:
+          kind: "{{ kind }}"
+          source:
+            path: "apps/{{ name }}"
+          build: { node: "22" }
+          visibility: organization
+          lifecycle: draft
+          dataNeeds:
+            - contextSpaceRef: { kind: ContextSpace, name: "{{ contextSpace }}" }
+              types: []
+              attrs: []
+              operations: [queryEntity, retrieveEntity]

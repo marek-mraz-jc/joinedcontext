@@ -1,0 +1,24 @@
+# The region's open data as one public, read-only MCP connector (T-4141, T-5367, ADR-N-043):
+# `https://{domain}/api/mcp/bbsk/otvorene-data`. It selects every public Endpoint of the project
+# bbsk; the steward's `bbsk-kraj` is not public and stays out. Every call is still that Endpoint's
+# own call, decided by its anonymous Policy, and the gateway lists anonymous callers read-only
+# tools only (T-4168). The edge counts anonymous calls per client IP (context-mcp-named).
+apiVersion: joinedcontext.com/v1alpha1
+kind: McpServer
+metadata:
+  name: otvorene-data
+  namespace: bbsk
+  # What an AI client reads as serverInfo and initialize.instructions (EP-92).
+  title:
+    sk: Banskobystrický samosprávny kraj — otvorené údaje
+    en: Banská Bystrica Region, open data
+  description:
+    sk: 'Otvorené údaje Banskobystrického samosprávneho kraja, len na čítanie: registre kraja (okresy, obce, organizácie, nemocnice, sociálne služby, mosty), ročné údaje ŠÚ SR za kraj a okresy, ukazovatele kraja a všetky ďalšie tabuľky portálu opendata.bbsk.sk (sčítanie, školy, cesty a mosty, zmluvy, faktúry, dotácie, zastupiteľstvo, investície, zdravotníctvo). Zdroje: Banskobystrický samosprávny kraj, Štatistický úrad SR; CC BY-SA 4.0. Pri citovaní uveďte zdroj.'
+    en: "Read-only open data of the Banská Bystrica Self-Governing Region (BBSK), Slovakia: its registers (districts, municipalities, the region's organisations, hospitals, social services, bridges), the Statistical Office's yearly figures for the region and its districts, the region's indicators, and every other table of its open-data portal (census, schools, roads and bridges, contracts, invoices, grants, the council, investments, health care), each entity linking its catalogue page in `isPartOf`. Each tool answers per Endpoint. Start with list_endpoints or search, then query_entities naming one endpoint, with a small limit. Texts are in Slovak. Sources: BBSK (https://opendata.bbsk.sk/) and the Statistical Office of the Slovak Republic; CC BY-SA 4.0, credit the source when you quote it."
+spec:
+  # Every public Endpoint of the project, resolved on each call (MF-55, T-5367): a new one joins
+  # without an edit here, one that stops being public leaves.
+  select:
+    projects: [bbsk]
+    accessLevel: [public]
+  audience: public

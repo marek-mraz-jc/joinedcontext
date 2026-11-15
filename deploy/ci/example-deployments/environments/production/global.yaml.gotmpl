@@ -1,0 +1,53 @@
+---
+global:
+  domain: platform.example.org
+  # The organisation's own domain in every entity id; production has no placeholder (CC-73).
+  orgDomain: example.org
+  profile: production
+  # security.txt (RFC 9116, T-1721): an example contact of the example domain.
+  securityTxt:
+    contact: mailto:security@platform.example.org
+    expires: "2027-09-24T00:00:00Z"
+  instanceSlug: jc
+  initialUserEmail: {{ env "GITLAB_USER_EMAIL" | default "admin@example.com" }}
+  ingress:
+    enabled: true
+    clusterIssuer: 'letsencrypt-prod'
+    ingressClass: 'nginx'
+  # A production instance is watched: the monitoring component renders its scrape
+  # configuration and the edge alert rules (OPS-16).
+  metrics:
+    enabled: true
+
+# The Prometheus the Operator runs, which the broker, the gateway and the Portal admit for
+# their scrapes from this namespace alone (T-3771).
+monitoring:
+  monitoring:
+    prometheusNamespace: 'monitoring'
+
+# An example object store, so the production render carries a real backup stanza. The
+# credentials are not here: `postgres-backup-s3` is a Secret the operator supplies.
+postgres:
+  cluster:
+    backups:
+      enabled: true
+      endpointURL: 'https://s3.example.org'
+      destinationPath: 's3://jc-backups/postgres'
+      region: 'eu-central-1'
+      bucket: 'jc-backups'
+
+# The audit trail of OPS-42. Same object store as the backups in this example, a different
+# bucket: the audit bucket carries Object Lock in compliance mode and the backup bucket does
+# not. `audit-logging-s3` is a Secret the operator supplies, holding a credential that may
+# write and nothing else.
+audit-logging:
+  collector:
+    enabled: true
+    bucket: 'jc-audit'
+    region: 'eu-central-1'
+    endpointURL: 'https://s3.example.org'
+
+# The project whose streams the pipeline runner carries: named here, never the demo city (CC-73).
+pipeline-runner:
+  runner:
+    project: city

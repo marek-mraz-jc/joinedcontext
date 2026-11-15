@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item 62e3cf1020434b07832ca9ae19bce348, served by its download API (opendata.geoportalpraha.cz/api/download/v1/items/62e3cf1020434b07832ca9ae19bce348/geojson), which
+# answers with a redirect to this ArcGIS Hub URL; the manifest names the target so the fetch is one request. No key.
+# CC BY 4.0 with the credit "datový podklad © IPR Praha", read from geoportalpraha.cz/data-a-sluzby/otevrena-data and the
+# IPR DCAT feed. 458 toilets.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-toilets
+  namespace: praha
+  title: { en: Public toilets (IPR Praha), cs: Veřejné toalety (IPR Praha) }
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/62e3cf1020434b07832ca9ae19bce348_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

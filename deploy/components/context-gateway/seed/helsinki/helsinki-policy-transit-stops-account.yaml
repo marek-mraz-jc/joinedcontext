@@ -1,0 +1,18 @@
+# The transit-stops pipeline writes GtfsStop and GtfsStation in one run (its mapping), but the Policy derived for its own
+# account pl-transit-stops grants only the output's one type (PL-20): every GtfsStation was refused 403 on dev
+# (T-5717, the T-5320 shape). This grants the account both types and nothing else.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: transit-stops-account
+  namespace: helsinki
+  title: { en: The transit-stops pipeline writes its GtfsStop and GtfsStation entities }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: serviceAccount, id: pl-transit-stops }
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: GtfsStop
+        - type: GtfsStation

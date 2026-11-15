@@ -1,0 +1,51 @@
+# The flood defence lines of the IPR Praha geoportal (T-5429): fixed, mobile and sandbag lines,
+# FloodDefence of the space praha-mesto read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-protipovodnova-ochrana
+  namespace: praha
+  title: { cs: Protipovodňová ochrana — Praha, en: Flood defences — Prague }
+  description:
+    cs: 'Linie protipovodňové ochrany: pevná opatření, mobilní stěny a pytle s pískem, kdo je zajišťuje a na jakou povodeň jsou navrženy. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'The flood defence lines: fixed barriers, mobile walls and sandbags, who keeps them and the flood they are designed for. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: juaufiuxbnd6s7lvyiw25wqdkontxm76
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-protipovodnova-ochrana
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Mapped areas and lines: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [ENVI]
+    keywords:
+      cs: [Praha, povodně, protipovodňová ochrana, mobilní stěny]
+      en: [Prague, floods, flood defences, mobile walls]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/1a09887626a243aeab7910d3ab2477d2_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Protipovodňová ochrana (IPR Praha), en: Flood defences (IPR Praha) }
+        description:
+          cs: Protipovodňová ochrana z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood defences from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/98a6eba14f8646e1a6b7e3cd805f484b_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Protipovodňová ochrana – pytle s pískem (IPR Praha)
+          en: 'Flood defences: sandbag lines (IPR Praha)'
+        description:
+          cs: Protipovodňová ochrana – pytle s pískem z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Flood defences: sandbag lines from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'

@@ -1,0 +1,163 @@
+{{- $bridge := index .Values "demo-feeds" "hsl-bridge" -}}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /ready and /ping
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> none needed, no Kubernetes API
+# - [ ] Named ports -> not applicable, Service disabled
+# - [ ] Ingress with TLS -> not applicable, it only dials out
+
+# HSL's live tram positions into the helsinki broker hsl-bridge (T-5883): Bento reads HSL's
+# public broker over WebSocket on 443 (the cluster's firewall lets nothing out on 8883) and
+# publishes every frame, its topic under `hsl`, to the broker's platform address over TLS, as a
+# device does: client `helsinki-hsl-bridge`, password a Keycloak token of that ServiceAccount.
+# The broker drops a connection when its token expires, so the bridge asks for a token, runs
+# until shortly before it expires, and starts again with a new one.
+fullnameOverride: hsl-bridge
+nameOverride: demo-feeds-hsl-bridge
+
+{{- $images := index .Values.images "demo-feeds" "feed" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+command: ["sh", "/etc/hsl-bridge/run.sh"]
+
+env:
+  CLIENT_ID: {{ $bridge.clientId | quote }}
+  # The realm's token endpoint on the public host, as the pipeline runner reaches it, so the
+  # token's `iss` is the one the gateway verifies. Bento asks for it: its TLS checks the host's
+  # certificate, which BusyBox's wget does not.
+  TOKEN_URL: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/token"
+  BROKER_URL: "ssl://hsl-bridge.helsinki.mqtt.{{ $global.domain }}:8883"
+
+# Optional: until an approver issues the secret and it is stored, the pod says so and waits.
+envSecret:
+  CLIENT_SECRET:
+    secret: {{ $bridge.clientSecret.secret }}
+    key: {{ $bridge.clientSecret.key }}
+    optional: true
+
+configMap:
+  enabled: true
+  mountPath: /etc/hsl-bridge
+  data:
+    run.sh: |
+      # Never echo the secret or the token: neither is in a log line or an argument.
+      while :; do
+        if [ -z "${CLIENT_SECRET:-}" ]; then
+          echo '{"level":"error","msg":"no client secret: issue one for the helsinki ServiceAccount hsl-bridge in the Portal and store it as Secret {{ $bridge.clientSecret.secret }} key {{ $bridge.clientSecret.key }}; retrying in 60 s"}'
+          sleep 60
+          continue
+        fi
+        rm -f /tmp/token
+        /bento -c /etc/hsl-bridge/token.yaml
+        TOKEN=""; life=0
+        [ -s /tmp/token ] && read -r TOKEN life < /tmp/token
+        rm -f /tmp/token
+        case "$life" in ''|*[!0-9]*) life=0 ;; esac
+        if [ -z "$TOKEN" ] || [ "$life" -le 60 ]; then
+          echo '{"level":"error","msg":"the realm gave the bridge no token (wrong secret, or the client is disabled); retrying in 30 s"}'
+          sleep 30
+          continue
+        fi
+        export TOKEN
+        timeout -s TERM "$((life - 30))" /bento -c /etc/hsl-bridge/bridge.yaml
+        unset TOKEN
+      done
+    token.yaml: |
+      input:
+        generate:
+          count: 1
+          interval: ""
+          mapping: |
+            root = "grant_type=client_credentials&client_id=%s&client_secret=%s".format(env("CLIENT_ID").escape_url_query(), env("CLIENT_SECRET").escape_url_query())
+      pipeline:
+        processors:
+          - http:
+              url: ${TOKEN_URL}
+              verb: POST
+              headers: { Content-Type: application/x-www-form-urlencoded }
+              timeout: 10s
+              retries: 0
+          # A refusal keeps the request, the secret in it: nothing of a failed call is written.
+          - mapping: |
+              root = if errored() || this.access_token.type() != "string" { deleted() } else {
+                "%s %d".format(this.access_token, this.expires_in.number().int64())
+              }
+      output:
+        file: { path: /tmp/token, codec: lines }
+      logger: { level: WARN, format: json }
+    bridge.yaml: |
+      http:
+        address: 0.0.0.0:4195
+      input:
+        mqtt:
+          urls: [ "wss://mqtt.hsl.fi:443/" ]
+          topics: [ {{ $bridge.topic | quote }} ]
+          qos: 0
+          clean_session: true
+      pipeline:
+        processors:
+          # The broker refuses a message over 1 KiB and disconnects its sender; a VP frame is
+          # about 300 bytes.
+          - mutation: |
+              root = if content().length() > 1024 { deleted() }
+          - rate_limit: { resource: broker }
+      output:
+        mqtt:
+          urls: [ "${BROKER_URL}" ]
+          client_id: ${CLIENT_ID}
+          user: ${CLIENT_ID}
+          password: ${TOKEN}
+          topic: hsl${! meta("mqtt_topic") }
+          qos: 1
+          max_in_flight: 64
+          tls: { enabled: true }
+      rate_limit_resources:
+        - label: broker
+          local: { count: {{ $bridge.messagesPerSecond }}, interval: 1s }
+      logger:
+        level: INFO
+        format: json
+
+containerPort: 4195
+
+probes:
+  readiness:
+    path: /ready
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /ping
+    periodSeconds: 15
+    timeoutSeconds: 3
+    # A token round and a reconnect take a few seconds; a missing secret restarts the pod
+    # every couple of minutes, which `kubectl get pods` shows.
+    failureThreshold: 8
+    initialDelaySeconds: 30
+
+service:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 48Mi
+  limits:
+    cpu: 500m
+    memory: 192Mi
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

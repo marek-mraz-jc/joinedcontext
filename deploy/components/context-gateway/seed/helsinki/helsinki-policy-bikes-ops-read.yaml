@@ -1,0 +1,27 @@
+# The city's own people read the stations through the operations endpoint (AP-61, EP-14).
+# helsinki-bikes-ops has the `organization` audience, where a signed-in person holds no
+# synthetic `public` role (GW22), so public-bikes does not reach them there; without this grant
+# the endpoint answered every member with nothing (T-3957, dev-smoke "ogc internal"). The
+# derived `helsinki-readers` holds everyone a binding names on the project and is what a token's
+# jc_groups carries (ADR-N-067 2.3, T-6470): the plain `helsinki` group matches only tokens
+# without jc_groups. The endpoint's projection still hides contactPoint. Reading only: the status write stays
+# bikes-ops-steward's, one Policy per attribute whitelist (GW17).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: bikes-ops-read
+  namespace: helsinki
+  title: { en: The city's people read the bike stations }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: group, id: helsinki-readers }
+  operations:
+    - retrieveOps
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: BikeHireDockingStation

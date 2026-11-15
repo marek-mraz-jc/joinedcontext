@@ -1,0 +1,6 @@
+---
+component: basemap
+parts:
+  # T-4638: the background map every map on the platform draws on, served from the cluster:
+  # a Protomaps PMTiles extract of the regions in values, its style, fonts and sprites.
+  - name: tiles

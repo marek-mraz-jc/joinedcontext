@@ -1,0 +1,17 @@
+# One RestrictedTrafficArea per record of the IPR layer Zákaz stání into the city space (T-5424).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-no-parking
+  namespace: praha
+  title: { en: No parking, cs: Zákaz stání }
+spec:
+  class: auto
+  # TSK republishes its parking layers every few weeks; one read a week keeps up.
+  period: 168h
+  schedule: '20 3 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-no-parking }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: RestrictedTrafficArea, mode: upsert }
+  quotas: { maxMemoryMb: 384, cpuMillicores: 200 }

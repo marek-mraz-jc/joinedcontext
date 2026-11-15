@@ -1,0 +1,21 @@
+# Compiled by the Portal from app-ovzdusie.yaml (joinedcontext-portal apps/banskabystrica-ovzdusie/grants,
+# `write_sample_app_grants`): the seed commits the App past the Portal's door, so the Endpoint and
+# Policies the door would commit beside it are seeded with it (T-2667, T-2972). Keep them equal.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-banskabystrica-ovzdusie-1
+  namespace: banskabystrica
+  annotations: { joinedcontext.com/generated-by: portal/app-reconciler }
+spec:
+  assignee:
+    id: endpoint:banskabystrica/app-banskabystrica-ovzdusie
+    kind: role
+  assigner: did:web:banskabystrica.sk
+  contextSpaceRef: { kind: ContextSpace, name: banskabystrica-verejne }
+  information:
+    - entities:
+        - type: AirQualityObserved
+      propertyNames: [name, dateObserved, location, pm10, pm25, dataProvider]
+      relationshipNames: [name, dateObserved, location, pm10, pm25, dataProvider]
+  operations: [queryEntity, retrieveEntity]

@@ -1,0 +1,18 @@
+# nextbike's Bratislava system (Slovnaft BAjk) as GBFS 2.3 `station_status`: what each station holds,
+# refreshed every 60 s by the publisher (`ttl`). No key. CC0-1.0, read from the feed's own
+# `system_information.json` (T-5273).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: nextbike-station-status
+  namespace: bratislava
+  title:
+    sk: Dostupnosť bicyklov Slovnaft BAjk (nextbike, GBFS)
+    en: Slovnaft BAjk bike availability (nextbike, GBFS)
+spec:
+  type: http
+  http:
+    url: https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bi/sk/station_status.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

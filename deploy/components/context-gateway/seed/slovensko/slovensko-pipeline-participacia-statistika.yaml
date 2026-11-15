@@ -1,0 +1,54 @@
+# Proposals per process and state (T-6505), the derived dataset of slovensko-participacia. It reads
+# the space's public Endpoint, so the public grant decides what it sees and no new read is opened,
+# and writes through the space's write door like the harvest.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: slovensko-participacia-statistika
+  namespace: slovensko
+  title: { sk: Návrhy podľa procesu a stavu, en: Proposals by process and state }
+spec:
+  class: scheduled
+  # After the hourly harvest of the own Decidim.
+  schedule: '47 * * * *'
+  source:
+    endpointRef: { kind: Endpoint, name: slovensko-participacia }
+    query:
+      # One read of two types, the process titles with their proposals: `query.type` names one type,
+      # and only a process or a proposal holds one of these attributes.
+      q: processType|proposalState|stateLabel
+      attrs: [name, proposalState, stateLabel, refParticipatoryProcess, source, dataProvider]
+  targetEndpoint: urn:ngsi-ld:Endpoint:joinedcontext.com:slovensko-participacia:slovensko-participacia-zapis
+  output: { type: ProposalStatistic, mode: upsert }
+  compute:
+    kind: bloblang
+    bloblang: |
+      let space = env("JC_SPACE")
+      let now = timestamp_unix()
+      let ran = $now.ts_format("2006-01-02T15:04:05Z", "UTC")
+      # A state with no proposal left stops being written: its row leaves within three hours, while
+      # one failed run keeps the figures.
+      let expires = ($now + 10800).ts_format("2006-01-02T15:04:05Z", "UTC")
+      let titles = this.filter(e -> e.type == "ParticipatoryProcess").map_each(e -> { (e.id): e.name.value }).squash()
+      let labels = { "not_answered": "Bez odpovede", "evaluating": "V hodnotení", "to_vote": "Postupuje do hlasovania", "accepted": "Prijatý", "rejected": "Nepostupuje do hlasovania", "withdrawn": "Stiahnutý" }
+
+      root = this.filter(e -> e.type == "Proposal").map_each(e -> {
+        "process": e.refParticipatoryProcess.object,
+        "token": e.proposalState.value.or(""),
+        "label": e.stateLabel.value.or($labels.get(e.proposalState.value.or("")).or(e.proposalState.value.or("Bez stavu"))),
+        "source": e.source.value,
+        "provider": e.dataProvider.value
+      }).map_each(r -> { ("%v|%v".format(r.process, r.label)): [r] }).squash().values().map_each(rows -> rows.index(0).assign({ "count": rows.length() })).map_each(g -> {
+        "id": "urn:ngsi-ld:ProposalStatistic:%v:%v-%v".format($space, g.process.split(":").index(-1), g.label.hash("xxhash64").encode("hex")),
+        "type": "ProposalStatistic",
+        "name": { "type": "Property", "value": "%v: %v".format($titles.get(g.process).or(g.process), g.label) },
+        "processName": { "type": "Property", "value": $titles.get(g.process).or(g.process) },
+        "proposalState": if g.token == "" { deleted() } else { { "type": "Property", "value": g.token } },
+        "stateLabel": { "type": "Property", "value": g.label },
+        "proposalCount": { "type": "Property", "value": g.count },
+        "refParticipatoryProcess": { "type": "Relationship", "object": g.process },
+        "source": { "type": "Property", "value": g.source },
+        "dataProvider": { "type": "Property", "value": g.provider },
+        "dateModified": { "type": "Property", "value": $ran },
+        "expiresAt": $expires
+      })

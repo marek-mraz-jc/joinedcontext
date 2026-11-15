@@ -1,0 +1,17 @@
+# One FareZone per PID fare zone of the IPR layer Pražská integrovaná doprava - tarifní pásma (T-5423).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: pid-fare-zones
+  namespace: praha
+  title: { en: PID fare zones, cs: Tarifní pásma PID }
+spec:
+  class: auto
+  # IPR redraws the zones when the tariff changes; one read a week keeps up.
+  period: 168h
+  schedule: '40 4 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-pid-fare-zones }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: FareZone, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 100 }

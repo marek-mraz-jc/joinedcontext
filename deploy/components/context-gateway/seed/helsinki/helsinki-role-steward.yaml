@@ -1,0 +1,43 @@
+# Roles as code (PF-49, PF-56): the steward is the domain lead of the demonstration instance,
+# proposing and approving every project kind (the yellow lane). Deletion, roles and bindings
+# belong to org-admin. A binding under users/assignments/ hands it to a person; the Portal
+# checks the binding before a Change exists (PF-50, T-0526).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: steward
+  namespace: org
+spec:
+  rules:
+    - kinds:
+        - ContextSpace
+        - DataModel
+        - Mapping
+        - Policy
+        - ScopeDefinition
+        - Endpoint
+        # An endpoint that names a projection carries one, and the Portal proposes the two
+        # as one import: a role that may act on the endpoint and not on its projection cannot
+        # check its own proposal (MP-01, T-1222).
+        - ModelProjection
+        - SharedSpaceReference
+        - ContextSourceRegistration
+        - ServiceAccount
+        - Pipeline
+        - DataSource
+        - MqttBroker
+        - App
+        # No CkanInstance: an instance is the administrator's, handed out per instance by its
+        # ckan-admin-{project}-{name} role (PF-107).
+        - Blueprint
+        - DataSpaceParticipant
+        - DataOffer
+        - DataAgreement
+        - SyncSource
+        - Bundle
+        - UiSchema
+        - Subscription
+        - Entity
+        - Dashboard
+        - Layer
+      verbs: [propose, approve]

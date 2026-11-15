@@ -1,0 +1,55 @@
+# One Smart Data Model type per catalogue dataset (T-4344): the road accidents of Barcelona's local
+# police (T-5374), counts only, read through their own Policy, which narrows the public read to RoadAccident.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: barcelona-accidents
+  namespace: barcelona
+  title:
+    ca: Accidents de trànsit — Barcelona
+    es: Accidentes de tráfico — Barcelona
+    en: Road accidents — Barcelona
+  description:
+    ca: "Cada accident de trànsit gestionat per la Guàrdia Urbana de Barcelona amb el lloc, el dia i l'hora, i el nombre de ferits, morts i vehicles, sense cap dada de les persones; un fitxer per any, llegit cada setmana. Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0."
+    es: 'Cada accidente de tráfico gestionado por la Guardia Urbana de Barcelona con el lugar, el día y la hora, y el número de heridos, muertos y vehículos, sin ningún dato de las personas; un fichero por año, leído cada semana. Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0.'
+    en: 'Each road accident the Guàrdia Urbana of Barcelona handled, with its place, day and hour and the number of injured, dead and vehicles, nothing about a person; one file a year, read every week. Source: Barcelona City Council, Open Data BCN, CC BY 4.0.'
+spec:
+  contextSpaceRef: barcelona
+  slug: iktky2jhufhge2pyeijyp4nhzpg2jzcc
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-accidents
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      ca: [accidents, trànsit, seguretat viària, Guàrdia Urbana]
+      es: [accidentes, tráfico, seguridad vial, Guardia Urbana]
+      en: [accidents, traffic, road safety, local police]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: ANNUAL
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/accidents-gu-bcn
+        title:
+          ca: Accidents gestionats per la Guàrdia Urbana
+          en: Accidents handled by the local police
+        description:
+          ca: Un fitxer CSV per any amb cada expedient d'accident.
+          en: One CSV file a year with each accident file.
+    pipelineRef: { kind: Pipeline, name: accidents }

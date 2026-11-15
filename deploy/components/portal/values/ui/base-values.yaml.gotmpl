@@ -1,0 +1,65 @@
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Runs as non-root (uid 101, the image's own) with `readOnlyRootFilesystem`: nginx writes
+#       /tmp and /var/cache/nginx, both emptyDir
+# - [x] Health probes -> / (the SPA shell) on 8080
+# - [x] Standard labels
+# - [x] ServiceAccount without an API token: it serves files and calls nothing
+# - [x] Named port -> 8080 container mapped to 8080 service
+# - [ ] Ingress with TLS -> not applicable, the Portal reads it inside the cluster (JC_PORTAL_UI_URL)
+
+# The Service name the Portal's JC_PORTAL_UI_URL names (components/portal/values/portal).
+fullnameOverride: portal-ui
+nameOverride: portal-ui
+
+{{- $image := index .Values.images "portal" "ui" }}
+image:
+  repository: {{ $image.repository }}
+  tag: {{ $image.tag | quote }}
+  digest: {{ $image.digest }}
+  pullPolicy: IfNotPresent
+
+containerPort: 8080
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  name: http
+
+probes:
+  readiness:
+    path: /
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 5
+
+extraVolumes:
+  - name: nginx-cache
+    emptyDir: {}
+extraVolumeMounts:
+  - name: nginx-cache
+    mountPath: /var/cache/nginx
+
+podSecurityContext:
+  {{ merge (dict "runAsUser" 101 "runAsGroup" 101 "fsGroup" 101) .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+# Inside the mesh the Portal's identity is the one caller of 8080 (PF-46); the NetworkPolicies
+# hold the same line for a cluster without it.
+meshAuthorization:
+  port: 8080
+  clients:
+    - serviceAccount: portal
+      namespace: {{ index .Values "portal" "portal" "namespace" | quote }}

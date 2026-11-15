@@ -1,0 +1,31 @@
+# The demo air sensors' space (T-4857): what the MQTT broker `ovzdusie` brings in, apart from the
+# EEA station of `ovzdusie`, whose expiry sweep must be the one writer there (PL-64), and from the
+# open data of banskabystrica-verejne. Each reading leaves every read an hour after its last
+# message (the pipeline's lifetime); its history is kept 30 days, as every measurement's.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: senzory
+  namespace: banskabystrica
+  title: { sk: Ukážkové senzory ovzdušia, en: Demo air sensors }
+  description:
+    sk: Testovacie merania ukážkových senzorov cez MQTT; nie sú to údaje mesta.
+    en: Test readings of the demo sensors over MQTT; not city data.
+spec:
+  urnSegment: senzory
+  isSandbox: false
+  dataModelRef: { kind: DataModel, name: bb-air-sensors }
+  defaultLocale: sk
+  retention:
+    - entityType: AirQualityObserved
+      history: P30D
+      attributes:
+        dateObserved: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+  quality:
+    - name: in-area-senzory
+      entityType: AirQualityObserved
+      kind: area
+      attribute: location
+      bbox: [18.95, 48.6, 19.35, 48.9]

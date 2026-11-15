@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: hsl-hfp-vehicles
+  namespace: helsinki
+  title: { en: 'HSL vehicles into the space: every bus, tram, metro, train and ferry' }
+spec:
+  class: auto
+  source:
+    dataSourceRef: { kind: DataSource, name: hsl-hfp }
+  # Every stream writes through the one endpoint that evaluates the pipelines-write Policy.
+  targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all
+  quotas: { maxMemoryMb: 128, cpuMillicores: 250 }
+  # A vehicle's end (PL-80, NGSI-LD 4.22 expiresAt): five minutes after the newest position it
+  # reports. Every write moves it on, so a vehicle that stops reporting leaves every read then
+  # and the broker's sweep deletes it (T-4823, T-4843).
+  lifetime:
+    - type: Vehicle
+      entity: { from: observedAt, plus: PT5M }

@@ -1,0 +1,24 @@
+# One CouncilVote per row of "Hlasovania poslancov" (T-4255); public office holders' votes.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-hlasovania-poslancov
+  namespace: bbsk
+  title:
+    sk: Hlasovania poslancov
+    en: Hlasovania poslancov
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 24 2 * * 5
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-hlasovania-poslancov
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: CouncilVote
+    mode: replace
+  quotas:
+    maxMemoryMb: 256
+    cpuMillicores: 100

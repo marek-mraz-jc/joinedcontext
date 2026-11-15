@@ -1,0 +1,47 @@
+# One catalogue dataset per file family (T-4344, T-5428): CityWork of the space praha-mesto whose ids
+# the Policy public-opravy-a-uzavirky names, so each city table is its own dataset.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-opravy-a-uzavirky
+  namespace: praha
+  title: { cs: Opravy a uzavírky — Praha, en: Road works and closures — Prague }
+  description:
+    cs: 'Stavby, opravy a akce na pražských ulicích ze služby opravujeme.to: co a kde, od kdy do kdy, stav, dopad na dopravu a investor; bod na mapě. Zdroj: hl. m. Praha, opravujeme.to, bez omezení práv.'
+    en: "The works, repairs and events on Prague's streets from the opravujeme.to service: what and where, from when until when, state, traffic impact and investor; a point on the map. Source: the City of Prague, opravujeme.to, free of rights."
+spec:
+  contextSpaceRef: praha-mesto
+  slug: cvlxwa7u3ea4vtbnvhvnojt7by5gkrhx
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-opravy-a-uzavirky
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-zero
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Figures and works of public bodies: the pipeline leaves out every field that names a person.
+    personalData: does-not-contain
+    # Open data under the Czech act on free access to information (DCAT-AP-CZ, API/08 section 3).
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC0
+    attribution:
+      cs: 'Zdroj: hl. m. Praha, opravujeme.to'
+      en: 'Source: City of Prague, opravujeme.to'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, uzavírky, opravy, stavby, doprava]
+      en: [Prague, road closures, road works, traffic]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: DAILY
+    source:
+      - url: https://opravujeme.to/api/action?limit=101
+        title: { cs: Data z aplikace opravujeme.to, en: Data of the opravujeme.to service }
+        description:
+          cs: Stavby, opravy a uzavírky na pražských ulicích ze služby opravujeme.to, bez omezení práv.
+          en: The works, repairs and closures on Prague's streets from the opravujeme.to service, free of rights.
+    pipelineRef: { kind: Pipeline, name: road-works }

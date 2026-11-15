@@ -1,0 +1,64 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem` (the image runs as 10001)
+# - [x] Health probes -> /healthz
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> none: the service touches no API server
+# - [x] Named ports -> 8080 container mapped to 8080 service
+# - [ ] Ingress with TLS -> not applicable: only the Portal calls it, inside the mesh
+
+fullnameOverride: model-tools
+nameOverride: model-tools-tools
+
+serviceAccount:
+  create: false
+  automountServiceAccountToken: false
+
+{{- $images := index .Values.images "model-tools" "tools" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+containerPort: 8080
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  name: http
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 5
+
+env:
+  MODEL_TOOLS_PORT: "8080"
+  # The catalogue of Smart Data Models the image ships; imports read it before the network.
+  MODEL_TOOLS_MODELS: /opt/model-tools/models
+  # schema-automator's pystow makes itself a home at import; the root filesystem is
+  # read-only, so it gets the pod's tmp volume (nothing there outlives the pod).
+  PYSTOW_HOME: /tmp/pystow
+
+# The image's own user (tools/model-tools/Dockerfile: `useradd --uid 10001`).
+podSecurityContext:
+  {{ merge (dict "runAsUser" 10001) .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

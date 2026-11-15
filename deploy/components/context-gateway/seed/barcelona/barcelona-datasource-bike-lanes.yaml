@@ -1,0 +1,21 @@
+# Open Data BCN `carril-bici` (CC BY 4.0): the city's bike network as one GeoJSON layer, a
+# LineString per segment (449 on 2026-10-23, 562 kB). The resource's download link answers 302 to
+# this address on the same host; the DataSource names it directly. Updated on request; the mapping
+# refuses more than 4 MiB. The lanes under construction come from the sibling layer, read in the
+# mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-bike-lanes
+  namespace: barcelona
+  title:
+    ca: Carrils bici de Barcelona (Open Data BCN)
+    es: Carriles bici de Barcelona (Open Data BCN)
+    en: Barcelona bike lanes (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/resources/bcn/CarrilsBici/CARRIL_BICI.geojson
+    verb: GET
+    headers: { Accept: application/geo+json }
+    timeout: 60s

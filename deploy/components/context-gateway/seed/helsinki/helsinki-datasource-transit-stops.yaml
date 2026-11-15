@@ -1,0 +1,26 @@
+# HSL's GTFS stops (stops.txt of hsl.zip): every stop, platform and station of the region, 8385
+# rows on 2026-10-12, read as the one member of the daily feed (PL-72): the runner fetches the
+# zip's directory and then this member by its byte range, never the 79 MB archive. No key.
+# CC-BY-4.0 (HSL open data). T-3890, replacing the ArcGIS stop register (T-3356).
+#
+# maxBytes is the most the runner lets the member inflate to: it reads a deflated member only
+# when 1032 times its packed size fits (T-3951), and stops.txt is 197 kB packed (1.1 MB inflated),
+# so 256 MiB, the largest bound, holds until it passes 260 kB packed.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-gtfs-stops
+  namespace: helsinki
+  title:
+    en: HSL GTFS stops and stations
+    fi: HSL:n GTFS-pysäkit
+spec:
+  type: http
+  http:
+    url: https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip
+    verb: GET
+    timeout: 60s
+    archive:
+      format: zip
+      members: [stops.txt]
+      maxBytes: 268435456

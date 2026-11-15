@@ -1,0 +1,128 @@
+---
+# The probe dials the public hosts of its own environment and its peers on 443 and nothing
+# inside the cluster but CoreDNS (T-5103). Its own host resolves to this node's public address,
+# which kube-proxy rewrites to the ingress controller's pod, as for the pipeline runner.
+probe:
+  podSelector:
+    app.kubernetes.io/name: probes-probe
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # The Prometheus that scrapes /metrics (components/monitoring), from its own namespace only;
+    # no peer is rendered while monitoring.prometheusNamespace is empty.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 9100
+    # The status page reads /results.json beside it (T-5102).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: probes-status
+          componentNamespace: probes
+      ports:
+        - protocol: TCP
+          port: 9100
+  egress:
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [traefik, kube-system, ingress-nginx]
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [traefik, ingress-nginx]
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+    # The API server, for the backup and drill age (T-5289). `kubernetes.default` is a ClusterIP
+    # kube-proxy DNATs to the node's address before this filter sees it, so the rule names the port
+    # the API server listens on (6443 on k3s) and cannot narrow the address.
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The status page answers the edge on 8080 and dials only the probe beside it and CoreDNS (T-5102).
+status-page:
+  podSelector:
+    app.kubernetes.io/name: probes-status
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: probes-probe
+          componentNamespace: probes
+      ports:
+        - protocol: TCP
+          port: 9100
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The edge's side of the route on status.{domain}.
+apisix-egress-to-status-page:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: probes-status
+          componentNamespace: probes
+      ports:
+        - protocol: TCP
+          port: 8080

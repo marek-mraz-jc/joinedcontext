@@ -1,0 +1,22 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage -> none, stateless
+# - [x] 2+ Replicas: the service holds nothing, so two of them are two of the same
+# - [x] Rolling updates maxUnavailable: 0, maxSurge: 1 -> default in workload chart
+# - [x] PodDisruptionBudget (at least minAvailable: 1)
+
+replicaCount: 2
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: '2'
+    memory: 2Gi

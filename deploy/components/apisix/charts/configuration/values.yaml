@@ -1,0 +1,71 @@
+---
+# Standalone APISIX configuration (ADR-N-007): rendered into the ConfigMap
+# `apisix-standalone-base` as apisix.yaml, which the Portal composes with the Apps' routes into
+# the Secret `apisix-standalone-config` that APISIX serves in deployment.mode=standalone.
+# Secrets are referenced as ${{ENV_VAR}} and injected
+# into the APISIX pod as environment variables (components/apisix/values/apisix).
+plugins: {}
+  # keycloak:
+  #   name: keycloak
+  #   description: Keycloak pass-through
+  #   plugins:
+  #     request-id: { include_in_response: true }
+
+routes: {}
+  # keycloak:
+  #   name: keycloak
+  #   upstream: keycloak-app-keycloakx-http.dev.svc.cluster.local:80
+  #   subDomain: idm
+  #   uri: '/*'
+  #   priority: 10
+  #   scheme: http
+
+# The body a request may carry at the edge, in MiB: the `client-control` global rule `edge-body`,
+# which the Portal rewrites to the Organization's spec.limits.edge.maxRequestBodyMegabytes
+# (ADR-N-035, T-2892). The catalog default, and the server block's own `client_max_body_size`,
+# which holds whenever no rule is served.
+maxRequestBodyMegabytes: 16
+
+domain: 'example.com'
+# Always overridden per instance (global.instanceSlug).
+realm: ''
+
+# Public edge TLS (T-0044, T-0045): the certificate covering every host APISIX answers on
+# and, on Traefik, the cipher policy of the listener in front of it.
+edge:
+  enabled: false
+  secretName: apisix-edge-tls
+  clusterIssuer: ''
+  ingressClass: ''
+  hosts: []
+  # Hostnames to prove against Let's Encrypt STAGING before the production certificate
+  # carries them (T-2806): a namespaced Issuer, HTTP-01 per hostname, and a Secret no
+  # listener serves. Empty renders nothing.
+  stagingHosts: []
+  # One certificate `*.apps.<domain>` by DNS-01 for every App host (ADR-N-037 §6, T-3013):
+  # the namespaced Issuer `letsencrypt-dns01` and the Certificate `apisix-apps-wildcard`.
+  # Empty renders nothing, and every App host keeps a certificate of its own.
+  appsWildcard: ''
+  # App names whose host `{name}.apps.<domain>` keeps a certificate of its own, Certificate
+  # `app-{name}` into Secret `app-{name}-tls` (jc, where no Portal stamps App hosts). Empty
+  # renders nothing.
+  appHosts: []
+  # Hosts that serve an Endpoint WebSocket (`/api/endpoint/{slug}/ws`). On Traefik their
+  # non-upgrade answers carry `Upgrade: websocket` again (T-5931). Empty renders nothing.
+  websocketHosts: []
+
+# Service mesh integration: a Linkerd `Server` marks the APISIX data plane as the
+# public edge reachable by the ingress controller.
+serviceMesh:
+  enabled: false
+  podSelector:
+    app.kubernetes.io/name: apisix
+  dataPlanePort: 9080
+  allowUnauthenticatedIngress: false
+
+# Who composes the served file from the base (ADR-N-030, AP-112): the Portal's ServiceAccount,
+# granted read on the base and update on the served Secret in this namespace only.
+composer:
+  enabled: false
+  serviceAccount: portal
+  namespace: ''

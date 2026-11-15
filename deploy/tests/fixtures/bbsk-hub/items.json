@@ -1,0 +1,200 @@
+{
+ "type": "FeatureCollection",
+ "numberMatched": 8,
+ "numberReturned": 8,
+ "features": [
+  {
+   "type": "Feature",
+   "id": "b5486911cb0342e48d475130d1d5e960",
+   "properties": {
+    "id": "b5486911cb0342e48d475130d1d5e960",
+    "type": "Feature Service",
+    "title": "Zoznam poskytovateľov pre APS v BBK",
+    "license": "CC-BY-SA-4.0",
+    "modified": 1754662062000,
+    "created": 1753449642000,
+    "url": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Zoznam_poskytovate%C4%BEov_pre_APS_v_BBK_2025/FeatureServer",
+    "tags": [
+     "zdravotnícke zariadenie"
+    ],
+    "categories": [
+     "/Categories/Zdravotníctvo"
+    ],
+    "description": "",
+    "snippet": "Dataset verejných informácií o poskytovateľoch pre ambulantnú pohotovostnú službu v Banskobystrickom kraji.",
+    "name": null
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "40138c783eaa46cd8cd3c8e09ab67127",
+   "properties": {
+    "id": "40138c783eaa46cd8cd3c8e09ab67127",
+    "type": "Feature Service",
+    "title": "Obyvateľstvo podľa rodinného stavu (2021)",
+    "license": "CC-BY-SA-4.0",
+    "modified": 1777877636000,
+    "created": 1706532132000,
+    "url": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Mapa_SODB_2021_rodinn%C3%BD_stav/FeatureServer",
+    "tags": [
+     "obec",
+     "sodb 2021"
+    ],
+    "categories": [
+     "/Categories/Demografia"
+    ],
+    "description": "Dataset popisujúci rodinný stav obyvateľstva v obciach Banskobystrického kraja v roku 2021. <div>Dáta pochádzajú zo Sčítania obyvateľov, domov a bytov 2021, https://www.scitanie.sk. <font face='Avenir Next W01, Avenir Next W00, Avenir Next, Avenir, Helvetica Neue, sans-serif' style='font-family:&quot;Avenir Next W01&quot;, &quot;Avenir Next W00&quot;, &quot;Avenir Next&quot;, Avenir, &quot;Helvetica Neue&quot;, sans-serif; font-size:16px;'>Priestorová zložka bola prevzatá z 3. generalizácie polygónov obcí od Geodetického a kartografického ústavu Bratislava: </font>",
+    "snippet": "Dataset rodinného stavu obyvateľstva v obciach Banskobystrického kraja z dát SODB 2021.",
+    "name": "Mapa_SODB_2021_rodinný_stav"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "04e229d8b39b415497081c63a74c94f9",
+   "properties": {
+    "id": "04e229d8b39b415497081c63a74c94f9",
+    "type": "Feature Service",
+    "title": "Obyvateľstvo podľa rodinného stavu (2021)",
+    "license": "CC-BY-SA-4.0",
+    "modified": 1777877172000,
+    "created": 1708079552000,
+    "url": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Mapa_SODB_2021_rodinn%C3%BD_stav_okres/FeatureServer",
+    "tags": [
+     "okres",
+     "sodb 2021"
+    ],
+    "categories": [
+     "/Categories/Demografia"
+    ],
+    "description": "Dataset popisujúci rodinný stav obyvateľstva v okresoch Banskobystrického kraja v roku 2021. <div>Dáta pochádzajú zo Sčítania obyvateľov, domov a bytov 2021, https://www.scitanie.sk. <font face='Avenir Next W01, Avenir Next W00, Avenir Next, Avenir, Helvetica Neue, sans-serif' style='font-family:&quot;Avenir Next W01&quot;, &quot;Avenir Next W00&quot;, &quot;Avenir Next&quot;, Avenir, &quot;Helvetica Neue&quot;, sans-serif; font-size:16px;'>Priestorová zložka bola prevzatá z 3. generalizácie polygónov okresov od Geodetického a kartografického ústavu Bratislava: </font>",
+    "snippet": "Dataset rodinného stavu v okresoch Banskobystrického kraja z dát SODB 2021.",
+    "name": "Mapa_SODB_2021_rodinný_stav_okres"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "2f936202febe4340a72c1b7224a664d9",
+   "properties": {
+    "id": "2f936202febe4340a72c1b7224a664d9",
+    "type": "Feature Service",
+    "title": "Kultúrne inštitúcie BBSK a ich pobočky",
+    "license": "CC-BY-4.0",
+    "modified": 1792057114000,
+    "created": 1743064609000,
+    "url": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Kult%C3%BArne_in%C5%A1tit%C3%BAcie_view/FeatureServer",
+    "tags": [
+     "múzeum",
+     "divadlo",
+     "osvetové stredisko",
+     "hvezdáreň",
+     "knižnica",
+     "ovzp",
+     "verejná správa"
+    ],
+    "categories": [
+     "/Categories/Kultúra",
+     "/Categories/Inštitúcie"
+    ],
+    "description": "<p style=\"background-color:rgb(255, 255, 255); border:0px solid currentcolor; box-sizing:border-box; color:rgb(74, 74, 74); font-family:&quot;Avenir Next&quot;, Avenir, &quot;Helvetica Neue&quot;, sans-serif; font-size:16px; font-style:normal; font-variant-caps:normal; font-variant-ligatures:normal; font-weight:400; letter-spacing:normal; margin:0px 0px 1rem; text-align:start; text-decoration-color:initial; text-decoration-style:initial; text-indent:0px; text-transform:none; word-spacing:0px;\"><span style=\"font-size:14px;\"><strong>Základný popis</strong></span></p>",
+    "snippet": "Datasety kultúrnych inštitúcií v zriaďovateľskej a zakladateľskej pôsobnosti Banskobystrického samosprávneho kraja a ich prevádzky",
+    "name": "Kultúrne_inštitúcie_view"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "8ccbd6932f234115b572667b20faa23a",
+   "properties": {
+    "id": "8ccbd6932f234115b572667b20faa23a",
+    "type": "Shapefile",
+    "title": "Bystrinská dolina - Výkres krajinnej štruktúry a územný systém ekologickej stability (B6)",
+    "license": "none",
+    "modified": 1791460108000,
+    "created": 1783417029000,
+    "url": null,
+    "tags": [
+     "prírodné zdroje",
+     "krajinné prvky",
+     "udržateľný rozvoj územia"
+    ],
+    "categories": [
+     "/Categories/Životné prostredie"
+    ],
+    "description": "<p style='background-color:rgb(255, 255, 255); border-style:solid; border-width:0px; box-sizing:border-box; color:rgb(74, 74, 74); font-family:&quot;Avenir Next&quot;, Avenir, &quot;Helvetica Neue&quot;, sans-serif; font-size:16px; font-style:normal; font-variant-caps:normal; font-variant-ligatures:normal; font-weight:400; letter-spacing:normal; margin:0px 0px 1rem; text-align:start; text-decoration-color:initial; text-decoration-style:initial; text-indent:0px; text-transform:none; word-spacing:0px;'><span style='font-family:inherit; font-size:14px;'>",
+    "snippet": "Výkres usporiadania prírodných zdrojov a krajinných prvkov v území.",
+    "name": "SHP_B6.zip"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "fa7efbbee247485880351220ad5f45a9",
+   "properties": {
+    "id": "fa7efbbee247485880351220ad5f45a9",
+    "type": "Feature Service",
+    "title": "Bystrinská dolina - Výkres krajinnej štruktúry a územný systém ekologickej stability (B6)",
+    "license": "none",
+    "modified": 1791455142000,
+    "created": 1783417032000,
+    "url": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Bystrinsk%C3%A1_dolina_B6/FeatureServer",
+    "tags": [
+     "prírodné zdroje",
+     "krajinné prvky",
+     "udržateľný rozvoj územia"
+    ],
+    "categories": [
+     "/Categories/Životné prostredie"
+    ],
+    "description": "<div><p>",
+    "snippet": "Výkres usporiadania prírodných zdrojov a krajinných prvkov v území.",
+    "name": null
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "123122d1040a48e68eefc10016fb262b",
+   "properties": {
+    "id": "123122d1040a48e68eefc10016fb262b",
+    "type": "Feature Service",
+    "title": "Súvislé cesty v Banskobystrickom kraji",
+    "license": "CC-BY-NC-4.0",
+    "modified": 1784712776000,
+    "created": 1775150304000,
+    "url": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/S%C3%BAvisl%C3%A9_cesty_v_Banskobystrickom_kraji/FeatureServer",
+    "tags": [
+     "cesty",
+     "cestná infraštruktúra",
+     "cesty a cestná infraštruktúra",
+     "model cestnej siete"
+    ],
+    "categories": [
+     "/Categories/Cesty a cestná infraštruktúra"
+    ],
+    "description": "<p><span style='background-color:rgb(255,255,255); color:rgb(74,74,74); font-family:&quot;Avenir Next&quot;, Avenir, &quot;Helvetica Neue&quot;, sans-serif; font-size:16px;'>",
+    "snippet": "Línie reprezentujúce cesty z Modelu cestnej siete v rámci Banskobystrického kraja - spojené do súvislých ciest, podľa čísla cesty (bez delenia na úseky).",
+    "name": "Súvislé_cesty_v_Banskobystrickom_kraji"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "825cd0cb3b0f46759d14f3bb0d328b59",
+   "properties": {
+    "id": "825cd0cb3b0f46759d14f3bb0d328b59",
+    "type": "Feature Service",
+    "title": "Dodávatelia ",
+    "license": "CC-BY-4.0",
+    "modified": 1792062839000,
+    "created": 1792062378000,
+    "url": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Pokus_dodavatelia/FeatureServer",
+    "tags": [
+     "dodávatelia"
+    ],
+    "categories": [
+     "/Categories/Hospodárenie"
+    ],
+    "description": "<p>Dataset dodávateľov BBSK. Dodávatelia sú sumárom všetkým dodávateľov z doručených faktúr a vystavených objednávok Banskobystrického samosprávneho kraja.</p>",
+    "snippet": "Dodávatelia Banskobystrického samosprávneho kraja",
+    "name": null
+   }
+  }
+ ],
+ "links": []
+}

@@ -1,0 +1,9 @@
+{% ckan_extends %}
+{# An empty result says what to try instead of leaving a blank column (T-2744). #}
+{% block package_list %}
+  {% if packages %}
+    {{ super() }}
+  {% else %}
+    <p class="empty jc-empty">{{ h.jc_t('empty') }}</p>
+  {% endif %}
+{% endblock %}

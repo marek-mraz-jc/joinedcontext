@@ -1,0 +1,18 @@
+# The event permits of the city's public-area register (Allu) as an open WFS layer, 152 areas on 2026-09-25, in WGS84.
+# No key. CC-BY-4.0, read from the HRI catalogue (package
+# helsingin-kaupungin-yleisten-alueiden-tapahtuma-ja-maankayttolupajarjestelma).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-allu-area-events
+  namespace: helsinki
+  title:
+    en: Events on public areas (public-area permits, Allu)
+    fi: Tapahtumat yleisillä alueilla (Allu)
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Tapahtumat_alue
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

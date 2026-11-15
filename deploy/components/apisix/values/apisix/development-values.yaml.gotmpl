@@ -1,0 +1,24 @@
+---
+{{- $this := .Values.apisix.apisix }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Minimal Resources
+# - [x] Minimal storage -> not applicable, standalone file mode
+# - [x] 1 Replica
+
+replicaCount: 1
+
+apisix:
+  nginx:
+    # Pin worker count to the CPU limit (500m -> 1). NEVER use the chart default
+    # "auto": nginx reads the host's core count, not the pod CPU limit, so on a
+    # many-core node it spawns one worker per host core and OOMs the 512Mi pod.
+    workerProcesses: "1"
+resources:
+  requests:
+    cpu: 100m
+    # T-4473: dev, kubectl top 2026-10-17 21:22-22:22Z: median 135, peak 138Mi.
+    memory: 176Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

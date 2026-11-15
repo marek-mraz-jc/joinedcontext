@@ -1,0 +1,45 @@
+# One Smart Data Model type per catalogue dataset (T-4344): the OffStreetParking garages Mr.Parkit
+# rents out in the space praha-mesto (T-5680), read through their own Policy, which keeps the
+# park-and-ride car parks of the same type out.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-garaze
+  namespace: praha
+  title: { cs: Garáže Mr.Parkit — Praha, en: Mr.Parkit garages — Prague }
+  description:
+    cs: 'Garáže v Praze, které služba Mr.Parkit pronajímá na rezervaci: poloha, adresa, cena za hodinu a za den. Zdroj: Golemio, Operátor ICT; Mr.Parkit.'
+    en: 'The garages in Prague that the Mr.Parkit service rents out by reservation: where they are, their address and the price of an hour and of a day. Source: Golemio, Operátor ICT; Mr.Parkit.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: eoaabwcvyz5ntph6ktp67qwe26xvcfi4
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-garaze
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  catalog:
+    # Off the catalogue (T-5767, owner order 2026-10-26T06:33Z: an empty dataset leaves it): on dev
+    # none of Golemio's 132 Mr.Parkit garages reached the broker.
+    # The harvest feeds leave it out (EP-139); publish it again once it holds data.
+    harvest: false
+    # Garages of a company: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    attribution:
+      cs: 'Zdroj: Golemio, Operátor ICT, a.s., s daty Mr.Parkit; podmínky užití https://api.golemio.cz/api-keys/'
+      en: 'Source: Golemio, Operátor ICT, a.s., with data of Mr.Parkit; terms of use https://api.golemio.cz/api-keys/'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, parkování, garáže, rezervace, ceník]
+      en: [Prague, parking, garages, reservation, tariff]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: DAILY
+    source:
+      - url: https://api.golemio.cz/v3/parking?primarySource=mr_parkit&limit=10000
+        title: { cs: Parkoviště – API (Golemio), en: Car parks API (Golemio) }
+        description:
+          cs: Garáže Mr.Parkit z registru parkovišť Golemio a jejich ceny z tarifů téhož registru (/v3/parking-tariffs), Operátor ICT, podle podmínek užití Golemio.
+          en: The Mr.Parkit garages of Golemio's car park register with their prices from its tariffs (/v3/parking-tariffs), Operátor ICT, under Golemio's terms of use.
+    pipelineRef: { kind: Pipeline, name: golemio-garages }

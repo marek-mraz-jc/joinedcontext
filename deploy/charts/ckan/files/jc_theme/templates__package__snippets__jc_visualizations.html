@@ -1,0 +1,10 @@
+{# The dataset's charts (T-4641), after the table they draw from. #}
+{% set charts = h.jc_visualizations(pkg) %}
+{% if charts %}
+  <section class="jc-visualizations" aria-labelledby="jc-viz-title">
+    <h2 id="jc-viz-title">{{ h.jc_t('visualizations') }}</h2>
+    {% for viz in charts %}
+      {% snippet 'jc/visualization.html', viz=viz %}
+    {% endfor %}
+  </section>
+{% endif %}

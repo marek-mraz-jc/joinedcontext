@@ -1,0 +1,96 @@
+# Helsinki data quality (T-3336): how complete, fresh and valid the open data of the
+# Helsinki space is, per entity type and attribute, and which entities fail. The inspection
+# runs in the visitor's browser as WebAssembly compiled from the Rust crate in wasm/ (AP-142).
+# The server component in server/ runs on the shared WASM host (T-3354, AP-148): it keeps every
+# quality run's scores in the App's own schema, for the trend, and each run's full per-entity
+# report under its own storage prefix. Hand written, so no generated-by annotation (AP-35).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: data-quality-inspector
+  namespace: helsinki
+  title:
+    en: "Helsinki data quality"
+    fi: "Helsingin datan laatu"
+  description:
+    en: "How complete, fresh and valid Helsinki open data is, per entity type and attribute, and which entities fail."
+    fi: "Helsingin avoimen datan kattavuus, tuoreus ja virheettömyys tietotyypeittäin ja ominaisuuksittain sekä virheelliset kohteet."
+spec:
+  kind: wasm
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_data-quality-inspector.git
+      ref: main
+  build:
+    node: "22"
+    rust: "1.90"
+  # Its own schema, migrated from migrations/ at publish, and its own prefix for the reports.
+  storage:
+    sql:
+      migrations: migrations
+      quotaMiB: 50
+    blob:
+      quotaMiB: 1024
+  # The quality run of every type, once a day at 02:40 UTC, as the App's own job principal through
+  # its own Endpoint (AP-154, AP-159): a run reads about thirty pages, past a request's 5 s wall
+  # time, so only the job runs one (T-3579).
+  server:
+    jobs:
+      - name: daily-inspection
+        schedule: "40 2 * * *"
+        export: inspect-daily
+  # Who does what (T-3827): the server decides from the signed-in person, never from the page.
+  roles:
+    - name: viewer
+      title: { en: "Viewer", fi: "Katselija" }
+      description: "Reads every finding and what stewards resolved; their own history."
+    - name: steward
+      title: { en: "Steward", fi: "Ylläpitäjä" }
+      description: "What a viewer does, and marks a finding resolved with a note, or corrects the attribute of the entity through the App's Endpoint; opens a finding again. Reads the whole history."
+  access:
+    - role: viewer
+      subjects: [{ group: data-quality-inspector-viewer }]
+    - role: steward
+      subjects: [{ group: data-quality-inspector-steward }]
+  visibility: public
+  lifecycle: published
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types:
+        - AirQualityObserved
+        - Alert
+        - BikeHireDockingStation
+        - AdministrativeArea
+        - Event
+        - Article
+        - OnStreetParking
+        - PointOfInterest
+        - CityWork
+        - Vehicle
+        - WaterQualityObserved
+        - WeatherObserved
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]
+    # A steward corrects one attribute of an entity a finding names (T-3827, API/07 §4): the server
+    # checks the role first and this Policy, held by the steward role alone, is the second check.
+    # Never createEntity or deleteEntity, and no other role.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types:
+        - AirQualityObserved
+        - Alert
+        - BikeHireDockingStation
+        - AdministrativeArea
+        - Event
+        - Article
+        - OnStreetParking
+        - PointOfInterest
+        - CityWork
+        - Vehicle
+        - WaterQualityObserved
+        - WeatherObserved
+      operations: [updateAttrs]
+      roles: [steward]

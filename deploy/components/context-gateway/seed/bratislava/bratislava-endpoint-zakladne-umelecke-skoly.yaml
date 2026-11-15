@@ -1,0 +1,40 @@
+# Primary art schools in Bratislava: one public dataset of the hub (T-5444), item 49d5049003754b5984721879b842cf24, written by the places pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-zakladne-umelecke-skoly
+  namespace: bratislava
+  title: { sk: Základné umelecké školy v Bratislave, en: Primary art schools in Bratislava }
+  description:
+    sk: 'Základné umelecké školy a ich elokované pracoviská s adresou a webom. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'Primary art schools and their branches, with address and website. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: s35sobzuy2wm5z3qakjgk7ezyl246mdu
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-zakladne-umelecke-skoly
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: WEEKLY
+    source:
+      - url: https://data.bratislava.sk/datasets/49d5049003754b5984721879b842cf24
+        title: { sk: Základné umelecké školy v Bratislave, en: Primary art schools in Bratislava }
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Základné umelecké školy v Bratislave. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Primary art schools in Bratislava. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: places }

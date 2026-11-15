@@ -1,0 +1,19 @@
+# One KeyPerformanceIndicator per location and utility (electricity, heat, water) of the city's
+# service properties, the last complete month's use, written into the city space (T-5278).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: service-property-energy
+  namespace: helsinki
+  title: { en: Service property energy use, fi: Palvelukiinteistöjen energiankulutus }
+spec:
+  class: auto
+  # Monthly values: a weekly read takes a new month within a week of its end and a late correction
+  # of the same month; it asks about 3,000 location and utility pairs, ten a second (hel_nuuka).
+  period: 168h
+  schedule: '15 5 * * 4'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-nuuka-properties }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

@@ -1,0 +1,17 @@
+# One PointOfInterest per record of `hel-business-plots`, written into the city space (T-5822).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: business-plots
+  namespace: helsinki
+  title: { en: Plots for business }
+spec:
+  class: auto
+  # The city updates the list as plots are reserved or sold; daily, so a sold plot leaves the reads within days.
+  period: 24h
+  schedule: '40 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-business-plots }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

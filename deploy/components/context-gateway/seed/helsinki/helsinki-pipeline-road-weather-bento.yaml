@@ -1,0 +1,79 @@
+# The mapping of the road-weather pipeline (PL-03): one WeatherObserved per Fintraffic road
+# weather station inside the Helsinki box, from the country-wide document. The data feed
+# carries no positions, so the stations' names and coordinates are listed here, read once from
+# https://tie.digitraffic.fi/api/weather/v1/stations. Sensor names are Fintraffic's Finnish ones.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.stations
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        let domain = env("JC_ORG_DOMAIN")
+        let stations = {
+          "1002": { "name": "kt51_Hki_Lapinlahti", "coordinates": [24.898476, 60.166907] },
+          "1004": { "name": "vt4_Helsinki_Jakomäki", "coordinates": [25.065093, 60.251833] },
+          "1011": { "name": "vt7_Sipoonlahti", "coordinates": [25.325135, 60.28135] },
+          "1034": { "name": "vt3_Helsinki_Pirkkola", "coordinates": [24.905725, 60.228845] },
+          "1035": { "name": "kt50_Vantaa_Askisto", "coordinates": [24.776422, 60.273557] },
+          "1045": { "name": "kt51_Hki_Vaskisalmi", "coordinates": [24.852457, 60.164148] },
+          "1047": { "name": "kt51_Espoo_Karhusaari", "coordinates": [24.822767, 60.169385] },
+          "1049": { "name": "kt50_Vantaa_Porttipuisto", "coordinates": [25.078063, 60.276891] },
+          "1055": { "name": "st101_Espoo_Turvesuo", "coordinates": [24.810269, 60.20006] },
+          "1071": { "name": "st103_Helsinki_Satamatie_etelä", "coordinates": [25.166245, 60.226774] },
+          "1072": { "name": "st103_Hki_Vuosaaren_tunneli_R", "coordinates": [25.161791, 60.232479] },
+          "1073": { "name": "st103_Helsinki_Satamatie_pohj", "coordinates": [25.156938, 60.239776] },
+          "1084": { "name": "kt50_Vantaa_Suutarila_Länsi", "coordinates": [24.998631, 60.287591] },
+          "1085": { "name": "kt50_Vantaa_Suutarila_Itä", "coordinates": [25.015549, 60.284854] },
+          "1092": { "name": "st101_Espoo_Mestarintunneli", "coordinates": [24.817893, 60.222462] },
+          "1096": { "name": "st101_Espoo_Vallikallio", "coordinates": [24.825079, 60.22655] },
+          "1113": { "name": "st103_Hki_Vuosaaren_tunneli_O", "coordinates": [25.161791, 60.232479] },
+          "1115": { "name": "vt7_Helsinki_Itäsalmi", "coordinates": [25.166158, 60.261944] },
+          "1171": { "name": "vt1_Helsinki_Tarvo", "coordinates": [24.848197, 60.205298] },
+          "1174": { "name": "vt1_Helsinki_Tarvo_OptX2", "coordinates": [24.848267, 60.204231] },
+          "1180": { "name": "vt1_Espoo_Sepänkylä_OptX2", "coordinates": [24.752948, 60.202083] },
+          "1193": { "name": "kt50_Vantaa_Vantaankoski", "coordinates": [24.86676, 60.296227] },
+          "19956": { "name": "Hki_Vantaa_LA04LA1", "coordinates": [24.908104, 60.315001] },
+          "19957": { "name": "Hki_Vantaa_LA04LA2", "coordinates": [24.908348, 60.314871] },
+          "19961": { "name": "Hki_Vantaa_LA04RA", "coordinates": [24.940248, 60.314363] },
+          "19965": { "name": "Hki_Vantaa_LA15B", "coordinates": [24.975186, 60.317684] },
+          "19966": { "name": "Hki_Vantaa_LA15C", "coordinates": [24.983947, 60.308925] }
+        }
+        let station = $stations.get(this.id.string())
+        let sensors = this.sensorValues.or([]).map_each(v -> { v.name: v }).squash()
+        # A station Fintraffic lists with no sensors carries the epoch as its update time: no
+        # reading, so no entity that would claim one from 1970 (T-5020).
+        root = if $station == null || this.sensorValues.or([]).length() == 0 { deleted() } else {
+          {
+            "id": "urn:ngsi-ld:%v:%v:%v:road-%v".format("WeatherObserved", $domain, env("JC_SPACE"), this.id),
+            "type": "WeatherObserved",
+            "name": { "type": "LanguageProperty", "languageMap": { "fi": $station.name } },
+            "location": {
+              "type": "GeoProperty",
+              "value": { "type": "Point", "coordinates": $station.coordinates }
+            },
+            "dateObserved": { "type": "Property", "value": this.dataUpdatedTime },
+            "temperature": if $sensors.ILMA.or(null) == null { null } else {
+              { "type": "Property", "value": $sensors.ILMA.value, "unitCode": "CEL", "observedAt": $sensors.ILMA.measuredTime }
+            },
+            "roadSurfaceTemperature": if $sensors.TIE_1.or(null) == null { null } else {
+              { "type": "Property", "value": $sensors.TIE_1.value, "unitCode": "CEL", "observedAt": $sensors.TIE_1.measuredTime }
+            },
+            "relativeHumidity": if $sensors.ILMAN_KOSTEUS.or(null) == null { null } else {
+              { "type": "Property", "value": $sensors.ILMAN_KOSTEUS.value / 100, "observedAt": $sensors.ILMAN_KOSTEUS.measuredTime }
+            },
+            "windSpeed": if $sensors.KESKITUULI.or(null) == null { null } else {
+              { "type": "Property", "value": $sensors.KESKITUULI.value, "unitCode": "MTS", "observedAt": $sensors.KESKITUULI.measuredTime }
+            },
+            "windDirection": if $sensors.TUULENSUUNTA.or(null) == null { null } else {
+              { "type": "Property", "value": $sensors.TUULENSUUNTA.value, "unitCode": "DD", "observedAt": $sensors.TUULENSUUNTA.measuredTime }
+            },
+            "precipitation": if $sensors.SADE_INTENSITEETTI.or(null) == null { null } else {
+              { "type": "Property", "value": $sensors.SADE_INTENSITEETTI.value, "unitCode": "MMH", "observedAt": $sensors.SADE_INTENSITEETTI.measuredTime }
+            },
+            "source": { "type": "Property", "value": "https://tie.digitraffic.fi/api/weather/v1/stations/data" }
+          }.filter(entry -> entry.value != null)
+        }
+
+    - archive: { format: json_array }

@@ -1,0 +1,272 @@
+{
+ "success": true,
+ "result": {
+  "records": [
+   {
+    "kind": "Rondes",
+    "imd": "72303",
+    "lon": "2.14560189068212",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4319494282875",
+    "id": "10-SMD-1",
+    "name": "RONDA DE DALT - MONTBAU (Llobregat)"
+   },
+   {
+    "kind": "Rondes",
+    "imd": "71138",
+    "lon": "2.14525543316658",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4309126482991",
+    "id": "10-SMD-2",
+    "name": "RONDA DE DALT - MONTBAU (Trinitat)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "10298",
+    "lon": "2.19073536914761",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4116798138391",
+    "id": "10001",
+    "name": "ARAGÓ - NAVAS (Llobregat)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "Mesura no disponible",
+    "lon": "2.19898280387419",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4113366439258",
+    "id": "10002",
+    "name": "BAC DE RODA - BOLIVIA (Pujada)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "5139",
+    "lon": "2.19188571810162",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4122858738082",
+    "id": "10005",
+    "name": "ARAGÓ - BILBAO (Besòs)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "6303",
+    "lon": "2.20106339805483",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4200433612197",
+    "id": "10008",
+    "name": "CANTÀBRIA - GUIPÚSCOA (Pujada)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "8718",
+    "lon": "2.20302142326192",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4209259389645",
+    "id": "10009",
+    "name": "GUIPÚSCOA - MARESME (Llobregat)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "29729",
+    "lon": "2.10952517290599",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.3837355108734",
+    "id": "1001",
+    "name": "AV. DIAGONAL - TORRE MELINA (Entrada)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "11001",
+    "lon": "2.20324041643966",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4207915403937",
+    "id": "10010",
+    "name": "GUIPÚSCOA - PUIGCERDÀ (Besós)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "3388",
+    "lon": "2.20629082616235",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4209026395824",
+    "id": "10011",
+    "name": "RBLA. PRIM - CONCILI DE TRENTO (Baixada)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "5027",
+    "lon": "2.20582046709715",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4217910120223",
+    "id": "10012",
+    "name": "RBLA. PRIM - CONCILI DE TRENTO (Pujada)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "3525",
+    "lon": "2.21346256192603",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.415434528203",
+    "id": "10013",
+    "name": "RBLA. PRIM - CRISTÓBAL DE MOURA (Baixada)"
+   },
+   {
+    "kind": "Trànsit",
+    "imd": "Mesura no disponible",
+    "lon": "2.2127448089634",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.416503515673",
+    "id": "10014",
+    "name": "RBLA. PRIM - CRISTÓBAL DE MOURA (Pujada)"
+   },
+   {
+    "kind": "Rondes",
+    "imd": "65233",
+    "lon": "2.14246531259924",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4253446384796",
+    "id": "11-SMD-1",
+    "name": "RONDA DE DALT - VALL D'HEBRON (Llobregat)"
+   },
+   {
+    "kind": "Rondes",
+    "imd": "80964",
+    "lon": "2.14198498941265",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4241063573498",
+    "id": "11-SMD-2",
+    "name": "RONDA DE DALT - VALL D'HEBRON (Trinitat)"
+   },
+   {
+    "kind": "Bicis",
+    "imd": "431",
+    "lon": "2.15747890993953",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.3829065516227",
+    "id": "20001",
+    "name": "COMTE D´URGELL - GRAN VIA (sentit muntanya)"
+   },
+   {
+    "kind": "Bicis",
+    "imd": "Mesura no disponible",
+    "lon": "2.15747186914086",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.3829069289634",
+    "id": "20002",
+    "name": "COMTE D´URGELL - DIPUTACIÓ (sentit mar)"
+   },
+   {
+    "kind": "Bicis",
+    "imd": "1471",
+    "lon": "2.16164939241435",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.3845874073557",
+    "id": "20003",
+    "name": "GRAN VIA DE LES CORTS-MUNTANER (sentit Llobregat)"
+   },
+   {
+    "kind": "Bicis",
+    "imd": "823",
+    "lon": "2.16310479362974",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.3838795627539",
+    "id": "20005",
+    "name": "MUNTANER-GRAN VIA DE LES CORTS (sentit mar)"
+   },
+   {
+    "kind": "Bicis",
+    "imd": "306",
+    "lon": "2.16312585146159",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.3838789052334",
+    "id": "20006",
+    "name": "MUNTANER - SEPULVEDA (sentit muntanya)"
+   },
+   {
+    "kind": "Bicis",
+    "imd": "1348",
+    "lon": "2.15940203819296",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.3900061414594",
+    "id": "20007",
+    "name": "ENRIC GRANADOS - MALLORCA (sentit muntanya)"
+   },
+   {
+    "kind": "Bicis",
+    "imd": "1131",
+    "lon": "2.15942767643012",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.3900029059072",
+    "id": "20008",
+    "name": "ENRIC GRANADOS - VALENCIA (sentit mar)"
+   },
+   {
+    "kind": "Bicis",
+    "imd": "1287",
+    "lon": "2.17800761054999",
+    "month": "12",
+    "year": "2025",
+    "lat": "41.4002712072215",
+    "id": "20009",
+    "name": "CONSELL DE CENT-SARDENYA"
+   }
+  ],
+  "fields": [
+   {
+    "type": "text",
+    "id": "id"
+   },
+   {
+    "type": "text",
+    "id": "year"
+   },
+   {
+    "type": "text",
+    "id": "month"
+   },
+   {
+    "type": "text",
+    "id": "imd"
+   },
+   {
+    "type": "text",
+    "id": "name"
+   },
+   {
+    "type": "text",
+    "id": "kind"
+   },
+   {
+    "type": "numeric",
+    "id": "lon"
+   },
+   {
+    "type": "numeric",
+    "id": "lat"
+   }
+  ],
+  "sql": "SELECT v.\"Id_aforament\" AS id, v.\"Any\"::int::text AS year, v.\"Mes\"::int::text AS month, v.\"Valor_IMD\" AS imd, d.\"Desc_aforament\" AS name, d.\"Desc_tipus_aforament\" AS kind, d.\"Longitud\" AS lon, d.\"Latitud\" AS lat FROM \"45fc3faa-cdc6-4ac3-83e9-d019c8a629b9\" v LEFT JOIN \"36d41387-a4e5-48fa-801d-698257e3a106\" d ON d.\"Id_aforament\" = v.\"Id_aforament\" WHERE v.\"Codi_tipus_dia\" = 2 AND v.\"Mes\" = (SELECT max(\"Mes\") FROM \"45fc3faa-cdc6-4ac3-83e9-d019c8a629b9\") ORDER BY v.\"Id_aforament\" LIMIT 5000"
+ }
+}

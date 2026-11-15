@@ -1,0 +1,4 @@
+---
+mqtt-brokers:
+  brokers:
+    chart: charts/brokers

@@ -1,0 +1,61 @@
+# The mapping of the air-quality pipeline (PL-03): one AirQualityObserved per ČHMÚ station in
+# Prague with the hour's means it last published. The feed is one CSV for the whole country,
+# one row per registration (a station and a pollutant) and hour; which registration is which
+# station and pollutant is ČHMÚ's metadata (air_quality/now/metadata/metadata.json), read on
+# 2026-09-25 for the 14 active Prague stations with real-time hourly data and listed here, the
+# way the Helsinki air-quality mapping lists FMI's stations. ČHMÚ writes a missing or invalid
+# hour as a negative number (-5003); such a row is left out, never written as a reading.
+
+pipeline:
+  processors:
+    - mapping: |
+        let stations = {
+          "AREP": { "name": "Praha 1-n. Republiky", "coordinates": [14.42922, 50.08807] },
+          "ALEG": { "name": "Praha 2-Legerova (hot spot)", "coordinates": [14.43067, 50.07239] },
+          "AKAL": { "name": "Praha 8-Karlín", "coordinates": [14.44205, 50.09424] },
+          "AVYN": { "name": "Praha 9-Vysočany", "coordinates": [14.5031, 50.11108] },
+          "ALIB": { "name": "Praha 4-Libuš", "coordinates": [14.44593, 50.00731] },
+          "ASTO": { "name": "Praha 5-Stodůlky", "coordinates": [14.33141, 50.04613] },
+          "APRU": { "name": "Praha 10-Průmyslová", "coordinates": [14.53782, 50.0623] },
+          "AHOL": { "name": "Praha 7-Holešovice", "coordinates": [14.44365, 50.10884] },
+          "AKOB": { "name": "Praha 8-Kobylisy", "coordinates": [14.46758, 50.12219] },
+          "ASUC": { "name": "Praha 6-Suchdol", "coordinates": [14.38464, 50.12653] },
+          "ARIE": { "name": "Praha 2-Riegrovy sady", "coordinates": [14.44269, 50.08148] },
+          "AVRS": { "name": "Praha 10-Vršovice", "coordinates": [14.44615, 50.06643] },
+          "ABRE": { "name": "Praha 6-Břevnov", "coordinates": [14.38012, 50.08438] },
+          "ACHO": { "name": "Praha 4-Chodov", "coordinates": [14.51745, 50.03017] }
+        }
+        # registration -> [station, attribute]
+        let registrations = {
+          "783575": ["AREP", "no2"], "783591": ["AREP", "pm10"],
+          "41157": ["ALEG", "no2"], "41158": ["ALEG", "co"], "867419": ["ALEG", "pm25"], "867416": ["ALEG", "pm10"],
+          "41238": ["AKAL", "no2"], "41236": ["AKAL", "pm10"],
+          "41252": ["AVYN", "no2"], "41249": ["AVYN", "o3"], "41248": ["AVYN", "pm10"],
+          "40279": ["ALIB", "so2"], "40281": ["ALIB", "no2"], "40282": ["ALIB", "co"], "40283": ["ALIB", "o3"], "40288": ["ALIB", "pm25"], "40285": ["ALIB", "pm10"],
+          "41241": ["ASTO", "o3"], "867319": ["ASTO", "pm25"], "41242": ["ASTO", "pm10"],
+          "194111": ["APRU", "no2"], "194125": ["APRU", "pm10"],
+          "1668652": ["AHOL", "no2"], "1668670": ["AHOL", "pm25"], "1668680": ["AHOL", "pm10"],
+          "40308": ["AKOB", "no2"], "40309": ["AKOB", "o3"], "40311": ["AKOB", "pm10"],
+          "40238": ["ASUC", "o3"], "40237": ["ASUC", "pm10"],
+          "40257": ["ARIE", "so2"], "40259": ["ARIE", "no2"], "848786": ["ARIE", "o3"], "867322": ["ARIE", "pm25"], "40261": ["ARIE", "pm10"],
+          "1635658": ["AVRS", "no2"], "40316": ["AVRS", "pm10"],
+          "1317399": ["ABRE", "no2"], "1317407": ["ABRE", "pm10"],
+          "1410468": ["ACHO", "no2"], "1410479": ["ACHO", "pm10"]
+        }
+        # ČHMÚ writes a space after each comma, header included, so names and values are trimmed.
+        let rows = content().string().parse_csv().map_each(row -> row.key_values().fold({}, cell -> cell.tally.assign({ cell.value.key.trim(): cell.value.value.string().trim() })))
+        let readings = $rows.filter(r -> $registrations.get(r.idRegistration.or("")) != null && r.value.or("").re_match("^[0-9]+(\\.[0-9]+)?$")).map_each(r -> {
+          "station": $registrations.get(r.idRegistration).index(0),
+          "attribute": $registrations.get(r.idRegistration).index(1),
+          "value": r.value.number(),
+          "at": r.startTime
+        }).sort_by(r -> r.at)
+        root = $readings.map_each(r -> r.station).unique().map_each(code -> $readings.filter(r -> r.station == code)).map_each(own -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:chmi-%v".format("AirQualityObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), own.index(0).station.lowercase()),
+          "type": "AirQualityObserved",
+          "name": { "type": "LanguageProperty", "languageMap": { "cs": $stations.get(own.index(0).station).name } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": $stations.get(own.index(0).station).coordinates } },
+          "dateObserved": { "type": "Property", "value": own.index(-1).at },
+          "dataProvider": { "type": "Property", "value": "Český hydrometeorologický ústav (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata.chmi.cz/air_quality/now/data/airquality_1h_avg_CZ.csv" }
+        }.merge(own.fold({}, item -> item.tally.assign({ item.value.attribute: { "type": "Property", "value": item.value.value, "unitCode": "GQ", "observedAt": item.value.at } }))))

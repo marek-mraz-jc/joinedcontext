@@ -1,0 +1,161 @@
+{{- /*
+  Public edge TLS: one certificate for every hostname APISIX answers on (T-0045) and the
+  BSI TR-02102 listener policy the ingress controller enforces in front of it (T-0044).
+  The Certificate is explicit rather than left to cert-manager's ingress-shim so the SAN
+  list is reviewable in Git; the Ingress therefore carries no `cert-manager.io/cluster-issuer`
+  annotation — two owners of one Secret means two ACME orders for the same names.
+*/}}
+{{- $edge := .Values.edge }}
+{{- if and $edge.enabled $edge.hosts }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: apisix-edge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $edge.secretName | quote }}
+  issuerRef:
+    name: {{ $edge.clusterIssuer | quote }}
+    kind: ClusterIssuer
+  dnsNames:
+    {{- range $edge.hosts }}
+    - {{ . | quote }}
+    {{- end }}
+{{- if $edge.stagingHosts }}
+---
+# Staging first (T-2806, OPS-35): a failed or looping order here costs nothing, while five
+# failed validations an hour lock a hostname out of production for a week. Namespaced, so
+# the cluster's own issuers stay as the kit made them; no e-mail, the account needs none.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-staging
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: {{ $edge.ingressClass | quote }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: apisix-edge-staging
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+spec:
+  secretName: apisix-edge-staging-tls
+  issuerRef:
+    name: letsencrypt-staging
+    kind: Issuer
+  dnsNames:
+    {{- range $edge.stagingHosts }}
+    {{- if contains "*" . }}
+    {{- fail (printf "edge.stagingHosts: %q is a wildcard, which HTTP-01 cannot prove" .) }}
+    {{- end }}
+    - {{ . | quote }}
+    {{- end }}
+{{- end }}
+{{- with $edge.appsWildcard }}
+{{- if not (hasPrefix "*.apps." .) }}
+{{- fail (printf "edge.appsWildcard: %q is not *.apps.<domain>" .) }}
+{{- end }}
+---
+# The App wildcard (ADR-N-037 §6, T-3013): DNS-01 in the delegated App zone through Hetzner's
+# webhook, which reads its token from a mounted file and holds no right to read Secrets.
+# Namespaced like the staging Issuer, so nothing cluster-wide changes; no e-mail, the account
+# needs none.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-dns01
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" $ | nindent 4 }}
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-dns01-account-key
+    solvers:
+      - selector:
+          dnsZones:
+            - {{ trimPrefix "*." . | quote }}
+        dns01:
+          webhook:
+            groupName: acme.hetzner.com
+            solverName: hetzner
+            config:
+              tokenFilePath: /var/run/secrets/hetzner/token
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: apisix-apps-wildcard
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" $ | nindent 4 }}
+spec:
+  # The Portal reads this Certificate: Ready and on the edge Ingress, it stops making a
+  # certificate per App (AP-133).
+  secretName: apisix-apps-wildcard-tls
+  issuerRef:
+    name: letsencrypt-dns01
+    kind: Issuer
+  dnsNames:
+    - {{ . | quote }}
+{{- end }}
+{{- range $edge.appHosts | default list }}
+---
+# One App host on a certificate of its own (jc, no Portal stamping App hosts): the name and
+# Secret the Portal gave it before, so a copied certificate stays valid and cert-manager renews it.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: app-{{ . }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" $ | nindent 4 }}
+spec:
+  secretName: app-{{ . }}-tls
+  issuerRef:
+    name: {{ $edge.clusterIssuer | quote }}
+    kind: ClusterIssuer
+  dnsNames:
+    - {{ printf "%s.apps.%s" . $.Values.domain | quote }}
+{{- end }}
+{{- if eq $edge.ingressClass "traefik" }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: bsi-tr-02102
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+spec:
+  # TLS 1.2 is the floor and 1.3 the ceiling; everything older negotiates nothing.
+  minVersion: VersionTLS12
+  maxVersion: VersionTLS13
+  # Forward-secret AEAD suites only — no CBC, no 3DES, no static RSA key exchange.
+  # Go fixes the TLS 1.3 suites (AES-GCM and ChaCha20-Poly1305) and ignores this list for
+  # 1.3; all of them are TR-02102-2 approved, so there is nothing to restrict there.
+  cipherSuites:
+    - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+    - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+    - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+  curvePreferences:
+    - CurveP384
+    - CurveP256
+{{- end }}
+{{- end }}

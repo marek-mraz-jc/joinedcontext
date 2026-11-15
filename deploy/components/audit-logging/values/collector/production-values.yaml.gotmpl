@@ -1,0 +1,11 @@
+---
+# The disk buffer is what stands between a sink outage and a hole in the trail, so the
+# collector is given enough memory to keep reading while it drains and enough CPU that
+# compression is not the bottleneck.
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: '2'
+    memory: 1Gi

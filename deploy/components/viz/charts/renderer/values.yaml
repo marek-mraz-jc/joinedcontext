@@ -1,0 +1,25 @@
+# Filled from components/viz/images.yaml and values/renderer.
+image: {repository: '', tag: '', digest: ''}
+imagePullPolicy: IfNotPresent
+
+# viz.{domain}; the page reads api.{domain} and opendata.{domain}.
+host: ''
+domain: ''
+
+serviceMesh:
+  enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources: {}

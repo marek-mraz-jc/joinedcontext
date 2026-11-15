@@ -1,0 +1,17 @@
+# The hub's layer "Mestská časť" (data.bratislava.sk, CC BY 4.0): the 17 city districts as polygons
+# in WGS 84, simplified to 0.0001° (about 10 m), six decimals; no credential. T-5274.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bratislava-districts
+  namespace: bratislava
+  title:
+    sk: Mestské časti Bratislavy (data.bratislava.sk)
+    en: Bratislava city districts (data.bratislava.sk)
+spec:
+  type: http
+  http:
+    url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/Mestsk%C3%A1_%C4%8Das%C5%A5_1/FeatureServer/0/query?where=1%3D1&outFields=ZUJ,NAZOV_UTJ&outSR=4326&geometryPrecision=6&maxAllowableOffset=0.0001&f=geojson
+    verb: GET
+    headers: { Accept: application/geo+json }
+    timeout: 30s

@@ -1,0 +1,44 @@
+# Growth model of the housing stock in the municipalities of the Bratislava Region, 1991-2021 and 2021-2051: one public dataset of the hub (T-5674), item 2d99d86cf2264354a5d11fa132437856, written by the statistics-obce pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-model-rastu-bytoveho-fondu-v-obciach-bsk
+  namespace: bratislava
+  title:
+    sk: Model rastu bytového fondu v obciach BSK v rokoch 1991-2021 a 2021-2051
+    en: Growth model of the housing stock in the municipalities of the Bratislava Region, 1991-2021 and 2021-2051
+  description:
+    sk: 'Ukazovatele tabuľky „Model rastu bytového fondu v obciach BSK v rokoch 1991-2021 a 2021-2051“ z data.bratislava.sk, jeden na obec Bratislavského kraja, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Growth model of the housing stock in the municipalities of the Bratislava Region, 1991-2021 and 2021-2051”, one per municipality of the Bratislava Region, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 3twqacrjsfybxj24qqrrtmq66y5n43ch
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-model-rastu-bytoveho-fondu-v-obciach-bsk
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/2d99d86cf2264354a5d11fa132437856
+        title:
+          sk: Model rastu bytového fondu v obciach BSK v rokoch 1991-2021 a 2021-2051
+          en: Growth model of the housing stock in the municipalities of the Bratislava Region, 1991-2021 and 2021-2051
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Model rastu bytového fondu v obciach BSK v rokoch 1991-2021 a 2021-2051. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Growth model of the housing stock in the municipalities of the Bratislava Region, 1991-2021 and 2021-2051. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-obce }

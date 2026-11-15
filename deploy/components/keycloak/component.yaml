@@ -1,0 +1,27 @@
+---
+component: keycloak
+parts:
+  # The login theme first: the Keycloak pod mounts its ConfigMap by name, and a pod whose
+  # ConfigMap does not exist yet stays in Init until it does.
+  - name: theme
+  - name: app
+    needs:
+      - keycloak.theme
+  # The seeded people under the fixed Keycloak ids the manifests name them by (PF-126):
+  # keycloak-config-cli drops a user's id, so they are created before the realm import.
+  - name: people
+    needs:
+      - keycloak.app
+  - name: config
+    needs:
+      - keycloak.people
+  # After the realm import: it narrows the Portal's client administration with the realm's
+  # fine-grained admin permissions, which the import switches on (T-2725).
+  # Its post-upgrade Job links every endpoint: scope to mcp-hub (T-3324), one kcadm JVM each:
+  # 58 links took 7 min 54 s on dev on 2026-10-11, past Helm's 300 s default, which failed an
+  # apply whose Job then succeeded. Later runs link only new scopes.
+  # ponytail: 900 s covers about 120 scopes on a fresh realm; batch the links when the count nears that.
+  - name: adminPermissions
+    timeout: 900
+    needs:
+      - keycloak.config

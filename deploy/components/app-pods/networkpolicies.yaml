@@ -1,0 +1,78 @@
+---
+# An App pod takes calls on 8080 from jc's pod (the Portal on the App's host) and from nobody
+# else, and calls jc's pod on 8083 alone (the apps listener: the gateway's Endpoint reads), plus
+# DNS; jc's public listener (8080) stays the edge's. The jc-* policies are jc's halves in its own
+# namespace.
+hsl-transport-pod:
+  podSelector:
+    app.kubernetes.io/name: app-hsl-transport
+    app.kubernetes.io/instance: app-pods-hsl-transport
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+              app.kubernetes.io/instance: jc-server
+          componentNamespace: jc
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+              app.kubernetes.io/instance: jc-server
+          componentNamespace: jc
+      ports:
+        - protocol: TCP
+          port: 8083
+jc-egress-to-app-pods:
+  componentNamespace: jc
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: app-hsl-transport
+              app.kubernetes.io/instance: app-pods-hsl-transport
+          componentNamespace: app-pods
+      ports:
+        - protocol: TCP
+          port: 8080
+jc-from-app-pods:
+  componentNamespace: jc
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: app-hsl-transport
+              app.kubernetes.io/instance: app-pods-hsl-transport
+          componentNamespace: app-pods
+      ports:
+        - protocol: TCP
+          port: 8083

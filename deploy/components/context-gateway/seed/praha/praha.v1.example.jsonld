@@ -1,0 +1,22 @@
+{
+  "availableBikeNumber": 0,
+  "dataProvider": "dataProvider",
+  "dateModified": "2026-01-01T00:00:00Z",
+  "freeSlotNumber": 0,
+  "id": "urn:ngsi-ld:BikeHireDockingStation:joinedcontext.com:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": {
+    "en": "name"
+  },
+  "observedAt": "2026-01-01T00:00:00Z",
+  "source": "source",
+  "status": "working",
+  "totalSlotNumber": 0,
+  "type": "BikeHireDockingStation"
+}

@@ -1,0 +1,92 @@
+{{- if lt (int .Values.ceilingDays) 1 }}
+{{- fail "sandbox-reaper: ceilingDays must be at least 1" }}
+{{- end }}
+{{- if gt (int .Values.ceilingDays) 14 }}
+{{- fail (printf "sandbox-reaper: ceilingDays is %d, and OPS-44 and PF-19 cap the Time-To-Live of an ephemeral sandbox at 14 calendar days" (int .Values.ceilingDays)) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "reaper.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reaper.labels" . | nindent 4 }}
+data:
+  reap.sh: |
+    {{- .Files.Get "files/reap.sh" | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "reaper.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reaper.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  timeZone: UTC
+  # A missed run reaps late, never twice, because age is read fresh from
+  # `metadata.creationTimestamp` on every run. Two overlapping runs would issue the same
+  # deletes, so they are forbidden rather than merely tolerated.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "reaper.labels" . | nindent 8 }}
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "reaper.selectorLabels" . | nindent 12 }}
+          annotations:
+            security.joinedcontext.com/api-access-reason: >-
+              Sandbox reaper: lists namespaces carrying the sandbox lifecycle label and
+              deletes the ones past their Time-To-Live (OPS-44, PF-19). Its ClusterRole
+              carries list and delete on namespaces and nothing else.
+            {{- if .Values.serviceMesh.enabled }}
+            # Without this the proxy keeps running after the script exits and the Job
+            # never completes.
+            linkerd.io/inject: enabled
+            config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+            {{- end }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "reaper.fullname" . }}
+          automountServiceAccountToken: true
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: reaper
+              image: {{ include "reaper.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              command: [/bin/sh, /opt/reaper/reap.sh]
+              env:
+                - name: CEILING_DAYS
+                  value: {{ .Values.ceilingDays | quote }}
+                - name: DRY_RUN
+                  value: {{ .Values.dryRun | quote }}
+                # kubectl writes its cache under $HOME, and the root filesystem is read-only.
+                - name: HOME
+                  value: /tmp
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: script
+                  mountPath: /opt/reaper
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: script
+              configMap:
+                name: {{ include "reaper.fullname" . }}
+                defaultMode: 0555
+            - name: tmp
+              emptyDir: {}

@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item 9dc0e8136fb347858f3d36b36413c532 (Pražská integrovaná doprava - linky), 819 lines on
+# 2026-10-24, read from its FeatureServer with the geometry simplified to about 5 m (maxAllowableOffset 0.00005°):
+# 7.3 MB instead of the 30.2 MB of the hub download. The layer's record limit is 2,000. No key. CC BY 4.0,
+# "datový podklad © IPR Praha" (T-5423).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-pid-lines
+  namespace: praha
+  title: { en: PID lines (IPR Praha), cs: Linky PID (IPR Praha) }
+spec:
+  type: http
+  http:
+    url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_PID_LINKY_L/FeatureServer/0/query?where=1%3D1&outFields=route_id,linka,trasa,druh,odkaz,globalid&outSR=4326&f=geojson&maxAllowableOffset=0.00005&geometryPrecision=6
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 120s

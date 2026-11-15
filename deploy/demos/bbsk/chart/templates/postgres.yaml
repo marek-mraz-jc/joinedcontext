@@ -1,0 +1,138 @@
+{{- /*
+  The demo catalogue's own Postgres (T-4687): one plain instance, no access to the platform's
+  cluster and no dependency on its CNPG operator, which watches the platform's namespaces only
+  and whose egress the platform's NetworkPolicies pin there. It runs the platform's pinned cluster
+  image with start.sh below. CKAN needs two databases (the catalogue and its DataStore, EP-65)
+  and a read-only role on the second; start.sh creates both once, on an empty volume.
+  ponytail: one instance and no backup; a demo's catalogue is rebuilt by its harvests. Move it to
+  a CNPG Cluster when the demo holds data of its own.
+*/}}
+{{- $pg := .Values.postgres }}
+{{- $labels := dict "app.kubernetes.io/name" "postgres" "app.kubernetes.io/instance" "demo-bbsk-db" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-bbsk-db-init
+  namespace: {{ .Release.Namespace }}
+data:
+  start.sh: |
+    # The image carries Postgres and no entrypoint of its own. A new volume is initialised in a
+    # side folder and renamed into place only when every step passed, so a failed first start
+    # is retried whole on the next one and never leaves half a database behind.
+    set -euo pipefail
+    if [ ! -s "$PGDATA/PG_VERSION" ]; then
+      init="$PGDATA.init"
+      rm -rf "$init"
+      # The superuser has no password: it signs in on the pod's own socket only, and CKAN's
+      # roles over TCP with scram-sha-256.
+      initdb -D "$init" -U postgres --auth-local=trust --auth-host=scram-sha-256 --encoding=UTF8 --locale=C.UTF-8
+      echo "host all all 0.0.0.0/0 scram-sha-256" >> "$init/pg_hba.conf"
+      pg_ctl -D "$init" -o "-c listen_addresses=''" -w start
+      # The read role gets SELECT on every table the owner creates in the DataStore and nothing
+      # else: CKAN refuses a read connection that can write (datastore_search_sql).
+      psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+        -v owner_password="$POSTGRES_PASSWORD" -v read_password="$DATASTORE_READ_PASSWORD" <<'SQL'
+    CREATE ROLE ckan LOGIN PASSWORD :'owner_password';
+    CREATE ROLE ckan_datastore_read LOGIN PASSWORD :'read_password';
+    CREATE DATABASE ckan OWNER ckan;
+    CREATE DATABASE ckan_datastore OWNER ckan;
+    REVOKE CONNECT ON DATABASE ckan, ckan_datastore FROM PUBLIC;
+    GRANT CONNECT ON DATABASE ckan TO ckan;
+    GRANT CONNECT ON DATABASE ckan_datastore TO ckan, ckan_datastore_read;
+    \connect ckan_datastore
+    ALTER DEFAULT PRIVILEGES FOR ROLE ckan IN SCHEMA public GRANT SELECT ON TABLES TO ckan_datastore_read;
+    SQL
+      pg_ctl -D "$init" -m fast -w stop
+      if [ -d "$PGDATA" ]; then rmdir "$PGDATA"; fi
+      mv "$init" "$PGDATA"
+    fi
+    exec postgres -D "$PGDATA" -c listen_addresses='*'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-bbsk-db
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    {{- toYaml $labels | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: demo-bbsk-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- toYaml $labels | nindent 4 }}
+spec:
+  serviceName: demo-bbsk-db
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- toYaml $labels | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- toYaml $labels | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ $pg.uid }}
+        runAsGroup: {{ $pg.uid }}
+        fsGroup: {{ $pg.uid }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: postgres
+          image: {{ required "postgres.image is the platform's pinned cluster image" $pg.image | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          command: [bash, /etc/demo-bbsk-db/start.sh]
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: db-ckan, key: password } }
+            - name: DATASTORE_READ_PASSWORD
+              valueFrom: { secretKeyRef: { name: db-ckan-datastore-read, key: password } }
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec: { command: [pg_isready, -U, ckan, -d, ckan, -h, 127.0.0.1] }
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: [pg_isready, -U, ckan, -d, ckan, -h, 127.0.0.1] }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            {{- toYaml $pg.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: run, mountPath: /var/run/postgresql }
+            - { name: tmp, mountPath: /tmp }
+            - { name: init, mountPath: /etc/demo-bbsk-db, readOnly: true }
+      volumes:
+        - { name: run, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+        - name: init
+          configMap: { name: demo-bbsk-db-init }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with $pg.storage.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $pg.storage.size }}

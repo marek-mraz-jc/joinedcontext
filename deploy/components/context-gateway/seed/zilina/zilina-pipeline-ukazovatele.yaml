@@ -1,0 +1,88 @@
+# The city's indicators (PL-45, PF-54, PF-55): one KeyPerformanceIndicator per indicator of
+# `joinedcontext-docs/Development/13-zilina-kpis.md`, six of them, from the cube rows of
+# `zilina-mesto`. None is judged against a threshold, because none has a published one; the
+# application shows a value and a direction, never a colour.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: ukazovatele
+  namespace: zilina
+  title: { sk: Ukazovatele mesta, en: City indicators }
+spec:
+  class: scheduled
+  # After the cube pipelines' weekly reads (Monday 02:00 to 03:30 UTC), and daily, so a tick the
+  # runner misses (a restart, a stream replaced at that minute) costs a day, not a week (T-4081).
+  schedule: '17 5 * * *'
+  # Read through the space's own Endpoint and not the store, so the Policy applies to this
+  # pipeline exactly as it applies to anybody else (PL-18, PF-39, PL-45). Only the rows the six
+  # indicators read: the five cubes hold ~3 300 rows, these indicators about 1 000.
+  source:
+    endpointRef: { kind: Endpoint, name: zilina-mesto }
+    query:
+      type: KeyPerformanceIndicator
+      q: dataSet=="om7101qr","om7052rr","om7105rr","pr5001rr","cr3803mr";indicator=="IN010115","IN010087","IN010089","IN010082","U15061","U_CR_0005"
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-kpi:zilina-kpi
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  # Every run rewrites each of the six its cube carries, so one missing for three weeks is an
+  # indicator the city stopped publishing: it is removed rather than shown with a stale value (PL-64). Safe here and
+  # only here: this pipeline is the one writer of zilina-kpi.
+  expiry:
+    after: 21d
+    types: [KeyPerformanceIndicator]
+  compute:
+    kind: bloblang
+    bloblang: |
+      # Development/13 §2, keyed by the indicator token; `title` is its Slovak and English row. `key` is the row's dimensionKey, null for a
+      # cube without one; the visitors match theirs by suffix, one row per month.
+      let indicators = {
+        "obyvatelstvo-stav": { "title": { "sk": "Stav trvale bývajúceho obyvateľstva na konci obdobia", "en": "Resident population at the end of the quarter" }, "cube": "om7101qr", "indicator": "IN010115", "key": "SPOLU", "unit": "C62", "formula": "the published value of om7101qr/IN010115/SPOLU for the city and the newest quarter the cube carries" },
+        "index-starnutia": { "title": { "sk": "Index starnutia", "en": "Ageing index: people of post-productive age per 100 children" }, "cube": "om7052rr", "indicator": "IN010087", "key": "SPOLU", "unit": "P1", "formula": "the published value of om7052rr/IN010087/SPOLU for the city and the newest year the cube carries" },
+        "priemerny-vek": { "title": { "sk": "Priemerný vek obyvateľa", "en": "Mean age of a resident" }, "cube": "om7052rr", "indicator": "IN010089", "key": "SPOLU", "unit": "ANN", "formula": "the published value of om7052rr/IN010089/SPOLU for the city and the newest year the cube carries" },
+        "celkovy-prirastok": { "title": { "sk": "Celkový prírastok obyvateľstva", "en": "Total population change: births less deaths plus net migration" }, "cube": "om7105rr", "indicator": "IN010082", "key": "SPOLU", "unit": "C62", "formula": "the published value of om7105rr/IN010082/SPOLU for the city and the newest year the cube carries" },
+        "uchadzaci": { "title": { "sk": "Počet evidovaných uchádzačov o zamestnanie", "en": "Registered jobseekers" }, "cube": "pr5001rr", "indicator": "U15061", "key": null, "unit": "C62", "formula": "the published value of pr5001rr/U15061 for the city and the newest year the cube carries" },
+        "navstevnici-rok": { "title": { "sk": "Počet návštevníkov ubytovacích zariadení za rok", "en": "Visitors staying in the city's accommodation over a year" }, "cube": "cr3803mr", "indicator": "U_CR_0005", "key": "VISIT_TOTAL", "unit": "C62", "formula": "the sum of cr3803mr/U_CR_0005/VISIT_TOTAL over the twelve months of the newest year that carries all twelve" }
+      }
+      let quarters = { "Q1": ["01-01", "03-31"], "Q2": ["04-01", "06-30"], "Q3": ["07-01", "09-30"], "Q4": ["10-01", "12-31"] }
+      let domain = "zilina.sk"
+      let space = env("JC_SPACE")
+      let ran = now().ts_format("2006-01-02T15:04:05Z07:00", "UTC")
+      let source_endpoint = "urn:ngsi-ld:Endpoint:%v:%v:%v".format($domain, env("JC_SOURCE_SPACE"), env("JC_SOURCE_SPACE"))
+      let rows = this.filter(r -> r.refArea.value.or("") == "SK031B517402" && r.kpiValue.value.type() == "number")
+
+      # The single-value indicators: the newest period of the exact cell.
+      let picks = $indicators.without("navstevnici-rok").map_each(i -> $rows.filter(r -> r.dataSet.value == i.value.cube && r.indicator.value == i.value.indicator && r.dimensionKey.value.or(null) == i.value.key).sort_by(r -> r.refPeriod.value).index(-1).catch(null))
+      # The visitors: one row per month ("7.-VISIT_TOTAL"), summed over the newest year with all twelve.
+      let months = $rows.filter(r -> r.dataSet.value == "cr3803mr" && r.indicator.value == "U_CR_0005" && r.dimensionKey.value.or("").has_suffix(".-VISIT_TOTAL"))
+      let year = $months.map_each(r -> r.refPeriod.value).unique().filter(y -> $months.filter(r -> r.refPeriod.value == y).map_each(r -> r.dimensionKey.value).unique().length() == 12).sort().index(-1).catch(null)
+      let these = $months.filter(r -> r.refPeriod.value == $year)
+      let visitors = if $year == null { null } else {
+        { "refPeriod": { "value": $year }, "kpiValue": { "value": $these.map_each(r -> r.kpiValue.value).sum() }, "dateObserved": $these.index(0).dateObserved }
+      }
+      let chosen = $picks.assign({ "navstevnici-rok": $visitors })
+
+      # An answer with no row of any cube is a read that brought nothing (the endpoint refused
+      # the pipeline, or answered a page of something else), never six indicators the city stopped
+      # publishing: nothing is written then (T-3113). An indicator that really stops is removed by
+      # the expiry above.
+      root = if $rows.length() == 0 { deleted() } else { $indicators.keys().sort().map_each(name -> {
+        "name": name,
+        "spec": $indicators.get(name),
+        "pick": $chosen.get(name),
+        # "2026Q2" is a quarter, "2025" a year; the window is the period's first and last day.
+        "period": $chosen.get(name).refPeriod.value.string().catch("")
+      # An indicator whose cube carries no row is left out rather than written as "not measured"
+      # over a zero period (T-4081): the last value it had stays until the expiry removes it.
+      }).filter(c -> c.pick != null).map_each(c -> c.assign({
+        "days": if c.period.length() > 4 { $quarters.get(c.period.slice(4)) } else { ["01-01", "12-31"] }
+      })).map_each(c -> {
+        "id": "urn:ngsi-ld:KeyPerformanceIndicator:%v:%v:%v-mesto".format($domain, $space, c.name),
+        "type": "KeyPerformanceIndicator",
+        "name": { "type": "Property", "value": "%v-mesto".format(c.name) },
+        "title": { "type": "LanguageProperty", "languageMap": c.spec.title },
+        "currentValue": { "type": "Property", "value": c.pick.kpiValue.value, "unitCode": c.spec.unit, "observedAt": c.pick.dateObserved.value.or(null) }.filter(e -> e.value != null),
+        "calculationPeriod": { "type": "Property", "value": { "start": "%v-%vT00:00:00Z".format(c.period.slice(0, 4), c.days.index(0)), "end": "%v-%vT23:59:59Z".format(c.period.slice(0, 4), c.days.index(1)) } },
+        "calculationFormula": { "type": "Property", "value": c.spec.formula },
+        "derivedFrom": { "type": "Property", "value": $source_endpoint },
+        "computedBy": { "type": "Property", "value": "urn:ngsi-ld:Pipeline:%v:%v:ukazovatele".format($domain, $space) },
+        "updatedAt": { "type": "Property", "value": { "@type": "DateTime", "@value": $ran } }
+      }) }

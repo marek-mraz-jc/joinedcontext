@@ -1,0 +1,209 @@
+---
+# Both clients live on the Portal host (https://portal.{host}, ADR-N-019): the realm template
+# builds rootUrl, redirectUris and webOrigins from `subdomain`. The browser login itself is
+# the edge's (`edge` client, components/apisix/keycloak-clients.yaml); these two remain for
+# the Portal's own code flow, the fallback of an installation without the edge in front, and
+# for the service account of the backend.
+portal-ui:
+  # What the login page names ("Sign in to {name} · {organization}"): a key the login theme
+  # translates (components/keycloak/charts/theme).
+  name: ${jcClientPortal}
+  description: Browser client of the portal single-page UI; public, PKCE only, no secret
+  subdomain: portal
+  redirectPath: /*
+  rawValues:
+    publicClient: true
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+
+portal-api:
+  # What the login page names ("Sign in to {name} · {organization}"): a key the login theme
+  # translates (components/keycloak/charts/theme).
+  name: ${jcClientPortal}
+  description: Confidential client of the portal backend for the OIDC code flow and its service account
+  subdomain: portal
+  redirectPath: /api/v1/auth/callback
+  # No secret (PF-47, T-2868): Keycloak verifies the Portal pod's projected ServiceAccount
+  # token, audience the realm, against the cluster issuer of the realm's `kubernetes` provider.
+  # `release` names the values key of the namespace, `serviceAccount` the pod's account.
+  federated:
+    release: portal.portal
+    serviceAccount: portal
+  # Keycloak posts the end of every session of the Portal's own code flow to it (T-5568).
+  backchannelLogout: true
+  # The reconciler creates, updates and deletes the confidential client `app-{name}` of every
+  # app on demand, as this client's own service account (AP-27). It holds the read-only
+  # `view-clients`, which lists and finds clients, and the write scopes come from the realm's
+  # fine-grained admin permissions, which the keycloak adminPermissions part grants on every
+  # client and denies on each one without `managed-by: joinedcontext`: the edge, the platform's
+  # own clients and Keycloak's (T-2725). Reading a client's secret stays with `view-clients`;
+  # the confidential platform clients move off shared secrets for that (T-2868).
+  # `query-users` and `query-groups` (read-only) let it list who holds an App client role:
+  # Keycloak answers GET /clients/{id}/roles/{role}/users and …/groups only to a caller that may
+  # view the client and query users or groups (T-3022, T-3322; without `query-groups` every
+  # reconcile cycle answered 403 on the role's groups). Neither reads a group's members or
+  # writes a mapping: every lookup and every mapping write stays with `portal-reconciler`.
+  serviceAccountClientRoles:
+    realm-management:
+      - view-clients
+      - query-users
+      - query-groups
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    # A connector's `jc_data_query` reads one Endpoint as the person (T-6063, API/14 §4.2): the
+    # Portal exchanges the person's token (RFC 8693, standard token exchange V2) for audience
+    # `mcp-hub` and scopes `gateway-hub endpoint:{slug}`, which the admin-permissions Job links
+    # here as optional. The realm takes only a subject token whose audience names `portal-api`,
+    # and the gateway decides the read on the person's own grants.
+    attributes:
+      standard.token.exchange.enabled: 'true'
+    optionalClientScopes: [address, phone, microprofile-jwt, gateway-hub]
+    # The Portal reads the caller's realm roles from the ID token (src/auth/oidc.rs
+    # realm_roles) and gates the Flows gallery by Blueprint.spec.allowedRoles on them
+    # (CC-59). Keycloak's default realm-roles mapper writes realm_access into the access
+    # token only, so a browser session had no role and saw no blueprint (T-0491).
+    protocolMappers:
+      - name: realm-roles-in-id-token
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-realm-role-mapper
+        consentRequired: false
+        config:
+          claim.name: realm_access.roles
+          jsonType.label: String
+          multivalued: 'true'
+          access.token.claim: 'true'
+          id.token.claim: 'true'
+          userinfo.token.claim: 'true'
+      # The Portal calls jc-functions with this client's client-credentials token (SDK-23); the
+      # runtime accepts audience jc-functions with azp portal-api and nothing else.
+      - name: jc-functions-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: jc-functions
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # The Portal reads and steers what the knowledge assistant holds of a project's sources
+      # with this client's client-credentials token (API/01 §34, T-3057); jc-assistant accepts
+      # the client's service account and nobody else, so a person's token of it is refused.
+      - name: jc-assistant-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: jc-assistant
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # The Portal asks the gateway's access/simulate what another person may do (EP-103,
+      # T-3311) with this client's client-credentials token; the gateway accepts this audience
+      # on that route alone and from the client's own service account only, so a person's
+      # token of this client reaches neither it nor any data path.
+      - name: context-gateway-simulate-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: context-gateway-simulate
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # A person's token is the subject token jc-agent-proxy exchanges for a run of theirs
+      # (ADR-N-038, AG-94): standard token exchange V2 takes it only when its audience names the
+      # requesting client. A custom audience, so the realm of an environment without the agent
+      # runner still imports.
+      - name: agent-proxy-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: helsinki-agent-proxy
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# The reconciler's own credential (PF-63, T-0866): the Portal brings the realm's groups to what
+# `users/groups/` says, and that is the only thing this client may do. It is a separate client
+# from `portal-api` on purpose — the login client must not gain the right to write people into
+# groups — and it has no login flow of its own: a service account and nothing else.
+portal-reconciler:
+  name: Portal reconciler
+  description: Service account the Portal's reconciler manages the realm's platform-owned groups with
+  subdomain: portal
+  # No secret (PF-47, T-2868): the ServiceAccount `portal-reconciler`, whose token the Portal mints
+  # per request (charts/namespaces/templates/reconciler-identity.yaml). Not the pod's own account,
+  # which is `portal-api`'s subject.
+  federated:
+    release: portal.portal
+    serviceAccount: portal-reconciler
+  # `manage-users` adds and removes a group membership; `query-groups` lists the groups to
+  # compare them against the manifests. No client, realm or role management.
+  serviceAccountClientRoles:
+    realm-management:
+      - manage-users
+      - query-groups
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    # The reconciler's writes into the spaces (declared Subscriptions, the seed entities put back
+    # after drift, the NGSI-LD catalogue) go through the Context Gateway as
+    # `service-account-portal-reconciler`, and each space's Policy decides them (Architecture/06,
+    # Architecture/21 §10). The gateway accepts a token only with its audience, so without this
+    # one every such write answered 404 (T-4866). An audience, no grant: what the account may do
+    # in a space is still only what a Policy names it for.
+    protocolMappers:
+      - name: context-gateway-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: context-gateway
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# `jcctl login` (T-2846, PF-45, MF-14): a person's token for the kubectl-shaped verbs, which call
+# the Portal resource API. RFC 8628's device flow, because a terminal has no browser to come back
+# to: no code flow and so no redirect URI anywhere, and a public client because it lives on a
+# laptop somebody can lose, with PKCE S256 from the client defaults on every sign-in (T-5614).
+# Its tokens carry the audience the Portal accepts and `jcctl-endpoint`, which the gateway admits
+# only beside the `endpoint:{slug}` scope of one Endpoint: `jcctl token --resource` asks for that
+# scope, which the admin-permissions Job links here as optional, so a person's script holds a
+# token for one Endpoint, decided by the person's Policy (PF-46, API/03 §2b).
+jcctl:
+  name: jcctl
+  description: Public client of the jcctl command line; device authorization grant with PKCE only, tokens for the Portal API and one Endpoint at a time
+  subdomain: portal
+  redirectPath: /
+  rawValues:
+    publicClient: true
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    redirectUris: []
+    webOrigins: []
+    attributes:
+      oauth2.device.authorization.grant.enabled: 'true'
+    protocolMappers:
+      - name: portal-api-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.client.audience: portal-api
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: jcctl-endpoint-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: jcctl-endpoint
+          access.token.claim: 'true'
+          id.token.claim: 'false'

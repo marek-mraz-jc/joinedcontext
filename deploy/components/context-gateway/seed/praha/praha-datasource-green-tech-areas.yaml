@@ -1,0 +1,18 @@
+# IPR Praha's geoportal item 6960e7e91f364502ba4325ad85e2d8f4 (Sdílená data o zeleni – technické prvky – plochy), 36,969 records of 30,828 areas on 2026-10-25: the layer's description
+# on IPR's ArcGIS server, whose field list and coded values the mapping reads before it pages
+# through the layer's FeatureServer. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5682).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-green-tech-areas
+  namespace: praha
+  title:
+    en: 'Shared green register: technical elements, areas (IPR Praha)'
+    cs: Sdílená data o zeleni – technické prvky – plochy (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_TP_P/FeatureServer/0?f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

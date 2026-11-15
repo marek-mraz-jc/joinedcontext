@@ -1,0 +1,5 @@
+apiVersion: v2
+name: namespaces
+description: What lets the Portal give each project its own namespace for pod-backed Apps, and the admission policy that keeps it to those (AP-116, AP-117)
+type: application
+version: 0.1.0

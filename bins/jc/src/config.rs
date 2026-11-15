@@ -254,6 +254,12 @@ pub struct KaisatsuSection {
     /// keeps the per-person rules (role `mfa-required`, an Organization's setting).
     #[serde(default)]
     pub second_factor: SecondFactorFloor,
+    /// Hosts besides the Kubernetes API that kaisatsu's outgoing calls (sign-out notices,
+    /// identity-provider keys and tokens) may reach on a private address or over `http`: exact
+    /// `host` or `host:port` (e.g. `portal.jc.svc.cluster.local:8080`), case-insensitive; an
+    /// address literal, a wildcard or a suffix is refused at load. Empty by default.
+    #[serde(default)]
+    pub outbound_private_hosts: Vec<String>,
 }
 
 /// `[kaisatsu] second_factor`.
@@ -535,7 +541,17 @@ pub struct OrganizationSection {
     /// stays the name.
     #[serde(default)]
     pub id: Option<jc_core::names::OrganizationId>,
+    /// The Organization's origins; jc fills them for `host = "auto"`.
+    #[serde(default)]
     pub hosts: OrganizationHosts,
+    /// `"auto"`: no host of the customer's, every origin derived from `base_host`
+    /// (evidence/T-6991/design.md §2). Refused beside `hosts`.
+    #[serde(default)]
+    pub host: Option<String>,
+    /// `hosts.apps` may share the working host's registrable domain (one site: an App's
+    /// same-site request then carries the session cookie, and the CSRF token is the only lock).
+    #[serde(default)]
+    pub same_site_apps: bool,
     /// The dataroom catalogue (a UUID) holding the Organization's datasets.
     pub catalogue_id: String,
     /// The CKAN API token the Portal publishes into this catalogue with; none, no Portal grant.
@@ -543,45 +559,244 @@ pub struct OrganizationSection {
     pub portal_token_file: Option<PathBuf>,
 }
 
-/// The hosts one Organization answers on: its Portal, its open data portal and its API and
-/// MCP addresses (both the gateway's).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// The origins of one Organization (evidence/T-6991/design.md §1): its working host (Portal),
+/// and optionally its open data host, its API host and its Apps domain. An absent open data or
+/// API host is served as paths of the working host (`/data`, the gateway's root paths).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OrganizationHosts {
+    #[serde(default)]
     pub portal: String,
-    pub opendata: String,
-    pub api: String,
-    pub mcp: String,
+    #[serde(default)]
+    pub opendata: Option<String>,
+    #[serde(default)]
+    pub api: Option<String>,
+    /// Kept for one release: equal to `api` or absent; another value is a second API host.
+    #[serde(default)]
+    pub mcp: Option<String>,
+    /// The Apps domain: Apps answer on `*.{apps}`, one of the Portal's `*.apps.` entries.
+    #[serde(default)]
+    pub apps: Option<String>,
     /// The hosts the operator lists for this Organization's further Portals (ODP-08), e.g.
     /// `mobility.city.sk`: a `Portal.spec.host` names one of these or none. TLS and the edge
     /// route of each stay deployment configuration.
     #[serde(default)]
     pub portals: Vec<String>,
+    /// `host = "auto"`: the open data and API hosts are the installation's, shared, with the
+    /// Organization's name as the first path segment.
+    #[serde(skip)]
+    pub shared: bool,
 }
 
+/// One place an Organization's module answers: on `host`, under `prefix` (whole host when
+/// `None`), with the host's role; `bound` hosts belong to the Organization alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrgMount<'a> {
+    pub module: Module,
+    pub host: &'a str,
+    pub prefix: Option<&'static str>,
+    pub role: Option<jc_router::HostRole>,
+    pub bound: bool,
+}
+
+/// The gateway's paths on the working host when it has no API host of its own (as on dev,
+/// where the Portal's pages read the gateway as the person on their own host).
+pub const GATEWAY_ON_WORKING_HOST: [&str; 3] = ["/cs", "/api/endpoint", "/api/mcp"];
+
+/// The dataroom's prefix on the working host: its pages move to the open data host, the
+/// Portal's catalogue writes stay there (the open data host takes none).
+pub const DATAROOM_ON_WORKING_HOST: &str = "/data";
+
 impl OrganizationHosts {
-    /// Each host with the module that answers on it.
+    /// The open data host (the working host without one of its own).
     #[must_use]
-    pub fn by_module(&self) -> Vec<(Module, &str)> {
+    pub fn opendata_host(&self) -> &str {
+        self.opendata.as_deref().unwrap_or(&self.portal)
+    }
+
+    /// The API host (the working host without one of its own).
+    #[must_use]
+    pub fn api_host(&self) -> &str {
+        self.api.as_deref().unwrap_or(&self.portal)
+    }
+
+    /// The second API host the old `mcp` member names, `None` when it is the API host.
+    fn second_api(&self) -> Option<&str> {
+        self.mcp
+            .as_deref()
+            .filter(|m| Some(*m) != self.api.as_deref())
+    }
+
+    /// Every host and the module, prefix and role that answer on it; the working host first.
+    #[must_use]
+    pub fn by_module(&self) -> Vec<OrgMount<'_>> {
+        use jc_router::HostRole;
+        let at = |module, host, prefix, role, bound| OrgMount {
+            module,
+            host,
+            prefix,
+            role,
+            bound,
+        };
         let mut all = vec![
-            (Module::Portal, self.portal.as_str()),
-            (Module::Dataroom, self.opendata.as_str()),
-            (Module::Gateway, self.api.as_str()),
-            (Module::Gateway, self.mcp.as_str()),
+            at(
+                Module::Portal,
+                &self.portal,
+                None,
+                Some(HostRole::Working),
+                true,
+            ),
+            at(
+                Module::Dataroom,
+                &self.portal,
+                Some(DATAROOM_ON_WORKING_HOST),
+                Some(HostRole::Working),
+                true,
+            ),
         ];
-        all.extend(self.portals.iter().map(|h| (Module::Dataroom, h.as_str())));
+        if let Some(h) = &self.opendata {
+            all.push(at(
+                Module::Dataroom,
+                h,
+                None,
+                Some(HostRole::OpenData),
+                !self.shared,
+            ));
+        }
+        all.extend(GATEWAY_ON_WORKING_HOST.map(|p| {
+            at(
+                Module::Gateway,
+                &self.portal,
+                Some(p),
+                Some(HostRole::Working),
+                true,
+            )
+        }));
+        if let Some(h) = &self.api {
+            all.push(at(
+                Module::Gateway,
+                h,
+                None,
+                Some(HostRole::Api),
+                !self.shared,
+            ));
+        }
+        if let Some(h) = self.second_api() {
+            all.push(at(Module::Gateway, h, None, Some(HostRole::Api), true));
+        }
+        all.extend(
+            self.portals
+                .iter()
+                .map(|h| at(Module::Dataroom, h, None, None, true)),
+        );
         all
+    }
+
+    /// The installation's hosts an `auto` Organization answers on, shared with the others.
+    pub fn shared_hosts(&self) -> impl Iterator<Item = &str> {
+        let shared = self.shared;
+        [&self.opendata, &self.api]
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .filter(move |_| shared)
+    }
+
+    /// Every host of its own, each once: the hosts no other Organization may name.
+    #[must_use]
+    pub fn own(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        for m in self.by_module().into_iter().filter(|m| m.bound) {
+            if !out.contains(&m.host) {
+                out.push(m.host);
+            }
+        }
+        out
     }
 }
 
+impl OrganizationSection {
+    /// The public base of the Organization's open data, without scheme: its own host, the shared
+    /// one with its name as the first segment, or the working host's `/data`.
+    #[must_use]
+    pub fn opendata_base(&self) -> String {
+        match (&self.hosts.opendata, self.hosts.shared) {
+            (Some(h), true) => format!("{h}/{}", self.name),
+            (Some(h), false) => h.clone(),
+            (None, _) => format!("{}{DATAROOM_ON_WORKING_HOST}", self.hosts.portal),
+        }
+    }
+
+    /// The public base of the Organization's Endpoint API, without scheme.
+    #[must_use]
+    pub fn api_base(&self) -> String {
+        match (&self.hosts.api, self.hosts.shared) {
+            (Some(h), true) => format!("{h}/{}", self.name),
+            _ => self.hosts.api_host().to_owned(),
+        }
+    }
+}
+
+/// The registrable domain of `host` as its last two labels (`bbsk.sk`). ponytail: no public
+/// suffix list, so `a.co.uk` and `b.co.uk` read as one site: the check refuses more, never less.
+fn site_of(host: &str) -> String {
+    let bare = bare_host(host);
+    let labels: Vec<&str> = bare.rsplitn(3, '.').take(2).collect();
+    labels.into_iter().rev().collect::<Vec<_>>().join(".")
+}
+
+/// `[kaisatsu] outbound_private_hosts`, each entry an exact host name (normalised to lowercase,
+/// without a trailing dot), by the rule of `kaisatsu_oidc::PrivateHost::parse` (kept here so the
+/// file loads without the `kaisatsu` feature).
+fn check_private_hosts(hosts: Vec<String>) -> Result<Vec<String>, ConfigError> {
+    let normalise = |raw: &str| -> Result<String, String> {
+        let raw = raw.trim();
+        let (host, port) = match raw.rsplit_once(':') {
+            Some((h, p)) if p.parse::<u16>().is_ok_and(|p| p != 0) => (h, Some(p)),
+            Some(_) => return Err(format!("'{raw}': the port must be 1-65535")),
+            None => (raw, None),
+        };
+        let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+        let label_ok = |l: &str| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        };
+        if host.len() > 253 || !host.split('.').all(label_ok) {
+            return Err(format!(
+                "'{raw}' is not an exact host name (no wildcard, suffix, scheme or path; e.g. portal.jc.svc.cluster.local:8080)"
+            ));
+        }
+        if host
+            .split('.')
+            .all(|l| l.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return Err(format!("'{raw}' is an address, not a host name"));
+        }
+        Ok(port.map_or(host.clone(), |p| format!("{host}:{p}")))
+    };
+    hosts
+        .iter()
+        .map(|h| normalise(h).map_err(ConfigError::PrivateHost))
+        .collect()
+}
+
 /// `[[organizations]]` checked: plain lowercase names and hosts, a catalogue UUID each, and no
-/// name, id, catalogue or host twice (a host compared without its port).
-fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigError> {
+/// name, id, catalogue or host twice (a host compared without its port). `host = "auto"` takes its
+/// hosts from `base_host`; `login_host` is no Organization's host.
+fn check_organizations(
+    orgs: &mut [OrganizationSection],
+    base_host: &str,
+    login_host: &str,
+) -> Result<(), ConfigError> {
     let bad = |m: String| Err(ConfigError::Organization(m));
     let mut names = std::collections::BTreeSet::new();
     let mut ids = std::collections::BTreeSet::new();
     let mut catalogues = std::collections::BTreeSet::new();
-    let mut hosts = BTreeMap::new();
+    let mut hosts = BTreeMap::from([(bare_host(login_host).to_owned(), "login_host".to_owned())]);
+    let mut shared_hosts = std::collections::BTreeSet::new();
     for org in orgs.iter_mut() {
         let name = org.name.as_str();
         if name.is_empty()
@@ -622,17 +837,77 @@ fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigErr
                 org.catalogue_id
             ));
         }
+        match org.host.as_deref() {
+            Some("auto") if org.hosts == OrganizationHosts::default() => {
+                org.hosts = OrganizationHosts {
+                    portal: format!("{name}.{base_host}"),
+                    opendata: Some(format!("opendata.{base_host}")),
+                    api: Some(format!("api.{base_host}")),
+                    shared: true,
+                    ..OrganizationHosts::default()
+                };
+            }
+            Some("auto") => {
+                return bad(format!(
+                    "{name}: host = \"auto\" and hosts are refused together"
+                ));
+            }
+            Some(other) => {
+                return bad(format!(
+                    "{name}: host '{other}' is not \"auto\": list the hosts in hosts = {{ portal = ... }}"
+                ));
+            }
+            None if org.hosts.portal.is_empty() => {
+                return bad(format!(
+                    "{name}: hosts.portal is missing: give the working host, e.g. \
+                     hosts = {{ portal = \"smartcity.city.sk\" }}, or host = \"auto\""
+                ));
+            }
+            None => {}
+        }
         let h = &mut org.hosts;
-        let fixed = [&mut h.portal, &mut h.opendata, &mut h.api, &mut h.mcp];
-        for host in fixed.into_iter().chain(h.portals.iter_mut()) {
+        let optional = [&mut h.opendata, &mut h.api, &mut h.mcp, &mut h.apps];
+        let fixed = std::iter::once(&mut h.portal).chain(optional.into_iter().flatten());
+        for host in fixed.chain(h.portals.iter_mut()) {
             *host = host.trim().to_ascii_lowercase();
             if !valid_host(host) {
                 return bad(format!("{name}: host '{host}' is not a plain host name"));
             }
-            let bare = host.split(':').next().unwrap_or_default().to_owned();
+        }
+        if let Some(apps) = &h.apps
+            && site_of(apps) == site_of(&h.portal)
+            && !org.same_site_apps
+        {
+            return bad(format!(
+                "{name}: hosts.apps '{apps}' is one site with the working host '{}': an App \
+                 could send requests carrying the session cookie. Put Apps on a domain of \
+                 their own, or set same_site_apps = true to accept that",
+                h.portal
+            ));
+        }
+        let shared = h.shared;
+        // Each whole-host mount takes a host of its own; the working host's paths are prefixes.
+        let whole = h
+            .by_module()
+            .into_iter()
+            .filter(|m| m.bound && m.prefix.is_none());
+        let own: Vec<&str> = whole.map(|m| m.host).chain(h.apps.as_deref()).collect();
+        for host in own {
+            let bare = bare_host(host).to_owned();
             if let Some(other) = hosts.insert(bare, org.name.clone()) {
                 return bad(format!("{name}: host '{host}' is also a host of {other}"));
             }
+        }
+        if shared {
+            shared_hosts.extend(h.shared_hosts().map(|s| bare_host(s).to_owned()));
+        }
+    }
+    // The shared hosts of `auto` Organizations are no Organization's own.
+    for host in shared_hosts {
+        if let Some(other) = hosts.get(&host) {
+            return bad(format!(
+                "{other}: host '{host}' is the shared host of host = \"auto\""
+            ));
         }
     }
     Ok(())
@@ -652,16 +927,17 @@ pub struct HostSection {
 
 /// `[[hosts]]` checked against the `[[organizations]]`: a plain host each, bound to an
 /// Organization of this deployment, at a clean root, and no host twice or an Organization's own.
-fn check_hosts(hosts: &mut [HostSection], orgs: &[OrganizationSection]) -> Result<(), ConfigError> {
+fn check_hosts(
+    hosts: &mut [HostSection],
+    orgs: &[OrganizationSection],
+    login_host: &str,
+) -> Result<(), ConfigError> {
     let bad = |m: String| Err(ConfigError::Organization(m));
     let mut seen: std::collections::BTreeSet<String> = orgs
         .iter()
-        .flat_map(|o| {
-            o.hosts
-                .by_module()
-                .into_iter()
-                .map(|(_, h)| bare_host(h).to_owned())
-        })
+        .flat_map(|o| o.hosts.own().into_iter().chain(o.hosts.shared_hosts()))
+        .chain([login_host])
+        .map(|h| bare_host(h).to_owned())
         .collect();
     for row in hosts.iter_mut() {
         row.host = row.host.trim().to_ascii_lowercase();
@@ -850,6 +1126,8 @@ pub struct FileConfig {
     pub organizations: Vec<OrganizationSection>,
     #[serde(default)]
     pub hosts: Vec<HostSection>,
+    /// The installation's sign-in host (T-6991 §5); `login.{base_host}` when unset.
+    pub login_host: Option<String>,
 }
 
 /// Errors while assembling the configuration.
@@ -905,6 +1183,8 @@ pub enum ConfigError {
     Address(&'static str, String),
     #[error("[identity] realm: {0}")]
     Realm(String),
+    #[error("[kaisatsu] outbound_private_hosts: {0}")]
+    PrivateHost(String),
     #[error("[[organizations]] {0}")]
     Organization(String),
 }
@@ -947,6 +1227,8 @@ pub struct Config {
     pub organizations: Vec<OrganizationSection>,
     /// `[[hosts]]`, checked: further hosts bound to one of the `organizations`.
     pub hosts: Vec<HostSection>,
+    /// The installation's sign-in host, no Organization's (T-6991 §5).
+    pub login_host: String,
 }
 
 impl Config {
@@ -1053,6 +1335,7 @@ impl Config {
             database: file.kaisatsu.database,
             branding_file: file.kaisatsu.branding_file,
             second_factor: file.kaisatsu.second_factor,
+            outbound_private_hosts: check_private_hosts(file.kaisatsu.outbound_private_hosts)?,
         };
         if kaisatsu.database.is_some() && kaisatsu.database_url_file.is_some() {
             return Err(ConfigError::Database {
@@ -1146,10 +1429,19 @@ impl Config {
             Some(name) => crate::setup::Realm::parse(&name).map_err(ConfigError::Realm)?,
             None => crate::setup::Realm::default(),
         };
+        let login_host = match file.login_host {
+            Some(h) => h.trim().to_ascii_lowercase(),
+            None => format!("login.{base_host}"),
+        };
+        if !valid_host(&login_host) {
+            return Err(ConfigError::Organization(format!(
+                "login_host '{login_host}' is not a plain host name, e.g. login.city.example"
+            )));
+        }
         let mut organizations = file.organizations;
-        check_organizations(&mut organizations)?;
+        check_organizations(&mut organizations, &base_host, &login_host)?;
         let mut hosts = file.hosts;
-        check_hosts(&mut hosts, &organizations)?;
+        check_hosts(&mut hosts, &organizations, &login_host)?;
         let remote_modules = match &file.remote {
             Some(remote) => remote_modules(remote, &roles)?,
             None => BTreeMap::new(),
@@ -1191,6 +1483,7 @@ impl Config {
             remote_modules,
             organizations,
             hosts,
+            login_host,
         })
     }
 }
@@ -2350,12 +2643,18 @@ path_prefix = "/api/endpoint"
         let cfg = orgs(TWO_ORGS).unwrap();
         assert_eq!(cfg.organizations.len(), 2);
         assert_eq!(cfg.organizations[1].name, "beta");
-        assert_eq!(cfg.organizations[1].hosts.mcp, "mcp.beta.test");
+        assert_eq!(
+            cfg.organizations[1].hosts.mcp.as_deref(),
+            Some("mcp.beta.test")
+        );
         // Hosts are compared lowercased: an upper-case spelling is the same host.
         let upper = TWO_ORGS.replacen("opendata.alpha.test", "OpenData.Alpha.test", 1);
         assert_eq!(
-            orgs(&upper).unwrap().organizations[0].hosts.opendata,
-            "opendata.alpha.test"
+            orgs(&upper).unwrap().organizations[0]
+                .hosts
+                .opendata
+                .as_deref(),
+            Some("opendata.alpha.test")
         );
         for (from, to, says) in [
             ("\"beta\"", "\"alpha\"", "named twice"),
@@ -2373,9 +2672,19 @@ path_prefix = "/api/endpoint"
             ),
             ("0000000000b1", "b1", "is not a UUID"),
             ("api.beta.test", "api.alpha.test", "also a host of alpha"),
-            // The same host twice inside one Organization, and with only a port apart.
-            ("mcp.beta.test", "api.beta.test", "also a host of beta"),
-            ("mcp.beta.test", "api.beta.test:8443", "also a host of beta"),
+            // The same host twice inside one Organization, and with only a port apart; `mcp`
+            // may repeat `api` alone (one release of the old form).
+            ("mcp.beta.test", "opendata.beta.test", "also a host of beta"),
+            (
+                "mcp.beta.test",
+                "opendata.beta.test:8443",
+                "also a host of beta",
+            ),
+            (
+                "mcp.beta.test",
+                "login.localhost",
+                "also a host of login_host",
+            ),
             ("api.beta.test", "*.beta.test", "not a plain host name"),
             (
                 "api.beta.test",
@@ -2387,16 +2696,131 @@ path_prefix = "/api/endpoint"
             let err = orgs(&text).expect_err(to).to_string();
             assert!(err.contains(says), "{to}: {err}");
         }
+        // `mcp` equal to `api` is that one API host.
+        let same = orgs(&TWO_ORGS.replace("mcp.beta.test", "api.beta.test")).unwrap();
+        assert_eq!(same.organizations[1].hosts.own().len(), 3);
         // An unknown key and a missing host are refused by the parser.
         let err =
             orgs(&TWO_ORGS.replace("mcp = \"mcp.beta.test\"", "mcp = \"m.b\", www = \"w.b\""))
                 .unwrap_err()
                 .to_string();
         assert!(err.contains("unknown field `www`"), "{err}");
-        let err = orgs(&TWO_ORGS.replace(", mcp = \"mcp.beta.test\"", ""))
+        let err = orgs(&TWO_ORGS.replace("portal = \"portal.beta.test\", ", ""))
             .unwrap_err()
             .to_string();
-        assert!(err.contains("missing field `mcp`"), "{err}");
+        assert!(err.contains("hosts.portal is missing"), "{err}");
+    }
+
+    /// One Organization on the working host alone (T-6991 §1 setup 1): its open data on the
+    /// working host's `/data`, its API on the gateway's paths there.
+    #[test]
+    fn optional_hosts_fall_back_to_paths_of_the_working_host() {
+        let text = TWO_ORGS.replace(
+            ", opendata = \"opendata.beta.test\", api = \"api.beta.test\", mcp = \"mcp.beta.test\"",
+            "",
+        );
+        let cfg = orgs(&text).unwrap();
+        let beta = &cfg.organizations[1];
+        assert_eq!(beta.hosts.own(), ["portal.beta.test"]);
+        assert_eq!(beta.opendata_base(), "portal.beta.test/data");
+        assert_eq!(beta.api_base(), "portal.beta.test");
+        let placed: Vec<(Module, Option<&str>)> = beta
+            .hosts
+            .by_module()
+            .into_iter()
+            .map(|m| (m.module, m.prefix))
+            .collect();
+        assert!(
+            placed.contains(&(Module::Dataroom, Some("/data"))),
+            "{placed:?}"
+        );
+        assert!(
+            placed.contains(&(Module::Gateway, Some("/api/endpoint"))),
+            "{placed:?}"
+        );
+    }
+
+    /// `host = "auto"` (T-6991 §2): five origins from `base_host`, none of the customer's.
+    #[test]
+    fn auto_derives_the_five_origins_and_refuses_overlaps() {
+        let auto = |extra: &str| {
+            format!(
+                "base_host = \"city.example\"\n{extra}\n[[organizations]]\nname = \"zilina\"\n\
+                 catalogue_id = \"00000000-0000-7000-8000-0000000000c1\"\nhost = \"auto\"\n\
+                 [[organizations]]\nname = \"kosice\"\n\
+                 catalogue_id = \"00000000-0000-7000-8000-0000000000c2\"\nhost = \"auto\"\n"
+            )
+        };
+        let cfg = orgs(&auto("")).unwrap();
+        let z = &cfg.organizations[0];
+        assert_eq!(z.hosts.portal, "zilina.city.example");
+        assert_eq!(z.opendata_base(), "opendata.city.example/zilina");
+        assert_eq!(z.api_base(), "api.city.example/zilina");
+        assert_eq!(cfg.login_host, "login.city.example");
+        assert_eq!(z.hosts.own(), ["zilina.city.example"]);
+        let roles: Vec<_> = z
+            .hosts
+            .by_module()
+            .into_iter()
+            .map(|m| (m.host, m.role, m.bound))
+            .collect();
+        use jc_router::HostRole;
+        assert!(roles.contains(&("opendata.city.example", Some(HostRole::OpenData), false)));
+        assert!(roles.contains(&("api.city.example", Some(HostRole::Api), false)));
+        // The second `auto` Organization shares the open data and API hosts.
+        assert_eq!(
+            cfg.organizations[1].opendata_base(),
+            "opendata.city.example/kosice"
+        );
+        // A shared host or the sign-in host is no Organization's own.
+        let own = "[[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000c3\"\n";
+        for (host, says) in [
+            ("api.city.example", "shared host of host = \"auto\""),
+            ("login.city.example", "also a host of login_host"),
+            ("zilina.city.example", "also a host of zilina"),
+        ] {
+            let text = format!("{}{own}hosts = {{ portal = \"{host}\" }}\n", auto(""));
+            let err = orgs(&text).expect_err(host).to_string();
+            assert!(err.contains(says), "{host}: {err}");
+        }
+        for (field, says) in [
+            ("host = \"manual\"", "is not \"auto\""),
+            (
+                "host = \"auto\"\nhosts = { portal = \"x.example\" }",
+                "refused together",
+            ),
+        ] {
+            let text = format!("{own}{field}\n");
+            let err = orgs(&text).expect_err(field).to_string();
+            assert!(err.contains(says), "{field}: {err}");
+        }
+        let err = orgs(&auto("login_host = \"https://login\""))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("login_host 'https://login' is not a plain host name"),
+            "{err}"
+        );
+    }
+
+    /// `hosts.apps` under the working host's own site is refused unless the operator accepts
+    /// it (T-6991 §6): an App's same-site request carries the session cookie.
+    #[test]
+    fn apps_on_the_working_hosts_site_need_same_site_apps() {
+        let apps = |host: &str, extra: &str| {
+            TWO_ORGS.replace(
+                "mcp = \"mcp.beta.test\" }",
+                &format!("mcp = \"mcp.beta.test\", apps = \"{host}\" }}{extra}"),
+            )
+        };
+        let err = orgs(&apps("apps.beta.test", "")).unwrap_err().to_string();
+        assert!(err.contains("one site with the working host"), "{err}");
+        assert!(orgs(&apps("apps.beta.test", "\nsame_site_apps = true")).is_ok());
+        assert!(orgs(&apps("apps.beta-apps.example", "")).is_ok());
+        let err = orgs(&apps("apps.alpha.example", "")).map(|_| ()).err();
+        assert!(err.is_none(), "{err:?}");
+        let err = orgs(&apps("portal.alpha.test", "\nsame_site_apps = true")).unwrap_err();
+        assert!(err.to_string().contains("also a host of alpha"), "{err}");
     }
 
     #[test]
@@ -2568,6 +2992,49 @@ path_prefix = "/api/endpoint"
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn the_kaisatsu_section_lists_exact_private_hosts_only() {
+        let parse = |list: &str| {
+            let file = Config::parse_file(
+                Path::new("jc.toml"),
+                &format!(
+                    "profile = \"development\"\n[kaisatsu]\noutbound_private_hosts = [{list}]\n"
+                ),
+            )
+            .expect("parses");
+            Config::merge(cli(&["--role", "kaisatsu"]), file)
+        };
+        let cfg =
+            parse(r#""Portal.JC.svc.cluster.local.:8080", "idp.corp.example""#).expect("parses");
+        assert_eq!(
+            cfg.kaisatsu.outbound_private_hosts,
+            ["portal.jc.svc.cluster.local:8080", "idp.corp.example"]
+        );
+        let unset = Config::parse_file(Path::new("jc.toml"), "profile = \"development\"\n")
+            .expect("parses");
+        assert!(unset.kaisatsu.outbound_private_hosts.is_empty());
+        assert!(
+            Config::merge(cli(&["--role", "kaisatsu"]), unset)
+                .expect("merges")
+                .kaisatsu
+                .outbound_private_hosts
+                .is_empty()
+        );
+        for bad in [
+            r#"".svc.cluster.local""#,
+            r#""*.svc.cluster.local""#,
+            r#""10.0.0.1""#,
+            r#""10.0.0.1:80""#,
+            r#""[::1]""#,
+            r#""http://portal""#,
+            r#""portal:0""#,
+            "\"\"",
+        ] {
+            let err = parse(bad).unwrap_err();
+            assert!(matches!(err, ConfigError::PrivateHost(_)), "{bad}: {err}");
+        }
     }
 
     #[test]

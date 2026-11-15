@@ -1,0 +1,28 @@
+---
+{{- $this := index .Values "apps-db" -}}
+{{- $images := index .Values.images "postgres" }}
+
+# The postgres component's `databases` chart for apps-db: no databases or roles of its own (the
+# Portal makes those), only the nightly dump of templates/local-backup.yaml and the
+# stat-statements Job. Its own name keeps its pods out of the platform cluster's psql-client rules.
+nameOverride: apps-db-backup
+
+cluster:
+  name: {{ $this.cluster.name }}
+
+roleJob:
+  image: {{ index $images "roleJob" "repository" }}@{{ index $images "roleJob" "digest" }}
+
+securityDefaults:
+  podSecurityContext:
+    {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 4 }}
+  securityContext:
+    {{ .Values.securityDefaults.securityContext | toYaml | nindent 4 }}
+
+statStatements:
+  preloaded: false
+
+localBackup:
+  {{- $this.backup.localBackup | toYaml | nindent 2 }}
+
+databases: {}

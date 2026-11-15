@@ -1,0 +1,59 @@
+# The city's water indicator (PL-45, PF-54, PF-55): invoiced drinking water per
+# inhabitant per day, from the water cube and the city's own register in the same space. It
+# has no published threshold either, and `calculationFormula` records every input it used so
+# a reader can check the division.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: ukazovatele-mesto
+  namespace: banskabystrica
+  title: { sk: Ukazovatele mesta, en: City indicators }
+spec:
+  class: scheduled
+  schedule: '23 4 * * 1'
+  # Read through the space's own Endpoint and not the store, so the Policy applies to this
+  # pipeline exactly as it applies to anybody else (PL-18, PF-39, PL-45).
+  source:
+    endpointRef: { kind: Endpoint, name: banskabystrica-mesto }
+    query: { type: KeyPerformanceIndicator }
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-kpi:banskabystrica-kpi
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  compute:
+    kind: bloblang
+    bloblang: |
+      let domain = "banskabystrica.sk"
+      let space = env("JC_SPACE")
+      let source_space = env("JC_SOURCE_SPACE")
+      let ran = now().ts_format("2006-01-02T15:04:05Z07:00", "UTC")
+      let source_endpoint = "urn:ngsi-ld:Endpoint:%v:%v:%v".format($domain, $source_space, $source_space)
+      let pipeline = "urn:ngsi-ld:Pipeline:%v:%v:ukazovatele-mesto".format($domain, $space)
+
+      # The newest year the water cube carries, and the register as it stood the last time it was read.
+      let water = this.filter(r -> r.dataSet.value == "vh5003rr" && r.indicator.value == "U03084" && r.kpiValue.value.type() == "number").sort_by(r -> r.refPeriod.value).index(-1).catch(null)
+      let register_day = this.filter(r -> r.dataSet.value == "mesto-obyvatelia-vek").map_each(r -> r.refPeriod.value).sort().index(-1).catch(null)
+      let people = if $register_day == null { 0 } else { this.filter(r -> r.dataSet.value == "mesto-obyvatelia-vek" && r.refPeriod.value == $register_day && r.kpiValue.value.type() == "number").map_each(r -> r.kpiValue.value).sum() }
+
+      # 366 days in a leap year, because dividing a year's water by 365 in a leap year is wrong in the
+      # third digit and the indicator is read to the first.
+      let year = if $water == null { 0 } else { $water.refPeriod.value.number() }
+      let days = if ($year % 4 == 0 && $year % 100 != 0) || $year % 400 == 0 { 366 } else { 365 }
+
+      # Cubic metres to litres: the voda mapping already scales the cube's thousands to m3 (F-BNT1-015).
+      let litres_per_person_day = if $water == null || $people == 0 { null } else { ($water.kpiValue.value * 1000) / $people / $days }
+
+      root = [{
+        "id": "urn:ngsi-ld:KeyPerformanceIndicator:%v:%v:spotreba-vody-obyvatel-mesto".format($domain, $space),
+        "type": "KeyPerformanceIndicator",
+        "name": { "type": "Property", "value": "spotreba-vody-obyvatel-mesto" },
+        "title": { "type": "LanguageProperty", "languageMap": { "sk": "Fakturovaná spotreba pitnej vody na obyvateľa za deň", "en": "Invoiced drinking water per inhabitant per day" } },
+        "currentValue": if $litres_per_person_day == null { { "type": "Property", "value": "not measured" } } else {
+          { "type": "Property", "value": $litres_per_person_day.round(), "unitCode": "LTR", "observedAt": $water.dateObserved.value }
+        },
+        "calculationPeriod": { "type": "Property", "value": if $water == null { { "start": $ran, "end": $ran } } else {
+          { "start": "%v-01-01T00:00:00Z".format($water.refPeriod.value), "end": "%v-12-31T23:59:59Z".format($water.refPeriod.value) } } },
+        "calculationFormula": { "type": "Property", "value": if $water == null { "vh5003rr/U03084 x 1000 / the city register's total / the days of the year; no published value for any year" } else {
+          "vh5003rr/U03084 for %v (%v m3 of invoiced water) x 1000 / %v inhabitants in the city register of %v / %v days".format($water.refPeriod.value, $water.kpiValue.value, $people, $register_day, $days) } },
+        "derivedFrom": { "type": "Property", "value": $source_endpoint },
+        "computedBy": { "type": "Property", "value": $pipeline },
+        "updatedAt": { "type": "Property", "value": { "@type": "DateTime", "@value": $ran } }
+      }]

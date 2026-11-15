@@ -1,0 +1,917 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-10-18T07:10:36Z",
+    "timestamp_areas_base": "2026-10-18T02:35:51Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 268287192,
+  "lat": 48.7387894,
+  "lon": 19.1557479,
+  "tags": {
+    "addr:city": "Banská Bystrica",
+    "addr:housenumber": "60",
+    "addr:postcode": "97401",
+    "addr:street": "Horná",
+    "amenity": "clinic",
+    "healthcare": "clinic",
+    "name": "Poliklinika BB",
+    "operator": "I. Hortenova, s.r.o.",
+    "website": "https://poliklinikabb.sk/"
+  }
+},
+{
+  "type": "node",
+  "id": 388597050,
+  "lat": 48.7370318,
+  "lon": 19.1439997,
+  "tags": {
+    "amenity": "pharmacy",
+    "dispensing": "yes",
+    "drive_through": "no",
+    "healthcare": "pharmacy",
+    "name": "Lazovná"
+  }
+},
+{
+  "type": "node",
+  "id": 477461118,
+  "lat": 48.7908216,
+  "lon": 19.3882868,
+  "tags": {
+    "amenity": "pharmacy"
+  }
+},
+{
+  "type": "node",
+  "id": 562621210,
+  "lat": 48.7343761,
+  "lon": 19.1438611,
+  "tags": {
+    "addr:city": "Banská Bystrica",
+    "addr:housenumber": "5",
+    "addr:postcode": "97401",
+    "addr:street": "Dolná",
+    "amenity": "pharmacy",
+    "brand": "Dr. Max",
+    "brand:wikidata": "Q56317371",
+    "dispensing": "yes",
+    "healthcare": "pharmacy",
+    "name": "Dr. Max",
+    "opening_hours": "Mo-Fr 08:00-16:30",
+    "operator": "Dr.Max"
+  }
+},
+{
+  "type": "node",
+  "id": 562621214,
+  "lat": 48.7354059,
+  "lon": 19.1469851,
+  "tags": {
+    "amenity": "pharmacy",
+    "dispensing": "yes",
+    "healthcare": "pharmacy",
+    "name": "Pri prameni"
+  }
+},
+{
+  "type": "node",
+  "id": 1334288813,
+  "lat": 48.7359873,
+  "lon": 19.1431525,
+  "tags": {
+    "amenity": "pharmacy",
+    "healthcare": "pharmacy",
+    "name": "Chamomilla"
+  }
+},
+{
+  "type": "node",
+  "id": 1827894835,
+  "lat": 48.7204486,
+  "lon": 19.1343508,
+  "tags": {
+    "amenity": "pharmacy",
+    "dispensing": "yes",
+    "email": "lekaren@artmed.sk",
+    "name": "Artmed",
+    "phone": "+421 48 416 4976"
+  }
+},
+{
+  "type": "node",
+  "id": 1827894845,
+  "lat": 48.7198928,
+  "lon": 19.1331007,
+  "tags": {
+    "amenity": "pharmacy",
+    "dispensing": "yes",
+    "name": "Montana"
+  }
+},
+{
+  "type": "node",
+  "id": 1827894909,
+  "lat": 48.7192814,
+  "lon": 19.1328584,
+  "tags": {
+    "amenity": "pharmacy",
+    "brand": "Dr. Max",
+    "brand:wikidata": "Q56317371",
+    "dispensing": "yes",
+    "name": "Dr. Max"
+  }
+},
+{
+  "type": "node",
+  "id": 2454003614,
+  "lat": 48.7372960,
+  "lon": 19.1496176,
+  "tags": {
+    "amenity": "pharmacy",
+    "healthcare": "pharmacy",
+    "name": "Lekáreň Bellis"
+  }
+},
+{
+  "type": "node",
+  "id": 2454003656,
+  "lat": 48.7391881,
+  "lon": 19.1591936,
+  "tags": {
+    "amenity": "pharmacy"
+  }
+},
+{
+  "type": "node",
+  "id": 2685687423,
+  "lat": 48.7323635,
+  "lon": 19.1420105,
+  "tags": {
+    "amenity": "pharmacy",
+    "dispensing": "yes",
+    "healthcare": "pharmacy",
+    "name": "Asklepion"
+  }
+},
+{
+  "type": "node",
+  "id": 2955700966,
+  "lat": 48.7602321,
+  "lon": 19.1659666,
+  "tags": {
+    "addr:city": "Banská Bystrica",
+    "addr:housenumber": "27",
+    "addr:postcode": "97411",
+    "addr:street": "Rudohorská",
+    "addr:streetnumber": "27",
+    "amenity": "pharmacy",
+    "name": "Silybum",
+    "opening_hours": "Mo-Fr 07:00-16:00"
+  }
+},
+{
+  "type": "node",
+  "id": 2957144267,
+  "lat": 48.7556888,
+  "lon": 19.1658866,
+  "tags": {
+    "addr:city": "Banská Bystrica",
+    "addr:postcode": "97411",
+    "addr:street": "Rudohorská",
+    "amenity": "pharmacy",
+    "healthcare": "pharmacy"
+  }
+},
+{
+  "type": "node",
+  "id": 3054957608,
+  "lat": 48.7411646,
+  "lon": 19.1588191,
+  "tags": {
+    "amenity": "pharmacy",
+    "name": "Zdravomed"
+  }
+},
+{
+  "type": "node",
+  "id": 3614945831,
+  "lat": 48.7600189,
+  "lon": 19.1671795,
+  "tags": {
+    "addr:city": "Banská Bystrica",
+    "addr:housenumber": "16",
+    "addr:postcode": "97411",
+    "addr:street": "Rudohorská",
+    "addr:streetnumber": "16",
+    "amenity": "pharmacy",
+    "drive_through": "no",
+    "name": "Sitnianska",
+    "operator": "Plus lekáreň"
+  }
+},
+{
+  "type": "node",
+  "id": 3911488780,
+  "lat": 48.7426112,
+  "lon": 19.1090789,
+  "tags": {
+    "amenity": "pharmacy",
+    "name": "Lekáreň PODLAVICE",
+    "opening_hours": "Mo-Fr 07:30-17:00"
+  }
+},
+{
+  "type": "node",
+  "id": 4212440993,
+  "lat": 48.7460122,
+  "lon": 19.3627815,
+  "tags": {
+    "amenity": "pharmacy"
+  }
+},
+{
+  "type": "node",
+  "id": 4275500389,
+  "lat": 48.7303339,
+  "lon": 19.1368906,
+  "tags": {
+    "amenity": "charging_station",
+    "authentication:membership_card": "yes",
+    "motorcar": "yes",
+    "operator": "GreenWay",
+    "socket:chademo": "1",
+    "socket:chademo:output": "44 kW"
+  }
+},
+{
+  "type": "node",
+  "id": 4275500489,
+  "lat": 48.7437341,
+  "lon": 19.1805431,
+  "tags": {
+    "amenity": "charging_station"
+  }
+},
+{
+  "type": "node",
+  "id": 4506460590,
+  "lat": 48.7671119,
+  "lon": 19.2730482,
+  "tags": {
+    "amenity": "pharmacy",
+    "name": "Lekáreň Ľupčianska",
+    "opening_hours": "Mo-Fr 06:30-16:00",
+    "operator": "Želmíra Šoóšová",
+    "phone": "+421 48 418 7010"
+  }
+},
+{
+  "type": "node",
+  "id": 4983596192,
+  "lat": 48.8760507,
+  "lon": 19.0411369,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "fee": "no",
+    "lockable": "no",
+    "motorcar": "no",
+    "operator": "RIDE.sk",
+    "website": "https://ride.sk/"
+  }
+},
+{
+  "type": "node",
+  "id": 5834295073,
+  "lat": 48.7305000,
+  "lon": 19.1357000,
+  "tags": {
+    "amenity": "charging_station",
+    "branch": "Banská Bystrica, Europa Shopping Center",
+    "capacity": "2",
+    "covered": "yes",
+    "fee": "yes",
+    "level": "2",
+    "motorcar": "yes",
+    "opening_hours": "24/7",
+    "operator": "GreenWay",
+    "operator:wikidata": "Q116450281",
+    "socket:chademo": "1",
+    "socket:chademo:output": "25 kW",
+    "socket:type2": "1",
+    "socket:type2:output": "22 kW",
+    "socket:type2_combo": "1",
+    "socket:type2_combo:output": "25 kW",
+    "website": "https://map.greenway.sk/?locationId=9503"
+  }
+},
+{
+  "type": "node",
+  "id": 6015158045,
+  "lat": 48.7331129,
+  "lon": 19.1214637,
+  "tags": {
+    "amenity": "clinic",
+    "healthcare": "clinic",
+    "healthcare:speciality": "general;paediatrics;dentist;gastroenterology;allergology;immunology;ophthalmology;gynaecology;endocrinology",
+    "name": "Zdravotné stredisko Edelma",
+    "website": "https://www.edelma.sk/"
+  }
+},
+{
+  "type": "node",
+  "id": 6196760552,
+  "lat": 48.7361585,
+  "lon": 19.1649078,
+  "tags": {
+    "amenity": "pharmacy",
+    "brand": "Dr. Max",
+    "brand:wikidata": "Q56317371",
+    "brand:wikipedia": "fr:Dr.Max",
+    "healthcare": "pharmacy",
+    "name": "Dr. Max",
+    "opening_hours": "Mo-Su 08:00-20:00",
+    "source": "survey"
+  }
+},
+{
+  "type": "node",
+  "id": 6340274023,
+  "lat": 48.7196395,
+  "lon": 19.1337787,
+  "tags": {
+    "amenity": "pharmacy",
+    "healthcare": "pharmacy",
+    "name": "Medical Park"
+  }
+},
+{
+  "type": "node",
+  "id": 7045964458,
+  "lat": 48.7251454,
+  "lon": 19.1362127,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "branch": "Banská Bystrica, McDonald's",
+    "brand": "ZSE Drive",
+    "brand:wikidata": "Q116450454",
+    "capacity": "2",
+    "covered": "no",
+    "fee": "yes",
+    "motorcar": "yes",
+    "operator": "Západoslovenská energetika",
+    "operator:short": "ZSE",
+    "operator:wikidata": "Q246921",
+    "socket:type2_combo": "2",
+    "socket:type2_combo:output": "100 kW"
+  }
+},
+{
+  "type": "node",
+  "id": 7046680392,
+  "lat": 48.7254108,
+  "lon": 19.1331721,
+  "tags": {
+    "amenity": "pharmacy",
+    "brand": "Dr. Max",
+    "brand:wikidata": "Q56317371",
+    "healthcare": "pharmacy",
+    "name": "Dr. Max"
+  }
+},
+{
+  "type": "node",
+  "id": 7848383870,
+  "lat": 48.7358226,
+  "lon": 19.1536095,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "branch": "Banská Bystrica, Hotel Lux",
+    "brand": "ejoin",
+    "brand:wikidata": "Q116737637",
+    "fee": "yes",
+    "operator": "ejoin",
+    "operator:wikidata": "Q116737637",
+    "socket:type2": "3",
+    "socket:type2:output": "22 kW"
+  }
+},
+{
+  "type": "node",
+  "id": 7848421989,
+  "lat": 48.7645073,
+  "lon": 19.1388865,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "brand": "eMotion",
+    "brand:wikidata": "Q139071415",
+    "fee": "yes",
+    "motorcar": "yes",
+    "socket:chademo": "1",
+    "socket:type2": "1",
+    "socket:type2:output": "150kW",
+    "socket:type2_combo": "1",
+    "source": "survey"
+  }
+},
+{
+  "type": "node",
+  "id": 8223048144,
+  "lat": 48.7336947,
+  "lon": 19.1337660,
+  "tags": {
+    "amenity": "hospital",
+    "brand": "Agel",
+    "brand:wikidata": "Q41365932",
+    "contact:facebook": "mammacentrumsv.agaty",
+    "email": "mammacentrum@mmc.agel.sk",
+    "healthcare": "hospital",
+    "name": "Mammacentrum sv. Agáty",
+    "opening_hours": "Mo-Fr 15:00-17:00; Sa,Su 13:00-17:00; PH off",
+    "operator": "AGEL Mammacentrum sv. Agáty",
+    "operator:type": "private",
+    "phone": "+421 48 420 4911",
+    "website": "https://mammacentrum.agel.sk/index.html"
+  }
+},
+{
+  "type": "node",
+  "id": 9147999592,
+  "lat": 48.8053008,
+  "lon": 19.1492782,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "opening_hours": "Mo-Su 09:00-21:00",
+    "operator": "Specialized"
+  }
+},
+{
+  "type": "node",
+  "id": 9147999593,
+  "lat": 48.7743204,
+  "lon": 19.0257919,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "name": "Nabíjecí stanice elektrokol Specialized Hostinec Skalnička",
+    "opening_hours": "Mo-Su 14:00-22:00",
+    "operator": "Specialized"
+  }
+},
+{
+  "type": "node",
+  "id": 9147999595,
+  "lat": 48.8769428,
+  "lon": 19.2255591,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "website": "https://www.visitliptov.sk/zaujimavosti/donovaly-koliba-goral-e-bike-nabijacia-stanica/"
+  }
+},
+{
+  "type": "node",
+  "id": 9147999597,
+  "lat": 48.6494169,
+  "lon": 19.3269839,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "name": "Nabíjecí stanice elektrokol Specialized Hrochoťský mlyn",
+    "opening_hours": "Mo-Su 09:00-21:00",
+    "ref": "47434058"
+  }
+},
+{
+  "type": "node",
+  "id": 9170239881,
+  "lat": 48.7493746,
+  "lon": 19.1580160,
+  "tags": {
+    "amenity": "clinic",
+    "email": "info@uroplus.sk",
+    "healthcare:speciality": "urology",
+    "name": "UROplus s.r.o.",
+    "opening_hours": "Mo 07:30-19:00; Tu 08:00-19:00; We-Th 07:30-19:00; Fr 07:30-15:30",
+    "phone": "+421 483811478",
+    "website": "https://www.uroplus.sk"
+  }
+},
+{
+  "type": "node",
+  "id": 9880933417,
+  "lat": 48.7178890,
+  "lon": 19.4043765,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "fixme": "position",
+    "name": "Nabíjecí stanice elektrokol Specialized Koliba pod Vartou",
+    "opening_hours": "Mo-Su 09:00-21:00",
+    "operator": "Specialized",
+    "ref": "52745406"
+  }
+},
+{
+  "type": "node",
+  "id": 9880933425,
+  "lat": 48.7890145,
+  "lon": 19.1810252,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "name": "Nabíjecí stanice elektrokol Specialized Fuggerov dvor",
+    "opening_hours": "Mo-Su 11:30-21:00",
+    "operator": "Specialized",
+    "ref": "36009644"
+  }
+},
+{
+  "type": "node",
+  "id": 10205215101,
+  "lat": 48.7889820,
+  "lon": 19.1813235,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "opening_hours": "Mo-Su 07:00-22:00",
+    "operator": "Nigol"
+  }
+},
+{
+  "type": "node",
+  "id": 11422954151,
+  "lat": 48.7651421,
+  "lon": 19.2069125,
+  "tags": {
+    "amenity": "pharmacy",
+    "dispensing": "yes",
+    "name": "Lekáreň Selce",
+    "opening_hours": "Mo-Th 07:30-16:00; Fr 07:30-14:00",
+    "phone": "+421 915 572 362"
+  }
+},
+{
+  "type": "node",
+  "id": 11499907515,
+  "lat": 48.8773146,
+  "lon": 19.2257303,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "branch": "Donovaly, Donovalský pivovar",
+    "brand": "GreenWay",
+    "capacity": "3",
+    "covered": "no",
+    "fee": "yes",
+    "level": "0",
+    "motorcar": "yes",
+    "opening_hours": "24/7",
+    "operator": "GreenWay",
+    "operator:wikidata": "Q116450281",
+    "socket:type2": "1",
+    "socket:type2:output": "22 kW",
+    "socket:type2_combo": "2",
+    "socket:type2_combo:output": "100 kW"
+  }
+},
+{
+  "type": "node",
+  "id": 11904872042,
+  "lat": 48.6604190,
+  "lon": 19.2480577,
+  "tags": {
+    "access": "yes",
+    "emergency": "defibrillator",
+    "indoor": "no",
+    "opening_hours": "24/7"
+  }
+},
+{
+  "type": "node",
+  "id": 12093151088,
+  "lat": 48.8776372,
+  "lon": 19.2243410,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "brand": "ePOWERpoint",
+    "capacity": "2/4 bicykle",
+    "description": "Nabíjacia stanica typu ePOWERpoint:\n1x Shimano Steps 4A, 1x BOSCH Standard 4A, 1x Yamaha Standard 4A, 2x voľná zásuvka, vzduchový kompresor",
+    "fee": "no",
+    "lockable": "yes",
+    "motorcar": "no",
+    "operator": "PARK SNOW Donovaly / OOCR Stredné Slovensko"
+  }
+},
+{
+  "type": "node",
+  "id": 12809161501,
+  "lat": 48.8761952,
+  "lon": 19.0409833,
+  "tags": {
+    "access": "permit",
+    "check_date": "2025-05-04",
+    "emergency": "defibrillator",
+    "indoor": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 12889153782,
+  "lat": 48.8044042,
+  "lon": 19.1489775,
+  "tags": {
+    "access": "yes",
+    "emergency": "defibrillator",
+    "indoor": "no",
+    "level": "0",
+    "opening_hours": "24/7"
+  }
+},
+{
+  "type": "node",
+  "id": 12990287220,
+  "lat": 48.7311398,
+  "lon": 19.1359084,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "branch": "Banská Bystrica, Europa Shopping Center",
+    "brand": "ZSE Drive",
+    "brand:wikidata": "Q116450454",
+    "capacity": "2",
+    "covered": "no",
+    "fee": "yes",
+    "motorcar": "yes",
+    "operator": "Západoslovenská energetika",
+    "operator:wikidata": "Q246921",
+    "socket:type2_combo": "2",
+    "socket:type2_combo:output": "300 kW"
+  }
+},
+{
+  "type": "node",
+  "id": 12990287221,
+  "lat": 48.7311742,
+  "lon": 19.1359290,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "branch": "Banská Bystrica, Europa Shopping Center",
+    "brand": "ZSE Drive",
+    "brand:wikidata": "Q116450454",
+    "capacity": "2",
+    "covered": "no",
+    "fee": "yes",
+    "motorcar": "yes",
+    "operator": "Západoslovenská energetika",
+    "operator:wikidata": "Q246921",
+    "socket:type2_combo": "2",
+    "socket:type2_combo:output": "300 kW"
+  }
+},
+{
+  "type": "node",
+  "id": 12990300584,
+  "lat": 48.7310907,
+  "lon": 19.1358786,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "branch": "Banská Bystrica, Europa Shopping Center",
+    "brand": "GreenWay",
+    "capacity": "8",
+    "covered": "no",
+    "fee": "yes",
+    "level": "0",
+    "motorcar": "yes",
+    "opening_hours": "24/7",
+    "operator": "GreenWay",
+    "operator:wikidata": "Q116450281",
+    "ref": "65332",
+    "socket:type2_combo": "6;2",
+    "socket:type2_combo:output": "400 kW;150 kW",
+    "website": "https://map.greenway.sk/?locationId=65332"
+  }
+},
+{
+  "type": "node",
+  "id": 13337071269,
+  "lat": 48.7944841,
+  "lon": 19.1003252,
+  "tags": {
+    "amenity": "charging_station"
+  }
+},
+{
+  "type": "node",
+  "id": 14200977823,
+  "lat": 48.8760654,
+  "lon": 19.0410996,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "brand": "ePOWERpoint",
+    "capacity": "2/4 bicykle",
+    "check_date": "2026-05-14",
+    "description": "Nabíjacia stanica typu ePOWERpoint:\n1x Shimano Steps 4A, 1x BOSCH Standard 4A, 1x Yamaha Intube 4A, 2x voľná zásuvka, vzduchový kompresor, servisné náradie",
+    "fee": "no",
+    "lockable": "yes",
+    "motorcar": "no",
+    "operator": "Horský hotel Kráľova studňa"
+  }
+},
+{
+  "type": "node",
+  "id": 14252731494,
+  "lat": 48.7199528,
+  "lon": 19.1331182,
+  "tags": {
+    "amenity": "clinic",
+    "healthcare": "clinic",
+    "name": "Mediklin"
+  }
+},
+{
+  "type": "node",
+  "id": 14252731496,
+  "lat": 48.7196423,
+  "lon": 19.1336909,
+  "tags": {
+    "amenity": "clinic",
+    "healthcare": "clinic",
+    "name": "Medical Park"
+  }
+},
+{
+  "type": "node",
+  "id": 14277670995,
+  "lat": 48.7349366,
+  "lon": 19.1598813,
+  "tags": {
+    "amenity": "pharmacy",
+    "name": "Benu"
+  }
+},
+{
+  "type": "way",
+  "id": 24863329,
+  "center": {
+    "lat": 48.7435095,
+    "lon": 19.1167046
+  },
+  "tags": {
+    "addr:city": "Banská Bystrica",
+    "addr:housenumber": "1",
+    "addr:postcode": "97517",
+    "addr:street": "Námestie Ludvíka Svobodu",
+    "amenity": "hospital",
+    "contact:facebook": "https://www.facebook.com/fnspfdr/",
+    "contact:website": "https://www.fnspfdr.sk/",
+    "emergency": "yes",
+    "healthcare": "hospital",
+    "name": "Fakultná nemocnica s poliklinikou F.D. Roosevelta",
+    "wikidata": "Q5423740"
+  }
+},
+{
+  "type": "way",
+  "id": 66056963,
+  "center": {
+    "lat": 48.7411962,
+    "lon": 19.1635163
+  },
+  "tags": {
+    "addr:city": "Banská Bystrica",
+    "addr:conscriptionnumber": "4443",
+    "addr:country": "SK",
+    "addr:housenumber": "4443/1B",
+    "addr:postcode": "97401",
+    "addr:street": "Cesta k nemocnici",
+    "addr:streetnumber": "1B",
+    "addr:suburb": "Banská Bystrica",
+    "amenity": "hospital",
+    "building": "hospital",
+    "healthcare": "hospital",
+    "healthcare:speciality": "intensive",
+    "name": "Zelený Sen",
+    "ref:minvskaddress": "7100662536",
+    "source:addr": "minvskaddress 2025-06",
+    "website": "https://www.zelenysen.sk/"
+  }
+},
+{
+  "type": "way",
+  "id": 66056970,
+  "center": {
+    "lat": 48.7421248,
+    "lon": 19.1609839
+  },
+  "tags": {
+    "addr:city": "Banská Bystrica",
+    "addr:conscriptionnumber": "5600",
+    "addr:country": "SK",
+    "addr:housenumber": "5600/61",
+    "addr:postcode": "97401",
+    "addr:street": "Cesta k nemocnici",
+    "addr:streetnumber": "61",
+    "addr:suburb": "Banská Bystrica",
+    "amenity": "hospital",
+    "building": "hospital",
+    "contact:website": "https://www.suscch.eu/page.php?13",
+    "emergency": "no",
+    "healthcare": "hospital",
+    "name": "Stredoslovenský ústav srdcových a cievnych chorôb, a.s.",
+    "ref:minvskaddress": "7000627546",
+    "source": "kapor2",
+    "source:addr": "minvskaddress 2025-11"
+  }
+},
+{
+  "type": "way",
+  "id": 281700438,
+  "center": {
+    "lat": 48.7429495,
+    "lon": 19.1184629
+  },
+  "tags": {
+    "addr:city": "Banská Bystrica",
+    "addr:conscriptionnumber": "6818",
+    "addr:country": "SK",
+    "addr:housenumber": "6818/4",
+    "addr:postcode": "97409",
+    "addr:street": "Námestie Ludvika Svobodu",
+    "addr:streetnumber": "4",
+    "addr:suburb": "Banská Bystrica",
+    "amenity": "hospital",
+    "building": "hospital",
+    "building:levels": "6",
+    "emergency": "yes",
+    "healthcare": "hospital",
+    "healthcare:speciality": "surgery;paediatrics;intensive;oncology;pediatric_surgery;intensive_care_unit",
+    "name": "Detská fakultná nemocnica s poliklinikou Banská Bystrica",
+    "phone": "+421 48 472 65 11",
+    "ref:minvskaddress": "5301033650",
+    "source": "kapor2",
+    "source:addr": "minvskaddress 2023-05",
+    "website": "http://www.dfnbb.sk/",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1449458301,
+  "center": {
+    "lat": 48.7149425,
+    "lon": 19.1358249
+  },
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "branch": "Banská Bystrica, Tesco",
+    "brand": "GreenWay",
+    "brand:wikidata": "Q116450281",
+    "covered": "no",
+    "fee": "yes",
+    "opening_hours": "24/7",
+    "operator": "GreenWay",
+    "operator:wikidata": "Q116450281",
+    "socket:type2_combo": "4",
+    "socket:type2_combo:output": "400 kW"
+  }
+},
+{
+  "type": "way",
+  "id": 1565235437,
+  "center": {
+    "lat": 48.7205685,
+    "lon": 19.1345075
+  },
+  "tags": {
+    "amenity": "clinic",
+    "contact:facebook": "https://www.facebook.com/Poliklinika-Novamed-236590976671940/",
+    "email": "sekretariat@novamed.sk",
+    "name": "Poliklinika Novamed",
+    "opening_hours": "Mo-Th 07:30-15:30; Fr 07:30-15:00; PH off",
+    "phone": "+421 48 4399 130",
+    "website": "https://novamed.sk"
+  }
+}
+
+  ]
+}

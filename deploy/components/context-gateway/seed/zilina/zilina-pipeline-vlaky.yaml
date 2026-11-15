@@ -1,0 +1,18 @@
+# One GtfsStop per railway station in the city, with the trains that leave it today, written into
+# the city's public space through its one Endpoint (PL-18, T-3138).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: vlaky
+  namespace: zilina
+  title: { sk: Železničné stanice v meste, en: Railway stations in the city }
+spec:
+  class: scheduled
+  # Shortly after midnight in Žilina, so the count is the day's; the timetable itself changes a
+  # few times a year.
+  schedule: '15 23 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: zsr-gtfs }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-verejne:zilina-verejne
+  output: { type: GtfsStop, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 200 }

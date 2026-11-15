@@ -1,0 +1,21 @@
+# One KeyPerformanceIndicator per bicycle counter per month, the hourly counts of the layer summed, written through the
+# space's one Endpoint with the runner's service account (PL-18, T-5930). The counters' places are the PointOfInterest
+# rows of od-cykloscitace-miesta in bbsk-otvorene-data, by the same place name.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: cyklisti
+  namespace: bbsk
+  title:
+    sk: Počet cyklistov na cyklosčítačoch kraja za mesiac
+    en: Cyclists per month at the region's bicycle counters
+spec:
+  class: auto
+  # The layer gains a day of hours at a time: a daily read keeps the running month current.
+  period: 24h
+  schedule: '23 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bbsk-scitace-cyklistov }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: akce-read
+  namespace: praha
+  title: { cs: 'Veřejné čtení: akce v Praze', en: 'Public read: events in Prague' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-akce }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-akce, events and their venues (DM-141);
+  # no entity write for anyone but the pipelines, which write through praha-akce-zapis (T-5666).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Event
+        - type: PointOfInterest

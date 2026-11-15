@@ -1,0 +1,95 @@
+# The mapping of the geo-springs pipeline (T-5269, PL-03): one PointOfInterest per record of the IPR layer
+# Oázy chladu – studánky, prameny (214 on 2026-10-23).
+# The IPR place layers of the space share this mapping; only the three lets of the second step differ.
+#
+# Ids: urn:ngsi-ld:PointOfInterest:{org}:{space}:geo-{layer}-{globalid}. The geo- prefix keeps them apart from the
+# ipr- places of praha-mista and the golemio- places of praha-sluzby; the Policy public-vybavenost names them.
+#
+# Read: the name (nazev_zar, nazev or nazev_zast), the address (adresa_zar, adresa up to its first comma, or ulice with
+# the house numbers), the point (without a third, height coordinate), the web page (left out unless it
+# is an http(s) URL of printable ASCII, which the model's uri format asks for), a type the layer writes
+# as text (typ_kkc_txt, retezec, typ) and the operating season (provoz_spec). Numeric codes whose list
+# IPR does not publish stay out, and so do the contact person, e-mail and phone of the animal corners
+# layer (personal data).
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a GUID or a name, without a point, outside
+# Prague's box (the city plus about 1 km) or at 0,0 is dropped, and so is a second record of one name in
+# one 0.0002° cell (about 15 m); the log line counts each reason. The layers carry no edit date, so
+# freshness is not checked. An answer that is not a feature list, an empty one, or one where fewer
+# than half the records survive (a projection or schema change) fails the run, so the places already
+# written stay instead of being thinned out.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes; more than 16 MiB is not a place layer".format(content().length())) } else { this }
+        - mapping: |
+            let set = "springs"
+            let category = "spring"
+            let item = "8aabe75c9689487a88d3e297bf498d6a"
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            map point {
+              root = if this.type() == "array" && this.length() >= 2 { this.slice(0, 2) } else { null }
+            }
+            let features = this.features.catch(null)
+            root = if $features.type() != "array" {
+              throw("IPR layer %v did not answer a feature list".format($item))
+            } else if $features.length() == 0 {
+              throw("IPR layer %v listed no record; the layer is never empty, so the download failed".format($item))
+            } else {
+              { "set": $set, "category": $category, "item": $item, "rows": $features.map_each(f -> {
+                "c": f.geometry.coordinates.catch(null).apply("point"),
+                "p": f.properties.catch({}),
+                "key": f.properties.globalid.catch("").string().re_replace_all("[{}]", "").lowercase(),
+                "name": [f.properties.nazev_zar.catch(null), f.properties.nazev.catch(null), f.properties.nazev_zast.catch(null)].map_each(n -> n.apply("words")).filter(n -> n != "").append("").index(0)
+              }) }
+            }
+        - mapping: |
+            let rows = this.rows
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") && r.name != "")
+            let located = $usable.filter(r -> r.c.type() == "array" && r.c.length() == 2 && r.c.index(0).type() == "number" && r.c.index(1).type() == "number")
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let unique = $inside.unique(r -> r.key).unique(r -> "%v|%v|%v".format(r.name.lowercase(), (r.c.index(0) / 0.0002).floor(), (r.c.index(1) / 0.0002).floor()))
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta set = this.set
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("IPR layer %v: only %v of %v records have a GUID, a name and a point in Prague".format(this.item, $unique.length(), $rows.length()))
+            } else { this.assign({ "rows": $unique }) }
+        - log:
+            level: INFO
+            message: 'geo-${! meta("set") }: read ${! meta("read") }, dropped ${! meta("unusable") } without GUID or name, ${! meta("outside") } without a point in Prague, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            let set = this.set
+            let category = this.category
+            let source = "https://geoportalpraha.cz/data-a-sluzby/" + this.item
+            root = this.rows.map_each(r -> {
+              "r": r,
+              "web": [r.p.web.catch(null)].filter(w -> w.type() == "string" && w.trim() != "").map_each(w -> if w.trim().re_match("^https?://") { w.trim() } else { "https://" + w.trim() }).filter(w -> w.re_match("^https?://[^\\s/]+\\.[\\x21-\\x7e]+$")),
+              "kind": [r.p.typ_kkc_txt.catch(null), r.p.retezec.catch(null), r.p.typ.catch(null)].map_each(t -> t.apply("words")).filter(t -> t != "").append("").index(0),
+              "street": [
+                r.p.adresa_zar.catch(null).apply("words"),
+                r.p.adresa.catch(null).apply("words").split(",").index(0).trim(),
+                if r.p.ulice.apply("words") != "" && r.p.cpop.type() == "number" { "%v %v%v".format(r.p.ulice.apply("words"), r.p.cpop.int64(), if r.p.cor.type() == "number" { "/%v".format(r.p.cor.int64()) } else { "" }) } else { "" }
+              ].filter(a -> a != "").append("").index(0),
+              "season": r.p.provoz_spec.catch(null).apply("words")
+            }).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:geo-%v-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $set, v.r.key),
+              "type": "PointOfInterest",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": v.r.name } },
+              "serviceCategory": { "type": "Property", "value": $category },
+              "facilityType": if v.kind != "" { { "type": "Property", "value": v.kind } } else { null },
+              "address": if v.street != "" { { "type": "Property", "value": { "streetAddress": v.street, "addressLocality": "Praha", "addressCountry": "CZ" } } } else { null },
+              "url": if v.web.length() > 0 { { "type": "Property", "value": v.web.index(0) } } else { null },
+              "openingHours": if v.season != "" { { "type": "LanguageProperty", "languageMap": { "cs": v.season } } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": v.r.c } },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+              "source": { "type": "Property", "value": $source }
+            }.filter(kv -> kv.value != null))

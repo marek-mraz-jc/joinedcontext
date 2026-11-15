@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-mista
+  namespace: praha
+  title: { cs: 'Veřejné čtení: kultura, školy, toalety a prodejní místa pid' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-mista, and only
+  # its types: the space's other types stay with their own datasets (T-4344).
+  # Only the IPR Praha (ipr-) and ROPID (pid-) places, which are CC BY 4.0: Golemio's places
+  # (golemio-) carry no licence and are their own dataset, praha-sluzby (T-5276).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: PointOfInterest
+          idPattern: ^urn:ngsi-ld:PointOfInterest:[a-z0-9.-]+:praha-mesto:(ipr|pid)-[a-z0-9_-]+$

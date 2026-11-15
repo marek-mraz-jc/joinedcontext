@@ -1,0 +1,16 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: neighbourhoods
+  namespace: barcelona
+  title: { ca: Barris de Barcelona, es: Barrios de Barcelona, en: Barcelona neighbourhoods }
+spec:
+  class: auto
+  # The division changes a few times a decade; weekly is already more than it needs.
+  schedule: '50 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-neighbourhoods }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert: an area missing from one file keeps its outline (T-5264).
+  output: { type: AdministrativeArea, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

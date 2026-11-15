@@ -1,0 +1,54 @@
+# The computed noise map of surface transport of the IPR Praha geoportal (T-5683): the day and the
+# night map in 5 dB bands, one NoiseZone per polygon of a band, of the space praha-mesto read through
+# its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-hluk
+  namespace: praha
+  title: { cs: Hluková mapa — Praha, en: Noise map — Prague }
+  description:
+    cs: 'Výpočtová hluková mapa povrchové dopravy, celková akustická situace ve výšce 4 m, stav 2024: hluková pásma po 5 dB pro den (06:00–22:00) a noc (22:00–06:00). Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'The computed noise map of surface transport, the overall sound level 4 m above ground, state of 2024: 5 dB noise bands for the day (06:00-22:00) and the night (22:00-06:00). Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: 3cxkuylz75tjx2xzoy5usjwzwxlgopbt
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-hluk
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Computed areas of a sound level: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [ENVI, TRAN]
+    keywords:
+      cs: [Praha, hluk, hluková mapa, doprava]
+      en: [Prague, noise, noise map, traffic]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/HM_CUR_HM_EKOLA_DEN_P/FeatureServer/0?f=json
+        title:
+          cs: Hluková mapa – den (IPR Praha)
+          en: Noise map, day (IPR Praha)
+        description:
+          cs: Výpočtová hluková mapa povrchové dopravy pro denní dobu z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The computed noise map of surface transport for the day from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/HM_CUR_HM_EKOLA_NOC_P/FeatureServer/0?f=json
+        title:
+          cs: Hluková mapa – noc (IPR Praha)
+          en: Noise map, night (IPR Praha)
+        description:
+          cs: Výpočtová hluková mapa povrchové dopravy pro noční dobu z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The computed noise map of surface transport for the night from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

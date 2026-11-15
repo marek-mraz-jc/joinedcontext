@@ -1,0 +1,102 @@
+# The motor vehicles the city counts at its counting points on one autumn weekday a year, one
+# TrafficFlowObserved per point, direction and year since 2010 (T-5669), read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-traffic-volumes
+  namespace: helsinki
+  title:
+    fi: Syksyn liikennemäärät laskentapisteittäin — Helsinki
+    en: Autumn traffic volumes per counting point — Helsinki
+  description:
+    fi: >-
+      Moottoriajoneuvot, jotka kaupunki laski laskentapisteissään yhtenä syksyn arkipäivänä (ma-to, syys-lokakuu)
+      vuosittain vuodesta 2010, pisteittäin, suunnittain ja vuosittain: päivän 42 laskentajakson summa. Smart Data
+      Models -tyyppi TrafficFlowObserved (intensity, dateObservedFrom-dateObservedTo on syys-lokakuun jakso, josta
+      päivä valittiin); oma ominaisuus trafficDirection kertoo kulkusuunnan (inbound keskustaan, outbound keskustasta,
+      D-linjalla west ja east). Satamatunneli ei kerro suuntaa, joten sen molemmat suunnat ovat yhdessä luvussa.
+      Raitiovaunut eivät ole mukana. Lähde: Helsingin kaupunki, CC BY 4.0.
+    en: >-
+      The motor vehicles the city counted at its counting points on one autumn weekday (Monday to Thursday,
+      September-October) each year since 2010, per point, direction and year: the sum of the day's 42 counting slots.
+      Smart Data Models type TrafficFlowObserved (intensity; dateObservedFrom to dateObservedTo is the
+      September-October window the day was picked from); the custom property trafficDirection names the direction of
+      travel (inbound into the centre, outbound out of it, west and east on the D screen line). Satamatunneli names
+      no direction, so both its directions are one figure. Trams are not included. Source: City of Helsinki, CC BY 4.0.
+spec:
+  contextSpaceRef: helsinki
+  slug: aav3qpok4dzxtb3og7t2t5cvn2tzfisg
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-traffic-volumes
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata, sta]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, CC BY 4.0'
+      en: 'Source: City of Helsinki, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      fi: [liikennemäärät, liikennelaskenta, syksyn arkivuorokausi]
+      sv: [trafikmängder, trafikräkning, höstvardag]
+      en: [traffic volumes, traffic counting, autumn weekday]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: ANNUAL
+    source:
+      - url: https://www.hel.fi/static/avoindata/kymp/hki_liikennemaarat.csv
+        title:
+          fi: Liikennemäärät taulukkomuodossa (CSV-tiedosto)
+          en: Traffic volumes as a table (CSV file)
+        description:
+          fi: Helsingin liikennetiedot (HRI liikennemaarat-helsingissa), CC BY 4.0.
+          en: Helsinki traffic data (HRI liikennemaarat-helsingissa), CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: traffic-volumes }
+    # Declared charts replace the automatic ones (T-5432): the autumn weekday counts are yearly
+    # (newest 2024); no 7-day history window reaches them, so each year is drawn from its own record.
+    visualizations:
+      - name: volumes-per-year
+        title:
+          fi: Syysarkiliikenne vuosittain
+          sk: Jesenná pracovná doprava za rok
+          en: Autumn weekday traffic per year
+        description:
+          fi: Kaikkien laskentapisteiden summa vuosittain.
+          sk: Súčet všetkých sčítacích miest za rok.
+          en: Every counting point summed per year.
+        data:
+          source: odata
+          entitySet: TrafficFlowObserved
+          $select: dateObserved,intensity
+        spec:
+          $schema: https://vega.github.io/schema/vega-lite/v5.json
+          data: { name: source }
+          mark: { type: line, point: true }
+          encoding:
+            x:
+              field: dateObserved
+              type: temporal
+              title: null
+              timeUnit: year
+            'y':
+              aggregate: sum
+              field: intensity
+              type: quantitative
+              title: null
+            tooltip:
+              - field: dateObserved
+                type: temporal
+                title: null
+                timeUnit: year
+              - aggregate: sum
+                field: intensity
+                type: quantitative
+                format: ',d'

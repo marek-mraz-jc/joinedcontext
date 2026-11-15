@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: kpi-forecast-steward
+  namespace: org
+  annotations:
+    joinedcontext.com/app: helsinki/kpi-forecast
+spec:
+  description: The stewards of kpi-forecast, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000001 # demo.steward

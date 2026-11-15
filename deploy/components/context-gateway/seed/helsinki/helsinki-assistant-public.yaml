@@ -1,0 +1,41 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: AssistantDeployment
+metadata:
+  name: helsinki-public
+  namespace: helsinki
+spec:
+  # The demonstration's public assistant (T-3055): it answers from the live road weather and
+  # the city's events, through the two public Endpoints' MCP surfaces, and from nothing it
+  # crawled. https://assistant.dev.joinedcontext.com/api/v1/d/helsinki-public/chat
+  publicId: helsinki-public
+  channel: public
+  systemPrompt: >-
+    You help residents and visitors of Helsinki with the road weather and the city's events, and
+    people working with the city's data with the joinedcontext platform, from its User Guide.
+    Read the live data with the tools before you answer, and name the station or the event; for
+    the platform, give the steps and the link into the Portal's form of each.
+  # Helsinki's own catalogue (T-3225): what data the city publishes, what each attribute means
+  # and where each Endpoint is, from its public Endpoints alone.
+  # The platform's User Guide (T-3226, AG-118): public, so the public channel may read it.
+  sources: [catalogue, guide]
+  # The EU themes of what it reads (AG-124, T-4694): the union of the themes of the Endpoints its
+  # server selects (T-5367); the context page lists them.
+  categories: [EDUC, ENVI, GOVE, HEAL, REGI, SOCI, TRAN]
+  # Its own body's data through its project's public McpServer (T-4750): every public Endpoint the server selects (T-5367)
+  # with the server's read tools, `endpoint` a parameter; an Endpoint added to the server joins
+  # without an edit here (tests/test_public_assistant_seed.py).
+  mcpServer: helsinki/otvorene-data
+  allowedOrigins:
+    - https://dev.joinedcontext.com
+    - https://portal.dev.joinedcontext.com
+  rateLimit: { requestsPerMinute: 30, perClientPerMinute: 6 }
+  # About 0.1 USD a day at most (google/gemini-3.8-flash, 2026-10-06).
+  budget:
+    tokensPerDay: 5000000
+    tokensPerConversation: 100000
+    costPerDayUsd: 3
+    costPerConversationUsd: 0.15
+  theme: { greeting: Hello! Ask me about the road weather or what is on in Helsinki. }
+  languages: [en, fi, sv]
+  # How the chat picks its language (T-4343): the browser's, no first-open question.
+  widget: { language: browser }

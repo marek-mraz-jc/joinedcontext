@@ -264,7 +264,7 @@ pub async fn build_with_writer(
             )));
         }
         let tenant = own_org[&org.name];
-        let host = bare_host(&org.hosts.opendata);
+        let host = bare_host(org.hosts.opendata_host());
         dataroom_server::ensure_catalogue(store.as_ref(), tenant, id, &org.name, host)
             .await
             .map_err(|e| err(&e))?;
@@ -319,7 +319,7 @@ pub async fn build_with_writer(
                 (
                     own_org[&org.name],
                     CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?,
-                    format!("{}://{}", mount.scheme, org.hosts.opendata),
+                    format!("{}://{}", mount.scheme, org.opendata_base()),
                 )
             }
         };
@@ -358,7 +358,7 @@ pub async fn build_with_writer(
     for org in organizations {
         let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
         by_organization.insert(org.name.clone(), (own_org[&org.name], id));
-        bases.insert(id, format!("{}://{}", mount.scheme, org.hosts.opendata));
+        bases.insert(id, format!("{}://{}", mount.scheme, org.opendata_base()));
     }
     #[cfg(feature = "portal")]
     let followed = portal_orgs(
@@ -448,7 +448,7 @@ fn portal_orgs(
                 &org.name,
                 own_org[&org.name],
                 catalogue_id,
-                org.hosts.opendata.clone(),
+                org.opendata_base(),
                 org.hosts.portals.clone(),
             ))
         })
@@ -638,7 +638,7 @@ fn organization_branding(
     assistant_widget: Option<String>,
 ) -> BrandingBlock {
     let mut block = installation_branding(own, live, assistant_widget);
-    block.addresses.api = format!("{scheme}://{}", org.hosts.api);
+    block.addresses.api = format!("{scheme}://{}", org.api_base());
     block.addresses.portal = format!("{scheme}://{}", org.hosts.portal);
     block
 }
@@ -667,7 +667,7 @@ async fn ensure_publisher(
                 name: org.name.clone(),
                 title: BTreeMap::from([("en".to_owned(), org.name.clone())]),
                 description: BTreeMap::new(),
-                uri: format!("{scheme}://{}/publisher/{}", org.hosts.opendata, org.name),
+                uri: format!("{scheme}://{}/publisher/{}", org.opendata_base(), org.name),
                 publisher_type: None,
                 identifier: None,
                 email: None,
@@ -918,11 +918,13 @@ mod tests {
                 id: None,
                 hosts: crate::config::OrganizationHosts {
                     portal: format!("portal.{name}.test"),
-                    opendata: format!("data.{name}.test"),
-                    api: format!("api.{name}.test"),
-                    mcp: format!("mcp.{name}.test"),
-                    portals: Vec::new(),
+                    opendata: Some(format!("data.{name}.test")),
+                    api: Some(format!("api.{name}.test")),
+                    mcp: Some(format!("mcp.{name}.test")),
+                    ..Default::default()
                 },
+                host: None,
+                same_site_apps: false,
                 catalogue_id: format!("6f1c0b2e-5d3a-4c1e-9a8b-7e2d4f6a1b{n:02}"),
                 portal_token_file: None,
             })
@@ -964,7 +966,7 @@ mod tests {
                 installation,
                 cat,
                 &org.name,
-                &org.hosts.opendata,
+                org.hosts.opendata_host(),
             )
             .await
             .unwrap();
@@ -1025,7 +1027,7 @@ mod tests {
         for org in &organizations {
             let request =
                 axum::http::Request::get(format!("/api/3/action/package_show?id=air-{}", org.name))
-                    .header("host", &org.hosts.opendata)
+                    .header("host", org.hosts.opendata_host())
                     .body(axum::body::Body::empty())
                     .unwrap();
             let answer = router.clone().oneshot(request).await.unwrap();

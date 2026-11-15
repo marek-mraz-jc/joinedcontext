@@ -1,0 +1,81 @@
+# How far a visitor gets by transit from any point of Helsinki in 10, 20 and 30 minutes (T-3331,
+# T-3356, T-3349). The analysis rides HSL's stops and lines (8389 stops, 1121 line variants), the
+# time of a ride from its distance at the mode's usual speed; where the space holds none, it
+# derives stops from where vehicles stood still in the last hours instead. Then it walks, waits,
+# rides and changes onto a hexagon grid. It runs in the visitor's browser as WebAssembly compiled
+# from the Rust crate in wasm/ (AP-142), answering a click anywhere at once. A server WASM App
+# (`kind: wasm`, ADR-N-044): its component on the shared host (server/) keeps HSL's network by
+# version and, from a stop, the area reached in each band with its GeoJSON, computed once per
+# version and kept in the App's own schema (migrations/) and prefix. A signed-in visitor keeps
+# origins to compare; a steward publishes a shared set (T-3826). Hand written, so no
+# generated-by annotation (AP-35).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: transit-reach
+  namespace: helsinki
+  title:
+    en: "How far can I get by transit"
+    fi: "Kuinka pitkälle pääsen joukkoliikenteellä"
+  description:
+    en: "Click anywhere in Helsinki: the area you reach within 10, 20 and 30 minutes walking to a stop and riding, from where the city's vehicles actually went in the last hours."
+    fi: "Napsauta mitä tahansa kohtaa Helsingissä: alue, jolle pääset 10, 20 ja 30 minuutissa kävellen pysäkille ja matkustaen, sen mukaan mihin kaupungin ajoneuvot viime tunteina kulkivat."
+spec:
+  kind: wasm
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_transit-reach.git
+      ref: main
+  # The interface is built with Node; the crate in wasm/ with Rust, to wasm32 (AP-142).
+  build:
+    node: "22"
+    rust: "1.90"
+  storage:
+    sql: { migrations: migrations, quotaMiB: 100 }
+    # A network is some 2 MB; each stop's areas a few hundred kilobytes of GeoJSON.
+    blob: { quotaMiB: 2048 }
+  visibility: public
+  lifecycle: published
+  # Who keeps and publishes origins (T-3826); the server decides from identity::caller() alone,
+  # and the city's data is only read.
+  roles:
+    - name: viewer
+      title: { en: "Viewer", fi: "Katselija" }
+      description: "Keeps origins of their own with the areas reached from them, compares them side by side, renames and deletes their own."
+    - name: steward
+      title: { en: "Steward", fi: "Ylläpitäjä" }
+      description: "What a viewer does, and publishes origins into the shared set every visitor sees; changes any origin. Reads the whole history."
+  access:
+    - role: viewer
+      subjects: [{ group: transit-reach-viewer }]
+    - role: steward
+      subjects: [{ group: transit-reach-steward }]
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Vehicle]
+      # What the Vehicle entities carry on dev (2026-10-08, 32 live vehicles of the HFP pipeline):
+      # where, how fast and on which route. Only their history is read, at most the six hours the
+      # longest window offers; read only when the space holds no stops and lines.
+      attrs: [location, speed, route]
+      operations: [retrieveTemporal]
+      temporalQ:
+        window: PT6H
+      representations: [ngsi-ld, ogc-features]
+    # HSL's stops and lines (T-3356): where each stop is, its name and sign code; each line's
+    # number, mode and stops in order.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [GtfsStop]
+      attrs: [name, stopCode, location]
+      operations: [queryEntity]
+      representations: [ngsi-ld]
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [PublicTransportRoute]
+      attrs: [routeShortName, transportMode, stopSequence]
+      operations: [queryEntity]
+      representations: [ngsi-ld]

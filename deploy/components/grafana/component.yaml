@@ -1,0 +1,9 @@
+---
+component: grafana
+parts:
+  # The ConfigMap first: the Grafana pod mounts it by name, and a pod whose ConfigMap does not
+  # exist yet stays in ContainerCreating until it does.
+  - name: dashboards
+  - name: grafana
+    needs:
+      - grafana.dashboards

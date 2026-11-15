@@ -1,0 +1,24 @@
+# One PointOfInterest per row of "Nabíjačky a Zastávky" (T-4255); a tourism-portal layer of places; no socket, capacity or vehicle column for EVChargingStation.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-nabijacky-a-zastavky
+  namespace: bbsk
+  title:
+    sk: Nabíjačky a Zastávky
+    en: Nabíjačky a Zastávky
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 41 3 * * 2
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-nabijacky-a-zastavky
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: PointOfInterest
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

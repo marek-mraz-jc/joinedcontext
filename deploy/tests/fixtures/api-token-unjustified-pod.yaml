@@ -1,0 +1,13 @@
+---
+# The case a mutation cannot fix quietly: the pod asks for an API token and gives no
+# reason. Kyverno's add-if-absent anchor leaves the field alone, so the rule sees it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: token-without-a-reason
+  namespace: dev
+spec:
+  automountServiceAccountToken: true
+  containers:
+    - name: app
+      image: nginx:1.27

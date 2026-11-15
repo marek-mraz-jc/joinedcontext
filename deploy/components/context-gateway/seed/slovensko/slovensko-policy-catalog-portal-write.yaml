@@ -1,0 +1,20 @@
+# Only the Portal reconciler writes the catalogue (Architecture/21 §10): its client
+# `portal-reconciler` has no ServiceAccount manifest (a platform client, jc-core PLATFORM_CLIENTS),
+# so the gateway decides its token as the user `service-account-portal-reconciler`. Upsert what
+# changed, delete a record whose Endpoint or CKAN dataset is gone or no longer public, list what it wrote.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: catalog-portal-write
+  namespace: slovensko
+  title: { sk: Katalóg zapisuje Portál, en: The Portal writes the catalogue }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: catalog }
+  assigner: did:web:joinedcontext.com
+  assignee: { kind: user, id: service-account-portal-reconciler }
+  operations: [upsertBatch, deleteBatch, retrieveOps]
+  information:
+    - entities:
+        - type: Dataset
+        - type: DataService
+        - type: Organization

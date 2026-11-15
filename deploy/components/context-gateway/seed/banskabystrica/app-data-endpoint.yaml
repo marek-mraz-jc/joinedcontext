@@ -1,0 +1,13 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-banskabystrica-data
+  namespace: banskabystrica
+  title: { en: Data of Banská Bystrica, sk: Dáta mesta Banská Bystrica }
+  annotations: { joinedcontext.com/generated-by: portal/app-reconciler }
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef: { kind: ContextSpace, name: banskabystrica-verejne }
+  enabledRepresentations: [ngsi-ld, mcp, csv, ogc-features, odata]
+  slug: fq4xw2ztnbe7rcav3ms6kd5ypu

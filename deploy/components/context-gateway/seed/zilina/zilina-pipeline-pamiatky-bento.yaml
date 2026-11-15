@@ -1,0 +1,69 @@
+# The mapping of the pamiatky pipeline (PL-03, T-3138): the city's immovable national cultural
+# monuments from the Monuments Board's register, one entity per object, each placed through the
+# register of addresses (MV SR, CC BY 4.0) by its cadastral area and súpisné číslo.
+#
+# The register's parcel numbers and authors stay behind (open data rules §1): a parcel locates an
+# owner and an author is a person. Ownership leaves as the register's category only. An object
+# without an address (a column, a statue, a chapel in a field) is written without a position.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = content().string().trim_prefix("﻿").parse_csv().filter(r -> r.Obec.or("") == "Žilina")
+    # The empty-read guard (T-3138): a register without the city is a broken download, never a city
+    # that lost its monuments, so the run fails where it can be seen.
+    - mapping: |
+        root = if this.length() == 0 { throw("the register holds no monument of the city") } else { this }
+
+    # The city's addresses (13 260, 10 MB), read once per run; only the buildings the register
+    # names are kept, by cadastral area and súpisné číslo (a building of two numbers, "605,625",
+    # by its first one).
+    - mapping: |
+        meta wanted = this.map_each(r -> r."Katastrálne územie" + "/" + r."Súpisné číslo".split(",").index(0).trim()).fold({}, acc -> acc.tally.assign({ acc.value: true })).string()
+    - branch:
+        request_map: root = ""
+        processors:
+          - http:
+              url: https://rageo.minv.sk/opendata/dataset/address_by_lau2_SK031B517402.geojson
+              verb: GET
+              headers: { Accept: application/geo+json }
+              timeout: 120s
+              retries: 2
+              rate_limit: pipeline_egress
+        result_map: |
+          let wanted = @wanted.parse_json()
+          meta found = this.features.length().string()
+          meta addresses = this.features.map_each(f -> {
+            "key": f.properties.district_name + "/" + f.properties.propertyregistrationnumber.string(),
+            "number": f.properties.orientationnumber.or("").string(),
+            "street": f.properties.streetname.or(""),
+            "annotation": f.properties.annotation.or(""),
+            "point": f.geometry.coordinates
+          }).filter(a -> $wanted.get(a.key) != null && a.point.or([]).length() == 2).sort_by(a -> a.street + "|" + a.number).string()
+    # Without the addresses every monument would be rewritten without its position.
+    - mapping: |
+        root = if errored() || @found.or("0") == "0" { throw("the register of addresses did not come: %v".format(error().or("no feature"))) } else { this }
+
+    - mapping: |
+        let addresses = @addresses.parse_json()
+        let rows = this
+        root = $rows.map_each(r -> r.assign({
+          "_entrances": $addresses.filter(a -> a.key == r."Katastrálne územie" + "/" + r."Súpisné číslo".split(",").index(0).trim())
+        })).map_each(r -> r.assign({
+          # A corner building has an entrance on each street; the one the register names wins.
+          "_at": r._entrances.filter(e -> e.number == r."Orientačné číslo".trim()).concat(r._entrances).index(0).catch(null)
+        })).map_each(r -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("PointOfInterest", "zilina.sk", env("JC_SPACE"), "uzpf-%v-%v".format(r."Č. ÚZPF NNKP", r."Index PO")),
+          "type": "PointOfInterest",
+          "name": { "type": "LanguageProperty", "languageMap": { "sk": if r."Zaužívaný názov NNKP".trim() == "" { r."Unifikovaný názov NNKP".trim() } else { r."Zaužívaný názov NNKP".trim() } } },
+          "monumentNumber": { "type": "Property", "value": "%v/%v".format(r."Č. ÚZPF NNKP", r."Index PO") },
+          "monumentKind": { "type": "Property", "value": r."Unifikovaný názov PO" },
+          "architecturalStyle": { "type": "Property", "value": r."Prevládajúci sloh" },
+          "constructionPeriod": { "type": "Property", "value": r."Vznik" },
+          "cadastralArea": { "type": "Property", "value": r."Katastrálne územie" },
+          "ownershipForm": { "type": "Property", "value": r."Vlastnícka forma názov" },
+          "address": if r._at == null { null } else { { "type": "Property", "value": "%v %v, Žilina".format(r._at.street, r._at.annotation) } },
+          "location": if r._at == null { null } else { { "type": "GeoProperty", "value": { "type": "Point", "coordinates": r._at.point } } },
+          "dataProvider": { "type": "Property", "value": "Pamiatkový úrad SR (MK SR), CC BY 4.0; poloha: register adries MV SR, CC BY 4.0" },
+          "source": { "type": "Property", "value": "https://data.slovensko.sk/download?id=dc413b1c-3c2e-454f-b986-d15e1c16093c" }
+        }.filter(entry -> entry.value != null && entry.value.value.or("x") != ""))

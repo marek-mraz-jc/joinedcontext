@@ -1,0 +1,5 @@
+---
+image:
+  repository: {{ index .Values.images "node-storage" "local-path" "repository" | quote }}
+  tag: {{ index .Values.images "node-storage" "local-path" "tag" | quote }}
+  digest: {{ index .Values.images "node-storage" "local-path" "digest" | quote }}

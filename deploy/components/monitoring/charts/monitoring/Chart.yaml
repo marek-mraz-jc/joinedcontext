@@ -1,0 +1,12 @@
+---
+apiVersion: v2
+name: monitoring
+description: Prometheus Operator scrape and alerting resources for the platform components
+
+# The chart deploys no workload. It renders one ServiceMonitor per platform component that
+# exports Prometheus metrics and has no monitor of its own, plus the alerting rules of the
+# edge, so that a Prometheus already in the cluster knows what to scrape and what to page on.
+
+type: application
+version: 1.0.0
+appVersion: '1.0.0'

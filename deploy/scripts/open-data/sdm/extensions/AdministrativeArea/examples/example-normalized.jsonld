@@ -1,0 +1,122 @@
+{
+  "id": "urn:ngsi-ld:AdministrativeArea:joinedcontext.com:example:1",
+  "type": "AdministrativeArea",
+  "dOW": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "fACC": {
+    "type": "Property",
+    "value": "fACC"
+  },
+  "fLAT": {
+    "type": "Property",
+    "value": "fLAT"
+  },
+  "fLON": {
+    "type": "Property",
+    "value": "fLON"
+  },
+  "iDN2": {
+    "type": "Property",
+    "value": 0
+  },
+  "iDN3": {
+    "type": "Property",
+    "value": 0
+  },
+  "iDN4": {
+    "type": "Property",
+    "value": 0
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "lAU1": {
+    "type": "Property",
+    "value": "lAU1"
+  },
+  "lAU1CODE": {
+    "type": "Property",
+    "value": "lAU1CODE"
+  },
+  "lAU2": {
+    "type": "Property",
+    "value": "lAU2"
+  },
+  "lAU2CODE": {
+    "type": "Property",
+    "value": "lAU2CODE"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "nM2": {
+    "type": "Property",
+    "value": "nM2"
+  },
+  "nM3": {
+    "type": "Property",
+    "value": "nM3"
+  },
+  "nUTS1": {
+    "type": "Property",
+    "value": "nUTS1"
+  },
+  "nUTS1CODE": {
+    "type": "Property",
+    "value": "nUTS1CODE"
+  },
+  "nUTS2": {
+    "type": "Property",
+    "value": "nUTS2"
+  },
+  "nUTS2CODE": {
+    "type": "Property",
+    "value": "nUTS2CODE"
+  },
+  "nUTS3": {
+    "type": "Property",
+    "value": "nUTS3"
+  },
+  "nUTS3CODE": {
+    "type": "Property",
+    "value": "nUTS3CODE"
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "typObce": {
+    "type": "Property",
+    "value": "typObce"
+  },
+  "vYMERA": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/AdministrativeArea/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

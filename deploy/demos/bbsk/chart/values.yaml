@@ -1,0 +1,35 @@
+# The demo's public host, such as bbsk.smartcity.joinedcontext.com. No default: a wrong host is a
+# certificate order for a name nobody meant.
+host: ''
+# cert-manager's ClusterIssuer for the host's certificate (HTTP-01, one name, never a wildcard).
+clusterIssuer: letsencrypt-prod
+ingressClass: traefik
+# The platform's domain: the landing page frames assistant.{domain} and links api.{domain} and
+# opendata.{domain} (T-4740).
+domain: ''
+# The CKAN release's Service. Since T-4740 the host serves the landing page; the catalogue stays
+# behind it, unrouted, until the owner OKs the page and it is removed.
+ckanService: ckan-demo-bbsk
+landing:
+  # The platform's pinned nginx (components/basemap/images.yaml), `repository:tag@digest`.
+  image: ''
+  # The catalogue theme's dock scripts by file name, filled from charts/ckan (values/base.yaml.gotmpl).
+  scripts: {}
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
+# The namespaces the ingress controller may run in (kube-hetzner: traefik; k3s: kube-system).
+ingressNamespaces: [traefik, kube-system]
+postgres:
+  # One instance: a demo whose catalogue is rebuilt by its harvests holds nothing to fail over to.
+  instances: 1
+  # The platform's pinned cluster image (components/postgres/images.yaml), started by start.sh.
+  image: ''
+  # The image's postgres user (CNPG images: 26).
+  uid: 26
+  storage:
+    size: 5Gi
+    storageClass: ''
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 512Mi }

@@ -1,0 +1,17 @@
+# One PointOfInterest per HSL ticket sales point of `hsl-sales-points`, written into the city space (T-5254).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: sales-points
+  namespace: helsinki
+  title: { en: HSL ticket sales points }
+spec:
+  class: auto
+  # HSL edits the register a few times a month; a nightly read keeps a closed kiosk off the map within a day.
+  period: 24h
+  schedule: '35 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hsl-sales-points }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

@@ -1,0 +1,353 @@
+---
+apisix-gateway:
+  name: APISIX Gateway
+  description: Service account used by the smoke suite and CI to call the Portal API with a client_credentials token (APISIX itself verifies no tokens, T-0252)
+  subdomain: ''
+  redirectPath: /
+  rawValues:
+    publicClient: false
+    bearerOnly: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    # The smoke suite proves the demo users can log in with a password grant through this
+    # confidential client; its secret never leaves the cluster (T-0248).
+    directAccessGrantsEnabled: true
+    serviceAccountsEnabled: true
+    authorizationServicesEnabled: false
+    redirectUris: []
+    webOrigins: []
+    defaultClientScopes:
+      - basic
+      - email
+      - profile
+      - roles
+    optionalClientScopes: []
+    protocolMappers:
+      # The Portal verifies `aud` itself and accepts only tokens minted for it (docs
+      # Architecture/12 §3): a client_credentials token from this client carries portal-api.
+      - name: portal-api-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.client.audience: portal-api
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # dev-smoke's "ogc internal" row reads the organization Endpoint helsinki-bikes-ops as the
+      # demo user (T-3957). The gateway admits a token only when `aud` names the slug (PF-45), as
+      # the edge's mapper of the same name does for a signed-in person; the person's own grants
+      # still decide what the read returns. The slug is the seed's
+      # (seed/helsinki/helsinki-endpoint-bikes-ops.yaml).
+      - name: helsinki-bikes-ops-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: ydp6nddchg4sewmylsiclg4377mlldrj
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+
+# The one login front (ADR-N-019, AP-26, AP-27): the `openid-connect` plugin of APISIX logs
+# every person in through this client, on the Portal host and on every `/apps/*` route of the
+# apex, so it lists redirect URIs on both hosts. Confidential, authorization code with PKCE, no
+# service account and no password grant: the edge acts for the person who logged in only.
+#
+# Its tokens are signed RS256 by per-client override: lua-resty-openidc, which the plugin wraps,
+# verifies RS- and HS-family signatures only, and the realm default stays ES256 for every other
+# client (TR-03187 AR-11, T-0252). The realm keeps an active RS256 key at a lower priority for
+# exactly this client (components/keycloak/values/config/base-values.yaml.gotmpl).
+#
+# The realm template merges `attributes` over its defaults, so the two the defaults carry
+# (post-logout URIs, PKCE method) are repeated here rather than relied on.
+edge:
+  # What the login page names ("Sign in to {name} · {organization}"): a key the login theme
+  # translates (components/keycloak/charts/theme).
+  name: ${jcClientPortal}
+  description: Confidential client of the APISIX openid-connect plugin, the login front of the Portal and every app
+  subdomain: portal
+  redirectPath: /*
+  additionalRedirectUris:
+    - subdomain: ''
+      path: /apps/*
+  componentNamespaces:
+    - apisix
+  # Keycloak posts the end of every edge session to the Portal (T-5568).
+  backchannelLogout: true
+  rawValues:
+    publicClient: false
+    bearerOnly: false
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    authorizationServicesEnabled: false
+    # No browser ever calls Keycloak with this client: the code flow runs inside APISIX.
+    webOrigins: []
+    attributes:
+      post.logout.redirect.uris: '+'
+      pkce.code.challenge.method: S256
+      access.token.signed.response.alg: RS256
+      id.token.signed.response.alg: RS256
+    # An MCP client behind the edge login may ask for the Portal MCP audience too (T-0637).
+    # No offline_access: the edge's session lives in APISIX and ends with the login (T-5568).
+    optionalClientScopes:
+      - address
+      - phone
+      - microprofile-jwt
+      - mcp:portal
+    protocolMappers:
+      # The Portal verifies the forwarded X-Access-Token as it verifies a bearer (ADR-N-019 §4,
+      # PF-46): issuer, signature, expiry and `aud == portal-api`. Without this mapper the
+      # edge's token names only `account` and every signed-in person is a 401 (T-0619).
+      - name: portal-api-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.client.audience: portal-api
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # The Context Gateway accepts its own name as the audience of a person signed in at the
+      # edge on every endpoint (Architecture/12 §4): an endpoint proposed and approved after the
+      # login has no mapper of its own, and without this one its NGSI-LD link answered 401 to
+      # the very steward who published it. The per-endpoint mappers below stay for the seeded
+      # endpoints and for clients that are not the edge.
+      - name: context-gateway-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: context-gateway
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # A person's token is the subject token jc-agent-proxy exchanges for a run of theirs
+      # (ADR-N-038, AG-94): standard token exchange V2 takes it only when its audience names the
+      # requesting client. A custom audience, so the realm of an environment without the agent
+      # runner still imports.
+      - name: agent-proxy-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: helsinki-agent-proxy
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # The indicator space's endpoint (seed/helsinki/helsinki-endpoint-kpi.yaml): a KPI a pipeline
+      # or the assistant computed is read here (PF-54, PL-45).
+      - name: helsinki-kpi-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: kpi4h6q2wz7xr3nv5tj6pb3mydk2s4fa
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # The Portal reads and writes context data with the person's own session (AP-62, AP-63):
+      # the gateway accepts a token only when `aud` names the slug it is called on, so the
+      # edge's token names every endpoint of the demonstration's seed
+      # (seed/helsinki/helsinki-endpoint-*.yaml), the public ones too: without its slug the
+      # explorer's access document and rows answer 401 to a signed-in person. One mapper per
+      # endpoint, rendered by jcctl, is the general form (T-0596, T-0580).
+      - name: helsinki-bikes-ops-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: ydp6nddchg4sewmylsiclg4377mlldrj
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-all-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: si6epqkx364lprho5uaigutk274r5grb
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-news-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: t2vph7knk35vyjoxzqwhjldnls6nhcmj
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-weather-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: 6wrymzu5x2uwjo2xqei66ppw53mafvbu
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-air-quality-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: jtjnhkaau64zmzz5csmcwem52icvufy2
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-alerts-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: dhiw4735mzyvwkrmszljpxcvvgv32q33
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # The datasets split out of helsinki-all (T-4344), one Smart Data Model type each.
+      - name: helsinki-beach-water-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: w5vgo2mi6phigetdq3pvvcjgznw73hji
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # The area statistics, one Endpoint per theme (T-5258).
+      - name: helsinki-statistics-population-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: hb4cgyuttzzhtgxangivybcsvjx747ui
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-statistics-housing-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: fxokhhdfi5kf2sahspabslnxd2ahhr7c
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-statistics-employment-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: yvvjivtkvjt7bitgrg34s442gerqo4k2
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-statistics-income-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: ciub7zhdbmaqh2gg3e4yau6f6bjvuoax
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-statistics-education-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: cparzbvehzoznbb2nuiyzkeudohmdhsq
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-statistics-services-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: 2otvm3oapms4vsucerjhnywlumdqf3px
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-statistics-welfare-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: n7eqxs3kybuh66al65cxadjqp6zxlm3f
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-statistics-environment-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: 6u27vozaruni2uaxbfk2ij3k57yutwfk
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      # The heat vulnerability index and the service property energy use (T-5278).
+      - name: helsinki-heat-vulnerability-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: yo2xtons6kf3b6xvzyrursdf6jteaegv
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-service-property-energy-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: vdv6dd5zhwph3ggzjz6xyffu2ikrmvtl
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-parking-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: x6d6jph5t3tib5vr53kmiz2l5n3u3tnu
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-public-area-permits-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: rjktf6sxt7mdqgdc3cvyf56ezh6if6kh
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-districts-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: s3luopgog5nkxcpykwxdvhw22iis5n7e
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-places-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: zq6avaaqv3d7ma2avz7rvkwtxelaxkc4
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-feedback-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: gv24bicwway4foznuszsagmzydzk3e2z
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-bikes-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: scsd2eehkx42n53z2zyd6vshfh7s7irf
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-events-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: gx2knuus75alkjgc24kjz7llte6q5jkk
+          access.token.claim: 'true'
+          id.token.claim: 'false'
+      - name: helsinki-transport-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: ajaezssvx3bwqgejgepmq4ig3frgan4e
+          access.token.claim: 'true'
+          id.token.claim: 'false'

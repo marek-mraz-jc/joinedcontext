@@ -1,0 +1,16 @@
+# IPR Praha's geoportal item 431d4d6de82f4ce3b29c62cf82198671 (Pošty), 70 on 2026-10-25: the layer's description
+# on IPR's ArcGIS server, whose field list and coded values the mapping reads before it pages
+# through the layer's FeatureServer. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5682).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-point-post-offices
+  namespace: praha
+  title: { en: Post offices (IPR Praha), cs: Pošty (IPR Praha) }
+spec:
+  type: http
+  http:
+    url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/FSV_CUR_KV_POSTY_B/FeatureServer/0?f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

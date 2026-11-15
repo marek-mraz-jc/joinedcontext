@@ -1,0 +1,18 @@
+# One NoiseZone per record of `hel-noise-roads-day-1`, written into the city space (T-5378).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: noise-roads-day-1
+  namespace: helsinki
+  title:
+    en: Road traffic noise, day 7-22, bands 50-60 dB
+spec:
+  class: auto
+  # The 2022 survey is a finished computation the city republishes rarely (layers last refreshed 2025-06-16); weekly is more than it needs.
+  period: 168h
+  schedule: '17 3 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-noise-roads-day-1 }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: NoiseZone, mode: upsert }
+  quotas: { maxMemoryMb: 384, cpuMillicores: 100 }

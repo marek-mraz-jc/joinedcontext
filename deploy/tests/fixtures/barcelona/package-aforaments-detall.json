@@ -1,0 +1,37 @@
+{
+ "help": "https://opendata-ajuntament.barcelona.cat/data/api/3/action/help_show?name=package_show",
+ "success": true,
+ "result": {
+  "name": "aforaments-detall",
+  "id": "a7a093f1-56ea-4766-a4ba-d6abad68d41d",
+  "resources": [
+   {
+    "id": "45fc3faa-cdc6-4ac3-83e9-d019c8a629b9",
+    "name": "2025_aforament_detall_valor.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/a7a093f1-56ea-4766-a4ba-d6abad68d41d/resource/45fc3faa-cdc6-4ac3-83e9-d019c8a629b9/download/2025_aforament_detall_valor.csv",
+    "datastore_active": true,
+    "position": 0,
+    "last_modified": "2026-05-06T17:22:47.048389"
+   },
+   {
+    "id": "5b2c39d8-2f51-4fc5-9478-a479b77f9a48",
+    "name": "2024_aforament_detall_valor.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/a7a093f1-56ea-4766-a4ba-d6abad68d41d/resource/5b2c39d8-2f51-4fc5-9478-a479b77f9a48/download/2024_aforament_detall_valor.csv",
+    "datastore_active": true,
+    "position": 1,
+    "last_modified": "2026-05-06T17:27:01.908996"
+   },
+   {
+    "id": "3fb834b2-b353-4382-b1f1-b78177fbf5e8",
+    "name": "2023_aforament_detall_valor.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/a7a093f1-56ea-4766-a4ba-d6abad68d41d/resource/3fb834b2-b353-4382-b1f1-b78177fbf5e8/download/2023_aforament_detall_valor.csv",
+    "datastore_active": true,
+    "position": 2,
+    "last_modified": "2024-01-25T08:56:37.398823"
+   }
+  ]
+ }
+}

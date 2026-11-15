@@ -11,3 +11,7 @@
 **/.codegraph
 **/test-results
 **/playwright-report
+# The deployment code (T-6985) is no input of the jc image; deploy/rehearsal stays as before.
+deploy/*
+!deploy/README.md
+!deploy/rehearsal

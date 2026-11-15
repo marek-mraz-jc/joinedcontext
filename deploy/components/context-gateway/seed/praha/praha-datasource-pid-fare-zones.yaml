@@ -1,0 +1,16 @@
+# IPR Praha's geoportal item 6391e7e27ff042a690617195a457f5a8 (Pražská integrovaná doprava - tarifní pásma), 14 areas
+# on 2026-10-24, read from its FeatureServer with the outline simplified to about 5 m: 0.5 MB instead of 2.8 MB.
+# No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5423).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-pid-fare-zones
+  namespace: praha
+  title: { en: PID fare zones (IPR Praha), cs: Tarifní pásma PID (IPR Praha) }
+spec:
+  type: http
+  http:
+    url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_PID_TARIFPASMA_P/FeatureServer/0/query?where=1%3D1&outFields=id,popis,globalid&outSR=4326&f=geojson&maxAllowableOffset=0.00005&geometryPrecision=6
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 120s

@@ -76,6 +76,69 @@ fn under<'a>(path: &'a str, root: &str) -> Option<&'a str> {
         .filter(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
+/// What one origin of an Organization serves (evidence/T-6991/design.md §1). The router
+/// enforces each role's refusals before any module runs, so a module added later cannot forget
+/// them, and names the role to the module in [`HOST_ROLE_HEADER`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostRole {
+    /// Portal, assistant, dashboards: the one origin of the session cookie.
+    Working,
+    /// Open data for anonymous visitors: reads only, no cookie and no credential either way.
+    OpenData,
+    /// Endpoint data API and MCP: bearer tokens only, no cookie either way.
+    Api,
+    /// Sign-in: kaisatsu alone.
+    SignIn,
+    /// Apps and embeds: code and content written by users.
+    Apps,
+}
+
+impl HostRole {
+    /// The value of [`HOST_ROLE_HEADER`].
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Working => "working",
+            Self::OpenData => "opendata",
+            Self::Api => "api",
+            Self::SignIn => "signin",
+            Self::Apps => "apps",
+        }
+    }
+
+    /// The methods the role answers, `None` for every method.
+    pub(crate) fn allowed_methods(self) -> Option<&'static str> {
+        (self == Self::OpenData).then_some("GET, HEAD, OPTIONS")
+    }
+
+    /// The request headers removed before any module runs.
+    pub(crate) fn removed_request_headers(self) -> &'static [&'static str] {
+        match self {
+            Self::OpenData => &["cookie", "authorization"],
+            Self::Api => &["cookie"],
+            _ => &[],
+        }
+    }
+
+    /// Whether `Set-Cookie` is removed from every answer.
+    pub(crate) fn drops_set_cookie(self) -> bool {
+        matches!(self, Self::OpenData | Self::Api)
+    }
+}
+
+/// The header naming a request's [`HostRole`] to the module (the gateway's open data `404`).
+/// The router removes it from every incoming request and sets it only from the table.
+pub const HOST_ROLE_HEADER: &str = "x-jc-host-role";
+
+/// Pages under `prefix` of one host belong on another origin: `308` to `to` (a configured host).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PageMove {
+    pub(crate) prefix: String,
+    pub(crate) to: String,
+    /// Only a page no mount of the host answers moves (the API host: its API calls stay).
+    pub(crate) unmounted_only: bool,
+}
+
 /// The deployment's hosts and Organizations (docs/API/15-addresses-v1.md §2).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HostTable {
@@ -84,6 +147,25 @@ pub struct HostTable {
     /// Organization id -> name, for the Organizations whose path segment is their id (EP-186).
     ids: BTreeMap<String, String>,
     reserved: BTreeSet<String>,
+    roles: BTreeMap<String, HostRole>,
+    moves: BTreeMap<String, Vec<PageMove>>,
+}
+
+/// The value of a host keyed map: exact first, then a wildcard one label under it.
+fn lookup<'a, V>(
+    map: &'a BTreeMap<String, V>,
+    host_with_port: &str,
+    host_only: &str,
+) -> Option<&'a V> {
+    map.get(host_only)
+        .or_else(|| map.get(host_with_port))
+        .or_else(|| {
+            map.iter().find_map(|(h, v)| {
+                let suffix = wildcard_suffix(h)?;
+                (one_label_under(host_with_port, suffix) || one_label_under(host_only, suffix))
+                    .then_some(v)
+            })
+        })
 }
 
 /// Whether `host` is an authority a URL can be built from: a lowercase name or IPv4 address, or
@@ -239,6 +321,69 @@ impl HostTable {
         }
     }
 
+    /// Gives `host` (a row's host, wildcard allowed) a [`HostRole`]; one role per host.
+    pub fn role(mut self, host: &str, role: HostRole) -> Result<Self, RouterError> {
+        let host = without_port(host.trim()).to_ascii_lowercase();
+        match self.roles.insert(host.clone(), role) {
+            Some(other) if other != role => Err(RouterError::InvalidHostRow(format!(
+                "host '{host}' has two roles"
+            ))),
+            _ => Ok(self),
+        }
+    }
+
+    /// Pages asked on `host` under `prefix` answer `308` to the same path below it on `to`;
+    /// with `unmounted_only`, only those no mount of `host` answers.
+    pub fn move_pages(
+        mut self,
+        host: &str,
+        prefix: &str,
+        to: &str,
+        unmounted_only: bool,
+    ) -> Result<Self, RouterError> {
+        let prefix = normalize_prefix(prefix)?;
+        let to = to.trim().to_ascii_lowercase();
+        // A host, or a host and the path a shared host keeps the Organization under.
+        let (to_host, to_path) = to.split_at(to.find('/').unwrap_or(to.len()));
+        let refused =
+            || RouterError::InvalidHostRow(format!("'{to}' is not a host a page can move to"));
+        if !well_formed(to_host) || normalize_prefix(to_path).map_err(|_| refused())? != to_path {
+            return Err(refused());
+        }
+        let host = without_port(host.trim()).to_ascii_lowercase();
+        self.moves.entry(host).or_default().push(PageMove {
+            prefix,
+            to,
+            unmounted_only,
+        });
+        Ok(self)
+    }
+
+    /// The role of a host: exact first, then a wildcard one label under it.
+    pub(crate) fn role_of(&self, host_with_port: &str, host_only: &str) -> Option<HostRole> {
+        lookup(&self.roles, host_with_port, host_only).copied()
+    }
+
+    /// Where a page at `path` on the host moves, with the path below the move's prefix.
+    pub(crate) fn page_move(
+        &self,
+        host_with_port: &str,
+        host_only: &str,
+        path: &str,
+        mounted: bool,
+    ) -> Option<(&str, String)> {
+        lookup(&self.moves, host_with_port, host_only)?
+            .iter()
+            .filter(|m| !(m.unmounted_only && mounted))
+            .find_map(|m| {
+                let rest = under(path, &m.prefix)?;
+                Some((
+                    m.to.as_str(),
+                    if rest.is_empty() { "/" } else { rest }.to_owned(),
+                ))
+            })
+    }
+
     /// The Organizations of the deployment.
     pub fn organizations(&self) -> impl Iterator<Item = &str> {
         self.organizations.iter().map(String::as_str)
@@ -247,16 +392,7 @@ impl HostTable {
     /// The row of a host (`host_with_port`, `host_only` without its port): exact first, then a
     /// wildcard one label under it.
     fn row_of(&self, host_with_port: &str, host_only: &str) -> Option<&HostRow> {
-        self.rows
-            .get(host_only)
-            .or_else(|| self.rows.get(host_with_port))
-            .or_else(|| {
-                self.rows.iter().find_map(|(h, row)| {
-                    let suffix = wildcard_suffix(h)?;
-                    (one_label_under(host_with_port, suffix) || one_label_under(host_only, suffix))
-                        .then_some(row)
-                })
-            })
+        lookup(&self.rows, host_with_port, host_only)
     }
 
     /// The Organization a first path segment names, as `(name, its id when the segment is its
@@ -756,5 +892,263 @@ mod tests {
             );
         }
         table.organization("bbsk").expect("an ordinary name");
+    }
+
+    /// What a module saw: its credentials, cookies and role header, and a cookie it tries to set.
+    async fn witness(req: Request<Body>) -> axum::response::Response {
+        let h = |n: &str| {
+            req.headers()
+                .get(n)
+                .map_or("-", |v| v.to_str().unwrap_or("?"))
+                .to_owned()
+        };
+        let seen = format!(
+            "{} {} cookie={} auth={} role={}",
+            req.method(),
+            req.uri().path(),
+            h("cookie"),
+            h("authorization"),
+            h(HOST_ROLE_HEADER)
+        );
+        axum::response::Response::builder()
+            .header("set-cookie", "planted=1; Path=/")
+            .body(Body::from(seen))
+            .unwrap()
+    }
+
+    /// `bbsk` on five origins (T-6991 §1): Portal and the dataroom's `/data` on the working host,
+    /// the dataroom on the open data host, the gateway on the API host, Apps under a wildcard.
+    fn origins() -> JcRouter {
+        let spec = |module: &str, host: &str, prefix: Option<&str>| MountSpec {
+            module: module.into(),
+            host: Some(host.into()),
+            path_prefix: prefix.map(str::to_owned),
+        };
+        let table = HostTable::new()
+            .bound("smartcity.bbsk.sk", "bbsk", "/")
+            .and_then(|t| t.bound("opendata.bbsk.sk", "bbsk", "/"))
+            .and_then(|t| t.bound("api.bbsk.sk", "bbsk", "/"))
+            .and_then(|t| t.shared("*.apps.bbsk.sk"))
+            .and_then(|t| t.role("smartcity.bbsk.sk", HostRole::Working))
+            .and_then(|t| t.role("opendata.bbsk.sk", HostRole::OpenData))
+            .and_then(|t| t.role("api.bbsk.sk", HostRole::Api))
+            .and_then(|t| t.role("*.apps.bbsk.sk", HostRole::Apps))
+            .and_then(|t| t.move_pages("smartcity.bbsk.sk", "/data", "opendata.bbsk.sk", false))
+            .and_then(|t| t.move_pages("api.bbsk.sk", "/", "smartcity.bbsk.sk", true))
+            .and_then(|t| t.bound("zilina.bbsk.sk", "zilina", "/"))
+            .and_then(|t| t.move_pages("zilina.bbsk.sk", "/data", "opendata.bbsk.sk/zilina", false))
+            .expect("rows");
+        let mut b = JcRouterBuilder::new("https", "smartcity.bbsk.sk").hosts(table);
+        for (module, host, prefix) in [
+            ("portal", "smartcity.bbsk.sk", None),
+            ("dataroom", "smartcity.bbsk.sk", Some("/data")),
+            ("dataroom", "zilina.bbsk.sk", Some("/data")),
+            ("dataroom", "opendata.bbsk.sk", None),
+            ("gateway", "api.bbsk.sk", Some("/api/endpoint")),
+            ("portal", "*.apps.bbsk.sk", None),
+        ] {
+            b = b.mount(
+                spec(module, host, prefix),
+                Router::new().fallback(any(witness)),
+            );
+        }
+        b.build().expect("router")
+    }
+
+    async fn ask(
+        jc: &JcRouter,
+        method: &str,
+        host: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> axum::response::Response {
+        let mut req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", host);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        jc.dispatch(req.body(Body::empty()).unwrap(), None).await
+    }
+
+    async fn text(resp: axum::response::Response) -> String {
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        String::from_utf8(body.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_open_data_host_answers_reads_only() {
+        let jc = origins();
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            let resp = ask(
+                &jc,
+                method,
+                "opendata.bbsk.sk",
+                "/api/3/action/package_create",
+                &[],
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED, "{method}");
+            assert_eq!(resp.headers()["allow"], "GET, HEAD, OPTIONS", "{method}");
+        }
+        for method in ["GET", "HEAD", "OPTIONS"] {
+            let resp = ask(&jc, method, "opendata.bbsk.sk", "/dataset/x", &[]).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{method}");
+        }
+        // The working host's own `/data` takes the Portal's writes into the catalogue.
+        let resp = ask(
+            &jc,
+            "POST",
+            "smartcity.bbsk.sk",
+            "/data/api/3/action/x",
+            &[],
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn no_cookie_or_credential_crosses_the_open_data_and_api_hosts() {
+        let jc = origins();
+        let sent = [
+            ("cookie", "__Host-jc_session=s; jc_csrf=t"),
+            ("authorization", "Bearer abc"),
+            (HOST_ROLE_HEADER, "working"),
+        ];
+        let resp = ask(&jc, "GET", "opendata.bbsk.sk", "/dataset/x", &sent).await;
+        assert!(resp.headers().get("set-cookie").is_none());
+        assert_eq!(
+            text(resp).await,
+            "GET /dataset/x cookie=- auth=- role=opendata"
+        );
+        let resp = ask(&jc, "GET", "api.bbsk.sk", "/api/endpoint/x", &sent).await;
+        assert!(resp.headers().get("set-cookie").is_none());
+        assert_eq!(text(resp).await, "GET /x cookie=- auth=Bearer abc role=api");
+        // The working host keeps its cookies; a role a client names is replaced by the table's.
+        let resp = ask(&jc, "GET", "smartcity.bbsk.sk", "/projects", &sent).await;
+        assert!(resp.headers().get("set-cookie").is_some());
+        assert_eq!(
+            text(resp).await,
+            "GET /projects cookie=__Host-jc_session=s; jc_csrf=t auth=Bearer abc role=working"
+        );
+        let resp = ask(
+            &jc,
+            "GET",
+            "x.apps.bbsk.sk",
+            "/",
+            &[(HOST_ROLE_HEADER, "working")],
+        )
+        .await;
+        assert_eq!(text(resp).await, "GET / cookie=- auth=- role=apps");
+    }
+
+    #[tokio::test]
+    async fn a_host_role_header_from_a_client_never_reaches_a_module() {
+        // Without a host table, too: no role is ever set there.
+        let mut b = JcRouterBuilder::new("https", "city.example");
+        b = b.mount(
+            MountSpec {
+                module: "portal".into(),
+                host: None,
+                path_prefix: None,
+            },
+            Router::new().fallback(any(witness)),
+        );
+        let jc = b.build().unwrap();
+        let resp = ask(
+            &jc,
+            "GET",
+            "city.example",
+            "/",
+            &[(HOST_ROLE_HEADER, "opendata")],
+        )
+        .await;
+        assert_eq!(text(resp).await, "GET / cookie=- auth=- role=-");
+    }
+
+    #[tokio::test]
+    async fn a_page_on_the_wrong_group_moves_to_a_configured_host_only() {
+        let jc = origins();
+        let page = ("accept", "text/html");
+        let spoofed = [
+            page,
+            ("x-forwarded-host", "evil.example"),
+            ("x-forwarded-proto", "https"),
+        ];
+        let cases = [
+            (
+                "smartcity.bbsk.sk",
+                "/data/dataset/x?q=1",
+                "https://opendata.bbsk.sk/dataset/x?q=1",
+            ),
+            ("smartcity.bbsk.sk", "/data", "https://opendata.bbsk.sk/"),
+            (
+                "smartcity.bbsk.sk",
+                "/data//evil.example",
+                "https://opendata.bbsk.sk//evil.example",
+            ),
+            (
+                "api.bbsk.sk",
+                "/projects/p",
+                "https://smartcity.bbsk.sk/projects/p",
+            ),
+            (
+                "zilina.bbsk.sk",
+                "/data/dataset/x",
+                "https://opendata.bbsk.sk/zilina/dataset/x",
+            ),
+            (
+                "zilina.bbsk.sk",
+                "/data",
+                "https://opendata.bbsk.sk/zilina/",
+            ),
+        ];
+        for (host, path, to) in cases {
+            for headers in [&[page][..], &spoofed[..]] {
+                let resp = ask(&jc, "GET", host, path, headers).await;
+                assert_eq!(
+                    resp.status(),
+                    StatusCode::PERMANENT_REDIRECT,
+                    "{host}{path}"
+                );
+                let location = resp.headers()["location"].to_str().unwrap();
+                assert_eq!(location, to, "{host}{path}");
+                assert!(!location.starts_with("//"), "{location}");
+            }
+        }
+        // An API call stays where it answers; a page the API host serves stays there.
+        let resp = ask(&jc, "GET", "smartcity.bbsk.sk", "/data/api/3/action/x", &[]).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = ask(&jc, "GET", "api.bbsk.sk", "/api/endpoint/x", &[page]).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = ask(&jc, "GET", "api.bbsk.sk", "/projects/p", &[]).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn a_host_takes_one_role_and_moves_to_a_plain_host() {
+        let t = HostTable::new().role("a.example", HostRole::Api).unwrap();
+        assert!(t.clone().role("a.example", HostRole::Api).is_ok());
+        assert!(t.role("A.example:443", HostRole::OpenData).is_err());
+        assert!(
+            HostTable::new()
+                .move_pages("a.example", "/", "b.example/org", false)
+                .is_ok()
+        );
+        for to in [
+            "evil.example/x/",
+            "evil.example//x",
+            "user@evil.example",
+            "",
+            "a b",
+        ] {
+            assert!(
+                HostTable::new()
+                    .move_pages("a.example", "/", to, false)
+                    .is_err(),
+                "{to}"
+            );
+        }
     }
 }

@@ -1,0 +1,35 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-water-quality
+  namespace: helsinki
+  title: { en: 'Public read: beach water' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint helsinki-beach-water, and only
+  # its types: the space's other types stay with their own datasets (T-4344).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # Its types keep history: anyone reads it, as far back as the space keeps it (T-4372).
+  temporalQ: timerel=after;timeAt=P-30D
+  # Every attribute but refPointOfInterest (T-5089): a sensor's Service Map unit is often no beach the
+  # services pipeline keeps (a sauna, a pier, an Espoo beach), so the public would follow a link to
+  # nothing. The kartta app's own Policy still reads it.
+  information:
+    - entities:
+        - type: WaterQualityObserved
+      propertyNames: [dataProvider, dateObserved, location, name, source, temperature]

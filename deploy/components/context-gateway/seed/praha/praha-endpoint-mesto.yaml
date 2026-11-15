@@ -1,0 +1,714 @@
+# The one door of the space, public: every source is open data, and republishing it with the
+# publisher's credit is what its licence allows. The catalogue entry names the licence the most
+# demanding source asks for, CC BY 4.0, and the space's description names each publisher.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-mesto
+  namespace: praha
+  title: { cs: Praha — městská data, en: Prague city data }
+  description:
+    cs: 'Městská data Prahy: kvalita ovzduší, sdílená kola, parkoviště P+R, kontejnery a stanoviště tříděného odpadu, rozpočet, kulturní a školská zařízení, veřejné toalety, městské části, služebny městské policie, knihovny, úřady, zahrady, dětská hřiště, sběrné dvory, občanská vybavenost, oázy chladu, parkování na ulici, parky, zeleň a stromy, zdroje znečišťování ovzduší, radonové riziko, záplavová území, protipovodňová ochrana, počasí, garáže Mr.Parkit a volná sdílená auta. Zdroje: ČHMÚ, Golemio, ROPID, IPR Praha a hl. m. Praha.'
+    en: 'Prague city data: air quality, shared bikes, park and ride car parks, sorted-waste containers and collection points, the budget, cultural and school facilities, public toilets, city districts, municipal police stations, libraries, municipal offices, gardens, playgrounds, waste collection yards, city amenities, cool spots, on-street parking, parks, green areas and trees, air pollution sources, radon risk, flood areas, flood defences, the weather, Mr.Parkit garages and shared cars free to rent. Sources: ČHMÚ, Golemio, ROPID, IPR Praha and the City of Prague.'
+spec:
+  contextSpaceRef: praha-mesto
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:app-praha-data-1
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:app-praha-mapa-1
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:app-praha-odpad-1-viewer
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:pipelines-write
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-bilancni-celky
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-cerpani-rozpoctu
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-cinnost-mestske-policie
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-cinnost-mestske-policie-utvary
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-cyklotrasy
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-financni-vztahy-mc
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-garaze
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-hluk
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-hrbitovy
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-kola
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-letni-udrzba
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-linky-pid
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-mestske-casti
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-mista
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-naucne-stezky
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-odpad
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-opravy-a-uzavirky
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-ovzdusi
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-parkovaci-automaty
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-parkovani
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-parkovani-pr
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-pietni-mista
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-pocasi
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-posty
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-protipovodnova-ochrana
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-psi-zony
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-radon
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-read
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-read-history
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-rozpocet
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-scitace-cyklistu
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-sdilena-auta
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-sluzby
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-stromy
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-tarifni-pasma
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-technicke-prvky-zelene
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-ulicni-useky
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-vodni-plochy
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-vozidla-pid
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-vstupy-metra
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-vybavenost
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zakazy-stani
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zaplavova-uzemi
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zastavky-pid
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zdravotni-a-socialni-sluzby
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zdroje-znecisteni
+    - urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zelen
+  slug: jw7tffshzip7igmzcszgffkkkuetnc6v
+  audience: public
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  # Off the catalogue (T-4344): its unrelated types are each their own dataset, through the
+  # narrowed Endpoints beside it. This Endpoint stays for the Apps and connectors that read it.
+  # The DCAT-AP description (T-2792, EP-78, EP-79), each licence read from its source on 2026-09-25:
+  # ČHMÚ CC BY 4.0 (NKOD 00020699/2d09f059…, author ČHMÚ); IPR Praha CC BY 4.0 with the credit
+  # "datový podklad © IPR Praha"; ROPID's ticket points CC BY (NKOD 60437359/12cceb7b…); nextbike
+  # CC0 1.0 (its GBFS system_information); Golemio's park-and-ride API free of rights (NKOD
+  # 02795281/b1c05f31…, matched to CC0); the city budget free of rights (Prague catalogue); Golemio's
+  # waste sensors marked "Open Data" with no licence named, credited to Golemio. CC BY 4.0 is the
+  # most demanding, so it is the space's; no source asks for share-alike. No contactPoint: the
+  # organization has no open-data role address yet (owner's decision, as T-2790). No temporal:
+  # the space holds each feed's current state, not a history.
+  catalog:
+    # Not a catalogue dataset: a door over the space; T-4344 split its types into datasets of their own, read by the Apps.
+    # Its own record stays; the harvest feeds leave it out (EP-139, T-4744).
+    harvest: false
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    # Open data under the Czech act on free access to information (DCAT-AP-CZ, API/08 section 3).
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroje: Český hydrometeorologický ústav (CC BY 4.0); datový podklad © IPR Praha (CC BY 4.0); ROPID (CC BY 4.0); nextbike (CC0 1.0); Golemio, Operátor ICT, s daty TSK hl. m. Prahy; rozpočet hl. m. Prahy'
+      en: 'Sources: Czech Hydrometeorological Institute (CC BY 4.0); data © IPR Praha (CC BY 4.0); ROPID (CC BY 4.0); nextbike (CC0 1.0); Golemio, Operátor ICT, with data of TSK hl. m. Prahy; City of Prague budget'
+    themes: [TRAN, ENVI, EDUC, ECON, GOVE, REGI]
+    keywords:
+      cs:
+        - Praha
+        - doprava
+        - sdílená kola
+        - P+R
+        - kvalita ovzduší
+        - odpad
+        - školy
+        - kultura
+        - rozpočet
+        - městské části
+      en:
+        - Prague
+        - transport
+        - bike sharing
+        - park and ride
+        - air quality
+        - waste
+        - schools
+        - culture
+        - budget
+        - city districts
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: CONT
+    source:
+      - url: https://opendata.chmi.cz/air_quality/now/data/airquality_1h_avg_CZ.csv
+        title:
+          cs: Kvalita ovzduší – aktuální hodinové údaje (ČHMÚ)
+          en: Air quality, current hourly data (ČHMÚ)
+        description:
+          cs: Hodinové průměry všech stanic ČHMÚ, z nichž prostor drží 14 pražských, CC BY 4.0.
+          en: Hourly means of every ČHMÚ station, of which the space keeps Prague's 14, CC BY 4.0.
+      - url: https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_tg/gbfs.json
+        title:
+          cs: Sdílená kola nextbike v Praze, GBFS
+          en: nextbike Prague bike sharing, GBFS
+        description:
+          cs: Stanice a jejich obsazenost podle GBFS 2.3, obnovované každou minutu, CC0 1.0.
+          en: Stations and what they hold, as GBFS 2.3, refreshed every minute, CC0 1.0.
+      - url: https://api.golemio.cz/v3/parking-measurements?primarySource=tsk-offstreet
+        title: { cs: Parkování P+R – API (Golemio), en: Park and ride parking API (Golemio) }
+        description:
+          cs: Obsazenost parkovišť P+R z počítadel TSK hl. m. Prahy, Operátor ICT, bez omezení práv.
+          en: Occupancy of the park-and-ride car parks from the counters of TSK hl. m. Prahy, Operátor ICT, free of rights.
+      - url: https://api.golemio.cz/v2/sortedwastestations?onlyMonitored=true
+        title:
+          cs: Zaplněnost kontejnerů na tříděný odpad (Golemio)
+          en: Sorted-waste container fill levels (Golemio)
+        description:
+          cs: Stanoviště tříděného odpadu s poslední hodnotou zaplnění ze senzorů, Operátor ICT, otevřená data.
+          en: Sorted-waste collection points with the last fill level their sensors read, Operátor ICT, open data.
+      - url: https://api.golemio.cz/v2/sortedwastestations
+        title:
+          cs: Kontejnery na tříděný odpad a dny jejich svozu (Golemio)
+          en: Sorted-waste containers and their collection days (Golemio)
+        description:
+          cs: Všechny kontejnery stanovišť tříděného odpadu s příštím dnem svozu z registru odpadů, Operátor ICT, otevřená data.
+          en: Every container of the sorted-waste collection points with its next collection day from the waste register, Operátor ICT, open data.
+      - url: https://data.pid.cz/pointsOfSale/json/pointsOfSale.json
+        title: { cs: Prodejní místa dokladů PID (ROPID), en: PID ticket points of sale (ROPID) }
+        description:
+          cs: Místa, kde se prodávají jízdenky PID, CC BY 4.0.
+          en: The places that sell PID tickets, CC BY 4.0.
+      - url: https://opendata-storage.praha.eu/ROZ_rozpocet_finance/rozpocet/Zdroje/2026/Rozpocet_MHMP_2026.json
+        title: { cs: Rozpočet hl. m. Prahy 2026, en: City of Prague budget 2026 }
+        description:
+          cs: Schválený a upravený rozpočet hlavního města Prahy na rok 2026, bez omezení práv.
+          en: The approved and adjusted budget of the City of Prague for 2026, free of rights.
+      - url: https://hub.arcgis.com/api/v3/datasets/17f4294bf3f041db9a0ec0d6ac0741a6_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Kulturní zařízení (IPR Praha), en: Cultural venues (IPR Praha) }
+        description:
+          cs: Kulturní zařízení z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Cultural venues from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/35ede955057f4815b522ea91b488792a_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Městské části (IPR Praha), en: City districts (IPR Praha) }
+        description:
+          cs: Hranice 57 městských částí z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The boundaries of the 57 city districts from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/7dce241cdbb141fa8104e3a65ca67ad6_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Parkoviště P+R (IPR Praha), en: Park and ride car parks (IPR Praha) }
+        description:
+          cs: Parkoviště P+R z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Park-and-ride car parks from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/5d32db18a5d545a79ad3029917984a89_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Školská zařízení (IPR Praha), en: School facilities (IPR Praha) }
+        description:
+          cs: Školská zařízení z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: School facilities from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/62e3cf1020434b07832ca9ae19bce348_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Veřejné toalety (IPR Praha), en: Public toilets (IPR Praha) }
+        description:
+          cs: Veřejné toalety z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Public toilets from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/9938b4b73b4d49a7aef5a605f4d39acf_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Stanoviště tříděného odpadu (IPR Praha)
+          en: Sorted-waste collection points (IPR Praha)
+        description:
+          cs: Stanoviště tříděného odpadu z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Sorted-waste collection points from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://api.golemio.cz/v2/vehiclepositions?limit=10000
+        title: { cs: Polohy vozidel PID – API (Golemio), en: PID vehicle positions API (Golemio) }
+        description:
+          cs: Aktuální polohy a zpoždění vozidel PID, Operátor ICT, podle podmínek užití Golemio.
+          en: Current positions and delays of the PID vehicles, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v3/parking?primarySource=mr_parkit&limit=10000
+        title: { cs: Parkoviště – API (Golemio), en: Car parks API (Golemio) }
+        description:
+          cs: Garáže Mr.Parkit z registru parkovišť Golemio a jejich ceny z tarifů téhož registru (/v3/parking-tariffs), Operátor ICT, podle podmínek užití Golemio.
+          en: The Mr.Parkit garages of Golemio's car park register with their prices from its tariffs (/v3/parking-tariffs), Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/sharedcars?limit=10000
+        title: { cs: Sdílená auta – API (Golemio), en: Shared cars API (Golemio) }
+        description:
+          cs: Volná sdílená auta v Praze, Operátor ICT, podle podmínek užití Golemio.
+          en: The shared cars free to rent in Prague, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/bicyclecounters
+        title: { cs: Sčítače cyklistů – API (Golemio), en: Cycle counters API (Golemio) }
+        description:
+          cs: Sčítače cyklistů v Praze a jejich pětiminutové počty, Operátor ICT, podle podmínek užití Golemio.
+          en: The cycle counters of Prague and their five-minute counts, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/municipalpolicestations?limit=10000
+        title:
+          cs: Služebny Městské policie – API (Golemio)
+          en: Municipal Police stations API (Golemio)
+        description:
+          cs: Služebny a pracoviště Městské policie hl. m. Prahy, Operátor ICT, podle podmínek užití Golemio.
+          en: The stations and desks of the Municipal Police of Prague, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/municipallibraries?limit=10000
+        title:
+          cs: Pobočky Městské knihovny v Praze – API (Golemio)
+          en: Municipal Library of Prague branches API (Golemio)
+        description:
+          cs: Pobočky Městské knihovny v Praze s otevírací dobou, Operátor ICT, podle podmínek užití Golemio.
+          en: The branches of the Municipal Library of Prague with their opening hours, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/municipalauthorities?limit=10000
+        title: { cs: Úřady městských částí – API (Golemio), en: Municipal offices API (Golemio) }
+        description:
+          cs: Úřady městských částí a Magistrát s úředními hodinami, Operátor ICT, podle podmínek užití Golemio.
+          en: The city district offices and the City Hall with their office hours, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/gardens?limit=10000
+        title:
+          cs: Pražské zahrady a parky – API (Golemio)
+          en: Prague gardens and parks API (Golemio)
+        description:
+          cs: Zahrady a parky hl. m. Prahy, Operátor ICT, podle podmínek užití Golemio.
+          en: The gardens and parks of the City of Prague, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/playgrounds?limit=10000
+        title: { cs: Dětská hřiště – API (Golemio), en: Playgrounds API (Golemio) }
+        description:
+          cs: Dětská hřiště v Praze, Operátor ICT, podle podmínek užití Golemio.
+          en: The children's playgrounds of Prague, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/wastecollectionyards?limit=10000
+        title: { cs: Sběrné dvory – API (Golemio), en: Waste collection yards API (Golemio) }
+        description:
+          cs: Sběrné dvory hl. m. Prahy s provozní dobou, Operátor ICT, podle podmínek užití Golemio.
+          en: The waste collection yards of Prague with their opening hours, Operátor ICT, under Golemio's terms of use.
+      - url: https://hub.arcgis.com/api/v3/datasets/3fbd520692be4ac889550cf7c5137282_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Polikliniky a zdravotní střediska (IPR Praha)
+          en: Polyclinics and health centres (IPR Praha)
+        description:
+          cs: Polikliniky a zdravotní střediska z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Polyclinics and health centres from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/28a9425f2ee748328fc5346030de2d83_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Vysoké školy (IPR Praha), en: Universities (IPR Praha) }
+        description:
+          cs: Vysoké školy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Universities from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/47befb94777e42808f9934f60768072b_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Sakrální objekty (IPR Praha), en: Places of worship (IPR Praha) }
+        description:
+          cs: Sakrální objekty z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Places of worship from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/c0bca952f09d44b0bf38885f499ad59d_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Kulturně komunitní centra (IPR Praha)
+          en: Cultural and community centres (IPR Praha)
+        description:
+          cs: Kulturně komunitní centra z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Cultural and community centres from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/81c543a1199e46da87e18e12125e29a3_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Ubytovací zařízení (IPR Praha), en: Accommodation (IPR Praha) }
+        description:
+          cs: Ubytovací zařízení z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Accommodation from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/97a5ee3b3d0c4e27b423f28daeb84e67_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Potravinářské plnosortimentní prodejny (IPR Praha)
+          en: Grocery stores (IPR Praha)
+        description:
+          cs: Potravinářské plnosortimentní prodejny z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Grocery stores from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/ae0ef46774394e09a91850fb9b826788_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – pítka (IPR Praha)
+          en: 'Cool spots: drinking fountains (IPR Praha)'
+        description:
+          cs: Oázy chladu – pítka z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: drinking fountains from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/3d3add84fb784ed297725c566f149a51_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – kašny, fontány (IPR Praha)
+          en: 'Cool spots: fountains (IPR Praha)'
+        description:
+          cs: Oázy chladu – kašny, fontány z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: fountains from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/8aabe75c9689487a88d3e297bf498d6a_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – studánky, prameny (IPR Praha)
+          en: 'Cool spots: wells and springs (IPR Praha)'
+        description:
+          cs: Oázy chladu – studánky, prameny z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: wells and springs from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/39f6228757cf424889f79b0ef7a7b415_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Oázy chladu – pumpy (IPR Praha), en: 'Cool spots: water pumps (IPR Praha)' }
+        description:
+          cs: Oázy chladu – pumpy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: water pumps from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/33eadb4efd7944adb3abf5cb77b40c06_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Oázy chladu – mlžítka (IPR Praha), en: 'Cool spots: mist showers (IPR Praha)' }
+        description:
+          cs: Oázy chladu – mlžítka z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: mist showers from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/8d435d33cd5d431cbaeda5837b3d3a77_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – místa ke koupání (IPR Praha)
+          en: 'Cool spots: places to swim (IPR Praha)'
+        description:
+          cs: Oázy chladu – místa ke koupání z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: places to swim from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/e332ec5438b645b6a08a54a0da1accd6_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Zookoutky, farmy a záchranné stanice (IPR Praha)
+          en: Petting zoos, farms and rescue stations (IPR Praha)
+        description:
+          cs: Zookoutky, farmy a záchranné stanice z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Petting zoos, farms and rescue stations from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/fb6ab7891a7244f39a3a380027af2981_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Významné stavby a místa (IPR Praha)
+          en: Notable buildings and places (IPR Praha)
+        description:
+          cs: Významné stavby a místa z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Notable buildings and places from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/176f314a9ded40ef88ce55a2ed401c2e_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Shromažďovací místa nebezpečných a bioodpadů (IPR Praha)
+          en: Hazardous and bio-waste collection points (IPR Praha)
+        description:
+          cs: Odpadní zařízení pro občany z geoportálu IPR Praha bez sběrných dvorů, CC BY 4.0, datový podklad © IPR Praha.
+          en: Waste facilities for residents from the IPR Praha geoportal without the collection yards, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/bed7894d358a4d08b640c972e844d7f3_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Naučné stezky – zastávky (IPR Praha), en: Nature trail stops (IPR Praha) }
+        description:
+          cs: Zastávky naučných stezek odboru ochrany prostředí MHMP z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Stops of the City of Prague's nature trails from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/d2382afbf9454951ab71a0a89c762d15_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Stacionární zdroje znečišťování ovzduší REZZO 1 (IPR Praha)
+          en: Stationary air pollution sources REZZO 1 (IPR Praha)
+        description:
+          cs: Velké stacionární zdroje (REZZO 1) z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Large stationary sources (REZZO 1) from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/8f600add6b104be9810b23c1bf212b78_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Stacionární zdroje znečišťování ovzduší REZZO 2 (IPR Praha)
+          en: Stationary air pollution sources REZZO 2 (IPR Praha)
+        description:
+          cs: Střední stacionární zdroje (REZZO 2) z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Medium stationary sources (REZZO 2) from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/a74bc85ba5354490a23afcfe495693d9_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Kategorie radonového rizika (IPR Praha)
+          en: Radon risk categories (IPR Praha)
+        description:
+          cs: Kategorie radonového rizika z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Radon risk categories from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/c4ef1880cd5d4e62896f8cb845217881_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Záplavové území Q5 (IPR Praha), en: Flood area Q5 (IPR Praha) }
+        description:
+          cs: Záplavové území Q5 z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area Q5 from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/fc295e699c5346de9cf6a7e1e634726b_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Záplavové území Q20 (IPR Praha), en: Flood area Q20 (IPR Praha) }
+        description:
+          cs: Záplavové území Q20 z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area Q20 from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/040756d41d294971ad730304b792cb03_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Záplavové území Q50 (IPR Praha), en: Flood area Q50 (IPR Praha) }
+        description:
+          cs: Záplavové území Q50 z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area Q50 from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/c9dc5fa395b2478a8db0a7cc5be0e447_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Záplavové území Q100 (IPR Praha), en: Flood area Q100 (IPR Praha) }
+        description:
+          cs: Záplavové území Q100 z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area Q100 from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/7a4bf2d99de44645ac5768f65d8a9692_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Záplavové území Vltavy a Berounky (IPR Praha)
+          en: Flood area of the Vltava and Berounka (IPR Praha)
+        description:
+          cs: Záplavové území Vltavy a Berounky z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood area of the Vltava and Berounka from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/1a09887626a243aeab7910d3ab2477d2_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Protipovodňová ochrana (IPR Praha), en: Flood defences (IPR Praha) }
+        description:
+          cs: Protipovodňová ochrana z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Flood defences from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/98a6eba14f8646e1a6b7e3cd805f484b_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Protipovodňová ochrana – pytle s pískem (IPR Praha)
+          en: 'Flood defences: sandbag lines (IPR Praha)'
+        description:
+          cs: Protipovodňová ochrana – pytle s pískem z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Flood defences: sandbag lines from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://opendata.chmi.cz/meteorology/climate/now/data/
+        title:
+          cs: Desetiminutová meteorologická data (ČHMÚ)
+          en: '10-minute weather data (ČHMÚ)'
+        description:
+          cs: Aktuální desetiminutová pozorování stanic ČHMÚ, z nichž prostor drží osm pražských, CC BY 4.0.
+          en: The current 10-minute observations of ČHMÚ's stations, of which the space keeps Prague's eight, CC BY 4.0.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_PID_LINKY_L/FeatureServer/0/query?where=1%3D1&outFields=route_id,linka,trasa,druh,odkaz,globalid&outSR=4326&f=geojson&maxAllowableOffset=0.00005&geometryPrecision=6
+        title: { cs: Linky PID (IPR Praha), en: PID lines (IPR Praha) }
+        description:
+          cs: Linky Pražské integrované dopravy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The Prague Integrated Transport lines from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://data.pid.cz/geodata/Zastavky_WGS84.json
+        title: { cs: Zastávky PID (ROPID), en: PID stops (ROPID) }
+        description:
+          cs: Zastávková stanoviště Pražské integrované dopravy s linkami a tarifními pásmy, ROPID, CC BY 4.0.
+          en: The Prague Integrated Transport stop platforms with their lines and fare zones, ROPID, CC BY 4.0.
+      - url: https://hub.arcgis.com/api/v3/datasets/62106cae6acf4507b988c0e745f55bba_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Vstupy do metra (IPR Praha), en: Metro entrances (IPR Praha) }
+        description:
+          cs: Vstupy do metra Pražské integrované dopravy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The Prague Integrated Transport metro entrances from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_PID_TARIFPASMA_P/FeatureServer/0/query?where=1%3D1&outFields=id,popis,globalid&outSR=4326&f=geojson&maxAllowableOffset=0.00005&geometryPrecision=6
+        title: { cs: Tarifní pásma PID (IPR Praha), en: PID fare zones (IPR Praha) }
+        description:
+          cs: Tarifní pásma Pražské integrované dopravy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The Prague Integrated Transport fare zones from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_VP_B/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – stromy (IPR Praha)
+          en: 'Shared green register: trees (IPR Praha)'
+        description:
+          cs: Stromy (body vegetačních prvků) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Trees (the vegetation element points) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_VP_L/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – stromořadí (IPR Praha)
+          en: 'Shared green register: tree rows (IPR Praha)'
+        description:
+          cs: Stromořadí (linie vegetačních prvků) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Tree rows (the vegetation element lines) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/URK_CUR_URK_SS_STROMORADI_L/FeatureServer/0?f=json
+        title: { cs: Stromořadí (IPR Praha), en: Tree rows (IPR Praha) }
+        description:
+          cs: Stromořadí z územně analytických podkladů z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Tree rows of the planning analysis from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_ZAKLADNIPL_P/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – základní plochy zeleně (IPR Praha)
+          en: 'Shared green register: basic green areas (IPR Praha)'
+        description:
+          cs: Základní plochy zeleně ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Basic green areas of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/URK_CUR_URK_PARKY_P/FeatureServer/0?f=json
+        title: { cs: Parky (ÚAP) (IPR Praha), en: Parks (planning analysis) (IPR Praha) }
+        description:
+          cs: Parky z územně analytických podkladů z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Parks of the planning analysis from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_PRIRODNIPARKY_P/FeatureServer/0?f=json
+        title: { cs: Přírodní parky (IPR Praha), en: Nature parks (IPR Praha) }
+        description:
+          cs: Přírodní parky z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Nature parks from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_PID_LINKY_L/FeatureServer/0/query?where=1%3D1&outFields=route_id,linka,trasa,druh,odkaz,globalid&outSR=4326&f=geojson&maxAllowableOffset=0.00005&geometryPrecision=6
+        title: { cs: Linky PID (IPR Praha), en: PID lines (IPR Praha) }
+        description:
+          cs: Linky Pražské integrované dopravy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The Prague Integrated Transport lines from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://data.pid.cz/geodata/Zastavky_WGS84.json
+        title: { cs: Zastávky PID (ROPID), en: PID stops (ROPID) }
+        description:
+          cs: Zastávková stanoviště Pražské integrované dopravy s linkami a tarifními pásmy, ROPID, CC BY 4.0.
+          en: The Prague Integrated Transport stop platforms with their lines and fare zones, ROPID, CC BY 4.0.
+      - url: https://hub.arcgis.com/api/v3/datasets/62106cae6acf4507b988c0e745f55bba_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Vstupy do metra (IPR Praha), en: Metro entrances (IPR Praha) }
+        description:
+          cs: Vstupy do metra Pražské integrované dopravy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The Prague Integrated Transport metro entrances from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_PID_TARIFPASMA_P/FeatureServer/0/query?where=1%3D1&outFields=id,popis,globalid&outSR=4326&f=geojson&maxAllowableOffset=0.00005&geometryPrecision=6
+        title: { cs: Tarifní pásma PID (IPR Praha), en: PID fare zones (IPR Praha) }
+        description:
+          cs: Tarifní pásma Pražské integrované dopravy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The Prague Integrated Transport fare zones from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/8e3420ecc539468489101958689a3cd9_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Zóny placeného stání vymezené tarifem (IPR Praha)
+          en: Paid parking sections by tariff (IPR Praha)
+        description:
+          cs: Úseky zón placeného stání s tarifem, zónou a počtem stání, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The paid parking sections with their tariff, zone and spaces, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/7cbfdf9f9d87418ba62b35762cd46ca7_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Úseky parkování v zónách placeného stání (IPR Praha)
+          en: Street segments of the paid parking zones (IPR Praha)
+        description:
+          cs: Úseky ulic v zónách placeného stání s počtem stání a úsekem tarifu, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The street segments of the paid parking zones with their spaces and tariff section, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/ab4a8cd8fc284b738ca806681559d694_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Vyhrazená stání pro držitele průkazu ZTP/P (IPR Praha)
+          en: Reserved bays for ZTP/P card holders (IPR Praha)
+        description:
+          cs: Vyhrazená parkovací stání pro držitele průkazu ZTP/P bez vazby na registrační značku, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Bays reserved for ZTP/P card holders, any vehicle, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/6bceef0c12d84031a0628fab533eecc1_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Vyhrazená stání pro invalidy – sdružená (IPR Praha)
+          en: Shared reserved bays for disabled drivers (IPR Praha)
+        description:
+          cs: Sdružená vyhrazená stání pro invalidy s počtem stání, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Shared reserved bays for disabled drivers with their spaces, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/1e6b9ad51a12468193f47e2b9b1b94ed_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Vyhrazené stání pro invalidy s registrační značkou (IPR Praha)
+          en: Reserved bays for one disabled driver's plate (IPR Praha)
+        description:
+          cs: Vyhrazená stání pro invalidy vázaná na registrační značku (značka se nečte), TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Bays reserved for one disabled driver's plate (the plate is not read), TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/b62d8490d0034b55b2982386a5d1027c_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Vyhrazené stání pro zásobování (IPR Praha), en: Delivery bays (IPR Praha) }
+        description:
+          cs: Vyhrazená stání pro zásobování, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Bays reserved for deliveries, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/720a5804b9ef4c73af2d85f5605c1dc6_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Vyhrazené stání speciální (IPR Praha), en: Special reserved bays (IPR Praha) }
+        description:
+          cs: Speciální vyhrazená stání, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Special reserved bays, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/b2be4777cec1443fa1e9b4b0d385fed1_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Zákaz stání (IPR Praha), en: No parking (IPR Praha) }
+        description:
+          cs: Úseky ulic se zákazem stání, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The stretches of street where parking is prohibited, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/2b49ad1ad0bb4892bcb54acfb978456a_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Parkovací automaty (IPR Praha), en: Parking machines (IPR Praha) }
+        description:
+          cs: Parkovací automaty zón placeného stání s číslem a ulicí, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The parking machines of the paid parking zones with their number and street, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/787f7c3ce4964b519ddc39246377c31b_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Hřbitovy (IPR Praha), en: Cemeteries (IPR Praha) }
+        description:
+          cs: Hřbitovy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Cemeteries from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/927f999ff604463cbce63914de97a6d7_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Naučné stezky (IPR Praha), en: Nature trails (IPR Praha) }
+        description:
+          cs: Naučné stezky z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Nature trails from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/e01b4bb6d148496abff4f065686290ff_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – vodní plochy a toky (IPR Praha)
+          en: 'Cool spots: water areas and streams (IPR Praha)'
+        description:
+          cs: Oázy chladu – vodní plochy a toky z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: water areas and streams from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/143a034267e34baaacdf253b89f4f09e_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Volný pohyb psů – psí zóny (IPR Praha), en: Dog zones (IPR Praha) }
+        description:
+          cs: Volný pohyb psů – psí zóny z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Dog zones from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/8a85aa7854b048f8a5cf8a92070dcbbe_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Bilanční územní celky (BUC) (IPR Praha)
+          en: Planning balance units (BUC) (IPR Praha)
+        description:
+          cs: Bilanční územní celky (BUC) z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Planning balance units (BUC) from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/45063acce89d4b37afc6d51f03f3ad49_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Cyklistické trasy (IPR Praha), en: Cycle routes (IPR Praha) }
+        description:
+          cs: Cyklistické trasy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Cycle routes from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/URK_CUR_URK_VALHROBPIETMIST_B/FeatureServer/0?f=json
+        title:
+          cs: Pietní místa a válečné hroby (IPR Praha)
+          en: Memorials and war graves (IPR Praha)
+        description:
+          cs: Pietní místa a válečné hroby z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Memorials and war graves from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/FSV_CUR_KV_POSTY_B/FeatureServer/0?f=json
+        title: { cs: Pošty (IPR Praha), en: Post offices (IPR Praha) }
+        description:
+          cs: Pošty z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Post offices from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_TP_B/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – technické prvky – body (IPR Praha)
+          en: 'Shared green register: technical elements, points (IPR Praha)'
+        description:
+          cs: Technické prvky (body) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Technical elements (points) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_TP_L/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – technické prvky – linie (IPR Praha)
+          en: 'Shared green register: technical elements, lines (IPR Praha)'
+        description:
+          cs: Technické prvky (linie) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Technical elements (lines) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_TP_P/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – technické prvky – plochy (IPR Praha)
+          en: 'Shared green register: technical elements, areas (IPR Praha)'
+        description:
+          cs: Technické prvky (plochy) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Technical elements (areas) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mppraha.cz/opendata/cinnost/mesicni_zpravy_za_rok_2025.json
+        title:
+          cs: Měsíční zprávy o činnosti Městské policie hl. m. Prahy za rok 2025
+          en: Monthly activity reports of the Prague municipal police for 2025
+        description:
+          cs: Měsíční zprávy o činnosti Městské policie hl. m. Prahy za celé město, CC0.
+          en: The municipal police of Prague's monthly activity reports for the whole city, CC0.
+      - url: https://mppraha.cz/opendata/cinnost/mesicni_zpravy_za_rok_podle_utvaru_2025.json
+        title:
+          cs: Měsíční zprávy o činnosti Městské policie hl. m. Prahy za rok 2025 podle útvarů
+          en: Monthly activity reports of the Prague municipal police for 2025 by unit
+        description:
+          cs: Měsíční zprávy o činnosti Městské policie hl. m. Prahy podle útvarů, CC0.
+          en: The municipal police of Prague's monthly activity reports per unit, CC0.
+      - url: https://opendata-storage.praha.eu/UCT_cerpani_rozpoctu/cerpani_rozpoctu/Zdroje/2026/Cerpani_rozpoctu_MHMP_2026.json
+        title: { cs: Čerpání rozpočtu hl. m. Prahy 2026, en: City of Prague budget execution 2026 }
+        description:
+          cs: Čerpání rozpočtu hlavního města Prahy na rok 2026 po řádcích, bez omezení práv.
+          en: The execution of the City of Prague's 2026 budget, line by line, free of rights.
+      - url: https://opendata-storage.praha.eu/ROZ_rozpocet_finance/financni_vztahy/Zdroje/2026/Financni_vztahy_mezi_HMP_a_MC_HMP_2026.json
+        title:
+          cs: Finanční vztahy mezi HMP a MČ HMP 2026
+          en: Transfers between the City of Prague and its districts 2026
+        description:
+          cs: Převody mezi hlavním městem Prahou a městskými částmi v roce 2026, bez omezení práv.
+          en: The transfers between the City of Prague and its city districts in 2026, free of rights.
+      - url: https://opravujeme.to/api/action?limit=101
+        title: { cs: Data z aplikace opravujeme.to, en: Data of the opravujeme.to service }
+        description:
+          cs: Stavby, opravy a uzavírky na pražských ulicích ze služby opravujeme.to, bez omezení práv.
+          en: The works, repairs and closures on Prague's streets from the opravujeme.to service, free of rights.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_SPRAVA_P/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – plochy správy (IPR Praha)
+          en: 'Shared green register: areas in care (IPR Praha)'
+        description:
+          cs: Plochy správy zeleně ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The areas each green manager looks after, of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_VP_P/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – vegetační prvky – plocha (IPR Praha)
+          en: 'Shared green register: vegetation areas (IPR Praha)'
+        description:
+          cs: Plošné vegetační prvky ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The vegetation areas of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/TIV_CUR_TIV_VDS_ZAPLAVA_DVT_P/FeatureServer/0?f=json
+        title:
+          cs: Záplavové území drobných vodních toků (IPR Praha)
+          en: Flood areas of the small streams (IPR Praha)
+        description:
+          cs: Záplavová území drobných vodních toků (aktivní zóna a Q100) z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The flood areas of the small streams (active zone and Q100) from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/HM_CUR_HM_EKOLA_DEN_P/FeatureServer/0?f=json
+        title:
+          cs: Hluková mapa – den (IPR Praha)
+          en: Noise map, day (IPR Praha)
+        description:
+          cs: Výpočtová hluková mapa povrchové dopravy pro denní dobu z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The computed noise map of surface transport for the day from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/HM_CUR_HM_EKOLA_NOC_P/FeatureServer/0?f=json
+        title:
+          cs: Hluková mapa – noc (IPR Praha)
+          en: Noise map, night (IPR Praha)
+        description:
+          cs: Výpočtová hluková mapa povrchové dopravy pro noční dobu z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The computed noise map of surface transport for the night from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_TSK_ULICUSPAKOM_L/FeatureServer/0?f=json
+        title:
+          cs: Uliční úseky TSK včetně zatřídění komunikací (IPR Praha)
+          en: TSK street sections with their road class (IPR Praha)
+        description:
+          cs: Uliční úseky TSK včetně zatřídění komunikací z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha, TSK hl. m. Prahy.
+          en: The TSK street sections with their road class from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha, TSK hl. m. Prahy.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_TSK_LU_TERMINY_P/FeatureServer/0?f=json
+        title:
+          cs: Letní údržba komunikací TSK (IPR Praha)
+          en: TSK summer street cleaning dates (IPR Praha)
+        description:
+          cs: Termíny letní údržby (blokového čištění) komunikací TSK z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha, TSK hl. m. Prahy.
+          en: The TSK summer street cleaning dates from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha, TSK hl. m. Prahy.
+      - url: https://datanzis.uzis.gov.cz/data/NR-01-NRPZS/NR-01-06/Otevrena-data-NR-01-06-nrpzs-mista-poskytovani-zdravotnich-sluzeb.csv
+        title:
+          cs: Místa poskytování zdravotních služeb (NRPZS, ÚZIS ČR)
+          en: Places of health care (NRPZS, ÚZIS ČR)
+        description:
+          cs: Národní registr poskytovatelů zdravotních služeb, místa poskytování péče s polohou, ÚZIS ČR, CC BY 4.0.
+          en: The national register of health care providers, places of care with their location, ÚZIS ČR, CC BY 4.0.
+      - url: https://data.mpsv.cz/sparql/?query=PREFIX%20m%3A%20%3Chttps%3A%2F%2Fdata.mpsv.cz%2Fpojem%2F%3E%20PREFIX%20skos%3A%20%3Chttp%3A%2F%2Fwww.w3.org%2F2004%2F02%2Fskos%2Fcore%23%3E%20SELECT%20DISTINCT%20%3Fsluzba%20%3Fdruh%20%3Fnazev%20%3Fulice%20%3Fcp%20%3Fco%20%3Fkod%20%3Fweb%20WHERE%20%7B%20%3Fs%20m%3AportalId%20%3Fsluzba%20%3B%20m%3AdruhSocialniSluzby%2Fskos%3AprefLabel%20%3Fdruh%20%3B%20m%3Azarizeni%20%3Fz%20.%20FILTER%20NOT%20EXISTS%20%7B%20%3Fs%20m%3AdatumPoskytovaniDo%20%3Fkonec%20FILTER%28%3Fkonec%20%3C%3D%20NOW%28%29%29%20%7D%20%3Fz%20m%3Anazev%20%3Fnazev%20%3B%20m%3AutajenaAdresa%200%20%3B%20m%3Aadresa%20%3Fa%20.%20FILTER%20NOT%20EXISTS%20%7B%20%3Fz%20m%3AposkytujeDo%20%3Fzdo%20%7D%20%3Fa%20m%3Aobec%20%3Chttps%3A%2F%2Fdata.mpsv.cz%2Fzdroj%2FObec%2F554782%3E%20%3B%20m%3AkodAdresnihoMista%20%3Fkod%20.%20OPTIONAL%20%7B%20%3Fa%20m%3Aulice%2Fm%3Anazev%20%3Fulice%20%7D%20OPTIONAL%20%7B%20%3Fa%20m%3AcisloDomovni%20%3Fcp%20%7D%20OPTIONAL%20%7B%20%3Fa%20m%3AcisloOrientacni%20%3Fco%20%7D%20OPTIONAL%20%7B%20%3Fs%20m%3Aweby%2Fm%3Aweb%20%3Fweb%20%7D%20%7D
+        title:
+          cs: Registr poskytovatelů sociálních služeb – Praha (MPSV, SPARQL)
+          en: Register of social service providers – Prague (MPSV, SPARQL)
+        description:
+          cs: Sociální služby se zařízením v Praze z otevřených dat MPSV; poloha z adresního místa RÚIAN, © ČÚZK, CC BY 4.0.
+          en: The social services with a facility in Prague from MPSV's open data; location from the RÚIAN address point, © ČÚZK, CC BY 4.0.

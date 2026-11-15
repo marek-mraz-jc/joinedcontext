@@ -1,0 +1,15 @@
+---
+component: jc
+# The one binary (monorepo bins/jc): kaisatsu, dataroom, daiya, ekiben, Antares, shako and the
+# Portal in one process behind one mount router, the successor of the separate keycloak, ckan,
+# grafana, pipeline-runner, context-broker, gitea and portal components. Opt-in: an environment
+# turns it on by listing `jc` in its components (README.md); dev and smartcity do not.
+parts:
+  - name: server
+  # jc-functions (components/functions) beside jc: the server functions of generated Apps, on
+  # this instance's own realm and gateway. Off unless the environment turns it on.
+  - name: functions
+  # prom-label-proxy, off by default: on a cluster whose Prometheus belongs to another instance
+  # (jc-prod beside dev), the only path from this jc's daiya to it, every query pinned to this
+  # namespace's series ([daiya] prometheus_reach names it).
+  - name: metricsProxy

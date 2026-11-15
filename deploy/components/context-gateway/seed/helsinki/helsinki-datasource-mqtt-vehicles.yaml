@@ -1,0 +1,15 @@
+# The demo trackers' messages (T-4857, PL-76): the runner reads the project's own broker on its
+# internal listener, with no credential.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mqtt-vehicles
+  namespace: helsinki
+  title: { en: Tracker messages of the broker vehicles }
+spec:
+  type: mqtt
+  mqtt:
+    brokerRef: { kind: MqttBroker, name: vehicles }
+    topics: [vehicles/+/position]
+    qos: 1
+    cleanSession: true

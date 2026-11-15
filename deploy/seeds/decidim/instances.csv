@@ -1,0 +1,3 @@
+name,base_url,locale,scope,locality,provider,read_on,version,organization
+tvormespolu,https://tvormespolu.banskabystrica.sk,sk,/SK/BB/banska_bystrica,Banská Bystrica,"Mesto Banská Bystrica, tvormespolu.banskabystrica.sk",2026-10-21,0.29.5,banskabystrica
+participacia,https://participacia.dev.joinedcontext.com,sk,/SK/participacia,Slovensko,Platforma joinedcontext,2026-11-02,0.32.2,

@@ -1,0 +1,20 @@
+# Checklist:
+# - [x] Minimal Resources -> one build at a time; the limit is what a Vite build of the template needs
+# - [x] Minimal storage -> the work directory is /tmp, wiped per job
+# - [x] 1 Replica -> the replica count is the only concurrency setting (ADR-N-028 §3.3)
+
+replicaCount: 1
+
+{{- $this := index .Values "gitea-runner" (.Release.Name | trimPrefix "gitea-runner-") }}
+{{- if hasKey $this "resources" }}
+resources:
+  {{- $this.resources | toYaml | nindent 2 }}
+{{- else }}
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: '2'
+    memory: 3Gi
+{{- end }}

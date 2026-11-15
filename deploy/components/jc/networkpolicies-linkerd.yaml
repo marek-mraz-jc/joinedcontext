@@ -1,0 +1,169 @@
+---
+# Meshed traffic reaches a pod on its Linkerd inbound proxy (4143), so every rule of
+# networkpolicies.yaml has its half here (T-5314: caller egress and callee ingress on 4143), and
+# jc, which declares an egress policy, reaches the control plane (8080, 8086, 8090).
+jc-server-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - protocol: TCP
+          port: 4143
+        - protocol: TCP
+          port: 4190
+        - protocol: TCP
+          port: 4191
+postgres-linkerd-from-jc:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+              app.kubernetes.io/instance: jc-server
+          componentNamespace: jc
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-retain
+          componentNamespace: jc
+      ports:
+        - protocol: TCP
+          port: 4143
+        - protocol: TCP
+          port: 4190
+        - protocol: TCP
+          port: 4191
+jc-retain-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: jc-retain
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+jc-server-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-functions
+      ports:
+        - protocol: TCP
+          port: 4143
+apisix-linkerd-egress-to-jc:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+              app.kubernetes.io/instance: jc-server
+          componentNamespace: jc
+      ports:
+        - protocol: TCP
+          port: 4143
+jc-functions-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: jc-functions
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+              app.kubernetes.io/instance: jc-server
+      ports:
+        - protocol: TCP
+          port: 4143
+        - protocol: TCP
+          port: 4190
+        - protocol: TCP
+          port: 4191
+jc-functions-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: jc-functions
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090

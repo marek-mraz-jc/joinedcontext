@@ -1,0 +1,17 @@
+# One TrafficSignalJunction per record of `hel-warning-lights`, written into the city space (T-5286).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: warning-lights
+  namespace: helsinki
+  title: { en: Crossings with warning lights }
+spec:
+  class: auto
+  # A crossing gets or loses its warning lights a few times a year; weekly is enough.
+  period: 168h
+  schedule: '0 5 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-warning-lights }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: TrafficSignalJunction, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

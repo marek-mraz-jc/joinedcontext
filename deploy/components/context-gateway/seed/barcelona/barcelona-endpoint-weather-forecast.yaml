@@ -1,0 +1,54 @@
+# Meteocat's forecast for Barcelonès as one public dataset (T-5413): each day ahead as a Smart Data
+# Models WeatherForecast, refreshed every half hour from Open Data BCN, with 30 days of issues.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: weather-forecast
+  namespace: barcelona
+  title:
+    ca: Predicció meteorològica del Barcelonès
+    es: Predicción meteorológica del Barcelonès
+    en: Barcelonès weather forecast
+  description:
+    ca: "La predicció del Servei Meteorològic de Catalunya per al Barcelonès, un registre per dia: temperatura màxima i mínima i el cel del matí i de la tarda, amb 30 dies d'història. Font: Open Data BCN, CC BY 4.0."
+    es: 'La predicción del Servicio Meteorológico de Cataluña para el Barcelonès, un registro por día: temperatura máxima y mínima y el cielo de la mañana y de la tarde, con 30 días de historia. Fuente: Open Data BCN, CC BY 4.0.'
+    en: "The Catalan weather service's forecast for Barcelonès, one record per day: highest and lowest temperature and the morning and afternoon sky, with 30 days of history. Source: Open Data BCN, CC BY 4.0."
+spec:
+  contextSpaceRef: barcelona
+  slug: c7egbq4bfj6ab752icvboemettyguj2m
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-weather-forecast
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, dades del Servei Meteorològic de Catalunya, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, datos del Servicio Meteorológico de Cataluña, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, data of the Catalan weather service (Meteocat), CC BY 4.0'
+    themes: [ENVI]
+    keywords:
+      ca: [meteorologia, predicció, temperatura]
+      es: [meteorología, predicción, temperatura]
+      en: [weather, forecast, temperature]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: CONT
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/prediccio-meteorologica-del-barcelones
+        title: { ca: Predicció meteorològica del Barcelonès, en: Weather forecast for Barcelonès }
+        description:
+          ca: La predicció comarcal de Meteocat, CC BY 4.0.
+          en: Meteocat's comarcal forecast, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: weather-forecast }

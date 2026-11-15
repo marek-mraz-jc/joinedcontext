@@ -1,0 +1,37 @@
+# The mapping of the organizacie pipeline (PL-03): one PublicOrganization per organisation the
+# region founded (schools, social-care homes, culture, offices), keyed by its IČO. The register's
+# category is mapped to the model's closed list; a row in a category the list does not know is
+# left out rather than written with a value the model refuses.
+
+pipeline:
+  processors:
+    - mapping: |
+        map category {
+          root = match this {
+            "školy" => "school",
+            "sociálne" => "socialCare",
+            "kultúra" => "culture",
+            "úrad" => "office",
+            _ => null,
+          }
+        }
+        root = this.features.or([]).map_each(f -> f.properties.assign({ "_geometry": f.geometry.or(null) })).filter(p -> p."IČO".or("").string().re_match("^[0-9]{8}$") && p."kategória".or("").apply("category") != null && p."Oficiálny_názov".or("").trim() != "").map_each(p -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("PublicOrganization", "bbsk.sk", env("JC_SPACE"), p."IČO"),
+          "type": "PublicOrganization",
+          "name": { "type": "Property", "value": p."Oficiálny_názov".trim() },
+          # CPSV-AP's PublicOrganization requires both (T-4329): the official name, and the place.
+          "preferredLabel": { "type": "Property", "value": p."Oficiálny_názov".trim() },
+          "spatial": if p.obec_nazov.or("").trim() == "" { null } else { { "type": "Property", "value": [p.obec_nazov.trim()] } },
+          "alternateName": if p."Zaužívaný_názov".or("").trim() == "" || p."Zaužívaný_názov".trim() == p."Oficiálny_názov".trim() { null } else { { "type": "Property", "value": p."Zaužívaný_názov".trim() } },
+          "legalId": { "type": "Property", "value": p."IČO" },
+          "organizationCategory": { "type": "Property", "value": p."kategória".apply("category") },
+          "address": if p.adresa.or("").trim() == "" { null } else { { "type": "Property", "value": {
+            "streetAddress": p.adresa.trim(),
+            "addressLocality": p.obec_nazov.or("").trim(),
+            "addressCountry": "SK"
+          }.filter(f -> f.value != "") } },
+          "refMunicipality": if p.obec_NUTS.or("").string().re_match("^SK032[1-9A-D][0-9]{6}$") { { "type": "Relationship", "object": "urn:ngsi-ld:%v:%v:%v:%v".format("AdministrativeArea", "bbsk.sk", env("JC_SPACE"), p.obec_NUTS) } } else { null },
+          "location": if p._geometry == null { null } else { { "type": "GeoProperty", "value": p._geometry } },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj, opendata.bbsk.sk (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata.bbsk.sk/" }
+        }.filter(entry -> entry.value != null))

@@ -1,0 +1,24 @@
+# One Article per row of "Aktuality" (T-4255); the city's news (WordPress).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-aktuality
+  namespace: banskabystrica
+  title:
+    sk: Aktuality
+    en: Aktuality
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 7 1 * * *
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-aktuality
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-otvorene-data:banskabystrica-otvorene-data
+  output:
+    type: Article
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

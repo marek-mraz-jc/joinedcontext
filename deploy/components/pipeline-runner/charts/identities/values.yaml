@@ -1,0 +1,18 @@
+# The namespace of the pipelines' own ServiceAccounts, which this chart creates. Never an
+# environment's instance namespace: with `singleNamespace` that one holds every workload.
+namespace: ''
+# The token service's ServiceAccount, which may mint a token of any ServiceAccount there and of
+# none anywhere else.
+tokenService:
+  serviceAccount: pipeline-tokens
+  namespace: ''
+# The Portal, whose reconciler creates and deletes the pipelines' ServiceAccounts there. An
+# empty namespace grants it nothing (an environment without the Portal).
+portal:
+  serviceAccount: portal
+  namespace: ''
+# What the namespace holds and the names of the two Roles, so the same chart serves the wasm
+# Apps' job principals (AP-159, T-3372) with names of their own.
+holds: pipeline-serviceaccounts
+tokenRole: pipeline-tokens
+portalRole: portal-pipeline-accounts

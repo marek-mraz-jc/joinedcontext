@@ -1,0 +1,44 @@
+# Current and capital expenditure of Bratislava by programme: one public dataset of the hub (T-5676), item 0cd89fe509b649dc810880504c798b9a, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vydavky-programy
+  namespace: bratislava
+  title:
+    sk: Bežné a kapitálové výdavky mesta Bratislava podľa programovej štruktúry
+    en: Current and capital expenditure of Bratislava by programme
+  description:
+    sk: 'Ukazovatele tabuľky „Bežné a kapitálové výdavky mesta Bratislava podľa programovej štruktúry“ z data.bratislava.sk, jeden na údaj, členenie a obdobie, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table "Current and capital expenditure of Bratislava by programme", one per figure, breakdown and period, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: nzso2qfofijafxyvif43p3r4dtftyet6
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vydavky-programy
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [GOVE]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/0cd89fe509b649dc810880504c798b9a
+        title:
+          sk: Bežné a kapitálové výdavky mesta Bratislava podľa programovej štruktúry
+          en: Current and capital expenditure of Bratislava by programme
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Bežné a kapitálové výdavky mesta Bratislava podľa programovej štruktúry. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Current and capital expenditure of Bratislava by programme. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

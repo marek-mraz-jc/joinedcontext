@@ -1,0 +1,241 @@
+/* The application's own layout, over the token variables the SDK sets from design-tokens.json. The
+   screens are laid out by the SDK's primitives (Page, Grid, Card, Split); what is here is only what
+   they do not cover (T-3328). */
+
+:root {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+body {
+  background: var(--jc-color-surface, #ffffff);
+  color: var(--jc-color-ink, #1a1a1a);
+}
+
+.app-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--jc-space-3, 0.75rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.app-summary li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+  padding: var(--jc-space-3, 0.75rem) var(--jc-space-4, 1rem);
+  background: var(--jc-color-card, #f8fafc);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-md, 6px);
+  min-width: 0;
+}
+.app-summary strong {
+  font-size: 2rem;
+  line-height: 1.1;
+}
+.app-summary-label,
+.app-updated {
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+}
+.app-updated {
+  margin: 0;
+}
+
+.app-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--jc-space-3, 0.75rem);
+}
+.app-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+  min-width: 0;
+  max-width: 100%;
+}
+.app-filters input,
+.app-filters select {
+  font: inherit;
+  font-size: var(--jc-font-size-md, 0.875rem);
+  padding: var(--jc-space-2, 0.5rem);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-surface, #ffffff);
+  color: var(--jc-color-ink, #1a1a1a);
+  max-width: 100%;
+}
+
+/* A station's name opens it in the entity panel: a button that reads as the name. */
+.jc-shell .app-open {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--jc-color-accent, #0000bf);
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.app-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem) var(--jc-space-4, 1rem);
+  margin: var(--jc-space-2, 0.5rem) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+.app-legend li,
+.app-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jc-space-1, 0.25rem);
+}
+.app-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  flex: none;
+}
+
+.app-stops {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-2, 0.5rem);
+  margin: 0;
+  padding-left: var(--jc-space-6, 1.5rem);
+  max-height: 32rem;
+  overflow-y: auto;
+}
+.app-stop {
+  padding: var(--jc-space-2, 0.5rem) 0;
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+}
+.app-stop > div {
+  min-width: 0;
+}
+.app-stop p {
+  margin: var(--jc-space-1, 0.25rem) 0;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+}
+.app-stop button,
+.app-choice {
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+/* The text stays in the ink colour for contrast; the action's colour is the border's. */
+.app-chip {
+  display: inline-block;
+  padding: 0 var(--jc-space-2, 0.5rem);
+  border-radius: 999px;
+  border: 2px solid var(--jc-color-line, #e2e8f0);
+  color: var(--jc-color-ink, #1a1a1a);
+  font-weight: 600;
+}
+.app-chip[data-action="pick"] {
+  border-color: var(--jc-color-accent, #0000bf);
+}
+.app-chip[data-action="drop"] {
+  border-color: var(--jc-color-success, #059669);
+}
+.app-choice-now {
+  display: block;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+}
+
+.app-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* The saved plans (T-3346): one row per plan, its actions wrapping under it on a phone. */
+.app-plans {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-2, 0.5rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.app-plan {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--jc-space-2, 0.5rem);
+  padding: var(--jc-space-2, 0.5rem) 0;
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+}
+.app-plan p {
+  margin: var(--jc-space-1, 0.25rem) 0 0;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+}
+.app-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-1, 0.25rem);
+}
+.app-plan-actions .jc-button {
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+.app-danger {
+  border-color: var(--jc-color-danger, #b91c1c);
+}
+.app-error {
+  color: var(--jc-color-danger, #b91c1c);
+  font-weight: 600;
+}
+
+/* Roles and edits (T-3826): the reader's role beside their name, the levels form, the history. */
+.app-role {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--jc-color-border, #cbd5e1);
+  border-radius: 999px;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+
+.app-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: end;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.app-levels label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.app-levels input {
+  width: 6rem;
+}
+
+.app-history {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.app-history th,
+.app-history td {
+  padding: 0.375rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--jc-color-border, #e2e8f0);
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,160 @@
+# The mapping of the od-vyvoj-emisii-v-bbk pipeline, generated from the T-4254 mapping: one KeyPerformanceIndicator per row of
+# "Vývoj emisií v BBK" (https://opendata.dev.joinedcontext.com/dataset/bbsk-vyvoj-emisii-v-bbk-c8d1ed). Do not edit: change the mapping and run scripts/open-data/generate.py.
+
+pipeline:
+  processors:
+    # A layer that answers an error or no feature list is the service failing, so the run fails
+    # where it can be seen rather than writing nothing.
+    - mapping: |
+        root = if this.error.or(null) != null || this.features.or(null) == null { throw("the layer answered no features: %v".format(this.error.message.or(""))) } else { this }
+    # Page 0 as it came. When the layer says there is more, it is asked how many rows it holds and
+    # every further page of them is read (T-5288), one page at a time: the runner fetches, maps and
+    # writes a page before the next, so a layer of any size runs in a page's memory (jc-ekiben-paging).
+    - branch:
+        request_map: |
+          root = if this.properties.exceededTransferLimit.or(false) { "" } else { deleted() }
+        processors:
+          - http:
+              url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/JF_to_Okresy_BBK_hranice_view/FeatureServer/0/query?where=1%3D1&returnCountOnly=true&f=json"
+              verb: GET
+              headers:
+                Accept: application/json
+              timeout: 60s
+              retries: 2
+              rate_limit: pipeline_egress
+        result_map: |
+          root.rowCount = this.count.or(this.error.message.or("no count"))
+    - mapping: |
+        let rows = this.rowCount.or(null)
+        root = if !this.properties.exceededTransferLimit.or(false) { [this] } else if errored() || $rows.type() != "number" { [{ "problem": "the layer did not say how many rows it holds: %v".format(error().or($rows)) }] } else if this.features.length() < [1000, $rows].min() { [{ "problem": "the layer answered %v rows where 1000 were asked, so its pages would skip rows".format(this.features.length()) }] } else if $rows <= 1000 { [this] } else { [this].concat(range(1, (($rows + 999) / 1000).floor()).map_each(p -> { "offset": p * 1000, "rowCount": $rows })) }
+    - unarchive:
+        format: json_array
+    # Each page its own batch: fetched, mapped and written before the next is read.
+    - split:
+        size: 1
+    - switch:
+        - check: this.offset.or(null) != null
+          processors:
+            - mapping: |
+                meta offset = this.offset
+                meta rows = this.rowCount
+                root = ""
+            - http:
+                url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/JF_to_Okresy_BBK_hranice_view/FeatureServer/0/query?where=1%3D1&outFields=DOW,FACC,IDN3,NM3,IDN2,NM2,VYMERA,NUTS1,NUTS1_CODE,NUTS2,NUTS2_CODE,NUTS3,NUTS3_CODE,LAU1,LAU1_CODE,K%C3%B3d_elementu,nuts,k%C3%B3d_okresu,rok,ukazovatel,K%C3%B3d_elementu_3,chemick%C3%A1_zl%C3%BA%C4%8Denina,Hodnota&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=${! @offset }&resultRecordCount=1000&orderByFields=ObjectId"
+                verb: GET
+                headers:
+                  Accept: application/geo+json
+                timeout: 60s
+                retries: 2
+                rate_limit: pipeline_egress
+            - mapping: |
+                root = if errored() { throw("the page at %v did not come: %v".format(@offset, error())) } else if this.features.or(null) == null { { "problem": "the page at %v answered no features: %v".format(@offset, this.error.message.or("")) } } else if this.features.length() < [1000, @rows - @offset].min() { { "problem": "the page at %v answered %v rows where %v were due".format(@offset, this.features.length(), [1000, @rows - @offset].min()) } } else { this }
+    # A refusal above fails the run and writes none of its page's rows; earlier pages stay written
+    # and the failed run deletes nothing (sourceDeletes waits for a finished run).
+    - mapping: |
+        root = if this.problem.or(null) != null { throw(this.problem) } else { this }
+    - mapping: |
+        root = this.features.or([])
+    - unarchive:
+        format: json_array
+    - mapping: |
+        # Slovak notation: a space (or a no-break one) between thousands, a comma before the decimals, so
+        # "10 700,01" is 10700.01 (T-4324); a text without a comma keeps its dot, "1.5" is one and a half.
+        map number {
+          let s = this.string().re_replace_all("[ 	  ]", "")
+          let t = if $s.contains(",") { $s.replace_all(".", "").replace_all(",", ".") } else { $s }
+          root = $t.number().catch(null)
+        }
+        map integer {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v.round().int64() } }
+        }
+        map float {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        map string {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": $v } }
+        }
+        map string_list {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": [$v] } }
+        }
+        map uri {
+          root = this.apply("string")
+        }
+        # An Esri date is milliseconds since the epoch; a WordPress one is text.
+        # `match` rebinds `this` to what it matches, so the value is named first.
+        map datetime {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02T15:04:05Z", "UTC").catch(null),
+            "string" => $x.ts_parse("2006-01-02T15:04:05").ts_format("2006-01-02T15:04:05Z", "UTC").catch($x.ts_format("2006-01-02T15:04:05Z", "UTC").catch(null)),
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        # The instant a row was observed, from its `observedAt` column: a bare year is its first instant,
+        # anything else reads as a datetime (T-4288).
+        map observed {
+          let x = this
+          root = if $x == null { null } else if $x.string().re_match("^[0-9]{4}$") { $x.string() + "-01-01T00:00:00Z" } else {
+            $x.apply("datetime").value.catch(null)
+          }
+        }
+        # A measured Property with the instant it holds, so SensorThings charts it (T-4288).
+        map stamped {
+          root = if this.p == null || this.at == null { this.p } else { this.p.merge({ "observedAt": this.at }) }
+        }
+        map date {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02", "UTC").catch(null),
+            # ISO, or the Slovak "29.08.2026" and "1. 3. 2024".
+            "string" => if $x.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}") { $x.slice(0, 10) } else {
+              $x.re_replace_all("[.] +", ".").trim().ts_parse("2.1.2006").ts_format("2006-01-02", "UTC").catch(null)
+            },
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        let local = "vyvoj-emisii-v-bbk-" + {"DOW": this.properties."DOW", "FACC": this.properties."FACC", "IDN3": this.properties."IDN3", "NM3": this.properties."NM3", "IDN2": this.properties."IDN2", "NM2": this.properties."NM2", "VYMERA": this.properties."VYMERA", "NUTS1": this.properties."NUTS1", "NUTS1_CODE": this.properties."NUTS1_CODE", "NUTS2": this.properties."NUTS2", "NUTS2_CODE": this.properties."NUTS2_CODE", "NUTS3": this.properties."NUTS3", "NUTS3_CODE": this.properties."NUTS3_CODE", "LAU1": this.properties."LAU1", "LAU1_CODE": this.properties."LAU1_CODE", "Kód_elementu": this.properties."Kód_elementu", "nuts": this.properties."nuts", "kód_okresu": this.properties."kód_okresu", "rok": this.properties."rok", "ukazovatel": this.properties."ukazovatel", "Kód_elementu_3": this.properties."Kód_elementu_3", "chemická_zlúčenina": this.properties."chemická_zlúčenina", "Hodnota": this.properties."Hodnota"}.format_json(no_indent: true).hash("sha256").encode("hex").slice(0, 24).re_replace_all("[^A-Za-z0-9._~-]", "-").slice(0, 80)
+        let at = this.properties."rok".apply("observed")
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", "bbsk.sk", env("JC_SPACE"), $local),
+          "type": "KeyPerformanceIndicator",
+          "dOW": this.properties."DOW".apply("datetime"),
+          "fACC": this.properties."FACC".apply("string"),
+          "iDN3": {"p": this.properties."IDN3".apply("integer"), "at": $at}.apply("stamped"),
+          "nM3": this.properties."NM3".apply("string"),
+          "iDN2": {"p": this.properties."IDN2".apply("integer"), "at": $at}.apply("stamped"),
+          "nM2": this.properties."NM2".apply("string"),
+          "vYMERA": {"p": this.properties."VYMERA".apply("float"), "at": $at}.apply("stamped"),
+          "nUTS1": this.properties."NUTS1".apply("string"),
+          "nUTS1CODE": this.properties."NUTS1_CODE".apply("string"),
+          "nUTS2": this.properties."NUTS2".apply("string"),
+          "nUTS2CODE": this.properties."NUTS2_CODE".apply("string"),
+          "nUTS3": this.properties."NUTS3".apply("string"),
+          "nUTS3CODE": this.properties."NUTS3_CODE".apply("string"),
+          "lAU1": this.properties."LAU1".apply("string"),
+          "lAU1CODE": this.properties."LAU1_CODE".apply("string"),
+          "kodElementu": this.properties."Kód_elementu".apply("string"),
+          "nuts": this.properties."nuts".apply("string"),
+          "kodOkresu": this.properties."kód_okresu".apply("string"),
+          "rok": this.properties."rok".apply("string"),
+          "ukazovatel": this.properties."ukazovatel".apply("string"),
+          "kodElementu3": {"p": this.properties."Kód_elementu_3".apply("integer"), "at": $at}.apply("stamped"),
+          "chemickaZlucenina": this.properties."chemická_zlúčenina".apply("string"),
+          "hodnota": {"p": this.properties."Hodnota".apply("float"), "at": $at}.apply("stamped"),
+          "location": if this.geometry.or(null) == null { null } else { { "type": "GeoProperty", "value": this.geometry } },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/JF_to_Okresy_BBK_hranice_view/FeatureServer/0/query?where=1%3D1&outFields=DOW,FACC,IDN3,NM3,IDN2,NM2,VYMERA,NUTS1,NUTS1_CODE,NUTS2,NUTS2_CODE,NUTS3,NUTS3_CODE,LAU1,LAU1_CODE,K%C3%B3d_elementu,nuts,k%C3%B3d_okresu,rok,ukazovatel,K%C3%B3d_elementu_3,chemick%C3%A1_zl%C3%BA%C4%8Denina,Hodnota&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=0&resultRecordCount=1000&orderByFields=ObjectId" },
+          "isPartOf": { "type": "Property", "value": "https://opendata.dev.joinedcontext.com/dataset/bbsk-vyvoj-emisii-v-bbk-c8d1ed" }
+        }.filter(entry -> entry.value != null)
+    # One request per run's batch rather than one per row.
+    - split:
+        size: 1000
+        byte_size: 2097152
+    - archive:
+        format: json_array

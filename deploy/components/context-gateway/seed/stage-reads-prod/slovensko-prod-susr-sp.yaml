@@ -1,0 +1,16 @@
+# Stage reads prod's public Endpoint susr-sp for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-susr-sp
+  namespace: slovensko
+  title: Prod susr-sp
+spec:
+  contextSpaceRef: susr-sp
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/l7q5rbcjcqwn6xyo5q5gocjphsfdfib2
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

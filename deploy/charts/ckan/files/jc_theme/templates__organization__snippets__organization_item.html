@@ -1,0 +1,14 @@
+{% ckan_extends %}
+{# A publisher without a picture or a description in CKAN shows the chart's badge and words. #}
+{% block image %}
+  {% set jc = h.jc_org(organization) %}
+  <img src="{{ jc.image or h.url_for_static('/base/images/placeholder-organization.png') }}" alt="" class="img-fluid media-image">
+{% endblock %}
+{% block description %}
+  {% set jc = h.jc_org(organization) %}
+  {% if jc.description %}
+    <p class="media-description">{{ h.markdown_extract(jc.description, extract_length=80) }}</p>
+  {% endif %}
+{% endblock %}
+{# A visitor reads what a publisher publishes, not how many CKAN accounts it has (T-4220). #}
+{% block members %}{% endblock %}

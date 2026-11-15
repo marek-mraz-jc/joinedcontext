@@ -1,0 +1,20 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Minimal Resources
+# - [x] Minimal storage -> none, stateless
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    # T-5113: kubectl top 2026-10-21 21:55-22:25Z: peak 183Mi on dev, 90Mi on prod, idle
+    # (T-4473 saw 725Mi); the limit leaves a generate run its room. T-5282: 266Mi on dev
+    # 2026-10-22 20:40-21:28Z, + 20 %. T-5897: dev working set 2026-10-25..28 (Prometheus, 3 days, supervisor): 530Mi, a saw-tooth
+    # of 260-950Mi per generate job, + 20 %.
+    memory: 640Mi
+  limits:
+    cpu: '1'
+    memory: 1Gi

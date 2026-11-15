@@ -1,0 +1,17 @@
+# One WaterQualityObserved per record of `fvh-uiras-beaches`, written into the city space (T-2787).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: beach-water
+  namespace: helsinki
+  title: { en: Beach water temperature }
+spec:
+  class: auto
+  # The sensors report about every half hour and the file is rebuilt hourly; twice an hour catches each reading within half an hour.
+  period: 30m
+  schedule: '*/30 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: fvh-uiras-beaches }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: WaterQualityObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

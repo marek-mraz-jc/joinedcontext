@@ -1,0 +1,19 @@
+# The cadastre of Slovakia's parcels through the INSPIRE Cadastral Parcels service of ÚGKK SR
+# (OGC API Features, inspirews.skgeodesy.sk), CC BY 4.0 ("AccessConstraints: CC BY Creative
+# Commons Attribution 4.0", "Fees: no conditions apply", the service's GetCapabilities). The
+# pages are asked for by the mapping (pipeline-kataster-bento.yaml); this source only starts one
+# run per schedule tick. No key.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: kataster-inspire
+  namespace: banskabystrica
+  title:
+    sk: Kataster nehnuteľností SR (INSPIRE, ÚGKK SR)
+    en: Cadastre of Slovakia (INSPIRE, ÚGKK SR)
+spec:
+  type: generate
+  input:
+    mapping: root = ""
+    count: 1
+    interval: ''

@@ -1,0 +1,115 @@
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /healthz
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> `create` on serviceaccounts/token in the pipelines' namespace alone
+# - [x] Named ports -> 4180
+# - [ ] Ingress with TLS -> not applicable, reached from the runner alone, through the mesh
+
+# The pipelines' token service (PL-19, T-1508, joinedcontext-docs Architecture/12 §3): a stream
+# names its pipeline as the OAuth 2 client id, the service mints a 600 s token of that
+# pipeline's own Kubernetes ServiceAccount and presents it to Keycloak as the client assertion.
+fullnameOverride: pipeline-tokens
+nameOverride: pipeline-runner-tokens
+
+{{- $images := index .Values.images "pipeline-runner" "tokens" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+# The image's entrypoint is the gateway; the token service is the binary beside it.
+command:
+  - /usr/local/bin/jc-token-sidecar
+
+containerPort: 4180
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 4180
+  targetPort: 4180
+  name: http
+
+probes:
+  readiness:
+    path: /healthz
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    periodSeconds: 20
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 5
+
+env:
+  JC_SIDECAR_LISTEN: "0.0.0.0:4180"
+  # The realm's token endpoint and issuer on the public host, as the runner reaches them (its
+  # own `JC_TOKEN_URL`), so the token's `iss` is the one the gateway verifies.
+  JC_TOKEN_URL: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/token"
+  JC_TOKEN_AUDIENCE: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}"
+  # Where the pipelines' ServiceAccounts are, the only namespace it may mint in.
+  JC_PIPELINE_NAMESPACE: {{ index .Values "pipeline-runner" "identities" "pipelineNamespace" | quote }}
+
+# Its own token, at the path the binary reads, from a projected volume rather than the
+# automount, so the API server audience and a short life are explicit.
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+extraVolumes:
+  - name: kube-api-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            expirationSeconds: 3600
+        - configMap:
+            name: kube-root-ca.crt
+            items:
+              - key: ca.crt
+                path: ca.crt
+extraVolumeMounts:
+  - name: kube-api-token
+    mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+    readOnly: true
+
+# justify-api-token-access: the projected API token above is how it calls TokenRequest.
+podAnnotations:
+  security.joinedcontext.com/api-access-reason: >-
+    Mints a short TokenRequest token for the pipelines' own ServiceAccounts (create on
+    serviceaccounts/token in that namespace alone) to present to Keycloak as a client assertion.
+
+# No grant in its own namespace: its one grant, `create` on serviceaccounts/token, is in the
+# namespace of the pipelines' ServiceAccounts alone (charts/identities, part `identities`).
+rbac:
+  rules: []
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+
+# Only the runner may ask for a pipeline's token.
+meshAuthorization:
+  port: 4180
+  clients:
+    - serviceAccount: pipeline-runner
+      namespace: {{ index .Values "pipeline-runner" "runner" "namespace" }}

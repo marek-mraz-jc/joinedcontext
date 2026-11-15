@@ -1,0 +1,62 @@
+# The mapping of the liipi-utilizations pipeline (PL-03, T-3894): LIIPI's free spaces become
+# availableSpotNumber, observed at LIIPI's own timestamp, on the OffStreetParking sites the space
+# holds. LIIPI answers for the whole country, so the pipeline asks the space which of the
+# reporting facilities it holds and writes only those: an upsert of any other would create a
+# site with free spaces and nothing else. A failed ask writes nothing this round.
+#
+# A facility's rows are summed over its kinds of space (park and ride use only). A row more than a
+# day older than the newest of the document is a counter that stopped reporting (one from May 2024
+# on 2026-10-12) and is left out, so a stale count never reads as live.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = if content().length() > 1048576 { throw("the utilizations answer is %d bytes, more than the 1 MiB read".format(content().length())) } else { this }
+    - mutation: root = if errored() { deleted() }
+
+    - mapping: |
+        let urn = "urn:ngsi-ld:OffStreetParking:%v:%v:liipi-%v"
+        let rows = (if this.type() == "array" { this } else { [] }).filter(r -> r.facilityId.type() == "number" && r.spacesAvailable.type() == "number" && r.usage.or("") == "PARK_AND_RIDE" && r.timestamp.type() == "string").map_each(r -> r.assign({ "t": r.timestamp.ts_parse("2006-01-02T15:04:05.999Z07:00").ts_unix() }))
+        let newest = $rows.fold(0, r -> if r.value.t > r.tally { r.value.t } else { r.tally })
+        let live = $rows.filter(r -> r.t >= $newest - 86400)
+        root.sites = $live.map_each(r -> r.facilityId).unique().map_each(id -> {
+            "id": $urn.format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), id.string()),
+            "free": $live.filter(r -> r.facilityId == id).fold(0, r -> r.tally + r.value.spacesAvailable),
+            "at": $live.filter(r -> r.facilityId == id).sort_by(r -> r.t).index(-1).t.ts_format("2006-01-02T15:04:05Z", "UTC")
+          })
+
+    - branch:
+        request_map: |
+          root = if this.sites.length() == 0 { deleted() } else { {
+            "type": "Query",
+            "entities": this.sites.map_each(s -> { "id": s.id, "type": "OffStreetParking" })
+          } }
+        processors:
+          - try:
+              - http:
+                  url: ${JC_GATEWAY_URL}/api/endpoint/si6epqkx364lprho5uaigutk274r5grb/ngsi-ld/v1/entityOperations/query?limit=1000&options=keyValues
+                  verb: POST
+                  headers: { Content-Type: application/json }
+                  oauth2:
+                    enabled: true
+                    client_key: ${JC_CLIENT_ID}
+                    client_secret: ${JC_CLIENT_SECRET}
+                    token_url: ${JC_TOKEN_URL}
+                  timeout: 20s
+                  rate_limit: pipeline_egress
+              - mapping: 'root = { "held": this.map_each(e -> e.id) }'
+          - catch:
+              - mapping: 'root = { "failed": true }'
+        result_map: root.known = this
+
+    - mapping: |
+        let held = this.known.held.or([])
+        root = if this.known.failed.or(false) { deleted() } else {
+          this.sites.filter(s -> $held.contains(s.id)).map_each(s -> {
+            "id": s.id,
+            "type": "OffStreetParking",
+            "availableSpotNumber": { "type": "Property", "value": s.free, "observedAt": s.at }
+          })
+        }
+
+    - unarchive: { format: json_array }

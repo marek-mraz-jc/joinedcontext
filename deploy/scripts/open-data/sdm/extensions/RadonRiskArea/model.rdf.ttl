@@ -1,0 +1,408 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:boolean a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"boolean\"." ;
+    skos:exactMatch "schema:Boolean"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "Bool" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Boolean"^^xsd:anyURI ;
+    linkml:description "A binary (true or false) value" ;
+    linkml:repr "bool" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#boolean"^^xsd:anyURI .
+
+jc:curie a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://www.w3.org/TR/curie/" ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"curie\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:note "in RDF serializations this MUST be expanded to a URI",
+        "in non-RDF serializations MAY be serialized as the compact representation" ;
+    linkml:base "Curie" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Curie"^^xsd:anyURI ;
+    linkml:description "a compact URI" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:dataProvider a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:mappingRelation "https://smartdatamodels.org/dataProvider"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/dataProvider"^^xsd:anyURI ;
+    linkml:description "Who published the row, with the credit its licence asks for." ;
+    linkml:domain_of jc:RadonRiskArea ;
+    linkml:owner jc:RadonRiskArea ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://smartdatamodels.org/dataProvider"^^xsd:anyURI .
+
+jc:date a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"date\".",
+        "URI is dateTime because OWL reasoners don't work with straight date or time" ;
+    skos:exactMatch "schema:Date"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "XSDDate" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Date"^^xsd:anyURI ;
+    linkml:description "a date (year, month and day) in an idealized calendar" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#date"^^xsd:anyURI .
+
+jc:date_or_datetime a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"date_or_datetime\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/DateOrDatetime"^^xsd:anyURI ;
+    linkml:description "Either a date or a datetime" ;
+    linkml:repr "str" ;
+    linkml:uri "https://w3id.org/linkml/DateOrDatetime"^^xsd:anyURI .
+
+jc:decimal a linkml:TypeDefinition ;
+    skos:broadMatch "schema:Number"^^xsd:anyURI ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"decimal\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "Decimal" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Decimal"^^xsd:anyURI ;
+    linkml:description "A real number with arbitrary precision that conforms to the xsd:decimal specification" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#decimal"^^xsd:anyURI .
+
+jc:double a linkml:TypeDefinition ;
+    skos:closeMatch "schema:Float"^^xsd:anyURI ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"double\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "float" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Double"^^xsd:anyURI ;
+    linkml:description "A real number that conforms to the xsd:double specification" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#double"^^xsd:anyURI .
+
+jc:float a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"float\"." ;
+    skos:exactMatch "schema:Float"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "float" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Float"^^xsd:anyURI ;
+    linkml:description "A real number that conforms to the xsd:float specification" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#float"^^xsd:anyURI .
+
+jc:integer a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"integer\"." ;
+    skos:exactMatch "schema:Integer"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "int" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Integer"^^xsd:anyURI ;
+    linkml:description "An integer" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#integer"^^xsd:anyURI .
+
+jc:jsonpath a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://www.ietf.org/archive/id/draft-goessner-dispatch-jsonpath-00.html" ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"jsonpath\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Jsonpath"^^xsd:anyURI ;
+    linkml:description "A string encoding a JSON Path. The value of the string MUST conform to JSON Point syntax and SHOULD dereference to zero or more valid objects within the current instance document when encoded in tree form." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:jsonpointer a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://datatracker.ietf.org/doc/html/rfc6901" ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"jsonpointer\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Jsonpointer"^^xsd:anyURI ;
+    linkml:description "A string encoding a JSON Pointer. The value of the string MUST conform to JSON Point syntax and SHOULD dereference to a valid object within the current instance document when encoded in tree form." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:name a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:mappingRelation "https://smartdatamodels.org/name"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/name"^^xsd:anyURI ;
+    linkml:description "The name, per language, as the publisher writes it." ;
+    linkml:domain_of jc:RadonRiskArea ;
+    linkml:owner jc:RadonRiskArea ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://smartdatamodels.org/name"^^xsd:anyURI .
+
+jc:ncname a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"ncname\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "NCName" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Ncname"^^xsd:anyURI ;
+    linkml:description "Prefix part of CURIE" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:nodeidentifier a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"nodeidentifier\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "NodeIdentifier" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Nodeidentifier"^^xsd:anyURI ;
+    linkml:description "A URI, CURIE or BNODE that represents a node in a model." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/ns/shex#nonLiteral"^^xsd:anyURI .
+
+jc:objectidentifier a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"objectidentifier\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:note "Used for inheritance and type checking" ;
+    linkml:base "ElementIdentifier" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Objectidentifier"^^xsd:anyURI ;
+    linkml:description "A URI or CURIE that represents an object in the model." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/ns/shex#iri"^^xsd:anyURI .
+
+jc:radonRiskCategory a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/radonRiskCategory"^^xsd:anyURI ;
+    linkml:description "The radon risk category of the ground in the area, as the Czech Geological Survey's radon index map gives it (transitional, low, medium, high)." ;
+    linkml:domain_of jc:RadonRiskArea ;
+    linkml:owner jc:RadonRiskArea ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://joinedcontext.com/models/radonRiskCategory"^^xsd:anyURI .
+
+jc:source a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:mappingRelation "https://smartdatamodels.org/source"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/source"^^xsd:anyURI ;
+    linkml:description "The service the row was read from." ;
+    linkml:domain_of jc:RadonRiskArea ;
+    linkml:owner jc:RadonRiskArea ;
+    linkml:range jc:uri ;
+    linkml:slot_uri "https://smartdatamodels.org/source"^^xsd:anyURI .
+
+jc:sparqlpath a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://www.w3.org/TR/sparql11-query/#propertypaths" ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"sparqlpath\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Sparqlpath"^^xsd:anyURI ;
+    linkml:description "A string encoding a SPARQL Property Path. The value of the string MUST conform to SPARQL syntax and SHOULD dereference to zero or more valid objects within the current instance document when encoded as RDF." ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:time a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"time\".",
+        "URI is dateTime because OWL reasoners do not work with straight date or time" ;
+    skos:exactMatch "schema:Time"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "XSDTime" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Time"^^xsd:anyURI ;
+    linkml:description "A time object represents a (local) time of day, independent of any particular day" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#time"^^xsd:anyURI .
+
+jc:uriorcurie a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"uriorcurie\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "URIorCURIE" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Uriorcurie"^^xsd:anyURI ;
+    linkml:description "a URI or a CURIE" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#anyURI"^^xsd:anyURI .
+
+jc:datetime a linkml:TypeDefinition ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"datetime\"." ;
+    skos:exactMatch "schema:DateTime"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "XSDDateTime" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Datetime"^^xsd:anyURI ;
+    linkml:description "The combination of a date and time" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#dateTime"^^xsd:anyURI .
+
+jc:id a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:mappingRelation "https://uri.etsi.org/ngsi-ld/hasId"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "@id" ;
+            linkml:tag "jsonld_keyword"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/id"^^xsd:anyURI ;
+    linkml:description "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    linkml:domain_of jc:Entity ;
+    linkml:identifier true ;
+    linkml:owner jc:Entity ;
+    linkml:range jc:string ;
+    linkml:required true ;
+    linkml:slot_uri "https://uri.etsi.org/ngsi-ld/hasId"^^xsd:anyURI .
+
+jc:location a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:mappingRelation "https://purl.org/geojson/vocab#geometry"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "GeoProperty" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/location"^^xsd:anyURI ;
+    linkml:description "Where the entity is, as GeoJSON geometry." ;
+    linkml:domain_of jc:Entity ;
+    linkml:owner jc:Entity ;
+    linkml:range jc:string ;
+    linkml:slot_uri "https://purl.org/geojson/vocab#geometry"^^xsd:anyURI .
+
+jc:observedAt a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:mappingRelation "https://uri.etsi.org/ngsi-ld/observedAt"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/observedAt"^^xsd:anyURI ;
+    linkml:description "When the observation the entity reports was made." ;
+    linkml:domain_of jc:Entity ;
+    linkml:owner jc:Entity ;
+    linkml:range jc:datetime ;
+    linkml:slot_uri "https://uri.etsi.org/ngsi-ld/observedAt"^^xsd:anyURI .
+
+jc:type a linkml:SlotDefinition ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:mappingRelation "https://uri.etsi.org/ngsi-ld/hasType"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "@type" ;
+            linkml:tag "jsonld_keyword"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ],
+        [ a linkml:Annotation ;
+            skos:example "Property" ;
+            linkml:tag "ngsi_ld_kind"^^xsd:anyURI ] ;
+    linkml:definition_uri "https://joinedcontext.com/models/type"^^xsd:anyURI ;
+    linkml:description "The entity type, one class of a published data model." ;
+    linkml:domain_of jc:Entity ;
+    linkml:owner jc:Entity ;
+    linkml:range jc:string ;
+    linkml:required true ;
+    linkml:slot_uri "https://uri.etsi.org/ngsi-ld/hasType"^^xsd:anyURI .
+
+jc:uri a linkml:TypeDefinition ;
+    dcterms:conformsTo "https://www.ietf.org/rfc/rfc3987.txt" ;
+    skos:closeMatch "schema:URL"^^xsd:anyURI ;
+    skos:editorialNote "If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"uri\"." ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    skos:note "in RDF serializations a slot with range of uri is treated as a literal or type xsd:anyURI unless it is an identifier or a reference to an identifier, in which case it is translated directly to a node" ;
+    linkml:base "URI" ;
+    linkml:definition_uri "https://joinedcontext.com/models/Uri"^^xsd:anyURI ;
+    linkml:description "a complete URI" ;
+    linkml:repr "str" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#anyURI"^^xsd:anyURI .
+
+jc:string a linkml:TypeDefinition ;
+    skos:editorialNote "In RDF serializations, a slot with range of string is treated as a literal or type xsd:string. If you are authoring schemas in LinkML YAML, the type is referenced with the lower case \"string\"." ;
+    skos:exactMatch "schema:Text"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:base "str" ;
+    linkml:definition_uri "https://joinedcontext.com/models/String"^^xsd:anyURI ;
+    linkml:description "A character string" ;
+    linkml:uri "http://www.w3.org/2001/XMLSchema#string"^^xsd:anyURI .
+
+jc:RadonRiskArea a linkml:ClassDefinition,
+        linkml:SchemaDefinition ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "RadonRiskArea, an extension of dataModel.PointOfInterest/PointOfInterest" ;
+    skos:exactMatch "jc:RadonRiskArea"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    sh:declare [ sh:namespace "https://joinedcontext.com/models/"^^xsd:anyURI ;
+            sh:prefix "jc" ],
+        [ sh:namespace "https://uri.etsi.org/ngsi-ld/"^^xsd:anyURI ;
+            sh:prefix "ngsi-ld" ],
+        [ sh:namespace "http://www.w3.org/2001/XMLSchema#"^^xsd:anyURI ;
+            sh:prefix "xsd" ],
+        [ sh:namespace "https://w3id.org/linkml/"^^xsd:anyURI ;
+            sh:prefix "linkml" ],
+        [ sh:namespace "http://schema.org/"^^xsd:anyURI ;
+            sh:prefix "schema" ],
+        [ sh:namespace "https://purl.org/geojson/vocab#"^^xsd:anyURI ;
+            sh:prefix "geojson" ],
+        [ sh:namespace "https://smartdatamodels.org/"^^xsd:anyURI ;
+            sh:prefix "sdm" ],
+        [ sh:namespace "http://www.w3.org/ns/shex#"^^xsd:anyURI ;
+            sh:prefix "shex" ] ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "https://smart-data-models.github.io/dataModel.PointOfInterest/PointOfInterest/schema.json" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:class_uri "https://joinedcontext.com/models/RadonRiskArea"^^xsd:anyURI ;
+    linkml:classes jc:Entity,
+        jc:RadonRiskArea ;
+    linkml:default_prefix "jc" ;
+    linkml:default_range jc:string ;
+    linkml:definition_uri "https://joinedcontext.com/models/RadonRiskArea"^^xsd:anyURI ;
+    linkml:description "One area of a radon risk map and the risk category of its ground.",
+        "One area of a radon risk map and the risk category of its ground. Extends dataModel.PointOfInterest/PointOfInterest: Environment has no model of a mapped ground property; EnvironmentObserved is a measurement at a time." ;
+    linkml:id "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:is_a jc:Entity ;
+    linkml:metamodel_version "1.12.0" ;
+    linkml:slot_usage [ ] ;
+    linkml:slots jc:dataProvider,
+        jc:id,
+        jc:location,
+        jc:name,
+        jc:observedAt,
+        jc:radonRiskCategory,
+        jc:source,
+        jc:type ;
+    linkml:source_file_size 14621 ;
+    linkml:types jc:boolean,
+        jc:curie,
+        jc:date,
+        jc:date_or_datetime,
+        jc:datetime,
+        jc:decimal,
+        jc:double,
+        jc:float,
+        jc:integer,
+        jc:jsonpath,
+        jc:jsonpointer,
+        jc:ncname,
+        jc:nodeidentifier,
+        jc:objectidentifier,
+        jc:sparqlpath,
+        jc:string,
+        jc:time,
+        jc:uri,
+        jc:uriorcurie .
+
+jc:Entity a linkml:ClassDefinition ;
+    skos:exactMatch "ngsi-ld:Entity"^^xsd:anyURI ;
+    skos:inScheme "https://joinedcontext.com/models/sdm/extensions/RadonRiskArea"^^xsd:anyURI ;
+    linkml:annotations [ a linkml:Annotation ;
+            skos:example "ETSI NGSI-LD core context v1.8" ;
+            linkml:tag "upstream_source"^^xsd:anyURI ] ;
+    linkml:class_uri "https://uri.etsi.org/ngsi-ld/Entity"^^xsd:anyURI ;
+    linkml:definition_uri "https://joinedcontext.com/models/Entity"^^xsd:anyURI ;
+    linkml:description "The root every NGSI-LD entity class specialises." ;
+    linkml:slot_usage [ ] ;
+    linkml:slots jc:id,
+        jc:location,
+        jc:observedAt,
+        jc:type .
+

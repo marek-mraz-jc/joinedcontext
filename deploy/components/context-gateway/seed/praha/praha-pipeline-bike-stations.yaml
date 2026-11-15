@@ -1,0 +1,17 @@
+# One BikeHireDockingStation per record of `nextbike-stations`, written into the city space (T-2785).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: bike-stations
+  namespace: praha
+  title: { en: Bike stations }
+spec:
+  class: auto
+  # Stations move a few times a season; a nightly read is enough.
+  period: 24h
+  schedule: '15 3 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: nextbike-stations }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: BikeHireDockingStation, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }
