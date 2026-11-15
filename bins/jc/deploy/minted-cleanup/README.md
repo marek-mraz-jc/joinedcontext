@@ -47,7 +47,7 @@ prod-20261109T1647Z: read each back on jc-prod (step 2.3).
 `W` is a 0700 work directory on the deployer's host. `M=bins/jc/deploy/minted-cleanup`. Every SQL
 file runs read-only against `jc_antares` as
 `psql -q -At -F "$(printf '\t')" -v ON_ERROR_STOP=1 -f $M/sql/<file>.sql`, written below as
-`sql <file> > out`. `G=https://<jc-prod Portal host>`, `T=$G/id/realms/smartcity/protocol/openid-connect/token`.
+`sql <file> > out`. `G=https://<jc-prod Portal host>`, `T=$G/login/realms/smartcity/protocol/openid-connect/token`.
 `MEM` is a command printing the node memory % last (for instance
 `KUBECONFIG=... kubectl top node --no-headers | awk '{print $5}'`).
 

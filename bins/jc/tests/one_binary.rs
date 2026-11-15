@@ -186,10 +186,10 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
     let (_, body) = get(
         addr,
         "city.test",
-        "/id/realms/jc/.well-known/openid-configuration",
+        "/login/realms/jc/.well-known/openid-configuration",
     )
     .await;
-    assert!(body.contains("http://city.test/id/realms/jc"), "{body}");
+    assert!(body.contains("http://city.test/login/realms/jc"), "{body}");
 
     // The assistant is off without its model and key: its paths answer 404, with no launcher.
     assert!(cfg.roles.contains(&Module::Assistant));
@@ -228,9 +228,9 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
     }
     // A dot-segment never crosses from one module's mount into another's (sent raw: an HTTP
     // client would resolve it before sending).
-    let status = raw_get_status(addr, "city.test", "/dashboards/../id/realms/jc").await;
+    let status = raw_get_status(addr, "city.test", "/dashboards/../login/realms/jc").await;
     assert_eq!(status, 404);
-    let status = raw_get_status(addr, "city.test", "/dashboards/%2e%2e/id/realms/jc").await;
+    let status = raw_get_status(addr, "city.test", "/dashboards/%2e%2e/login/realms/jc").await;
     assert_eq!(status, 404);
 
     // The admin listener is separate: metrics (behind the admin token: they carry Antares'
@@ -312,11 +312,11 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
     }
     let (_, body) = get(
         addr,
-        "id.city.test",
+        "login.city.test",
         "/realms/jc/.well-known/openid-configuration",
     )
     .await;
-    assert!(body.contains("http://id.city.test/realms/jc"), "{body}");
+    assert!(body.contains("http://login.city.test/realms/jc"), "{body}");
 
     // T-6705: the modules the edge never routes to answer their siblings on the in-pod listener,
     // loopback only, at their slug and whatever the Host; nothing else answers there.
@@ -383,8 +383,8 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
         "nope.city.test",
         "model-tools.city.test",
         "city.test",
-        "id.other.test",
-        "id.city.test.evil",
+        "login.other.test",
+        "login.city.test.evil",
     ] {
         let (status, _) = get(addr, host, "/realms/jc/.well-known/openid-configuration").await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{host}");
@@ -682,7 +682,7 @@ async fn overlapping_mounts_refuse_to_start() {
             Module::Daiya,
             vec![MountOverride {
                 host: None,
-                path_prefix: Some("/id".into()),
+                path_prefix: Some("/login".into()),
             }],
         )]),
     );

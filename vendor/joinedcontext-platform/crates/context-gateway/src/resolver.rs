@@ -197,6 +197,10 @@ pub struct Endpoint {
     /// Its dataset page on the open data portal, from `spec.publish.ckan` and the project's
     /// `CkanInstance` (T-6569); `None` for an internal Endpoint or one that publishes none.
     pub page: Option<String>,
+    /// Whether it is open data, [`jc_core::kinds::EndpointSpec::is_open_data`] of the Policies it
+    /// binds: read-only for every caller, whatever a Policy grants (EP-187). `false` for a
+    /// space's canonical surface, which the owner's pipelines write through.
+    pub open_data: bool,
 }
 
 /// The types a space's one model declares (DM-61, ADR-N-033).

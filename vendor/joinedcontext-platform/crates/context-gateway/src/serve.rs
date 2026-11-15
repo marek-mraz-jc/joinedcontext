@@ -163,9 +163,19 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
     // as the gateway's own client, for the member brokers' audiences (T-3999, ADR-N-047 §2.4).
     // Without a client such a read answers 503; it is never forwarded as anyone else.
     let gateway = match (config.token_url(), config.oidc_client.as_ref()) {
-        (Some(token_url), Some((id, credential))) => gateway.exchange_with(
-            crate::federation::exchange::Exchanger::new(token_url, id.clone(), credential.clone()),
-        ),
+        (Some(token_url), Some((id, credential))) => {
+            match crate::federation::exchange::Exchanger::new(
+                token_url,
+                id.clone(),
+                credential.clone(),
+            ) {
+                Ok(exchanger) => gateway.exchange_with(exchanger),
+                Err(error) => {
+                    tracing::error!(%error, "cannot build the token exchange client");
+                    return Err(format!("cannot build the token exchange client: {error}"));
+                }
+            }
+        }
         _ => gateway,
     };
 
@@ -263,10 +273,11 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
             }
             None => reaper,
         };
+        let stale = Arc::clone(&gateway);
         tokio::spawn(async move {
             let error = reaper.run().await;
-            tracing::error!(%error, "the repository reaper stopped; exiting so a revoked grant never stays");
-            std::process::exit(1);
+            stale.set_stale(true);
+            tracing::error!(%error, "the repository reaper stopped; the gateway refuses requests so a revoked grant never stays");
         });
     }
 

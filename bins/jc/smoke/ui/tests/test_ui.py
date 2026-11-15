@@ -103,12 +103,12 @@ def forwarded_jc():
 
         def do_GET(self):
             public, cookie = self.server.public, self.headers.get("Cookie") or ""
-            if self.path == "/id/realms/dev/.well-known/openid-configuration":
+            if self.path == "/login/realms/dev/.well-known/openid-configuration":
                 return self.answer(200, [("Content-Type", "application/json")],
-                                   json.dumps({"issuer": f"{public}/id/realms/dev"}).encode())
+                                   json.dumps({"issuer": f"{public}/login/realms/dev"}).encode())
             if self.path == "/api/v1/auth/login":
-                return self.answer(303, [("Location", f"{public}/id/realms/dev/login")])
-            if self.path == "/id/realms/dev/login":
+                return self.answer(303, [("Location", f"{public}/login/realms/dev/login")])
+            if self.path == "/login/realms/dev/login":
                 return self.answer(200, [("Content-Type", "text/html")], b'<form method="post">'
                                    b'<input name="username"><input name="password" type="password"><button>Sign in</button></form>')
             if self.path == "/api/v1/auth/callback":
@@ -231,7 +231,7 @@ def test_the_persona_admin_calls_the_realm_it_is_given():
 
     h = H()
     personas.Admin(h, "t", "smartcity").groups()
-    assert h.seen == ["/id/admin/realms/smartcity/groups?briefRepresentation=false&max=1000"]
+    assert h.seen == ["/login/admin/realms/smartcity/groups?briefRepresentation=false&max=1000"]
 
 
 def test_the_persona_admin_mints_its_token_in_the_realm_and_names_a_refusal():
@@ -248,7 +248,7 @@ def test_the_persona_admin_mints_its_token_in_the_realm_and_names_a_refusal():
     h = H(200, b'{"access_token": "jwt"}')
     assert personas.admin_token(h, "s3", "smartcity") == "jwt"
     m, path, headers, body = h.seen[0]
-    assert (m, path) == ("POST", "/id/realms/smartcity/protocol/openid-connect/token")
+    assert (m, path) == ("POST", "/login/realms/smartcity/protocol/openid-connect/token")
     assert headers["Content-Type"] == "application/x-www-form-urlencoded"
     assert b"client_id=portal-reconciler" in body and b"grant_type=client_credentials" in body
     with pytest.raises(RuntimeError, match="portal-reconciler token: 401"):
@@ -342,7 +342,9 @@ document.getElementById("g").innerHTML = DRAWN[t]
 </script></body></html>"""
 
 
-def viz_server(held: dict, drawn: dict):
+def viz_server(held: dict, drawn: dict, second: dict | None = None):
+    """An explorer page `/opendata/dataset/x` on Endpoint slug1 holding `held`, opened on Alert, and
+    `/opendata/dataset/y` on slug2 holding `second`, opened on Bus; the frame draws the `drawn` types."""
     import http.server
     import threading
 
@@ -356,6 +358,8 @@ def viz_server(held: dict, drawn: dict):
             if path == "/opendata/dataset/x":
                 # Another origin than the page, as an opaque sandboxed frame is: its location is not the page's to read.
                 body = f'<iframe class="jc-explorer-frame" src="http://localhost:{self.server.server_port}/embed/explore.html#slug1&inline&type=Alert"></iframe>'
+            elif path == "/opendata/dataset/y" and second is not None:
+                body = f'<iframe class="jc-explorer-frame" src="http://localhost:{self.server.server_port}/embed/explore.html#slug2&inline&type=Bus"></iframe>'
             elif self.path == suite.MOVED_PAGE[0]:
                 self.send_response(308)
                 self.send_header("Location", suite.MOVED_PAGE[1])
@@ -364,11 +368,13 @@ def viz_server(held: dict, drawn: dict):
             elif path in suite.SANDBOX_PAGES:
                 headers["Content-Security-Policy"] = "sandbox allow-scripts"
                 body = EXPLORE.replace("DRAWN", json.dumps(drawn))
-            elif path == "/api/endpoint/slug1/ngsi-ld/v1/types":
-                headers["Content-Type"], body = "application/json", json.dumps({"typeList": sorted(held) + ["Alert"]})
-            elif path == "/api/endpoint/slug1/ngsi-ld/v1/entities":
-                t = re.search(r"type=([^&]+)", query).group(1)
-                headers["Content-Type"], headers["NGSILD-Results-Count"], body = "application/json", str(held.get(t, 0)), "[]"
+            elif m := re.fullmatch(r"/api/endpoint/(slug[12])/ngsi-ld/v1/(types|entities)", path):
+                own, opened = (held, "Alert") if m.group(1) == "slug1" else (second or {}, "Bus")
+                if m.group(2) == "types":
+                    headers["Content-Type"], body = "application/json", json.dumps({"typeList": sorted({*own, opened})})
+                else:
+                    t = re.search(r"type=([^&]+)", query).group(1)
+                    headers["Content-Type"], headers["NGSILD-Results-Count"], body = "application/json", str(own.get(t, 0)), "[]"
             self.send_response(200 if body else 404)
             for k, v in headers.items():
                 self.send_header(k, v)
@@ -396,6 +402,26 @@ def test_an_explorer_opened_on_an_empty_type_still_owes_rows_of_a_type_the_endpo
         row = next(r for r in w.res.rows if r["id"] == "viz.grid")
         assert (row["result"] == "pass") == ok, row["actual"]
         assert said in row["actual"], row["actual"]
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("second, drawn, ok, said", [
+    ({"Bus": 2}, {"Bus": 1}, True, "1 rows on /opendata/dataset/y; /opendata/dataset/x: the Endpoint holds no entity"),
+    ({}, {}, False, "the Endpoint holds no entity of Bus or any other type"),
+])
+def test_a_dataset_whose_endpoint_holds_nothing_hands_the_grid_row_to_the_next_dataset(page, second, drawn, ok, said):
+    # T-6995 reopen: the catalogue's first dataset was an Endpoint with no entity (zilina-svietidla),
+    # which proves nothing about the grid; the next listed dataset owes the rows instead.
+    srv = viz_server({}, drawn, second)
+    ctx = page.context.browser.new_context()
+    try:
+        w = object.__new__(suite.Walker)
+        w.res, w.base = Results("ui", "http://x"), f"http://127.0.0.1:{srv.server_port}"
+        suite.viz_sandbox(w, ctx, ctx.new_page(), "/opendata/dataset/x", ["/opendata/dataset/y"])
+        rows = [r for r in w.res.rows if r["id"] == "viz.grid"]
+        assert len(rows) == 1 and (rows[0]["result"] == "pass") == ok, rows
+        assert said in rows[0]["actual"], rows[0]["actual"]
     finally:
         ctx.close()
         srv.shutdown()

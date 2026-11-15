@@ -36,7 +36,7 @@ def admin_token(h: Http, client_secret: str, realm: str = REALM) -> str:
     """A portal-reconciler token of `realm` (client credentials), the Admin's bearer."""
     form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": "portal-reconciler",
                                    "client_secret": client_secret}).encode()
-    st, _, raw = h.call("POST", f"/id/realms/{realm}/protocol/openid-connect/token",
+    st, _, raw = h.call("POST", f"/login/realms/{realm}/protocol/openid-connect/token",
                         headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
     body = as_json(raw)
     if st != 200 or not isinstance(body, dict) or "access_token" not in body:
@@ -49,7 +49,7 @@ class Admin:
         self.h, self.token, self.realm = h, token, realm
 
     def call(self, method, path, body=None):
-        st, _, raw = self.h.call(method, f"/id/admin/realms/{self.realm}{path}", self.token, body=body)
+        st, _, raw = self.h.call(method, f"/login/admin/realms/{self.realm}{path}", self.token, body=body)
         return st, as_json(raw)
 
     def groups(self) -> dict[str, str]:

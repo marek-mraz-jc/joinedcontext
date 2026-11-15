@@ -23,21 +23,26 @@ TOP = ["/catalogue", "/glossary", "/connectors", "/ai-connectors", "/settings", 
 
 def first_link(page, base: str, list_page: str, pattern: re.Pattern, main_only: bool = True, tries: int = 15):
     """The first link on a list page that opens one of its items, as a person would find it."""
+    found = links(page, base, list_page, pattern, main_only, tries)
+    return found[0] if found else None
+
+
+def links(page, base: str, list_page: str, pattern: re.Pattern, main_only: bool = True, tries: int = 15) -> list:
+    """The links on a list page that open one of its items, in page order, each once."""
     try:
         page.goto(f"{base}{list_page}", wait_until="load", timeout=60000)
     except Exception:  # noqa: BLE001 - the list page's own row reports a failed load
-        return None
+        return []
     sel = "main a[href]" if main_only else "a[href]"
     for _ in range(tries):
         hrefs = page.locator(sel).evaluate_all("ls => ls.map(l => l.getAttribute('href') || '')")
-        for href in hrefs:
-            path = href.split("?")[0].split("#")[0]
-            if path.startswith(base):
-                path = path[len(base):]
-            if pattern.search(path):
-                return path
+        paths = [h.split("?")[0].split("#")[0] for h in hrefs]
+        found = list(dict.fromkeys(p[len(base):] if p.startswith(base) else p for p in paths))
+        found = [p for p in found if pattern.search(p)]
+        if found:
+            return found
         page.wait_for_timeout(1000)
-    return None
+    return []
 
 
 def first_name(page, base: str, project: str, section: str):

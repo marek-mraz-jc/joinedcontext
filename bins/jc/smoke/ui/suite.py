@@ -338,20 +338,22 @@ def dataroom(w: Walker):
     ctx, page = w.context("anonymous")
     try:
         addrs = ["/opendata/", "/opendata/dataset"]
+        datasets = []
         for list_page, pattern in (("/opendata/dataset", r"^/opendata/dataset/[^/?#]+$"),
                                    ("/opendata/organization", r"^/opendata/organization/[^/?#]+$")):
-            found = walk.first_link(page, w.base, list_page, re.compile(pattern), main_only=False)
+            found = walk.links(page, w.base, list_page, re.compile(pattern), main_only=False)
+            if list_page.endswith("dataset"):
+                datasets = found
             if found:
-                addrs.append(found)
+                addrs.append(found[0])
             else:
                 w.res.add(f"dataroom.item:{list_page}", "dataroom", f"GET {list_page} (first item link)",
                           "a link to one item", "none", FAIL if list_page.endswith("dataset") and w.datasets() else SKIP,
                           "the catalogue lists nothing to open")
         for a in addrs:
             w.judge(page, "anonymous", "dataroom", a, a, portal=False, viewer=False)
-        dataset = next((a for a in addrs if a.startswith("/opendata/dataset/")), None)
-        if dataset:
-            viz_sandbox(w, ctx, page, dataset)
+        if datasets:
+            viz_sandbox(w, ctx, page, datasets[0], datasets[1:GRID_DATASETS])
     finally:
         ctx.close()
 
@@ -378,9 +380,16 @@ def frame_csp_rows(w: Walker, page, shared: bool):
                 r.status == 308 and location.endswith(new) and not location.startswith("//"))
 
 
-def viz_sandbox(w: Walker, ctx, page, dataset: str):
+# The datasets the grid row tries: the catalogue's order is the reconciler's, so the first listed
+# can be an Endpoint holding no entity (zilina-svietidla, T-6995), which proves nothing about the grid.
+GRID_DATASETS = 5
+EMPTY_ENDPOINT = "the Endpoint holds no entity of"
+
+
+def viz_sandbox(w: Walker, ctx, page, dataset: str, more=()):
     """The explorer frame on one dataset page, with a cookie of the host set: its scripts run in an
-    opaque origin that reads no cookie, and the grid still draws rows."""
+    opaque origin that reads no cookie, and the grid still draws rows. When the dataset's Endpoint
+    holds no entity at all, the grid row goes to the next of `more` (other datasets' pages)."""
     page.goto(w.base + dataset, wait_until="load", timeout=60000)
     frame_el = page.locator("iframe.jc-explorer-frame")
     if not frame_el.count():
@@ -416,8 +425,34 @@ def viz_sandbox(w: Walker, ctx, page, dataset: str):
         # the same frame on a type the Endpoint holds entities of, and never excused while the
         # Endpoint holds entities of the type shown.
         rows, why = other_type_rows(w, page, frame)
+    tried = []
+    for other in more:
+        if rows or not why.startswith(EMPTY_ENDPOINT):
+            break
+        tried.append(f"{dataset}: {why}")
+        dataset = other
+        rows, why = grid_on(w, page, dataset)
+    if rows and tried:
+        why = f"{why} on {dataset}; " + "; ".join(tried)
     w.res.check("viz.grid", "viz", f"the explorer grid on {dataset}", "rows drawn",
                 f"{rows} rows{why}" if rows else why, rows > 0)
+
+
+def grid_on(w: Walker, page, dataset: str) -> tuple[int, str]:
+    """Rows the explorer grid draws on one dataset page, another type's when the opened one is empty."""
+    page.goto(w.base + dataset, wait_until="load", timeout=60000)
+    frame = None
+    for _ in range(60):
+        frame = next((f for f in page.frames if "/explore.html" in f.url), None)
+        if frame:
+            break
+        page.wait_for_timeout(500)
+    if not frame:
+        return 0, f"{dataset}: no explorer frame"
+    rows, why = grid_rows(frame)
+    if not rows and frame.locator(".jc-grid-empty").count():
+        rows, why = other_type_rows(w, page, frame)
+    return rows, why
 
 
 def grid_rows(frame) -> tuple[int, str]:

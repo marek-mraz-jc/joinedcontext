@@ -51,6 +51,11 @@ pub struct ScopedRole {
 }
 
 impl Account {
+    /// Whether every credential of the account has ended at `now` (PF-36).
+    pub fn has_ended(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        self.credentials_end.is_some_and(|end| end <= now)
+    }
+
     /// The roles that reach one space of one project: the called Endpoint's.
     ///
     /// A role scoped to another space is not a role here: that is the whole point of
@@ -118,9 +123,7 @@ impl ServiceAccounts {
     /// ended at `now` (PF-36): what an open session admitted under it rechecks (S-3-12).
     pub fn holds(&self, project: &str, name: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
         self.by_client_id.values().any(|account| {
-            account.project == project
-                && account.name == name
-                && account.credentials_end.is_none_or(|end| end > now)
+            account.project == project && account.name == name && !account.has_ended(now)
         })
     }
 
@@ -386,13 +389,30 @@ fn apps_of(repo: &Repository) -> AppTables {
             })
         })
         .collect();
+    // The client `app-{name}` is one for the realm, so an App name two projects declare (a git
+    // commit past the Portal's AP-14a check) is nobody's: its client is admitted nowhere rather
+    // than on whichever project was read last.
+    let mut declared: HashMap<&str, usize> = HashMap::new();
+    for (_, name, _) in &apps {
+        *declared.entry(name.as_str()).or_default() += 1;
+    }
+    let ambiguous: BTreeSet<String> = declared
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(name, _)| name.to_owned())
+        .collect();
     let mut admitted = HashMap::new();
     let mut jobs = Vec::new();
     for (project, name, spec) in apps {
-        let slugs = served_endpoints(&project, &name, &spec, &endpoints, &references)
-            .into_iter()
-            .map(|endpoint| endpoint.slug.clone())
-            .collect();
+        let slugs = if ambiguous.contains(&name) {
+            tracing::warn!(app = %name, "an App name several projects declare: its client is admitted nowhere");
+            BTreeSet::new()
+        } else {
+            served_endpoints(&project, &name, &spec, &endpoints, &references)
+                .into_iter()
+                .map(|endpoint| endpoint.slug.clone())
+                .collect()
+        };
         admitted.insert(format!("{APP_CLIENT_PREFIX}{name}"), slugs);
         let runs_jobs = spec.class == jc_core::kinds::app::AppClass::Wasm
             && spec
@@ -448,5 +468,75 @@ mod tests {
             "another project's"
         );
         assert!(!ServiceAccounts::new().holds("espoo", "kpi", now), "gone");
+    }
+
+    /// AP-113, AP-14a: the client `app-{name}` is one for the realm, so an App name two projects
+    /// declare admits that client on neither project's Endpoint; a name one project declares
+    /// alone keeps its App's Endpoint.
+    #[test]
+    fn an_app_name_two_projects_declare_admits_its_client_nowhere() {
+        let app = |project: &str, name: &str| {
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: App\nmetadata:\n  name: {name}\n  \
+                 namespace: {project}\nspec:\n  kind: wasm\n  build: {{ node: \"22\", rust: \"1.90\" }}\n  source:\n    git: {{ url: \
+                 \"https://dev.joinedcontext.com/git/joinedcontext/{project}_{name}.git\", ref: \
+                 main }}\n  visibility: project\n  lifecycle: published\n  dataNeeds:\n    - \
+                 contextSpaceRef: {{ kind: ContextSpace, name: {project} }}\n      types: \
+                 [Event]\n      operations: [queryEntity]\n"
+            )
+        };
+        let space = |project: &str| {
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: \
+                 {project}\n  namespace: {project}\nspec:\n  isSandbox: false\n  urnSegment: \
+                 {project}\n"
+            )
+        };
+        let endpoint = |project: &str, name: &str, slug: &str| {
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: \
+                 app-{name}\n  namespace: {project}\n  annotations:\n    \
+                 joinedcontext.com/generated-by: portal/app-reconciler\nspec:\n  \
+                 contextSpaceRef: {project}\n  slug: {slug}\n  audience: project-list\n  \
+                 allowedProjects: [{project}]\n  callerRole: true\n  enabledRepresentations: \
+                 [\"ngsi-ld\"]\n"
+            )
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "gw-app-names-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a repository");
+        let (a, b, c) = (
+            "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "cccccccccccccccccccccccccc",
+        );
+        for (file, body) in [
+            ("s1.yaml", space("espoo")),
+            ("s2.yaml", space("vantaa")),
+            ("a1.yaml", app("espoo", "events")),
+            ("a2.yaml", app("vantaa", "events")),
+            ("a3.yaml", app("vantaa", "parking")),
+            ("e1.yaml", endpoint("espoo", "events", a)),
+            ("e2.yaml", endpoint("vantaa", "events", b)),
+            ("e3.yaml", endpoint("vantaa", "parking", c)),
+        ] {
+            std::fs::write(dir.join(file), body).expect("a manifest");
+        }
+        let accounts = crate::store::load(&dir).expect("the repository loads").2;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            accounts.admits_on("app-parking", c),
+            "the one App of its name"
+        );
+        assert!(
+            !accounts.admits_on("app-parking", b),
+            "not another App's Endpoint"
+        );
+        assert!(!accounts.admits_on("app-events", a), "espoo's events");
+        assert!(!accounts.admits_on("app-events", b), "vantaa's events");
     }
 }

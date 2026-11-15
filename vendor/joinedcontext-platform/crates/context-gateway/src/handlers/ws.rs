@@ -192,6 +192,17 @@ pub(crate) async fn endpoint_ws(
                 )
                 .into_response();
         }
+        Err(crate::fanout::socket::Refused::CallerFull) => {
+            metrics::counter!("jc_gateway_ws_refused_total", "reason" => "caller-full")
+                .increment(1);
+            return ProblemDetails::new(429, "too-many-requests", "Too Many Requests")
+                .with_detail(format!(
+                    "one caller watches at most {} Endpoints over WebSockets at once; close the \
+                     WebSocket of another Endpoint, then connect again",
+                    crate::fanout::socket::HUBS_PER_CALLER
+                ))
+                .into_response();
+        }
         Err(crate::fanout::socket::Refused::NoIdentity) => {
             tracing::error!(space = %endpoint.space, "endpoint names an unusable space");
             return ProblemDetails::internal().into_response();

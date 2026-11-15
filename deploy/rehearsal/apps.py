@@ -287,7 +287,7 @@ def person_id(base: str, realm: dict, secrets_dir: Path) -> str | None:
     pw_file = secrets_dir / ref[len("$(file:"):-1] if ref.startswith("$(file:") else None
     if not pw_file or not pw_file.is_file():
         return None
-    st, body = call(base, "POST", f"/id/realms/{realm.get('realm')}/protocol/openid-connect/token", {}, form={
+    st, body = call(base, "POST", f"/login/realms/{realm.get('realm')}/protocol/openid-connect/token", {}, form={
         "grant_type": "password", "client_id": "admin-cli", "username": PERSON,
         "password": pw_file.read_text().strip()})
     token = (body or {}).get("access_token") if st == 200 else None

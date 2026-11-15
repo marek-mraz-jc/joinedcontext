@@ -21,7 +21,7 @@ use reqwest::StatusCode;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
-const ISSUER: &str = "http://127.0.0.1/id/realms/jc";
+const ISSUER: &str = "http://127.0.0.1/login/realms/jc";
 const RUNNER: &str = "portal-pipeline-runner";
 
 struct Key {
@@ -157,7 +157,7 @@ async fn the_runner_clients_kaisatsu_token_is_admitted_and_every_other_token_ref
     c.as_object_mut().unwrap().remove("aud");
     with("no audience", c);
     let mut c = claims();
-    c["iss"] = json!("http://127.0.0.1/id/realms/other");
+    c["iss"] = json!("http://127.0.0.1/login/realms/other");
     with("another issuer", c);
     let mut c = claims();
     c["azp"] = json!("praha-pipelines");

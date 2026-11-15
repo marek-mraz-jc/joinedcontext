@@ -233,9 +233,9 @@ def test_the_reader_and_the_refused_token_call_use_the_state_realm(tmp_path, mon
     (tmp_path / "realm-name.txt").write_text("smartcity")
     with pytest.raises(RuntimeError, match="401"):
         suite.Person("http://127.0.0.1:9", tmp_path)._admin_token()
-    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+    assert seen == ["/login/realms/smartcity/protocol/openid-connect/token"]
     kaisatsu = [c for c in suite.refused_calls("m", None, "smartcity") if c["module"] == "kaisatsu"]
-    assert [c["path"] for c in kaisatsu] == ["/id/realms/smartcity/protocol/openid-connect/token"]
+    assert [c["path"] for c in kaisatsu] == ["/login/realms/smartcity/protocol/openid-connect/token"]
 
 
 def test_a_result_file_is_named_by_its_dir_so_every_shard_names_it_alike(tmp_path):

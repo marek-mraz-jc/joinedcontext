@@ -598,6 +598,13 @@ fn normalize_broker_url(raw: &str) -> Result<String, ConfigError> {
     if rest.contains('/') {
         return Err(invalid("must be scheme and authority only, with no path"));
     }
+    // A password in the authority would be logged with the address at start, and a query or
+    // fragment would swallow every path appended to it.
+    if rest.contains(['@', '?', '#']) {
+        return Err(invalid(
+            "must be scheme and authority only, with no user, query or fragment",
+        ));
+    }
     Ok(trimmed.to_owned())
 }
 
@@ -908,6 +915,9 @@ mod tests {
             "http://",
             "http://antares:9090/ngsi-ld/v1",
             "",
+            "http://user:pass@antares:9090",
+            "http://antares:9090?x=1",
+            "http://antares:9090#x",
         ] {
             assert!(normalize_broker_url(bad).is_err(), "{bad:?} was accepted");
         }

@@ -115,7 +115,7 @@ def _hidden(page: str, name: str) -> str:
 
 
 def admin_token(s: Session, client_secret: str, realm: str = REALM) -> str:
-    st, body = s.json("POST", f"/id/realms/{realm}/protocol/openid-connect/token", form={
+    st, body = s.json("POST", f"/login/realms/{realm}/protocol/openid-connect/token", form={
         "grant_type": "client_credentials", "client_id": ADMIN_CLIENT, "client_secret": client_secret})
     if st != 200 or not isinstance(body, dict) or "access_token" not in body:
         raise RuntimeError(f"{ADMIN_CLIENT} token: {st}")
@@ -126,19 +126,19 @@ def make_person(s: Session, token: str, groups=("/platform-admins",), realm: str
     """The suite's person in `realm`, made or reused; a fresh random password each run."""
     auth = {"Authorization": f"Bearer {token}"}
     password = secrets.token_urlsafe(18) + "-7aZ"
-    st, body = s.json("POST", f"/id/admin/realms/{realm}/users", headers=auth, body={
+    st, body = s.json("POST", f"/login/admin/realms/{realm}/users", headers=auth, body={
         "username": PERSON, "enabled": True, "email": f"{PERSON}@smoke.invalid", "emailVerified": True,
         "firstName": "Smoke", "lastName": "Charts"})
     if st not in (201, 409):
         raise RuntimeError(f"create {PERSON}: {st} {str(body)[:200]}")
-    st, users = s.json("GET", f"/id/admin/realms/{realm}/users?username={PERSON}&exact=true", headers=auth)
+    st, users = s.json("GET", f"/login/admin/realms/{realm}/users?username={PERSON}&exact=true", headers=auth)
     uid = users[0]["id"]
-    st, body = s.json("PUT", f"/id/admin/realms/{realm}/users/{uid}/reset-password", headers=auth,
+    st, body = s.json("PUT", f"/login/admin/realms/{realm}/users/{uid}/reset-password", headers=auth,
                       body={"type": "password", "value": password, "temporary": False})
     if st not in (200, 204):
         raise RuntimeError(f"password of {PERSON}: {st}")
-    SECOND_FACTOR.fresh(lambda m, p: s.json(m, f"/id/admin/realms/{realm}{p}", headers=auth), PERSON, uid)
-    st, tree = s.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
+    SECOND_FACTOR.fresh(lambda m, p: s.json(m, f"/login/admin/realms/{realm}{p}", headers=auth), PERSON, uid)
+    st, tree = s.json("GET", f"/login/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
     by_path, todo = {}, list(tree or [])
     while todo:
         g = todo.pop()
@@ -147,7 +147,7 @@ def make_person(s: Session, token: str, groups=("/platform-admins",), realm: str
     for path in groups:
         if path not in by_path:
             raise RuntimeError(f"group {path}: not in realm {realm}")
-        st, _ = s.json("PUT", f"/id/admin/realms/{realm}/users/{uid}/groups/{by_path[path]}", headers=auth)
+        st, _ = s.json("PUT", f"/login/admin/realms/{realm}/users/{uid}/groups/{by_path[path]}", headers=auth)
         if st not in (200, 204):
             raise RuntimeError(f"group {path} of {PERSON}: {st}")
     return password
@@ -230,7 +230,7 @@ def app_token(base: str, realm: Realm, client_id: str, username: str, timeout: f
     q = urllib.parse.urlencode({"client_id": client_id, "redirect_uri": redirect, "response_type": "code",
                                 "scope": "openid", "state": secrets.token_hex(8), "code_challenge": challenge,
                                 "code_challenge_method": "S256"})
-    login_url, st, page = s.follow(f"/id/realms/{realm.name}/protocol/openid-connect/auth?{q}")
+    login_url, st, page = s.follow(f"/login/realms/{realm.name}/protocol/openid-connect/auth?{q}")
     if st != 200:
         raise RuntimeError(f"authorize {client_id}: {st}")
     text = page.decode(errors="replace")
@@ -242,7 +242,7 @@ def app_token(base: str, realm: Realm, client_id: str, username: str, timeout: f
     code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query).get("code", [None])[0]
     if st not in (302, 303) or not code or not loc.startswith(redirect):
         raise RuntimeError(f"login of {username} at {client_id}: {st}")
-    st, body = s.json("POST", f"/id/realms/{realm.name}/protocol/openid-connect/token", form={
+    st, body = s.json("POST", f"/login/realms/{realm.name}/protocol/openid-connect/token", form={
         "grant_type": "authorization_code", "code": code, "redirect_uri": redirect, "client_id": client_id,
         "client_secret": secret, "code_verifier": verifier})
     if st != 200 or not isinstance(body, dict) or "access_token" not in body:

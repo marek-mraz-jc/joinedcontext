@@ -20,7 +20,7 @@ pub enum MountMode {
     /// One domain, a path slug per module (`https://city.example/id/...`).
     #[default]
     Slug,
-    /// A host per module (`https://id.city.example/...`).
+    /// A host per module (`https://login.city.example/...`).
     Host,
 }
 
