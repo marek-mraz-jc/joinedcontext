@@ -201,9 +201,10 @@ fn budget_ctx(cpu_ms: u64) -> ProcContext {
 
 #[tokio::test]
 async fn script_time_stops_at_the_runs_processing_budget() {
-    // 120 ms for the run: two spins of 50 ms, the third cut at what is left, the rest unrun.
+    // 120 ms for the run: two spins of 50 ms, the third cut at what is left, the other 17 unrun
+    // (run, the 20 would take a second).
     let p = processor(json!({ "code": "while (true) {}", "timeout_ms": 50 }));
-    let parts = (0..6).map(|_| Part::from_str("x")).collect();
+    let parts = (0..20).map(|_| Part::from_str("x")).collect();
     let started = Instant::now();
     let out = p
         .process_batch(&budget_ctx(120), parts)
@@ -211,7 +212,7 @@ async fn script_time_stops_at_the_runs_processing_budget() {
         .expect("runs")
         .remove(0);
     let took = started.elapsed();
-    assert!(took < Duration::from_millis(400), "{took:?}");
+    assert!(took < Duration::from_millis(600), "{took:?}");
     assert!(flag(&out[0]).contains("ran past its limit of 50 ms"));
     assert!(flag(&out[1]).contains("ran past its limit of 50 ms"));
     for p in &out[2..] {
