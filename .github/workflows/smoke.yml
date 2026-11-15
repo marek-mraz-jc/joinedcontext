@@ -1,10 +1,16 @@
 name: smoke
 # The smoke gate: jc built from the pushed commit, started on synthetic data (the committed
-# bins/jc/smoke/ci/synth-export.tgz, moved to now), and `bins/jc/smoke/run all` against it: every
-# smoke suite (endpoints, mcp, pipelines, charts-apps, logs, ui, whichever are present) plus jc's
-# e2e tests (`cargo test -p jc --tests`), one summary table and one verdict. A red verdict fails
-# the job; the suites' results.json and REPORT.md files are the artifact. Nothing here reaches dev
-# or prod: the suites refuse any host but loopback.
+# bins/jc/smoke/ci/synth-export.tgz, moved to now), and every smoke suite (endpoints, mcp, pipelines,
+# charts-apps, logs, ui, whichever are present) plus jc's e2e tests (`cargo test -p jc --tests`)
+# against it, one summary table and one verdict. A red verdict fails the `verdict` job; the merged
+# results.json and REPORT.md with every shard's files are the smoke-all artifact. Nothing here
+# reaches dev or prod: the suites refuse any host but loopback.
+#
+# Sharded (T-6954): `run all` in one job took 62 min (run 43662696026: ui 916 s, pipelines 658 s,
+# restore 531 s, multiorg 427 + 354 s, e2e 236 s, after 12 min of builds). `build` and `apps` build
+# once; each `shard` job starts its own rehearsal (gate.sh) from those binaries and runs its suites
+# plus logs, which reads each shard's own jc log; `e2e` runs jc's tests beside them. `verdict` folds
+# the shards into the one report (ci/merge.py): a shard missing or red, or a run no shard ran, is RED.
 on:
   push:
     branches: [jc-portal-1]
@@ -22,13 +28,101 @@ env:
   CARGO_PROFILE_TEST_DEBUG: "0"
   CARGO_INCREMENTAL: "0"
 jobs:
-  all:
+  # jc, kaisatsu, daiya (the -server crates' binaries) and jcctl with the Portal UI jc embeds, as one tar: tar keeps the mtimes
+  # up.sh's ui-fresh.sh compares (ui/dist built after the last UI commit, jc linked after ui/dist).
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 60
+    env: { CARGO_BUILD_JOBS: "3" }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh .github/scripts/free-disk.sh
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with: { shared-key: smoke, save-if: "${{ github.ref == 'refs/heads/jc-portal-1' }}" }
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      # The Portal UI jc embeds; up.sh refuses a jc whose embedded UI is older than its sources.
+      - run: cd crates/portal/sdk && pnpm install --frozen-lockfile && pnpm build
+      - run: cd crates/portal/ui && pnpm install --frozen-lockfile && pnpm build
+      - run: cargo build --locked -p jc -p kaisatsu-server -p daiya-server
+      # The import validates every manifest with jcctl (deploy/rehearsal/import.sh JCCTL_BIN, default
+      # beside jc): jcctl is a crate of the vendored platform workspace, built into jc's target.
+      - run: cargo build --locked --manifest-path vendor/joinedcontext-platform/Cargo.toml -p jcctl --target-dir target
+      - run: |
+          tar -cf - target/debug/jc target/debug/kaisatsu target/debug/daiya target/debug/jcctl \
+            crates/portal/ui/dist | zstd -T0 -3 > "$RUNNER_TEMP/smoke-bin.tar.zst"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: smoke-bin
+          path: ${{ runner.temp }}/smoke-bin.tar.zst
+          retention-days: 1
+          compression-level: 0
+
+  # The App bundles (bins/jc/Dockerfile apps-bundles: the apps stage's /srv/apps alone) built by
+  # BuildKit in its own container: apps.sh's own `docker build --target apps` ran inside dockerd,
+  # which grew to 13.8 GB and the runner out of memory (run 42931221810, brief 120). The memory
+  # cap makes an overrun a red step instead of a lost runner. buildkit is moby/buildkit v0.34.2
+  # (the buildx-stable-1 tag setup-buildx pulls, pushed 2026-11-03). Saved as an image tar each
+  # shard loads as jc-apps:smoke.
+  apps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - id: buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver-opts: |
+            image=moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+            memory=10g
+            memory-swap=10g
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: bins/jc/Dockerfile
+          target: apps-bundles
+          push: false
+          tags: jc-apps:smoke
+          outputs: type=docker,dest=${{ runner.temp }}/jc-apps.tar
+          cache-from: type=gha,scope=jc
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: jc-apps
+          path: ${{ runner.temp }}/jc-apps.tar
+          retention-days: 1
+
+  runner-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with: { python-version: "3.13" }
+      - run: python -m pip install pyyaml==6.0.2 pytest==8.4.2 playwright==1.63.0
+      - run: |
+          # Three tries: the runner's apt mirrors (security.ubuntu.com, azure.archive.ubuntu.com)
+          # failed DNS in three runs in a row (43031791849, 43037195781, 43044556087), each with no
+          # verdict. The step still fails when all three do.
+          for i in 1 2 3; do
+            python -m playwright install --with-deps chromium && exit 0
+            echo "playwright install try $i failed"
+            [ "$i" = 3 ] || sleep 30
+          done
+          exit 1
+      - name: the smoke runner's own tests
+        run: |
+          for t in bins/jc/smoke/*/tests bins/jc/smoke/ci; do python -m pytest -q "$t"; done
+
+  # jc's own e2e tests (bins/jc/tests restart_pg.rs, the kaisatsu store), one row per test.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
     services:
-      # jc's own e2e tests (bins/jc/tests restart_pg.rs, the kaisatsu store); the rehearsal starts
-      # its own PostgreSQL in docker on another port (deploy/rehearsal/up.sh). The password is no
-      # role name: restart_pg checks that no module prints it, and `postgres` is in every refusal.
+      # The password is no role name: restart_pg checks that no module prints it, and `postgres`
+      # is in every refusal.
       postgres:
         image: postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6
         env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: smoke-superuser-pw }
@@ -45,80 +139,113 @@ jobs:
       - run: psql postgres://postgres:smoke-superuser-pw@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE kaisatsu"
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with: { shared-key: smoke, save-if: "${{ github.ref == 'refs/heads/jc-portal-1' }}" }
+        with: { shared-key: smoke-e2e, save-if: "${{ github.ref == 'refs/heads/jc-portal-1' }}" }
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with: { package_json_file: crates/portal/ui/package.json }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 24 }
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with: { python-version: "3.13" }
+      # jc embeds the Portal UI: its tests compile only with ui/dist built.
+      - run: cd crates/portal/sdk && pnpm install --frozen-lockfile && pnpm build
+      - run: cd crates/portal/ui && pnpm install --frozen-lockfile && pnpm build
+      - name: run all (e2e)
+        run: |
+          python3 bins/jc/smoke/run all --base-url http://127.0.0.1:1 --out "$RUNNER_TEMP/smoke" \
+            --shard e2e --only e2e --e2e --known bins/jc/smoke/ci/known.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: smoke-shard-e2e
+          path: ${{ runner.temp }}/smoke
+          retention-days: 14
+
+  # One rehearsal per shard. Every shard runs logs too (its own jc log and result dirs); ui splits
+  # by persona, the dataroom and shako walks on ui-admin. restore runs after pipelines on their
+  # shard: on a shard of its own it compared 3 min after the import, while the Pipelines' first
+  # runs still wrote new types between its before and after runs (runs 43683591053, 43685936569:
+  # TrafficFlowObserved/anon.types.written before absent, after pass); after pipelines the run
+  # queue has reached the suite's run-now, as in the one-job gate. `rest` names what it leaves out, so a new
+  # suite runs there. ci/test_smoke_yml.py checks that every suite runs on exactly one shard.
+  shard:
+    needs: [build, apps]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { shard: rest, skip: "multiorg,pipelines,restore,ui" }
+          - { shard: pipelines, only: "pipelines,restore,logs" }
+          - { shard: ui-admin, only: "ui,logs", with: "ui=--personas admin" }
+          - { shard: ui-viewer, only: "ui,logs", with: "ui=--personas viewer --no-shared" }
+          - { shard: ui-outsider, only: "ui,logs", with: "ui=--personas outsider --no-shared" }
+          - { shard: multiorg, only: "multiorg,logs", skip: "multiorg@path" }
+          - { shard: multiorg-path, only: "multiorg@path,logs" }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh .github/scripts/free-disk.sh
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with: { python-version: "3.13" }
       # rehearsal.py reads the bundle's YAML; the ui suite and the charts-apps shots drive Chromium.
       - run: python -m pip install pyyaml==6.0.2 pytest==8.4.2 playwright==1.63.0
-      # Three tries: the runner's apt mirrors (security.ubuntu.com, azure.archive.ubuntu.com) failed
-      # DNS in three runs in a row (43031791849, 43037195781, 43044556087), each with no verdict.
-      # The step still fails when all three do.
       - run: |
+          # Three tries, as in runner-tests.
           for i in 1 2 3; do
             python -m playwright install --with-deps chromium && exit 0
             echo "playwright install try $i failed"
             [ "$i" = 3 ] || sleep 30
           done
           exit 1
-      - name: the smoke runner's own tests
-        run: |
-          for t in bins/jc/smoke/*/tests bins/jc/smoke/ci; do python -m pytest -q "$t"; done
-      # The Portal UI jc embeds; up.sh refuses a jc whose embedded UI is older than its sources.
-      - run: cd crates/portal/sdk && pnpm install --frozen-lockfile && pnpm build
-      - run: cd crates/portal/ui && pnpm install --frozen-lockfile && pnpm build
-      - run: cargo build --locked -p jc -p kaisatsu-server -p daiya-server
-      # The import validates every manifest with jcctl (deploy/rehearsal/import.sh JCCTL_BIN, default
-      # beside jc): jcctl is a crate of the vendored platform workspace, built into jc's target.
-      - run: cargo build --locked --manifest-path vendor/joinedcontext-platform/Cargo.toml -p jcctl --target-dir target
-      # The App bundles (bins/jc/Dockerfile apps-bundles: the apps stage's /srv/apps alone) built by
-      # BuildKit in its own container: apps.sh's own `docker build --target apps` ran inside dockerd,
-      # which grew to 13.8 GB and the runner out of memory (run 42931221810, brief 120). The memory
-      # cap makes an overrun a red step instead of a lost runner. buildkit is moby/buildkit v0.34.2
-      # (the buildx-stable-1 tag setup-buildx pulls, pushed 2026-11-03).
-      - id: buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-        with:
-          driver-opts: |
-            image=moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
-            memory=10g
-            memory-swap=10g
-      - name: memory probe for the App bundles build
-        run: |
-          ( while :; do
-              echo "build probe $(date -u +%T): $(free -m | awk 'NR==2{print "mem used "$3" avail "$7" MB"}')," \
-                "dockerd $(ps -C dockerd -o rss= | awk '{s+=$1} END{printf "%d", s/1024}') MB," \
-                "buildkitd $(ps -C buildkitd -o rss= | awk '{s+=$1} END{printf "%d", s/1024}') MB," \
-                "top $(ps -eo rss=,comm= --sort=-rss | head -3 | awk '{printf "%s:%dMB ", $2, $1/1024}')"
-              sleep 30
-            done ) > "$RUNNER_TEMP/build-probe.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/build-probe.pid"
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          file: bins/jc/Dockerfile
-          target: apps-bundles
-          load: true
-          push: false
-          tags: jc-apps:smoke
-          cache-from: type=gha,scope=jc
-      # The probe lines, then BuildKit stopped so the gate gets its memory back.
-      - name: memory probe lines
-        if: always()
-        env: { BUILDER: "${{ steps.buildx.outputs.name }}" }
-        run: |
-          kill "$(cat "$RUNNER_TEMP/build-probe.pid")" 2>/dev/null || true
-          cat "$RUNNER_TEMP/build-probe.log"
-          docker buildx stop "$BUILDER" || true
-          echo "after stop: $(free -m | awk 'NR==2{print "mem used "$3" avail "$7" MB"}')"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with: { name: smoke-bin, path: "${{ runner.temp }}/bin" }
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with: { name: jc-apps, path: "${{ runner.temp }}/apps" }
+      - run: |
+          zstd -dc "$RUNNER_TEMP/bin/smoke-bin.tar.zst" | tar -xf -
+          docker load -i "$RUNNER_TEMP/apps/jc-apps.tar"
       # REHEARSAL_JC_IMAGE: apps.sh copies /srv/apps out of that image instead of building the apps
       # stage itself. REHEARSAL_APPS=off is never set here: it would drop every App row.
-      - name: run all
-        env: { SMOKE_E2E: "1", REHEARSAL_HOME: "${{ runner.temp }}/rehearsal", REHEARSAL_JC_IMAGE: "jc-apps:smoke" }
+      - name: run all (shard)
+        env:
+          SMOKE_SHARD: "${{ matrix.shard }}"
+          SMOKE_ONLY: "${{ matrix.only }}"
+          SMOKE_SKIP: "${{ matrix.skip }}"
+          SMOKE_WITH: "${{ matrix.with }}"
+          REHEARSAL_HOME: "${{ runner.temp }}/rehearsal"
+          REHEARSAL_JC_IMAGE: "jc-apps:smoke"
         run: bins/jc/smoke/ci/gate.sh "$RUNNER_TEMP/smoke"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: smoke-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/smoke
+          retention-days: 14
+
+  verdict:
+    needs: [runner-tests, e2e, shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with: { python-version: "3.13" }
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with: { pattern: "smoke-shard-*", path: "${{ runner.temp }}/smoke/shards" }
+      # A shard that uploaded nothing is a `shards/missing:<name>` failure in the report.
+      - name: merge
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke/shards"
+          python3 -I bins/jc/smoke/ci/merge.py --out "$RUNNER_TEMP/smoke" --known bins/jc/smoke/ci/known.txt \
+            --expect rest,pipelines,ui-admin,ui-viewer,ui-outsider,multiorg,multiorg-path,e2e \
+            "$RUNNER_TEMP"/smoke/shards/*
+      - name: the runner's own tests passed
+        if: always()
+        env: { RESULT: "${{ needs.runner-tests.result }}" }
+        run: |
+          echo "runner-tests: $RESULT"
+          [ "$RESULT" = success ]
       - name: summary
         if: always()
         run: |
