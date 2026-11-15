@@ -1549,11 +1549,12 @@ async fn compat_list_groups(
     Ok(Json(groups))
 }
 
-/// Group attributes the token mappers read as organization membership (`jc_org`) and groups
-/// (`jc_groups`), and the sign-in rule the Portal writes from an Organization's manifest
+/// Group attributes the token mappers read as organization membership (`jc_org`, its id
+/// `jc_org_id`) and groups (`jc_groups`), and the sign-in rule the Portal writes from an Organization's manifest
 /// (`jc.secondFactor`): an organization admin dropping it would lower the rule outside its Change.
-const MEMBERSHIP_ATTRIBUTES: [&str; 3] = [
+const MEMBERSHIP_ATTRIBUTES: [&str; 4] = [
     "jc_org",
+    "jc_org_id",
     "jc_groups",
     kaisatsu_oidc::ORG_SECOND_FACTOR_ATTRIBUTE,
 ];
