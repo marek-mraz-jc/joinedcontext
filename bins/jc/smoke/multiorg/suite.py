@@ -1907,7 +1907,7 @@ class Suite:
         names another Organization's project or private Endpoint address is refused (422). In
         host mode each further Portal's address (`{opendata}/-/multiorg/`) lists its own
         published datasets and none of another's, in search, list, DCAT, Turtle, Atom and the MCP
-        catalogue tool; path mode serves no Organization catalogue (no [[organizations]]), so
+        catalogue tool (a POST, so on the working host's `/data`); path mode serves no Organization catalogue (no [[organizations]]), so
         those rows skip there."""
         tag = f"mo-pt-{secrets.token_hex(3)}"
         own_ok = {}
@@ -2036,13 +2036,15 @@ class Suite:
                          st == 200 and not leaked and not hosts)
             rpc = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                    "params": {"name": "jc_dataset_search", "arguments": {}}}
-            st, body = h.json("POST", f"{base}/mcp", body=rpc)
+            # MCP is a POST, which the read-only open data host refuses (405): the same catalogue
+            # answers it on the working host's `/data` (T-6991 §2).
+            st, body = self.client(org).json("POST", f"/data{base}/mcp", body=rpc)
             text = json.dumps(body, ensure_ascii=False)
             # a dataset by its `name` member (the tool's text is JSON inside JSON), never a bare word
             names = {n for n in [*others, *listed[org]] if n and re.search(rf'\\?"name\\?":\s*\\?"{re.escape(n)}\\?"', text)}
             leaked = sorted(others & names)
             own = not listed[org] or bool(listed[org] & names)
-            self.row(f"portals.{org}.mcp.no-foreign", org, f"POST {{opendata}}{base}/mcp tools/call jc_dataset_search",
+            self.row(f"portals.{org}.mcp.no-foreign", org, f"POST {{portal}}/data{base}/mcp tools/call jc_dataset_search",
                      "200, an own dataset, none of another Organization", f"{st}, own {own}, leaked {leaked[:3]}",
                      st == 200 and own and not leaked)
 
