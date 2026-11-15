@@ -219,6 +219,9 @@ pub struct Probe {
     pub records: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<usize>,
+    /// The pages a paged source's read walked (`spec.http.paging` or a preset); absent unpaged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages: Option<usize>,
     /// The first record as data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<serde_json::Value>,

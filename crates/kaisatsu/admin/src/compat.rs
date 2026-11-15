@@ -963,6 +963,8 @@ async fn compat_create_user(
                 managed_by: group.managed_by.clone(),
             },
         ))?;
+        crate::operations::ensure_may_join_group(&ctx, state.oidc.store.as_ref(), &realm, &group)
+            .await?;
         joins.push(group.id);
     }
     user.service_account_client_id = None;

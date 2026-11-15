@@ -2531,7 +2531,8 @@
       "button": "Verbindung testen",
       "running": "Wird getestet…",
       "read": "Verbunden: {records, plural, one {# Datensatz} other {# Datensätze}} gelesen ({bytes} Bytes). Der erste:",
-      "failed": "Nichts gelesen: {reason}. Prüfen Sie Adresse und Zugangsdaten und testen Sie erneut."
+      "failed": "Nichts gelesen: {reason}. Prüfen Sie Adresse und Zugangsdaten und testen Sie erneut.",
+      "pages": "{pages, plural, one {# Seite} other {# Seiten}} gelesen."
     },
     "usedBy": {
       "title": "Verwendet von",
@@ -2541,6 +2542,79 @@
       "title": "Fertige Einrichtungen",
       "lead": "Eine Einrichtung schreibt die Quelle, ihre Pipeline und ihren Zeitplan in einer Änderung aus wenigen Antworten. Beispiel: ein GBFS-Feed für Leihräder, jede Minute abgefragt.",
       "back": "Zurück zu den Datenquellen"
+    },
+    "preset": {
+      "title": "Open-Data-API-Vorlage",
+      "hint": "Für einen CKAN-, ArcGIS-, OData-, WFS-, OGC-API-Features- oder SensorThings-Dienst: Die Plattform blättert selbst und findet die Datensätze. Lassen Sie Blättern und Datensätze liegen in leer, wenn Sie eine wählen.",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (Datensätze oder Datastore-Zeilen)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Datensätze pro Seite",
+      "organization": "Organisation",
+      "resourceId": "Ressourcen-ID",
+      "objectIdField": "Objekt-ID-Feld",
+      "outFields": "Gelesene Felder",
+      "typeNames": "Objektart",
+      "srsName": "Koordinatensystem",
+      "expand": "Verknüpfte Entitäten"
+    },
+    "paging": {
+      "title": "Blättern",
+      "hint": "Für eine blätternde API ohne Vorlage: wie die nächste Seite angefragt wird. Der Verbindungstest liest jede Seite und sagt, wie viele.",
+      "mode": "Nächste Seite per",
+      "modes": {
+        "page": "Seitennummer",
+        "offset": "Offset und Limit",
+        "cursor": "Cursor in der Antwort",
+        "link": "Link-Header (rel=next)",
+        "nextUrl": "Nächste URL in der Antwort"
+      },
+      "param": "Seitenparameter",
+      "start": "Erste Seite oder Offset",
+      "sizeParam": "Seitengrößenparameter",
+      "size": "Seitengröße",
+      "offsetParam": "Offset-Parameter",
+      "limitParam": "Limit-Parameter",
+      "limit": "Limit",
+      "cursor": "Cursor-Pfad",
+      "cursorParam": "Cursor-Parameter",
+      "cursorHeader": "Cursor-Header",
+      "next": "Pfad der nächsten URL",
+      "total": "Pfad der Gesamtzahl",
+      "more": "Pfad für weitere Seiten",
+      "maxPages": "Höchstens Seiten",
+      "maxRecords": "Höchstens Datensätze",
+      "delay": "Pause zwischen Seiten"
+    },
+    "discover": {
+      "title": "Im Dienst suchen",
+      "hint": "Liest die eigene Liste des Dienstes einmal auf dem Runner des Projekts, nur öffentliche Dienste, und bietet an, was diese Vorlage lesen kann.",
+      "needs": "Wählen Sie unter Open-Data-API-Vorlage eine API und geben Sie die URL des Dienstes ein, um zu sehen, was er anbietet.",
+      "button": "Suchen",
+      "running": "Dienst wird gelesen…",
+      "pick": "{count, plural, one {# Eintrag} other {# Einträge}} gefunden",
+      "pickHint": "Wählen Sie einen; Übernehmen schreibt ihn ins Formular, wo Sie ihn noch ändern können.",
+      "use": "Übernehmen",
+      "useNeeds": "Wählen Sie zuerst einen Eintrag aus der Liste.",
+      "truncated": "Der Dienst listet mehr, als das Portal liest; fehlt Ihrer, geben Sie eine engere URL ein.",
+      "none": "Der Dienst listet nichts, was diese Vorlage lesen kann. Prüfen Sie URL und API-Art.",
+      "failed": "Nichts gelistet: {reason}. Prüfen Sie URL und API-Art und versuchen Sie es erneut.",
+      "used": "Ins Formular geschrieben: {value}.",
+      "fields": {
+        "organization": "Organisation",
+        "layer": "Ebene",
+        "entitySet": "Entitätsmenge",
+        "typeNames": "Objektart",
+        "collection": "Sammlung",
+        "thing": "Thing"
+      },
+      "refused": "Bitten Sie eine Projektverwaltung um eine Rolle, die Datenquellen vorschlägt."
     }
   },
   "pipelines": {
