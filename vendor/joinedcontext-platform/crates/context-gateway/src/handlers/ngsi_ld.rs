@@ -37,7 +37,7 @@ use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{any, get};
 use axum::Router;
-use jc_core::kinds::{Operation, Representation};
+use jc_core::kinds::{Operation, OperationRef, Representation};
 use jc_core::ProblemDetails;
 use serde_json::Value;
 use std::sync::Arc;
@@ -976,6 +976,14 @@ fn anonymous_subscription_refusal(
 /// writes it serves to somebody else. The same decision as the rest of the request
 /// (`Gateway::pdp`, the Endpoint's bound Policies), with no request narrowing: a write any
 /// permit could pass goes on to the guards and the view, which decide the rest.
+/// The answer to a write on an open-data Endpoint (EP-187): `403 open-data-read-only`.
+pub(crate) fn open_data_read_only(operation: Operation) -> ProblemDetails {
+    ProblemDetails::new(403, "open-data-read-only", "Open Data Is Read-Only").with_detail(format!(
+        "this Endpoint publishes open data and only reads, so {operation} is refused for every \
+         caller; the data owner writes through an internal Endpoint of the space"
+    ))
+}
+
 fn ungranted_write_refusal(
     gateway: &Gateway,
     endpoint: &Endpoint,
@@ -1084,6 +1092,13 @@ pub(crate) async fn view_request(
                 .with_detail("a read-only connector's token reads and never writes")
                 .into_response(),
         ));
+    }
+    // EP-187 (T-6972): open data is read-only for every caller, before any Policy decides, so a
+    // manifest that predates the validation writes nothing either. A subscription changes no
+    // data, only the caller's own notifications, so a signed-in reader still subscribes.
+    if endpoint.open_data && OperationRef::Single(operation).writes_entities() {
+        tracing::info!(slug = %endpoint.slug, %operation, "write refused: an open-data Endpoint");
+        return Err(Box::new(open_data_read_only(operation).into_response()));
     }
     if let Some(refusal) = anonymous_subscription_refusal(subject, operation) {
         tracing::info!(slug = %endpoint.slug, %operation, "refused: an anonymous subscription");

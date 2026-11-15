@@ -501,7 +501,14 @@ fn manifests() -> Vec<(String, String)> {
         ),
         (
             space("endpoints/public.yaml"),
-            endpoint("public", PUBLIC, "public", ""),
+            // Open data is read-only (EP-187): the public Endpoint serves the public read alone,
+            // the writers write through the closed one.
+            endpoint(
+                "public",
+                PUBLIC,
+                "public",
+                &format!("  policyRefs: [urn:ngsi-ld:Policy:jc.invalid:{SPACE}:public-read]\n"),
+            ),
         ),
         (
             space("endpoints/closed.yaml"),

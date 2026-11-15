@@ -444,6 +444,19 @@ impl OperationRef {
             Self::Group(grp) => grp.includes_write(),
         }
     }
+
+    /// [`Self::is_write`] less the subscription operations: a subscription is the caller's own
+    /// state, so it changes no entity, attribute or history (ODP-02, PL-111).
+    pub fn writes_entities(&self) -> bool {
+        !matches!(
+            self,
+            Self::Single(
+                Operation::CreateSubscription
+                    | Operation::UpdateSubscription
+                    | Operation::DeleteSubscription
+            )
+        ) && self.is_write()
+    }
 }
 
 impl fmt::Display for OperationRef {
@@ -965,6 +978,24 @@ impl PolicySpec {
         }
 
         self.validate_assignee()?;
+        // Every caller holds the role `public`, anonymous or signed in, so a grant to it that
+        // changes data lets anyone change it (EP-187, T-6972). It may create only, the public
+        // form of EP-97; a prohibition takes, never gives.
+        let changes = |op: &&OperationRef| {
+            op.writes_entities() && **op != OperationRef::Single(Operation::CreateEntity)
+        };
+        let public_write = (self.is_public() && !self.effect.is_prohibition())
+            .then(|| self.operations.iter().find(changes))
+            .flatten();
+        if let Some(op) = public_write {
+            return Err(Error::Name {
+                field: "spec.operations",
+                value: op.as_str().to_owned(),
+                reason: "a public grant only reads, or creates through a form Endpoint (EP-97): \
+                         open data is read-only (EP-187); grant the change to a group or a \
+                         service account in a Policy of its own",
+            });
+        }
 
         if self.operations.is_empty() && self.actions.is_empty() {
             return Err(Error::Name {
@@ -1160,7 +1191,7 @@ impl PolicySpec {
                 .any(|r| matches!(r, OperationRef::Single(o) if *o == op))
         };
         let temporal = named(Operation::QueryTemporal) || named(Operation::RetrieveTemporal);
-        let public = self.assignee.kind == PrincipalKind::Role && self.assignee.id == "public";
+        let public = self.is_public();
         let any_name = info.property_names.is_empty() && info.relationship_names.is_empty();
         for (name, caps) in &info.attributes {
             let at = |reason| Err(refused(name.clone(), reason));
@@ -1219,6 +1250,21 @@ impl PolicySpec {
             return Some("a capability list names each value once");
         }
         None
+    }
+
+    /// Whether this Policy is assigned the role `public`, which every caller holds (ODP-02).
+    pub fn is_public(&self) -> bool {
+        self.assignee.kind == PrincipalKind::Role && self.assignee.id == "public"
+    }
+
+    /// The first operation of this grant that writes context data (an entity, an attribute or
+    /// its history), or `None`: a subscription is the caller's own state and writes none
+    /// ([`OperationRef::writes_entities`]). A prohibition grants nothing and answers `None`.
+    pub fn entity_write(&self) -> Option<&OperationRef> {
+        if self.effect.is_prohibition() {
+            return None;
+        }
+        self.operations.iter().find(|op| op.writes_entities())
     }
 
     /// Returns `true` if any granted operation or group modifies context state: a group by
