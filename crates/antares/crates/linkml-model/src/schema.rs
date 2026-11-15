@@ -238,6 +238,16 @@ pub struct Slot {
     /// The slot that states the same relation from the other end.
     #[serde(default)]
     pub inverse: Option<String>,
+    /// The least value a numeric slot holds, inclusive (PL-59: `sh:minInclusive`).
+    #[serde(default)]
+    pub minimum_value: Option<serde_json::Number>,
+    /// The greatest value a numeric slot holds, inclusive (PL-59: `sh:maxInclusive`).
+    #[serde(default)]
+    pub maximum_value: Option<serde_json::Number>,
+    /// A regular expression a text value matches somewhere (PL-59: `sh:pattern`, as JSON Schema
+    /// and SHACL read it: unanchored; `^` and `$` anchor it).
+    #[serde(default)]
+    pub pattern: Option<String>,
     /// The unit of a quantity.
     #[serde(default)]
     pub unit: Option<Unit>,

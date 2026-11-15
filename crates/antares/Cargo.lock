@@ -2387,6 +2387,7 @@ version = "0.3.0"
 dependencies = [
  "moka",
  "proptest",
+ "regex",
  "serde",
  "serde-saphyr",
  "serde_json",

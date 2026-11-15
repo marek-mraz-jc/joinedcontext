@@ -635,8 +635,7 @@ impl QueryReader {
                 total,
             });
         }
-        ctx.metrics
-            .incr_counter(&metrics::read_key(label), page_len);
+        metrics::incr(&ctx.metrics, label, metrics::READ, None, page_len);
 
         let mut batch: Batch = Vec::with_capacity(entities.len());
         let mut updates: Vec<(String, String)> = Vec::new();
@@ -1017,8 +1016,13 @@ impl TemporalReader {
             }
             _ => self.end_pass(),
         }
-        ctx.metrics
-            .incr_counter(&metrics::read_key(label), entities.len() as u64);
+        metrics::incr(
+            &ctx.metrics,
+            label,
+            metrics::READ,
+            None,
+            entities.len() as u64,
+        );
         if entities.is_empty() {
             return Ok(None);
         }
