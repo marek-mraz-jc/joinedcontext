@@ -621,7 +621,7 @@ async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str
             "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
             "audience": "public",
             "enabledRepresentations": ["ngsi-ld"],
-            "policyRefs": [policy_ref]
+            "policyRefs": [policy_ref.clone()]
         }),
     );
     let (status, body) = step(
@@ -646,7 +646,8 @@ async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str
         json!({
             "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
             "audience": "organization",
-            "enabledRepresentations": ["ngsi-ld"]
+            "enabledRepresentations": ["ngsi-ld"],
+            "policyRefs": [policy_ref]
         }),
     );
     let (status, body) = step(
