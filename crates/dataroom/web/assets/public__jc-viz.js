@@ -38,29 +38,11 @@ function jcVizViewport() {
     }
   });
 }
-// T-6748: on a phone the closed assistant steps aside while it sits over a frame, so a table's last
-// rows and its pager stay readable and tappable (the edge icon of T-5415 still covered them). It is
-// back once the frame scrolls past it, and on a keyboard focus (jc-theme.css).
-var jcPhone = window.matchMedia("(max-width: 40rem)");
-// T-6758: it steps aside over an open Subscribe menu too, at every width, so no field of it is covered.
-function jcCornerAside() {
-  var corner = document.querySelector(".jc-corner .jc-assistant:not([open]) > summary");
-  var over = false;
-  if (corner) {
-    var c = corner.getBoundingClientRect();
-    var under = (jcPhone.matches ? "iframe[data-jc-viz], " : "") + ".jc-subscribe[open] > .jc-subscribe-menu";
-    over = Array.prototype.some.call(document.querySelectorAll(under), function (frame) {
-      var r = frame.getBoundingClientRect();
-      return r.left < c.right && c.left < r.right && r.top < c.bottom && c.top < r.bottom;
-    });
-  }
-  document.body.classList.toggle("jc-corner-aside", over);
-}
 var jcVizQueued = false;
 function jcVizSoon() {
   if (jcVizQueued) return;
   jcVizQueued = true;
-  window.requestAnimationFrame(function () { jcVizQueued = false; jcVizViewport(); jcCornerAside(); });
+  window.requestAnimationFrame(function () { jcVizQueued = false; jcVizViewport(); if (window.jcCornerAside) window.jcCornerAside(); });
 }
 window.addEventListener("scroll", jcVizSoon, { passive: true, capture: true });
 window.addEventListener("resize", jcVizSoon);

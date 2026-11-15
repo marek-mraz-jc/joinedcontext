@@ -26,6 +26,8 @@ zeroize = "1"
 # the version the gateway, jcctl and jc-manifest already lock.
 jsonschema = { version = "0.54", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["serde", "alloc"] }
+# The open data portal's page texts as safe HTML (T-7031); the version the Portal and shako lock.
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 axum = { version = "0.8", optional = true, default-features = false, features = ["json"] }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "json"] }

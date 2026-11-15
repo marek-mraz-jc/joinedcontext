@@ -2030,15 +2030,11 @@ pub fn jc_examples(dist: &Distribution, lang: &str) -> Vec<ResourceExample> {
             );
         }
         "MCP" => {
+            // T-7030: the clicks per assistant live once, on the catalogue's /connector page.
             add(
-                jc_t("mcp_claude_ai", lang),
+                jc_t("ex_mcp_title", lang),
                 Some(url.clone()),
-                vec![jc_t("mcp_claude_ai_1", lang), jc_t("mcp_claude_ai_2", lang)],
-            );
-            add(
-                jc_t("ex_chatgpt_title", lang),
-                Some(url.clone()),
-                vec![jc_t("ex_chatgpt", lang)],
+                vec![jc_t("ex_mcp_steps", lang)],
             );
             add(
                 jc_t("mcp_claude", lang),
@@ -2149,24 +2145,46 @@ pub fn jc_map_config(
     }))
 }
 
-/// Static page content (`PAGES` / `jc_page` in `plugin.py` lines 2536-2676, D6).
+/// Static page content (`PAGES` / `jc_page` in `plugin.py` lines 2536-2676, D6): the
+/// Organization's own Markdown of the page in the language (`spec.appearance.pages`, T-7031),
+/// else the built-in one, rendered by jc-core's one safe renderer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StaticPageView {
     pub name: String,
     pub title: String,
-    pub sections: Vec<(String, Vec<String>)>,
+    /// The page's body as HTML from [`jc_core::opendata_pages::render`]: no raw HTML, no image,
+    /// no script link.
+    pub html: String,
     pub email: String,
     pub other_pages: Vec<(String, String)>,
 }
 
-pub const STATIC_PAGE_NAMES: [&str; 5] =
-    ["connector", "privacy", "terms", "support", "accessibility"];
+pub const STATIC_PAGE_NAMES: [&str; 5] = jc_core::opendata_pages::PAGES;
 
 pub fn jc_page(name: &str, branding: &BrandingBlock, lang: &str) -> Option<StaticPageView> {
-    if !STATIC_PAGE_NAMES.contains(&name) {
-        return None;
-    }
     let code = normalize_lang_code(lang);
+    let (title, html) = page_text(name, branding, &code)?;
+    let other_pages = STATIC_PAGE_NAMES
+        .iter()
+        .filter(|&&p| p != name)
+        .filter_map(|&p| Some((p.to_owned(), page_text(p, branding, &code)?.0)))
+        .collect();
+    Some(StaticPageView {
+        name: name.to_owned(),
+        title,
+        html,
+        email: if branding.contact_email.contains('@') {
+            branding.contact_email.clone()
+        } else {
+            String::new()
+        },
+        other_pages,
+    })
+}
+
+/// The title and HTML body of page `name` in language `code`; `None` for no such page.
+fn page_text(name: &str, branding: &BrandingBlock, code: &str) -> Option<(String, String)> {
+    let built_in = jc_core::opendata_pages::default_markdown(name, code)?;
     let mcp = jc_mcp_install(branding);
     let mcp_url = mcp
         .as_ref()
@@ -2177,193 +2195,18 @@ pub fn jc_page(name: &str, branding: &BrandingBlock, lang: &str) -> Option<Stati
     } else {
         &branding.domain
     };
-
-    let (title, raw_sections): (&str, Vec<(&str, Vec<String>)>) = match (name, code.as_str()) {
-        ("connector", "sk") => (
-            "MCP konektor",
-            vec![
-                (
-                    "",
-                    vec![format!(
-                        "Pýtajte sa AI asistenta na otvorené dáta tohto katalógu: aktuálnu kvalitu ovzdušia, nemocnice v kraji, zmluvy mesta. Konektor je MCP server na adrese {mcp_url}. Netreba účet a iba číta."
-                    )],
-                ),
-                (
-                    "Čo dokáže",
-                    vec![
-                        "list_endpoints nájde datasety; list_types, get_type a describe_schema prečítajú ich dátové modely; query_entities a get_entity čítajú aktuálne záznamy; query_temporal a retrieve_temporal ich históriu; describe_access povie, čo smie volanie čítať.".into(),
-                        "Každý nástroj iba číta. Nástroj, ktorý by zapisoval, bez prihlásenia odmietne.".into(),
-                    ],
-                ),
-            ],
-        ),
-        ("connector", _) => (
-            "MCP connector",
-            vec![
-                (
-                    "",
-                    vec![format!(
-                        "Ask an AI assistant about this catalogue's open data: air quality now, hospitals in the region, a city's contracts. The connector is an MCP server at {mcp_url}. It needs no account and only reads."
-                    )],
-                ),
-                (
-                    "What it can do",
-                    vec![
-                        "list_endpoints finds the datasets; list_types, get_type and describe_schema read their data models; query_entities and get_entity read the current rows; query_temporal and retrieve_temporal read their history; describe_access says what a call may read.".into(),
-                        "Every tool reads. A tool that would write is refused without a sign-in.".into(),
-                    ],
-                ),
-            ],
-        ),
-        ("privacy", "sk") => (
-            "Ochrana súkromia",
-            vec![
-                ("", vec![format!("Táto stránka sa týka MCP konektora na adrese {mcp_url}.")]),
-                (
-                    "Bez účtu, bez cookies",
-                    vec!["Konektor odpovedá bez účtu. Nenastavuje žiadne cookie a nevedie o vás žiadny profil.".into()],
-                ),
-                (
-                    "Dáta",
-                    vec!["Konektor poskytuje iba datasety, ktoré ich vydavatelia zverejnili ako otvorené dáta.".into()],
-                ),
-            ],
-        ),
-        ("privacy", _) => (
-            "Privacy",
-            vec![
-                ("", vec![format!("This page covers the MCP connector at {mcp_url}.")]),
-                (
-                    "No account, no cookie",
-                    vec!["The connector answers without an account. It sets no cookie and keeps no profile of you.".into()],
-                ),
-                (
-                    "The data",
-                    vec!["The connector serves only datasets their publishers released as open data.".into()],
-                ),
-            ],
-        ),
-        ("terms", "sk") => (
-            "Podmienky používania",
-            vec![
-                (
-                    "Licencie",
-                    vec!["Každý dataset uvádza svoju licenciu na svojej stránke v katalógu a tá určuje, ako ho smiete použiť.".into()],
-                ),
-                (
-                    "Iba čítanie",
-                    vec!["Konektor dáta nikdy nemení. Nástroje, ktoré by zapisovali, bez prihlásenia odmietne.".into()],
-                ),
-                (
-                    "Bez záruky",
-                    vec![format!("{domain} beží ako vývojová služba.")],
-                ),
-            ],
-        ),
-        ("terms", _) => (
-            "Terms of use",
-            vec![
-                (
-                    "Licences",
-                    vec!["Each dataset names its licence on its catalogue page, and that licence governs its reuse.".into()],
-                ),
-                (
-                    "Read only",
-                    vec!["The connector never changes data. Tools that would write are refused without a sign-in.".into()],
-                ),
-                ("As is", vec![format!("{domain} runs as a development service.")]),
-            ],
-        ),
-        ("support", "sk") => (
-            "Podpora",
-            vec![(
-                "",
-                vec![
-                    "Napíšte nám, keď konektor zlyhá alebo číslo nesedí. Uveďte dataset alebo nástroj, otázku, ktorú ste položili, a čas.".into(),
-                    "Chybné číslo v datasete: oznámte ho aj jeho vydavateľovi, uvedenému na stránke datasetu.".into(),
-                ],
-            )],
-        ),
-        ("support", _) => (
-            "Support",
-            vec![(
-                "",
-                vec![
-                    "Write to us when the connector fails or a number looks wrong. Name the dataset or the tool, the question you asked and the time.".into(),
-                    "A wrong number in a dataset: tell its publisher too, named on the dataset page.".into(),
-                ],
-            )],
-        ),
-        ("accessibility", "sk") => (
-            "Vyhlásenie o prístupnosti",
-            vec![
-                (
-                    "",
-                    vec!["Chceme, aby tento katalóg mohol používať každý, aj človek, ktorý pracuje iba s klávesnicou, s čítačkou obrazovky alebo so zväčšením.".into()],
-                ),
-                (
-                    "Právny rámec",
-                    vec!["Prístupnosť upravuje zákon č. 95/2019 Z. z. o informačných technológiách vo verejnej správe a vyhláška č. 78/2020 Z. z., ktorá za štandard berie WCAG 2.1 na úrovni AA (EN 301 549).".into()],
-                ),
-                (
-                    "Stav súladu",
-                    vec!["Katalóg je čiastočne v súlade s WCAG 2.1 na úrovni AA.".into()],
-                ),
-            ],
-        ),
-        (_, _) => (
-            "Accessibility statement",
-            vec![
-                (
-                    "",
-                    vec!["We want everyone to be able to use this catalogue, including people who work only with a keyboard, a screen reader or magnification.".into()],
-                ),
-                (
-                    "Legal basis",
-                    vec!["Accessibility is governed by Act No. 95/2019 Coll. and Decree No. 78/2020 Coll., which take WCAG 2.1 level AA (EN 301 549) as the standard.".into()],
-                ),
-                (
-                    "Compliance status",
-                    vec!["This catalogue is partially compliant with WCAG 2.1 level AA.".into()],
-                ),
-            ],
-        ),
-    };
-
-    let other_pages = STATIC_PAGE_NAMES
-        .iter()
-        .filter(|&&p| p != name)
-        .map(|&p| {
-            let t = match (p, code.as_str()) {
-                ("connector", "sk") => "MCP konektor",
-                ("connector", _) => "MCP connector",
-                ("privacy", "sk") => "Ochrana súkromia",
-                ("privacy", _) => "Privacy",
-                ("terms", "sk") => "Podmienky používania",
-                ("terms", _) => "Terms of use",
-                ("support", "sk") => "Podpora",
-                ("support", _) => "Support",
-                ("accessibility", "sk") => "Vyhlásenie o prístupnosti",
-                (_, _) => "Accessibility statement",
-            };
-            (p.to_owned(), t.to_owned())
-        })
-        .collect();
-
-    Some(StaticPageView {
-        name: name.to_owned(),
-        title: title.to_owned(),
-        sections: raw_sections
-            .into_iter()
-            .map(|(h, p)| (h.to_owned(), p))
-            .collect(),
-        email: if branding.contact_email.contains('@') {
-            branding.contact_email.clone()
-        } else {
-            String::new()
-        },
-        other_pages,
-    })
+    let vars = [("mcp_url", mcp_url), ("domain", domain)];
+    let own = branding
+        .pages
+        .get(&(name.to_owned(), code.to_owned()))
+        .map(|md| jc_core::opendata_pages::render(md, &vars));
+    let shown = own.unwrap_or_else(|| jc_core::opendata_pages::render(built_in, &vars));
+    let title = shown.title.unwrap_or_else(|| {
+        jc_core::opendata_pages::render(built_in, &[])
+            .title
+            .unwrap_or_else(|| name.to_owned())
+    });
+    Some((title, shown.html))
 }
 
 /// Step-by-step assistant guide (`GUIDES` / `jc_assistant_guide` in `plugin.py` lines 2280-2525, D6).
@@ -2384,6 +2227,14 @@ pub struct AssistantGuideView {
 }
 
 pub const CONNECTOR_NAME: &str = "Joinedcontext Open Data";
+
+/// The sections of the one `/connector` page, each at its own anchor (`#claude`, ...): a guide
+/// per assistant and one for any other MCP client (T-7030). `/assistants/{id}` answers 308 there.
+pub const GUIDE_IDS: [&str; 4] = ["claude", "chatgpt", "grok", "other"];
+
+/// Where the MCP specification defines the Streamable HTTP transport the connector speaks.
+const MCP_TRANSPORTS: &str =
+    "https://modelcontextprotocol.io/specification/2025-06-18/basic/transports";
 
 pub fn jc_try_prompt(branding: &BrandingBlock, lang: &str) -> String {
     let code = normalize_lang_code(lang);
@@ -2415,7 +2266,7 @@ pub fn jc_assistant_guide(
     branding: &BrandingBlock,
     lang: &str,
 ) -> Option<AssistantGuideView> {
-    if !matches!(id, "chatgpt" | "claude" | "grok") {
+    if !GUIDE_IDS.contains(&id) {
         return None;
     }
     let code = normalize_lang_code(lang);
@@ -2516,7 +2367,7 @@ pub fn jc_assistant_guide(
                 ("The answer does not use the catalogue.", "Start a new chat, type @, pick Joinedcontext Open Data and ask again."),
             ],
         ),
-        (_, "sk") => (
+        ("grok", "sk") => (
             "Grok",
             "2026-10-18",
             2,
@@ -2535,7 +2386,7 @@ pub fn jc_assistant_guide(
                 ("Odpoveď katalóg nepoužije.", "Otvorte nový rozhovor a napíšte: použi Joinedcontext Open Data."),
             ],
         ),
-        (_, _) => (
+        ("grok", _) => (
             "Grok",
             "2026-10-18",
             2,
@@ -2551,6 +2402,46 @@ pub fn jc_assistant_guide(
             ],
             vec![
                 ("Grok refuses the address.", "Copy the address again with the button and paste it whole."),
+                ("The answer does not use the catalogue.", "Start a new chat and write: use Joinedcontext Open Data."),
+            ],
+        ),
+        (_, "sk") => (
+            "Iný klient MCP",
+            "2026-11-15",
+            1,
+            MCP_TRANSPORTS,
+            vec![
+                "Každý klient, ktorý hovorí MCP cez Streamable HTTP: Claude Code, VS Code, Cursor a ďalšie.",
+            ],
+            vec![
+                "V klientovi pridajte MCP server typu HTTP (Streamable HTTP) s názvom Joinedcontext Open Data.",
+                "Vložte túto adresu:",
+                "Prihlásenie nenastavujte: konektor ho nepotrebuje.",
+                "Otvorte nový rozhovor a položte otázku; klient vypíše nástroje opísané vyššie.",
+            ],
+            vec![
+                ("Klient chce príkaz alebo JSON, nie adresu.", "Použite príkaz alebo JSON nižšie: obsahujú tú istú adresu."),
+                ("Klient sa nepripojí.", "Skontrolujte, že typ je HTTP (Streamable HTTP), nie SSE ani stdio."),
+                ("Odpoveď katalóg nepoužije.", "Otvorte nový rozhovor a napíšte: použi Joinedcontext Open Data."),
+            ],
+        ),
+        (_, _) => (
+            "Any other MCP client",
+            "2026-11-15",
+            1,
+            MCP_TRANSPORTS,
+            vec![
+                "Every client that speaks MCP over Streamable HTTP: Claude Code, VS Code, Cursor and others.",
+            ],
+            vec![
+                "In your client, add an MCP server of type HTTP (Streamable HTTP) named Joinedcontext Open Data.",
+                "Paste this address:",
+                "Set no sign-in: the connector needs none.",
+                "Start a new chat and ask your question; the client lists the tools described above.",
+            ],
+            vec![
+                ("The client wants a command or JSON, not an address.", "Use the command or the JSON below: they hold the same address."),
+                ("The client does not connect.", "Check the type is HTTP (Streamable HTTP), not SSE or stdio."),
                 ("The answer does not use the catalogue.", "Start a new chat and write: use Joinedcontext Open Data."),
             ],
         ),
@@ -2572,9 +2463,13 @@ pub fn jc_assistant_guide(
             .into_iter()
             .map(|(p, f)| (p.to_owned(), f.to_owned()))
             .collect(),
-        checked: jc_t("guide_checked", lang)
-            .replace("{date}", checked_date)
-            .replace("{maker}", name),
+        checked: if id == "other" {
+            jc_t("guide_checked_spec", lang).replace("{date}", checked_date)
+        } else {
+            jc_t("guide_checked", lang)
+                .replace("{date}", checked_date)
+                .replace("{maker}", name)
+        },
     })
 }
 

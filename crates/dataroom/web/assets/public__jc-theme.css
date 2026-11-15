@@ -328,6 +328,22 @@ border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); overflow
 .jc-about-lead { font-size: 1.1875rem; }
 .jc-live { background: var(--jc-primary-soft); border: 1px solid color-mix(in oklab, var(--jc-primary) 22%, var(--jc-paper)); border-radius: var(--jc-radius-lg); padding: 1.25rem 1.5rem; }
 .jc-live h2 { margin-top: 0; }
+/* T-7030: a static page's connect card sits in its intro; its Markdown body below (jc-core
+opendata_pages): a long word or address wraps, a table scrolls in its own box. */
+.jc-connect { margin-block: 1.25rem 1.5rem; }
+.jc-connect .jc-code { margin-top: .5rem; }
+.jc-connect-guide { margin: .75rem 0 0; }
+.jc-page-body { overflow-wrap: anywhere; }
+.jc-page-body ul, .jc-page-body ol { padding-inline-start: 1.25rem; }
+.jc-page-body li + li { margin-top: .375rem; }
+.jc-page-body code { font-size: .875em; padding: .1em .35em; border-radius: 4px; background: var(--jc-n100); color: var(--jc-ink); overflow-wrap: anywhere; }
+.jc-page-body pre { padding: .75rem 1rem; border-radius: var(--jc-radius); background: var(--jc-n50); border: 1px solid var(--jc-border); overflow-x: auto; }
+.jc-page-body pre code { padding: 0; background: none; }
+.jc-page-body table { display: block; max-inline-size: 100%; overflow-x: auto; border-collapse: collapse; margin-block: 1rem; }
+.jc-page-body th, .jc-page-body td { border: 1px solid var(--jc-border); padding: .375rem .625rem; text-align: start; }
+.jc-page-links { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--jc-border); }
+.jc-page-links .list-inline { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; margin: 0; padding: 0; }
+.jc-page-links a { display: inline-flex; align-items: center; min-block-size: 2.75rem; }
 .jc-copy { display: flex; gap: .5rem; }
 .jc-copy .form-control, .jc-copy-code pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .875rem; }
 /* An API resource's usage text and its commands to copy (T-3887). */
@@ -374,7 +390,7 @@ only where the template put a <wbr> (before a slash). */
 .jc-code-copy { display: inline-flex; align-items: center; gap: .375rem; min-height: 2.25rem; padding: 0 .75rem; border: 1px solid color-mix(in oklab, var(--jc-paper) 22%, transparent); border-radius: calc(var(--jc-radius) - 2px); background: color-mix(in oklab, var(--jc-paper) 8%, transparent); color: inherit; font: inherit; font-weight: 500; cursor: pointer; }
 .jc-code-copy:hover { background: color-mix(in oklab, var(--jc-paper) 16%, transparent); }
 .jc-code-copy:focus-visible { outline: 2px solid var(--jc-paper); outline-offset: 1px; }
-.jc-live .jc-code pre, .jc-code .jc-code-url { margin: 0; padding: .75rem var(--jc-code-pad); background: transparent; color: inherit; border-radius: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8125rem; line-height: 1.5; }
+.jc-live .jc-code pre, .jc-guide .jc-code pre, .jc-code .jc-code-url { margin: 0; padding: .75rem var(--jc-code-pad); background: transparent; color: inherit; border-radius: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8125rem; line-height: 1.5; }
 .jc-code code { font: inherit; color: inherit; background: none; padding: 0; }
 .jc-live .jc-code pre { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 .jc-code .jc-code-url { overflow-wrap: normal; word-break: normal; }
@@ -382,7 +398,7 @@ only where the template put a <wbr> (before a slash). */
 .jc-code-copy { min-height: 2.75rem; }
 /* A phone's card gives the code the width its longest line needs. */
 .jc-mcp { padding: 1rem; --jc-code-pad: .625rem; }
-.jc-live .jc-code pre, .jc-code .jc-code-url { font-size: .75rem; }
+.jc-live .jc-code pre, .jc-guide .jc-code pre, .jc-code .jc-code-url { font-size: .75rem; }
 }
 .jc-section + .jc-section { margin-top: 1.5rem; }
 .jc-section h3 { margin: 0; font-size: 1.0625rem; }
@@ -432,7 +448,8 @@ only where the template put a <wbr> (before a slash). */
 .jc-footer-brand { display: flex; align-items: center; gap: .625rem; min-block-size: 2.75rem; margin-bottom: .5rem; }
 .jc-footer-brand img { height: 2rem; width: 2rem; }
 .jc-footer-brand span { font-family: var(--jc-font-heading); font-size: 1.25rem; font-weight: 700; color: var(--jc-paper); }
-.jc-ribbon { position: sticky; top: 0; z-index: 1030; padding: .375rem 1rem; text-align: center; font-weight: 600; background: var(--jc-accent); color: var(--jc-text); }
+/* T-7030: the ribbon scrolls with the header, so the logo row never slides under it. */
+.jc-ribbon { position: relative; z-index: 1030; padding: .375rem 1rem; text-align: center; font-weight: 600; background: var(--jc-accent); color: var(--jc-text); }
 .jc-footer-lines { font-size: .875rem; }
 .jc-footer-lines p { margin: 0 0 .375rem; }
 /* The contact address reads as a link and is a 44px target. */
@@ -716,20 +733,6 @@ map's height whenever it came and went, and every resize past the cap asked the 
 .jc-map-page .jc-map-note { position: absolute; z-index: 2; top: .75rem; inset-inline-start: .75rem; max-inline-size: calc(100% - 4rem); margin: 0; padding: .25rem .75rem; background: var(--jc-surface); color: var(--jc-ink); border: 1px solid var(--jc-border); border-radius: 999px; box-shadow: var(--jc-shadow-2); }
 .jc-map-links { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin: 0; padding: .5rem .75rem; font-size: .875rem; border-top: 1px solid var(--jc-border); }
 /* ---- Use it in your AI assistant (T-4585) ------------------------------------------------ */
-/* T-4628, T-4634: every card in one row on a desktop, as many as fit at 14rem below it, one column
-on a phone, all one height. A card's link covers the whole card, and the card shows its focus. */
-.jc-assistant-cards { list-style: none; margin: 1.5rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); grid-auto-rows: 1fr; gap: 1rem; }
-.jc-assistant-card { position: relative; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: .75rem; padding: 1.25rem; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-1); }
-.jc-assistant-card h2 { display: flex; align-items: center; gap: .75rem; font-size: 1.25rem; margin: 0; }
-.jc-assistant-card .jc-ai-logo { flex: none; display: block; inline-size: 2rem; block-size: 2rem; }
-.jc-card-links { margin: auto 0 0; display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
-.jc-card-link { font-weight: 600; }
-/* T-4643: the guide sits above the card's whole-card link, so it stays its own target. */
-.jc-card-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
-.jc-assistant-card:has(.jc-card-link) { cursor: pointer; }
-.jc-assistant-card:has(.jc-card-link:hover) { border-color: var(--jc-primary); }
-.jc-card-link:focus-visible { outline: none; }
-.jc-assistant-card:has(.jc-card-link:focus-visible) { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
 .jc-connector-note { display: flex; gap: .75rem; align-items: flex-start; margin: 0 0 1.5rem; padding: .75rem 1rem; background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); border-inline-start: 4px solid var(--jc-primary); border-radius: var(--jc-radius); }
 .jc-connector-note p { margin: 0 0 .5rem; }
 .jc-connector-note p:last-child { margin: 0; }
@@ -737,20 +740,53 @@ on a phone, all one height. A card's link covers the whole card, and the card sh
 .jc-note-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-weight: 600; }
 .jc-note-prompt q { overflow-wrap: anywhere; }
 .jc-connector-status { margin: 0 0 1rem; padding: .75rem 1rem; background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); border-inline-start: 4px solid var(--jc-primary); border-radius: var(--jc-radius); }
-.jc-store-address { margin: 1.5rem 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
-.jc-store-url { font-weight: 600; overflow-wrap: anywhere; }
-/* One assistant, step by step (T-4643). */
-.jc-guide h1 { display: flex; align-items: center; gap: .75rem; }
-.jc-guide h1 .jc-ai-logo { flex: none; inline-size: 2rem; block-size: 2rem; }
-.jc-guide-steps li { margin-block-end: .75rem; }
-.jc-guide-steps .jc-store-address { margin-block-start: .5rem; }
-.jc-guide-example { margin: 0 0 1rem; padding: .75rem 1rem; border-inline-start: 4px solid var(--jc-primary); background: var(--jc-surface); }
+/* T-7030: the one connector page, a section per assistant at its anchor; the menu above them is a
+row of logo buttons that wraps, and the sections stack at every width, each a card. */
+.jc-guides { margin-top: 2.5rem; }
+.jc-guide-menu ul { list-style: none; margin: .5rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .5rem; }
+.jc-guide-menu a { display: inline-flex; align-items: center; gap: .5rem; min-block-size: 2.75rem; padding: .25rem .875rem; border: 1px solid var(--jc-border); border-radius: 999px; background: var(--jc-surface); color: var(--jc-ink); font-weight: 600; text-decoration: none; }
+.jc-guide-menu a:hover { border-color: var(--jc-primary); }
+.jc-guide-menu a:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
+.jc-guide-menu .jc-ai-logo, .jc-guide h3 .jc-ai-logo { flex: none; inline-size: 1.5rem; block-size: 1.5rem; }
+.jc-guide { scroll-margin-top: 1rem; margin: 0 0 .75rem; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-1); }
+.jc-guide[open] { border-color: var(--jc-primary); }
+.jc-guide > :not(summary) { margin-inline: 1.5rem; }
+.jc-guide > :last-child { margin-block-end: 1.25rem; }
+/* Each section is closed until its menu button, its anchor or its own heading opens it. */
+.jc-guide > summary { display: flex; align-items: center; gap: .75rem; min-block-size: 3.5rem; padding: .5rem 1.5rem; cursor: pointer; list-style: none; border-radius: var(--jc-radius-lg); }
+.jc-guide > summary::-webkit-details-marker { display: none; }
+.jc-guide > summary::after { content: ""; flex: none; margin-inline-start: auto; inline-size: .625rem; block-size: .625rem; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform .15s; }
+.jc-guide[open] > summary::after { transform: rotate(-135deg); }
+.jc-guide[open] > summary { border-bottom: 1px solid var(--jc-border); border-end-start-radius: 0; border-end-end-radius: 0; }
+.jc-guide > summary:hover { background: color-mix(in oklab, var(--jc-primary) 6%, transparent); }
+.jc-guide > summary:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
+.jc-guide h3 { display: flex; align-items: center; gap: .625rem; margin: 0; font-size: 1.25rem; }
+.jc-guide-menu a[aria-current] { border-color: var(--jc-primary); background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); }
+.jc-guide .jc-mcp-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: .5rem; }
+.jc-guide .jc-mcp-links .btn { min-block-size: 2.75rem; display: inline-flex; align-items: center; justify-content: center; }
+.jc-guide-up { margin-block: 1rem 0; }
+.jc-guide-up a { display: inline-flex; align-items: center; min-block-size: 2.75rem; }
+.jc-guide h4 { font-size: 1rem; margin-block: 1.25rem .5rem; }
+.jc-guide-steps { padding-inline-start: 1.25rem; }
+.jc-guide-steps li { margin-block-end: .5rem; }
+.jc-guide-steps .jc-code { margin-block: .5rem .75rem; }
+.jc-guide .jc-code { --jc-code-pad: .875rem; }
+.jc-guide .jc-code pre { white-space: pre; overflow-x: auto; }
+.jc-guide .jc-code-copy { min-block-size: 2.75rem; }
+.jc-guide .jc-code-head { gap: .75rem; }
+@media (max-width: 40rem) {
+/* One full-width button per line: every name stays on one line in every language. */
+.jc-guide-menu ul { display: grid; grid-template-columns: 1fr; }
+.jc-guide-menu a { display: flex; }
+.jc-guide > :not(summary) { margin-inline: 1rem; }
+.jc-guide > summary { padding-inline: 1rem; }
+.jc-guide-steps { padding-inline-start: 1.125rem; }
+}
+/* A step's card is narrower than the page's: its address also breaks inside a host name. */
+.jc-guide .jc-code .jc-code-url { overflow-wrap: anywhere; }
 .jc-guide-trouble dt { font-weight: 600; margin-block-start: .75rem; }
 .jc-guide-trouble dd { margin: .25rem 0 0; }
 .jc-guide-checked { color: var(--jc-muted); overflow-wrap: anywhere; }
-.jc-developers { margin-top: 2.5rem; }
-.jc-developers > summary { cursor: pointer; font-weight: 600; font-size: 1.125rem; }
-.jc-developers > .jc-mcp { margin-top: 1rem; }
 /* T-4641: a chart of the dataset, framed from the renderer's host; the frame sets its own height. */
 .jc-visualizations { margin: 2rem 0; }
 .jc-viz { margin: 0 0 1.5rem; }
@@ -773,12 +809,14 @@ or the legend; the legend now sits under the chart (render.js). */
 body.jc-corner-compact .jc-corner { margin-inline-end: 0; }
 body.jc-corner-compact .jc-assistant:not([open]) > summary { margin-inline: 0; transform: none; border-start-end-radius: 0; border-end-end-radius: 0; opacity: .92; }
 body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon { transform: none; }
-/* T-6748: over a frame it steps aside, so no row or pager of the table sits under it; a keyboard still reaches it. */
+}
+/* T-6748, T-7030: while it would sit over a frame, a connect card, a code block or a form control
+(jc-dock.js), the corner steps aside at every width, so nothing a visitor came for sits under it;
+a keyboard still reaches it, and at the page's end it has its own row above the footer. */
 body.jc-corner-aside .jc-corner { pointer-events: none; }
-body.jc-corner-aside .jc-corner .jc-assistants-link { display: none; }
+body.jc-corner-aside .jc-corner .jc-assistants-link { visibility: hidden; }
 body.jc-corner-aside .jc-assistant:not([open]) > summary:not(:focus-visible) { opacity: 0; }
 body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer-events: auto; }
-}
 .jc-about-sources > summary { cursor: pointer; color: var(--jc-primary); min-block-size: 2.75rem; display: flex; align-items: center; }
 .jc-about-sources > summary:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
 .jc-about-sources ul { margin: .25rem 0 0; padding-inline-start: 1.25rem; columns: 2 16rem; }

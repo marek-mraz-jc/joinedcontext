@@ -334,14 +334,6 @@ fn every_page_escapes_publisher_text_and_nonces_every_script() {
         ),
         ("about", render_about_page(&c, None, "sk", true, "", NONCE)),
         (
-            "assistants",
-            render_assistants_page(&c, None, "sk", true, "", NONCE),
-        ),
-        (
-            "guide",
-            render_assistant_guide_page(&c, None, "claude", "sk", true, "", NONCE).expect("guide"),
-        ),
-        (
             "map",
             render_map_page(&c, None, &ds, None, "sk", true, "", NONCE).expect("map"),
         ),
@@ -1045,7 +1037,11 @@ fn g1_dataset_page_follows_the_addresses_named_one_by_one() {
         html.contains("data-jc-viz=\"http://localhost:42241\""),
         "the height messages come from the viz origin"
     );
-    assert!(html.contains("http://localhost:42241/api/mcp"));
+    assert!(html.contains("http://localhost:42241<wbr>/api<wbr>/mcp"));
+    // T-7030: the steps live once, on /connector; the panel links each section's anchor.
+    for id in ["claude", "chatgpt", "grok", "other"] {
+        assert!(html.contains(&format!("/connector#{id}\"")), "{id}");
+    }
     // The assistant setup is a native disclosure, closed until opened; its summary names it (T-6745).
     let mcp = html
         .split("<details class=\"jc-live jc-mcp\">")
@@ -1442,28 +1438,68 @@ fn d6_static_assistant_and_guide_pages_and_their_error_states() {
     );
     let privacy = render_static_page(&c, None, "privacy", "en", false, "", NONCE).expect("privacy");
     assert!(!privacy.contains("id=\"jc-mcp-title\""));
-    assert!(render_assistant_guide_page(&c, None, "gemini", "en", false, "", NONCE).is_none());
+    // T-7030: the one connector page holds every assistant's setup at its anchor, the address
+    // once per section with its copy button, the tools as a list in code, and writes refused
+    // for everyone; the other pages hold no guide.
+    for id in ["claude", "chatgpt", "grok", "other"] {
+        assert!(
+            connector.contains(&format!("<details class=\"jc-guide\" id=\"{id}\"")),
+            "{id}"
+        );
+        assert!(
+            connector.contains(&format!("href=\"#{id}\"")),
+            "{id} in the menu"
+        );
+        assert!(
+            connector.contains(&format!("id=\"jc-url-{id}\"")),
+            "{id} address"
+        );
+    }
+    assert_eq!(connector.matches("<details class=\"jc-guide\"").count(), 4);
+    assert!(connector.contains("<li><code>list_endpoints</code>: finds the datasets.</li>"));
+    assert!(connector.contains("refuse every write, for every caller"));
+    assert!(!connector.contains("without a sign-in"));
+    assert!(!privacy.contains("jc-guide"));
+    let sk = render_static_page(&c, None, "connector", "sk", false, "", NONCE).expect("sk");
+    assert!(sk.contains("odmietnu každý zápis, každému volajúcemu"));
+    assert_safe_page("connector-sk", &sk, "sk");
+    // Without an address there is nothing to paste: no card, no guide, the text stays.
     let no_domain = catalogue(json!({}));
-    assert!(
-        render_assistant_guide_page(&no_domain, None, "claude", "en", false, "", NONCE).is_none(),
-        "a guide needs the connector address"
+    let bare = render_static_page(&no_domain, None, "connector", "en", false, "", NONCE)
+        .expect("bare connector");
+    assert_safe_page("connector-bare", &bare, "en");
+    assert!(!bare.contains("id=\"jc-mcp-title\"") && !bare.contains("jc-guide"));
+    assert!(bare.contains("What it can do"));
+}
+
+/// T-7031: an Organization's own Markdown of a page in a language replaces the built-in text
+/// there and only there, rendered safe: raw HTML as text, a script link without its link.
+#[test]
+fn an_organizations_own_page_text_replaces_the_built_in_one_safely() {
+    let c = cat();
+    let mut own = dataroom_core::BrandingBlock::default();
+    own.apply_override_json(&json!({ "domain": DOMAIN }));
+    own.pages.insert(
+        ("support".into(), "sk".into()),
+        "# Pomoc mesta\n\nPíšte na [úrad](https://mesto.example/) <script>alert(1)</script> \
+         [zlé](javascript:alert(1))"
+            .into(),
     );
-    for id in ["claude", "chatgpt", "grok"] {
-        let g = render_assistant_guide_page(&c, None, id, "en", false, "", NONCE).expect(id);
-        assert_safe_page(id, &g, "en");
-        assert!(g.contains(&format!("https://api.{DOMAIN}")), "{id}");
-    }
-    let a = render_assistants_page(&c, None, "en", false, "", NONCE);
-    for id in [
-        "/assistants/chatgpt",
-        "/assistants/claude",
-        "/assistants/grok",
-    ] {
-        assert!(a.contains(id), "{id}");
-    }
-    let a = render_assistants_page(&no_domain, None, "en", false, "", NONCE);
-    assert_safe_page("assistants-bare", &a, "en");
-    assert!(!a.contains("id=\"jc-mcp-title\""));
+    let sk = render_static_page(&c, Some(&own), "support", "sk", false, "", NONCE).expect("sk");
+    assert!(
+        sk.contains("<h1 class=\"page-heading\">Pomoc mesta</h1>"),
+        "{sk}"
+    );
+    assert!(sk.contains("<a href=\"https://mesto.example/\" rel=\"noopener nofollow\">úrad</a>"));
+    assert!(sk.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    assert!(!sk.contains("javascript:"));
+    assert_safe_page("support-own", &sk, "sk");
+    // The footer and the other pages' menus name it by its own title.
+    let terms = render_static_page(&c, Some(&own), "terms", "sk", false, "", NONCE).expect("t");
+    assert!(terms.contains(">Pomoc mesta</a>"));
+    // English, and every other page, keep the built-in text.
+    let en = render_static_page(&c, Some(&own), "support", "en", false, "", NONCE).expect("en");
+    assert!(en.contains("<h1 class=\"page-heading\">Support</h1>"));
 }
 
 #[test]
@@ -1570,12 +1606,8 @@ fn b4_noindex_reaches_every_page_but_the_framed_map() {
         ),
         ("about", render_about_page(&c, None, "sk", false, "", NONCE)),
         (
-            "assistants",
-            render_assistants_page(&c, None, "sk", false, "", NONCE),
-        ),
-        (
-            "guide",
-            render_assistant_guide_page(&c, None, "grok", "sk", false, "", NONCE).expect("guide"),
+            "connector",
+            render_static_page(&c, None, "connector", "sk", false, "", NONCE).expect("connector"),
         ),
         (
             "static",

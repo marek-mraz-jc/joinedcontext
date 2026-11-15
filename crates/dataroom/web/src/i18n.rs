@@ -904,32 +904,6 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Az MCP-szerver címe",
     );
     add(
-        "mcp_claude_ai",
-        "Claude (claude.ai and Claude Desktop)",
-        "Claude (claude.ai a Claude Desktop)",
-        "Claude (claude.ai a Claude Desktop)",
-        "Claude (claude.ai und Claude Desktop)",
-        "Claude (claude.ai és Claude Desktop)",
-    );
-    add("mcp_claude_ai_1", "Open Customize, then Connectors, choose + Add and Add custom connector.", "Otvorte Prispôsobiť, potom Konektory, zvoľte + Pridať a Pridať vlastný konektor.", "Otevřete Přizpůsobit, pak Konektory, zvolte + Přidat a Přidat vlastní konektor.", "Öffnen Sie Anpassen, dann Konnektoren, wählen Sie + Hinzufügen und Benutzerdefinierten Konnektor hinzufügen.", "Nyissa meg a Testreszabás, majd a Csatlakozók menüt, válassza a + Hozzáadás, majd az Egyéni csatlakozó hozzáadása lehetőséget.");
-    add(
-        "mcp_claude_ai_2",
-        "Name it joinedcontext and paste this address:",
-        "Pomenujte ho joinedcontext a vložte túto adresu:",
-        "Pojmenujte ho joinedcontext a vložte tuto adresu:",
-        "Nennen Sie ihn joinedcontext und fügen Sie diese Adresse ein:",
-        "Nevezze el joinedcontext néven, és illessze be ezt a címet:",
-    );
-    add("mcp_claude_ai_3", "Leave the advanced settings empty and choose Add. Open data needs no login.", "Rozšírené nastavenia nechajte prázdne a zvoľte Pridať. Otvorené dáta nepotrebujú prihlásenie.", "Rozšířená nastavení nechte prázdná a zvolte Přidat. Otevřená data nepotřebují přihlášení.", "Lassen Sie die erweiterten Einstellungen leer und wählen Sie Hinzufügen. Offene Daten brauchen keine Anmeldung.", "A speciális beállításokat hagyja üresen, és válassza a Hozzáadás lehetőséget. A nyílt adatokhoz nem kell bejelentkezni.");
-    add(
-        "mcp_editors",
-        "Code editors and other assistants",
-        "Editory kódu a iní asistenti",
-        "Editory kódu a jiní asistenti",
-        "Code-Editoren und andere Assistenten",
-        "Kódszerkesztők és más asszisztensek",
-    );
-    add(
         "mcp_claude",
         "Claude Code",
         "Claude Code",
@@ -1019,22 +993,6 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Ezt a csatlakozót még előkészítjük: a Claude és a ChatGPT könyvtárában még nem jelent meg. Addig adja hozzá egyéni csatlakozóként az útmutató szerint.",
     );
     add(
-        "store_address",
-        "Each guide shows where to paste this address:",
-        "Každý návod ukazuje, kam vložiť túto adresu:",
-        "Každý návod ukazuje, kam vložit tuto adresu:",
-        "Jede Anleitung zeigt, wo Sie diese Adresse einfügen:",
-        "Minden útmutató megmutatja, hová illessze be ezt a címet:",
-    );
-    add(
-        "guide_open",
-        "Guide",
-        "Návod",
-        "Návod",
-        "Anleitung",
-        "Útmutató",
-    );
-    add(
         "guide_title",
         "{name}, step by step",
         "{name} krok za krokom",
@@ -1101,28 +1059,44 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Ha nem működik",
     );
     add(
+        "ex_mcp_title",
+        "Claude, ChatGPT, Grok and other assistants",
+        "Claude, ChatGPT, Grok a iní asistenti",
+        "Claude, ChatGPT, Grok a jiní asistenti",
+        "Claude, ChatGPT, Grok und andere Assistenten",
+        "Claude, ChatGPT, Grok és más asszisztensek",
+    );
+    add(
+        "ex_mcp_steps",
+        "Add this address to the assistant as a custom connector; the catalogue's MCP connector page shows where to click in each one.",
+        "Pridajte túto adresu do asistenta ako vlastný konektor; stránka MCP konektor v katalógu ukazuje, kam v ktorom kliknúť.",
+        "Přidejte tuto adresu do asistenta jako vlastní konektor; stránka MCP konektor v katalogu ukazuje, kam v kterém kliknout.",
+        "Fügen Sie diese Adresse dem Assistenten als eigenen Connector hinzu; die Seite MCP-Connector des Katalogs zeigt, wo Sie in jedem klicken.",
+        "Adja hozzá ezt a címet az asszisztenshez egyéni csatlakozóként; a katalógus MCP-csatlakozó oldala mutatja, hol kell kattintani az egyes asszisztensekben.",
+    );
+    add(
+        "guide_up",
+        "Back to the list of assistants",
+        "Späť na zoznam asistentov",
+        "Zpět na seznam asistentů",
+        "Zurück zur Liste der Assistenten",
+        "Vissza az asszisztensek listájához",
+    );
+    add(
+        "guide_checked_spec",
+        "Checked on {date} against the MCP specification:",
+        "Overené dňa {date} podľa špecifikácie MCP:",
+        "Ověřeno dne {date} podle specifikace MCP:",
+        "Geprüft am {date} anhand der MCP-Spezifikation:",
+        "Ellenőrizve {date} az MCP-specifikáció alapján:",
+    );
+    add(
         "guide_checked",
         "Checked on {date} against {maker}'s own help:",
         "Overené dňa {date} podľa pomocníka {maker}:",
         "Ověřeno dne {date} podle nápovědy {maker}:",
         "Geprüft am {date} anhand der Hilfe von {maker}:",
         "Ellenőrizve {date} napján a(z) {maker} saját súgója alapján:",
-    );
-    add(
-        "guide_back",
-        "All assistants",
-        "Všetci asistenti",
-        "Všichni asistenti",
-        "Alle Assistenten",
-        "Minden asszisztens",
-    );
-    add(
-        "for_developers",
-        "For developers",
-        "Pre vývojárov",
-        "Pro vývojáře",
-        "Für Entwickler",
-        "Fejlesztőknek",
     );
     add(
         "any_client",
@@ -1742,15 +1716,6 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
     add("ex_excel", "In Excel or Power BI: Data, Get Data, From OData Feed, with this address", "V Exceli alebo Power BI: Údaje, Získať údaje, Z informačného kanála OData, s touto adresou", "V Excelu nebo Power BI: Data, Načíst data, Z informačního kanálu OData, s touto adresou", "In Excel oder Power BI: Daten, Daten abrufen, Aus OData-Feed, mit dieser Adresse", "Excelben vagy Power BI-ban: Adatok, Adatok beolvasása, OData-hírcsatornából, ezzel a címmel");
     add("ex_qgis", "In QGIS: Layer, Add Layer, Add WFS / OGC API - Features Layer, a new connection with this address", "V QGIS: Vrstva, Pridať vrstvu, Pridať vrstvu WFS / OGC API - Features, nové pripojenie s touto adresou", "V QGIS: Vrstva, Přidat vrstvu, Přidat vrstvu WFS / OGC API - Features, nové připojení s touto adresou", "In QGIS: Layer, Layer hinzufügen, WFS / OGC API - Features-Layer hinzufügen, eine neue Verbindung mit dieser Adresse", "QGIS-ben: Réteg, Réteg hozzáadása, WFS / OGC API - Features réteg hozzáadása, új kapcsolat ezzel a címmel");
     add("ex_ws", "Changes as they happen, with websocat: open the socket, then send the subscription as the first line", "Zmeny naživo cez websocat: otvorte spojenie a ako prvý riadok pošlite odber", "Změny živě přes websocat: otevřete spojení a jako první řádek pošlete odběr", "Änderungen live mit websocat: Verbindung öffnen, dann das Abonnement als erste Zeile senden", "Változások valós időben websocattal: nyissa meg a socketet, majd első sorként küldje el a feliratkozást");
-    add(
-        "ex_chatgpt_title",
-        "ChatGPT",
-        "ChatGPT",
-        "ChatGPT",
-        "ChatGPT",
-        "ChatGPT",
-    );
-    add("ex_chatgpt", "Open Settings, then Apps and Connectors, and choose Create. Paste this address as the MCP server URL, with no authentication.", "Otvorte Nastavenia, potom Aplikácie a konektory, a zvoľte Vytvoriť. Vložte túto adresu ako URL MCP servera, bez overenia.", "Otevřete Nastavení, pak Aplikace a konektory, a zvolte Vytvořit. Vložte tuto adresu jako URL MCP serveru, bez ověření.", "Öffnen Sie Einstellungen, dann Apps und Konnektoren, und wählen Sie Erstellen. Fügen Sie diese Adresse als URL des MCP-Servers ein, ohne Authentifizierung.", "Nyissa meg a Beállítások, majd az Alkalmazások és csatlakozók menüt, és válassza a Létrehozás lehetőséget. Illessze be ezt a címet MCP-szerver URL-ként, hitelesítés nélkül.");
     add(
         "created",
         "Created",

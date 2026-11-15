@@ -43,10 +43,9 @@ use dataroom_web::dashboards::{is_dashboard, render_dashboard_list_page, render_
 use dataroom_web::helpers::{jc_robots_txt, jc_sitemap_xml};
 use dataroom_web::i18n::{resolve_request_language, LanguageResolution};
 use dataroom_web::{
-    csp_header_for_branding, render_about_page, render_assistant_guide_page,
-    render_assistants_page, render_dataset_list_page, render_home_page_mounted, render_map_page,
-    render_organization_list_page, render_organization_read_page, render_resource_page,
-    render_static_page, JC_ENUMS_JSON, JC_LOGO_SVG, JC_THEME_CSS,
+    csp_header_for_branding, render_about_page, render_dataset_list_page, render_home_page_mounted,
+    render_map_page, render_organization_list_page, render_organization_read_page,
+    render_resource_page, render_static_page, JC_ENUMS_JSON, JC_LOGO_SVG, JC_THEME_CSS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1607,6 +1606,18 @@ async fn moved_home(state: &DataroomState, here: &RequestCtx, gone: &Dataset) ->
 
 /// Builds a redirect without panicking on a target that is not a valid header value
 /// (`axum::response::Redirect` panics on one).
+/// The mount prefix plus, when the request named a language in its path, that language: the
+/// root a page address of the same language starts with.
+fn lang_root(state: &DataroomState, lang: &str, had_url_prefix: bool) -> String {
+    let prefix = state.mount_prefix();
+    let prefix = prefix.trim_end_matches('/');
+    if had_url_prefix {
+        format!("{prefix}/{}", dataroom_web::i18n::normalize_lang_code(lang))
+    } else {
+        prefix.to_owned()
+    }
+}
+
 pub(crate) fn safe_redirect(status: StatusCode, target: &str) -> Response {
     match axum::http::HeaderValue::try_from(target) {
         Ok(location) => (status, [(header::LOCATION, location)]).into_response(),
@@ -2290,35 +2301,27 @@ async fn dispatch_ui_route(
             };
             html_response_with_csp(html, &nonce, &branding, false)
         }
-        // D6: Assistants page (`/assistants`)
-        ["assistants"] => {
-            let html = render_assistants_page(
-                &cat,
-                Some(&state.branding_of(&cat)),
-                &lang,
-                had_url_prefix,
-                &state.mount_prefix(),
-                &nonce,
-            );
-            html_response_with_csp(html, &nonce, &branding, false)
+        // T-7030: one page, `/connector`, holds every assistant's setup at its anchor; the old
+        // overview and guide addresses answer 308 there, every query dropped.
+        ["assistants"] => safe_redirect(
+            StatusCode::PERMANENT_REDIRECT,
+            &format!(
+                "{}/connector#assistants",
+                lang_root(&state, &lang, had_url_prefix)
+            ),
+        ),
+        ["assistants", guide_id] if dataroom_web::helpers::GUIDE_IDS.contains(guide_id) => {
+            safe_redirect(
+                StatusCode::PERMANENT_REDIRECT,
+                &format!(
+                    "{}/connector#{guide_id}",
+                    lang_root(&state, &lang, had_url_prefix)
+                ),
+            )
         }
-        // D6: Assistant guide page (`/assistants/{id}`)
-        ["assistants", guide_id] => {
-            let Some(html) = render_assistant_guide_page(
-                &cat,
-                Some(&state.branding_of(&cat)),
-                guide_id,
-                &lang,
-                had_url_prefix,
-                &state.mount_prefix(),
-                &nonce,
-            ) else {
-                return problem_response(DataroomError::NotFound(format!(
-                    "assistant guide '{guide_id}' not found"
-                )));
-            };
-            html_response_with_csp(html, &nonce, &branding, false)
-        }
+        ["assistants", guide_id] => problem_response(DataroomError::NotFound(format!(
+            "assistant guide '{guide_id}' not found"
+        ))),
         // D6: Framable map page (`/map/{id}` and `/map/{id}/{resource_id}`)
         ["map", ds_id] => {
             let Some(ds) = state.store.get_dataset(&ctx, ds_id).await.ok().flatten() else {
