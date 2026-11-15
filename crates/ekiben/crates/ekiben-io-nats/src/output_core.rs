@@ -149,6 +149,7 @@ pub struct NatsRequestReplyProcessor {
     meta_filter: MetadataFilter,
     inbox_prefix: String,
     timeout: Duration,
+    live_client: AsyncMutex<Option<async_nats::Client>>,
 }
 
 impl NatsRequestReplyProcessor {
@@ -198,7 +199,58 @@ impl NatsRequestReplyProcessor {
             meta_filter,
             inbox_prefix,
             timeout,
+            live_client: AsyncMutex::new(None),
         })
+    }
+
+    /// Sends one request on a live connection and waits for its reply: a private inbox under
+    /// `inbox_prefix` is subscribed before the request goes, so no reply is missed.
+    async fn request_live(
+        &self,
+        ctx: &ProcContext,
+        subject: String,
+        hdrs: BTreeMap<String, String>,
+        payload: bytes::Bytes,
+    ) -> Result<async_nats::Message, String> {
+        use futures::StreamExt;
+        let client = {
+            let mut guard = self.live_client.lock().await;
+            match guard.as_ref() {
+                Some(c) => c.clone(),
+                None => {
+                    let c = self
+                        .conn_details
+                        .connect_live(&ctx.label)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    *guard = Some(c.clone());
+                    c
+                }
+            }
+        };
+        let token = client.new_inbox();
+        let token = token.rsplit('.').next().unwrap_or(&token);
+        let inbox = format!("{}.{token}", self.inbox_prefix);
+        let mut sub = client
+            .subscribe(inbox.clone())
+            .await
+            .map_err(|e| format!("nats subscribe to the reply inbox failed: {e}"))?;
+        let mut nats_hdrs = async_nats::HeaderMap::new();
+        for (k, v) in &hdrs {
+            nats_hdrs.insert(k.as_str(), v.as_str());
+        }
+        client
+            .publish_with_reply_and_headers(subject, inbox, nats_hdrs, payload)
+            .await
+            .map_err(|e| format!("nats request publish failed: {e}"))?;
+        match tokio::time::timeout(self.timeout, sub.next()).await {
+            Ok(Some(msg)) if msg.status == Some(async_nats::StatusCode::NO_RESPONDERS) => {
+                Err("nats: no responders available for request".to_string())
+            }
+            Ok(Some(msg)) => Ok(msg),
+            Ok(None) => Err("nats: the connection closed before the reply".to_string()),
+            Err(_) => Err("nats request_reply timed out".to_string()),
+        }
     }
 }
 
@@ -260,7 +312,22 @@ impl Processor for NatsRequestReplyProcessor {
                     }
                 }
             } else {
-                ctx.on_error(&mut p, "live nats request_reply not connected");
+                match self
+                    .request_live(ctx, subject.to_string(), hdrs, p.as_bytes_ref())
+                    .await
+                {
+                    Ok(reply) => {
+                        p.set_bytes(reply.payload);
+                        if let Some(h) = reply.headers {
+                            for (k, vs) in h.iter() {
+                                if let Some(v) = vs.first() {
+                                    p.meta_set_str(k.to_string(), v.to_string());
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => ctx.on_error(&mut p, e),
+                }
             }
             out.push(p);
         }
