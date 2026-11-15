@@ -197,6 +197,31 @@ async fn a_turn_reads_back_redacted_with_its_steps_and_the_cost_is_their_sum() {
         Value::Null,
         "an answered conversation names no failure"
     );
+    // T-6941: the step columns are read for the page only; a cursor page carries them too and
+    // the two pages split the list in its order.
+    let one = |cursor: Option<String>| Filter {
+        limit: Some(1),
+        cursor,
+        ..Filter::default()
+    };
+    let (first, next) = transcript::list(&pool, PROJECT, &one(None))
+        .await
+        .expect("the first page reads");
+    assert_eq!(next.as_deref(), Some("1"));
+    let (second, last) = transcript::list(&pool, PROJECT, &one(next))
+        .await
+        .expect("the cursor page reads");
+    assert_eq!(last, None);
+    assert_eq!(
+        [&first[0], &second[0]].map(|i| i["id"].clone()),
+        [&items[0], &items[1]].map(|i| i["id"].clone()),
+    );
+    let paged = [&first[0], &second[0]]
+        .into_iter()
+        .find(|i| i["id"] == DATA)
+        .expect("the data conversation is on a page");
+    assert_eq!(paged["models"], json!(["google/gemini-3.8-flash"]));
+    assert_eq!(paged["models"], listed["models"]);
     let (other, _) = transcript::list(&pool, "elsewhere", &Filter::default())
         .await
         .expect("another project's list reads");
