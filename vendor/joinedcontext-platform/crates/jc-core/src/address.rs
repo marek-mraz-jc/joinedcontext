@@ -86,7 +86,7 @@ const INTERNAL_SUFFIXES: [&str; 7] = [
 /// `0x7f.1`, `[::ffff:127.0.0.1]`), a name of one label (an in-cluster Service) or under an
 /// internal suffix, and anything a parser would decode into another host (`%`, non-ASCII).
 /// What a public name resolves to is judged when it is fetched, by the outbound guard.
-pub(crate) fn check_remote_host(host: &str) -> std::result::Result<(), &'static str> {
+pub fn check_remote_host(host: &str) -> std::result::Result<(), &'static str> {
     const PRIVATE: &str = "the host is a loopback, private, link-local or internal address; a \
                            remote names a public host such as git.example.org";
     if host.is_empty() {
