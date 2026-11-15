@@ -929,13 +929,15 @@ async fn the_functions_the_ui_calls_answer_as_their_rest_doors() {
         "ServiceAccount",
         "etl",
         "helsinki",
-        json!({ "description": "nightly import" }),
+        json!({ "owner": { "user": "jana@hel.fi" }, "purpose": "nightly import",
+                "roles": [{ "role": "space-writer", "scope": { "contextSpace": "air" } }], "credentials": [] }),
     ));
     let hel = Mode::Host("hel");
     let subject = json!({ "kind": "role", "name": "reader" });
     let simulated =
         json!({ "subject": { "kind": "group", "name": "stewards" }, "action": "retrieveEntity" });
-    let cases: [(&str, Value, Answer); 4] = [
+    // This state has no forge and no Endpoint: the history and the simulation are refusals.
+    let cases: [(&str, Value, Answer, u16); 4] = [
         (
             "jc_access_explore",
             json!({ "subject": subject }),
@@ -947,6 +949,7 @@ async fn the_functions_the_ui_calls_answer_as_their_rest_doors() {
                 json!({ "subject": subject }),
             )
             .await,
+            200,
         ),
         (
             "jc_serviceaccount_access",
@@ -958,6 +961,7 @@ async fn the_functions_the_ui_calls_answer_as_their_rest_doors() {
                 "/api/v1/projects/helsinki/serviceaccounts/etl/access",
             )
             .await,
+            200,
         ),
         (
             "jc_change_history",
@@ -969,6 +973,7 @@ async fn the_functions_the_ui_calls_answer_as_their_rest_doors() {
                 "/api/v1/projects/helsinki/changes/history?page=1&kind=Policy&name=air",
             )
             .await,
+            503,
         ),
         (
             "jc_access_simulate",
@@ -981,9 +986,10 @@ async fn the_functions_the_ui_calls_answer_as_their_rest_doors() {
                 simulated.clone(),
             )
             .await,
+            404,
         ),
     ];
-    for (name, params, rest) in cases {
+    for (name, params, rest, expected) in cases {
         let params = params.as_object().expect("object");
         let names: Vec<String> = params.keys().map(|k| format!("{k}=@{k}")).collect();
         let aliases: Vec<String> = params
@@ -1001,11 +1007,14 @@ async fn the_functions_the_ui_calls_answer_as_their_rest_doors() {
             "{name}: OData {} REST {}",
             odata.text, rest.text
         );
+        assert_eq!(rest.status.as_u16(), expected, "{name}: {}", rest.text);
         if rest.status.is_success() {
             assert_eq!(odata.json()["value"], rest.json(), "{name}");
         } else {
-            assert!(
-                odata.json()["error"]["message"].is_string(),
+            // A refusal says the same sentence through either door.
+            assert_eq!(
+                odata.json()["error"]["message"],
+                rest.json()["detail"],
                 "{name}: {}",
                 odata.text
             );
