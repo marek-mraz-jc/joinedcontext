@@ -344,6 +344,25 @@ async fn a_project_the_caller_may_not_read_is_not_duplicated() {
         .is_empty());
 }
 
+/// T-6896: the copy holds the whole repository and its history, so a reader bound to one space
+/// reads it as a project that is not there, and nothing is copied.
+#[tokio::test]
+async fn a_reader_of_one_space_does_not_duplicate_the_project() {
+    let (server, state) = world(false).await;
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "spacer-reads-one-space",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "spacer@hel.fi" }], "role": "reader",
+                "scope": { "project": "ovzdusie", "contextSpace": "ovzdusie" } }),
+    ));
+    let (status, text) = duplicate(&state, "spacer", json!({ "name": "doprava" })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{text}");
+    assert!(received(&server, "POST", "/odata/ImportRepository")
+        .await
+        .is_empty());
+}
+
 /// PF-89: layout 1 has no project repository to copy; the answer names the import instead.
 #[tokio::test]
 async fn layout_one_answers_with_the_import() {
