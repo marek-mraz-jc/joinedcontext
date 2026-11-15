@@ -187,6 +187,81 @@ async fn a_good_message_after_a_timeout_still_runs() {
     assert_eq!(flag(&out[1]), "");
 }
 
+fn budget_ctx(cpu_ms: u64) -> ProcContext {
+    let mut c = proc_ctx();
+    c.org = OrgContext::new(
+        OrgId::default(),
+        OrgQuotas {
+            max_cpu_time_ms_per_run: cpu_ms,
+            ..OrgQuotas::default()
+        },
+    );
+    c
+}
+
+#[tokio::test]
+async fn script_time_stops_at_the_runs_processing_budget() {
+    // 120 ms for the run: two spins of 50 ms, the third cut at what is left, the other 17 unrun
+    // (run, the 20 would take a second).
+    let p = processor(json!({ "code": "while (true) {}", "timeout_ms": 50 }));
+    let parts = (0..20).map(|_| Part::from_str("x")).collect();
+    let started = Instant::now();
+    let out = p
+        .process_batch(&budget_ctx(120), parts)
+        .await
+        .expect("runs")
+        .remove(0);
+    let took = started.elapsed();
+    assert!(took < Duration::from_millis(600), "{took:?}");
+    assert!(flag(&out[0]).contains("ran past its limit of 50 ms"));
+    assert!(flag(&out[1]).contains("ran past its limit of 50 ms"));
+    for p in &out[2..] {
+        assert!(flag(p).contains("max_cpu_time_ms_per_run"), "{}", flag(p));
+    }
+}
+
+#[tokio::test]
+async fn a_spent_run_budget_runs_no_script() {
+    let ctx = budget_ctx(10);
+    ctx.metrics.charge_processing(10_000_000);
+    let p = processor(json!({ "code": "bento.v0_msg_set_string('ran')" }));
+    let out = p
+        .process_batch(&ctx, vec![Part::from_str("x")])
+        .await
+        .expect("runs")
+        .remove(0);
+    assert_eq!(text(&out[0]), "x");
+    assert!(flag(&out[0]).contains("max_cpu_time_ms_per_run"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scripts_take_turns_for_a_quarter_of_the_cores() {
+    // Twice the slots plus one spins of 50 ms each: run all at once they end in about 50 ms,
+    // in turns of `slots` they need three turns.
+    let slots = script_slots().available_permits();
+    let p = Arc::new(processor(
+        json!({ "code": "while (true) {}", "timeout_ms": 50 }),
+    ));
+    let started = Instant::now();
+    let runs: Vec<_> = (0..2 * slots + 1)
+        .map(|_| {
+            let p = p.clone();
+            tokio::spawn(async move {
+                p.process_batch(&proc_ctx(), vec![Part::from_str("x")])
+                    .await
+            })
+        })
+        .collect();
+    for r in runs {
+        r.await.expect("joins").expect("runs");
+    }
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_millis(140),
+        "{slots} slots, {took:?}"
+    );
+}
+
 #[test]
 fn lint_names_what_ekiben_refuses() {
     let errs = lint(&json!({"file": "a.js", "global_folders": ["/x"], "timeout_ms": 500}));

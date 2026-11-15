@@ -395,7 +395,6 @@ async fn execute_stream_loop(
         pctx,
         paging,
         cpu_limit_ns: cpu_limit_ms.saturating_mul(1_000_000),
-        busy_ns: AtomicU64::new(0),
         stop: AtomicBool::new(false),
         taken: AtomicU64::new(0),
         in_flight: Arc::new(tokio::sync::Semaphore::new(workers * 2)),
@@ -482,9 +481,9 @@ struct WorkerPool {
     sctx: StreamContext,
     pctx: ProcContext,
     paging: Paging,
-    /// `max_cpu_time_ms_per_run`, charged with the time workers spend inside the processors.
+    /// `max_cpu_time_ms_per_run`, charged (`StreamMetrics::charge_processing`) with the time
+    /// workers spend inside the processors.
     cpu_limit_ns: u64,
-    busy_ns: AtomicU64,
     stop: AtomicBool,
     failure: std::sync::Mutex<Option<String>>,
     /// Sequence numbers handed out as batches are taken.
@@ -549,7 +548,7 @@ impl WorkerPool {
             }
             let failed = if self.stop.load(Ordering::Acquire) {
                 Some("stream stopped".to_string())
-            } else if self.busy_ns.load(Ordering::Relaxed) > self.cpu_limit_ns {
+            } else if self.pctx.metrics.processing_ns() > self.cpu_limit_ns {
                 Some(format!(
                     "stream run exceeded per-run processing time budget ({} ms)",
                     self.cpu_limit_ns / 1_000_000
@@ -597,7 +596,7 @@ impl WorkerPool {
         })
         .await;
         let busy = (started.elapsed().as_nanos() as u64).saturating_sub(waited.into_inner());
-        self.busy_ns.fetch_add(busy, Ordering::Relaxed);
+        self.pctx.metrics.charge_processing(busy);
         res.map_err(|e| e.to_string())
     }
 
