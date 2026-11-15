@@ -6,9 +6,11 @@
 # to now, imports it through deploy/rehearsal/import.sh (PostgreSQL in docker, `jc --role all` on a
 # loopback bind) and runs every smoke suite with the rehearsal's state, log and admin listener.
 # JC_BIN names the jc binary (kaisatsu and daiya beside it); SMOKE_E2E=1 adds `cargo test -p jc
-# --tests`; SMOKE_ARGS adds flags to `run all`. Beside it, two more jcs on the six-Organization
-# bundle compose.py makes of synth-export.tgz (hel, zilina), multiorg-export.tgz (barcelona) and
-# three Organizations with no project (ops, the installation's, ctl-a, ctl-b):
+# --tests`; SMOKE_ARGS adds flags to `run all`. SMOKE_SHARD=<name> with SMOKE_ONLY / SMOKE_SKIP (comma
+# lists of run names, `run all --only/--skip`) and SMOKE_WITH (one more --with) runs one shard of the
+# CI gate: only the multiorg jcs its runs need are imported; ci/merge.py folds the shards' verdicts.
+# Beside it, two more jcs on the six-Organization bundle compose.py makes of synth-export.tgz (hel,
+# zilina), multiorg-export.tgz (barcelona) and three Organizations with no project (ops, the installation's, ctl-a, ctl-b):
 # one with each Organization on its own *.localhost hosts for `multiorg` (host mode), one without
 # for `multiorg@path`; both import while the gate's own jc does. The CI job
 # (.github/workflows/smoke.yml) and a local check run the same script. Answers `run all`'s verdict: 0 green, 1 red.
@@ -25,6 +27,10 @@ mo_export=$REHEARSAL_HOME/multiorg-export
 mo_hosts=$REHEARSAL_HOME/multiorg-hosts.toml
 mo_port=$((port + 10)); mo_pg=$((pg_port + 10))   # multiorg, host mode
 mp_port=$((port + 20)); mp_pg=$((pg_port + 20))   # multiorg@path
+
+# runs <run name>: whether this run (a shard: SMOKE_ONLY, SMOKE_SKIP) runs it, as `run all` picks.
+picks() { local n; for n in ${2//,/ }; do [ "$n" = "$1" ] || [ "$n" = "${1%@*}" ] && return 0; done; return 1; }
+runs() { { [ -z "${SMOKE_ONLY:-}" ] || picks "$1" "$SMOKE_ONLY"; } && ! picks "$1" "${SMOKE_SKIP:-}"; }
 
 # fresh <env>: a fresh stack every run: the import only creates (rehearsal.py import_shako refuses a
 # main that holds files the export would change or delete), and the last run's suites edited main.
@@ -132,10 +138,15 @@ for org in "${mo_orgs[@]}"; do
   printf 'hosts = { portal = "portal.%s.localhost:%s", opendata = "opendata.%s.localhost:%s", api = "api.%s.localhost:%s", mcp = "mcp.%s.localhost:%s" }\n\n' \
     "$o" "$mo_port" "$o" "$mo_port" "$o" "$mo_port" "$o" "$mo_port"
 done >> "$mo_hosts"
-REHEARSAL_JC_TOML_EXTRA=$mo_hosts multiorg mo-hosts "$mo_port" "$mo_pg" > "$out/mo-hosts.log" 2>&1 &
-mo_hosts_pid=$!
-multiorg mo-path "$mp_port" "$mp_pg" > "$out/mo-path.log" 2>&1 &
-mo_path_pid=$!
+mo_pids=()
+if runs multiorg; then
+  REHEARSAL_JC_TOML_EXTRA=$mo_hosts multiorg mo-hosts "$mo_port" "$mo_pg" > "$out/mo-hosts.log" 2>&1 &
+  mo_pids+=($!)
+fi
+if runs multiorg@path; then
+  multiorg mo-path "$mp_port" "$mp_pg" > "$out/mo-path.log" 2>&1 &
+  mo_pids+=($!)
+fi
 
 "$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"
 # The red proof: SMOKE_STOP=<module> restarts jc without that module, and the verdict must be RED.
@@ -144,16 +155,21 @@ if [ -n "${SMOKE_STOP:-}" ]; then
   REHEARSAL_ROLE=$roles "$repo/deploy/rehearsal/up.sh" gate "$port" "$pg_port"
 fi
 converge gate "$(wc -l < "$home/jc.log")"
-wait "$mo_hosts_pid" "$mo_path_pid" || true
-cat "$out/mo-hosts.log" "$out/mo-path.log" | grep '^gate: ' || true
+[ "${#mo_pids[@]}" = 0 ] || wait "${mo_pids[@]}" || true
+cat "$out"/mo-*.log 2>/dev/null | grep '^gate: ' || true
 
 # jc names itself 127.0.0.1:<port> (up.sh --base-host): tokens carry that issuer.
-for e in gate mo-hosts mo-path; do view "$e"; done
+view gate
+if runs multiorg; then view mo-hosts; fi
+if runs multiorg@path; then view mo-path; fi
 view="$home/smoke-state"
 args=(--base-url "http://127.0.0.1:$port" --out "$out" --export "$export_dir" --state "$view"
       --log-file "$home/jc.log" --admin-url "http://127.0.0.1:$((pg_port + 200))"
       --admin-token-file "$home/secrets/metrics-token")
 [ "${SMOKE_E2E:-0}" = 1 ] && args+=(--e2e)
+[ -n "${SMOKE_SHARD:-}" ] && args+=(--shard "$SMOKE_SHARD")
+[ -n "${SMOKE_ONLY:-}" ] && args+=(--only "$SMOKE_ONLY")
+[ -n "${SMOKE_SKIP:-}" ] && args+=(--skip "$SMOKE_SKIP")
 # The logs suite also looks for every secret value of the rehearsal in the log: the service
 # tokens, the realm's client secrets (up.sh writes them to secrets/realm) and jc's state files,
 # which the link view above hides from it (collect_secrets reads plain files only).
@@ -179,6 +195,8 @@ args+=(--known "$repo/bins/jc/smoke/ci/known.txt")
 python3 -c 'import playwright' 2>/dev/null || args+=(--with "charts-apps=--no-shots")
 # shellcheck disable=SC2206 # SMOKE_ARGS is a flag list by design
 args+=(${SMOKE_ARGS:-})
+# SMOKE_WITH: one `--with SUITE=ARGS` of a shard (the ui personas it walks), after the gate's own.
+[ -n "${SMOKE_WITH:-}" ] && args+=(--with "$SMOKE_WITH")
 # The two multiorg jcs take most of a core each while they idle (their catalogue waves): both
 # stopped once multiorg@path has written its results, and in any case once `run all` ends.
 stop_mo() {
@@ -188,6 +206,7 @@ stop_mo() {
   done
 }
 rm -f "$out/multiorg@path/results.json"
+# A shard without multiorg@path stops them when `run all` ends.
 ( while [ ! -e "$out/multiorg@path/results.json" ]; do sleep 5; done; stop_mo ) &
 mo_stop=$!
 set +e

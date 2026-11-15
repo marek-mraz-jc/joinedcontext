@@ -19,6 +19,7 @@ use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_oidc::{OutboundGuard, OutboundPolicy};
 use kaisatsu_server::{KaisatsuState, router};
+use kaisatsu_store_memory::MemoryStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -135,6 +136,19 @@ async fn get_with_ck(app: &Router, uri: &str, cookie: &str) -> (StatusCode, Head
     let h = resp.headers().clone();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     (st, h, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Whether the redirect in `h` is a code for the client: the broker hands a verified upstream
+/// sign-in to the login pages, which issue the code when nothing else is asked of the person.
+async fn signs_in(app: &Router, h: &HeaderMap, cookie: &str) -> bool {
+    let next = h[header::LOCATION].to_str().unwrap().to_owned();
+    assert!(next.contains("/login-actions/authenticate"), "{next}");
+    let (st, h, _) = get_with_ck(app, &next, cookie).await;
+    let code = h
+        .get(header::LOCATION)
+        .and_then(|l| url::Url::parse(l.to_str().ok()?).ok())
+        .is_some_and(|u| u.query_pairs().any(|(k, _)| k == "code"));
+    st == StatusCode::SEE_OTHER && code
 }
 
 #[tokio::test]
@@ -266,7 +280,7 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     )
     .await;
     assert_eq!(st_ok, StatusCode::SEE_OTHER);
-    assert!(h_ok[header::LOCATION].to_str().unwrap().contains("code="));
+    assert!(signs_in(&app, &h_ok, &auth_cookie).await);
 
     // 6. Existing local account (`demo.orgmember@hel.fi`) requires link confirmation + local password.
     let (s2, ck2) = start_auth_session(&app).await;
@@ -370,16 +384,12 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     )
     .await;
     assert_eq!(st_linked, StatusCode::SEE_OTHER);
-    assert!(
-        h_linked[header::LOCATION]
-            .to_str()
-            .unwrap()
-            .contains("code=")
-    );
+    assert!(signs_in(&app, &h_linked, &ck2).await);
 }
 
-#[tokio::test]
-async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
+/// The `dev` realm with the upstream IdP `entra` of the fake upstream, its router, store and
+/// upstream; `floor` turns the realm's second-factor floor on.
+async fn broker_world(floor: bool) -> (Router, Arc<MemoryStore>, String, FakeUpstreamState) {
     let (up_issuer, up_state) = start_fake_upstream().await;
     let (_, store, kek) = setup_dev_realm_state().await;
     store
@@ -408,18 +418,31 @@ async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
         in_cluster_hosts: vec!["127.0.0.1".into()],
         ..OutboundPolicy::default()
     });
-    let state = KaisatsuState::new(
+    let mut state = KaisatsuState::new(
         store.clone() as Arc<dyn Store>,
         kek,
         guard,
         Arc::new(LocalAuthorizer),
-    )
-    .with_second_factor(kaisatsu_server::SecondFactor::Required);
+    );
+    if floor {
+        state = state.with_second_factor(kaisatsu_server::SecondFactor::Required);
+    }
     let app = router(state, mount()).layer(Extension(mount()));
+    (app, store, up_issuer, up_state)
+}
 
-    let (session_code, auth_cookie) = start_auth_session(&app).await;
+/// Signs in at the upstream as `sub` with `email` and returns where the broker endpoint sends
+/// the browser (never a code: the login pages decide) and the auth session cookie.
+async fn upstream_sign_in(
+    app: &Router,
+    up_issuer: &str,
+    up_state: &FakeUpstreamState,
+    sub: &str,
+    email: &str,
+) -> (String, String) {
+    let (session_code, auth_cookie) = start_auth_session(app).await;
     let (_, hdrs, _) = get_with_ck(
-        &app,
+        app,
         &format!("/realms/dev/broker/entra/login?session_code={session_code}"),
         &auth_cookie,
     )
@@ -429,16 +452,16 @@ async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
     let now = chrono::Utc::now().timestamp();
     *up_state.next_claims.lock().unwrap() = json!({
         "iss": up_issuer,
-        "sub": "entra-sub-floor",
+        "sub": sub,
         "aud": "kaisatsu-broker-client",
         "nonce": qp["nonce"],
-        "email": "floor.broker@hel.fi",
+        "email": email,
         "email_verified": true,
         "iat": now,
         "exp": now + 300
     });
     let (st, h, _) = get_with_ck(
-        &app,
+        app,
         &format!(
             "/realms/dev/broker/entra/endpoint?code=c1&state={}",
             qp["state"]
@@ -446,7 +469,6 @@ async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
         &auth_cookie,
     )
     .await;
-    // No code: the upstream sign-in counts as the first factor only.
     assert_eq!(st, StatusCode::SEE_OTHER);
     let next = h[header::LOCATION].to_str().unwrap().to_owned();
     assert!(
@@ -454,8 +476,114 @@ async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
         "{next}"
     );
     assert!(next.contains("/login-actions/authenticate"), "{next}");
+    (next, auth_cookie)
+}
+
+fn page_id(html: &str) -> &str {
+    let marker = "data-page-id=\"login-";
+    html.find(marker)
+        .map(|i| &html[i + marker.len()..])
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
+    let (app, _, up_issuer, up_state) = broker_world(true).await;
+    let (next, auth_cookie) = upstream_sign_in(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-floor",
+        "floor.broker@hel.fi",
+    )
+    .await;
     // The person has no authenticator yet: the login page enrols one.
     let (st, _, html) = get_with_ck(&app, &next, &auth_cookie).await;
     assert_eq!(st, StatusCode::OK);
     assert!(html.contains("kc-totp-settings-form"), "{html}");
+}
+
+/// Only the broker's hand-off signs a person on from the UpstreamIdp state: the same state
+/// with a person on the auth session but without the broker's verified mark (an IdP hint, no
+/// upstream assertion) issues no code and sets no SSO cookie.
+#[tokio::test]
+async fn an_upstream_state_without_the_brokers_mark_signs_nobody_on() {
+    let (app, store, up_issuer, up_state) = broker_world(false).await;
+    let (next, cookie) = upstream_sign_in(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-h",
+        "hint.only@hel.fi",
+    )
+    .await;
+    let parsed = url::Url::parse(&format!("https://idm.dev.example.test{next}")).unwrap();
+    let session_code = parsed
+        .query_pairs()
+        .find(|(k, _)| k == "session_code")
+        .unwrap()
+        .1
+        .into_owned();
+    let mut auth_session = store
+        .get_auth_session_by_id("dev", &session_code)
+        .await
+        .unwrap()
+        .expect("the auth session the broker handed over");
+    assert!(auth_session.user_id.is_some());
+    auth_session.step_state_json =
+        json!({ "step": "UpstreamIdp", "idp_alias": "entra" }).to_string();
+    store.put_auth_session(auth_session).await.unwrap();
+
+    let (_, h, _) = get_with_ck(&app, &next, &cookie).await;
+    let code = h
+        .get(header::LOCATION)
+        .and_then(|l| url::Url::parse(l.to_str().ok()?).ok())
+        .is_some_and(|u| u.query_pairs().any(|(k, _)| k == "code"));
+    assert!(!code, "{h:?}");
+    assert!(h.get(header::SET_COOKIE).is_none(), "{h:?}");
+}
+
+/// A brokered sign-in runs the login machine after the upstream assertion (S-4-01): the
+/// client's consent and the person's required actions come before any code, as for a password.
+#[tokio::test]
+async fn a_brokered_sign_in_asks_for_consent_and_required_actions_before_any_code() {
+    let (app, store, up_issuer, up_state) = broker_world(false).await;
+    let mut edge = store
+        .get_client_by_client_id("dev", "edge")
+        .await
+        .unwrap()
+        .unwrap();
+    edge.consent_required = true;
+    store.upsert_client(edge).await.unwrap();
+
+    let (next, cookie) = upstream_sign_in(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-c",
+        "consent.broker@hel.fi",
+    )
+    .await;
+    let (st, _, html) = get_with_ck(&app, &next, &cookie).await;
+    assert_eq!((st, page_id(&html)), (StatusCode::OK, "consent"), "{html}");
+
+    // The same upstream person again, now with a pending required action.
+    let mut person = store
+        .get_user_by_username_or_email("dev", None, "consent.broker@hel.fi")
+        .await
+        .unwrap()
+        .expect("the brokered person");
+    person.required_actions = vec!["TERMS_AND_CONDITIONS".into()];
+    store.update_user(person).await.unwrap();
+    let (next, cookie) = upstream_sign_in(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-c",
+        "consent.broker@hel.fi",
+    )
+    .await;
+    let (st, _, html) = get_with_ck(&app, &next, &cookie).await;
+    assert_eq!((st, page_id(&html)), (StatusCode::OK, "terms"), "{html}");
 }

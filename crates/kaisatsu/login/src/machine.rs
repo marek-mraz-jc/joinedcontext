@@ -17,8 +17,13 @@ use serde::{Deserialize, Serialize};
 pub enum LoginState {
     /// Initial identity-first step (username or e-mail) or conditional UI passkey.
     IdentityFirst,
-    /// Redirected to an organization's upstream OIDC Identity Provider.
-    UpstreamIdp { idp_alias: String },
+    /// Redirected to an organization's upstream OIDC Identity Provider. Only the broker sets
+    /// `assertion_verified`, after the upstream assertion verified; an IdP hint leaves it false.
+    UpstreamIdp {
+        idp_alias: String,
+        #[serde(default)]
+        assertion_verified: bool,
+    },
     /// First factor: password entry for a resolved person.
     Password { user_id: String },
     /// First or passwordless factor: WebAuthn passkey ceremony.
@@ -303,7 +308,10 @@ pub fn transition(
             },
         ) => {
             if let Some(idp_alias) = routed_idp {
-                Ok(LoginState::UpstreamIdp { idp_alias })
+                Ok(LoginState::UpstreamIdp {
+                    idp_alias,
+                    assertion_verified: false,
+                })
             } else {
                 Ok(LoginState::Password { user_id })
             }

@@ -1057,6 +1057,11 @@ async fn compat_update_user(
     user.realm_id = realm;
     let user = merge_user_update(&existing, user, &ctx);
     let updated = state.oidc.store.update_user(user).await?;
+    // Disabling ends the person's sessions now, as SCIM deactivation does (S-4-10).
+    if !updated.enabled {
+        crate::scim::end_sessions_for_deactivated_user(&state, &mount, &updated.realm_id, &id)
+            .await?;
+    }
     record_admin_write(
         &state,
         &ctx,

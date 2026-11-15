@@ -92,6 +92,25 @@ def test_a_variant_runs_the_suite_again_with_its_own_flags_dir_and_prefix(tmp_pa
         all_suite.main(["--base-url", "http://127.0.0.1:1", "--out", str(out), "--with", "nope@path=-x"])
 
 
+def test_only_and_skip_pick_one_variant_and_a_shard_names_its_plan(tmp_path, monkeypatch):
+    monkeypatch.setattr(all_suite, "SMOKE", smoke(tmp_path, {"good": GOOD, "logs": LOGS}))
+    flags = ["--base-url", "http://127.0.0.1:1", "--export", "E", "--with", "good@path=--export X"]
+
+    def ran(*extra):
+        out = tmp_path / str(len(list(tmp_path.iterdir())))
+        all_suite.main([*flags, "--out", str(out), *extra])
+        return json.loads((out / "results.json").read_text())
+
+    assert [s["suite"] for s in ran("--only", "good@path")["suites"]] == ["good@path", "e2e"]
+    assert [s["suite"] for s in ran("--only", "good", "--skip", "good@path")["suites"]] == ["good", "e2e"]
+    doc = ran("--only", "good@path,logs", "--shard", "s1")
+    # a shard leaves the e2e placeholder out and names every run the gate holds
+    assert [s["suite"] for s in doc["suites"]] == ["good@path", "logs"]
+    assert doc["shard"] == "s1" and doc["plan"] == ["good", "good@path", "logs"]
+    with pytest.raises(SystemExit):
+        ran("--skip", "nope")
+
+
 def test_green_when_nothing_fails_and_a_missing_required_flag_is_a_skip(tmp_path, monkeypatch):
     monkeypatch.setattr(all_suite, "SMOKE", smoke(tmp_path, {"good": GOOD}))
     out = tmp_path / "out"
