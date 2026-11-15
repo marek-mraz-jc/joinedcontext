@@ -161,7 +161,21 @@
  #detail, #embed { max-width: min(40rem, calc(100vw - 32px)); width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); padding: 16px; box-sizing: border-box; }
  #detail::backdrop, #embed::backdrop { background: rgba(15, 23, 42, 0.5); }
  dialog a { color: var(--accent); overflow-wrap: break-word; }
-@@ -95,6 +119,8 @@
+@@ -90,11 +114,22 @@
+ @media (max-width: 639px) {
+   .jc-grid-detail { inset-block-start: var(--jc-vv-top, 0px); height: var(--jc-vv-height, 100dvh); max-height: var(--jc-vv-height, 100dvh); }
+ }
++/* T-6956: Close keeps its own width, so a long title or type label wraps instead of pushing the
++   button over the card's edge; the head stays on top while a long card scrolls under it. */
++.detail-head > button { flex: none; white-space: nowrap; }
++#detail > .detail-head, #embed > .detail-head { position: sticky; top: -16px; z-index: 1; margin: -16px -16px 0; padding: 16px; background: var(--bg); }
++/* A phone's frame: the card is a sheet on the bottom of the slice the reader sees, as wide as the
++   frame, scrolled inside itself; the backdrop above it closes it, as Esc does. */
++@media (max-width: 640px) {
++  #detail, #embed { max-width: 100%; inset-block: calc(var(--jc-vv-top, 0px) + var(--jc-vv-height, 100dvh)) auto; transform: translateY(-100%); max-height: calc(var(--jc-vv-height, 100dvh) - 16px); border-width: 1px 0 0; border-radius: 12px 12px 0 0; }
++}
+ .card-dev summary::before { content: "\25B8"; margin-inline-end: 8px; }
+ .card-dev[open] summary::before { content: "\25BE"; }
  /* T-5233: the map's count line, its Mapa panel, the reader's chips and the legend. */
  .map-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
  .map-head #map-title { margin: 0; }

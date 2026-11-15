@@ -779,13 +779,17 @@ pub async fn retain_history(
 /// The Entities of a type (`$2`), or of no type of `$2` for the rest, in
 /// Tenant `$1` leaving out `$3`, after `$4` in id order, at most `$5`. The
 /// primary key serves the order; `types` is only a filter, as no array
-/// operator reaches an index under RLS (migration 0015).
+/// operator reaches an index under RLS (migration 0015). An Entity the bare
+/// sweep found without history (migration 0030) holds no row to delete and
+/// is passed over unprobed (T-6957: on jc-dev 128 678 such Entities of one
+/// type held each sweep's step for its whole [`WALK_TIME`], and the old rows
+/// behind them waited hours); a write of an instance clears the mark first.
 const TYPE_IDS: &str = "SELECT t.id FROM temporal_entities t
-       WHERE t.tenant_id = $1 AND t.types @> $2::text[]
+       WHERE t.tenant_id = $1 AND t.types @> $2::text[] AND NOT t.bare
          AND t.id <> ALL($3::text[]) AND t.id > $4
        ORDER BY t.id LIMIT $5";
 const REST_IDS: &str = "SELECT t.id FROM temporal_entities t
-       WHERE t.tenant_id = $1 AND NOT (t.types && $2::text[])
+       WHERE t.tenant_id = $1 AND NOT (t.types && $2::text[]) AND NOT t.bare
          AND t.id <> ALL($3::text[]) AND t.id > $4
        ORDER BY t.id LIMIT $5";
 

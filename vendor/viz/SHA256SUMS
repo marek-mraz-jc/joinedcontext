@@ -4,7 +4,7 @@
 # jc.patch applied to explore.js, explore.html, explore.css, embed.js, map.html, host.css, host.js, render.css, render.html and render.js, plus csv.js and theme.js, which jc.patch adds (vendor/SOURCES.md).
 d777da540a64b580e57dd0418ddf487d114ef7e1267201d9a5ed569902d6e17a  csv.js
 1fa68fbfc99c7a5c7715440de8ad6ad8e37d7f4e79192f627e07cd758d27fd87  embed.js
-3be8accffc2a543d62b9b2c8fd5b86e8fa0555274285f2645f63847e4f2727c8  explore.css
+2e13fd022fb481d98309ff94bfa16544fc2b53ce331fa911d840e750bb8f7de2  explore.css
 edeedacd18be65b800c35f6bad65b7ebfec2326a83e635828e21f60815de830f  explore.html
 3a12f38fc553d4cbe24fe01cfdf4f943eac13cccbb6823da73b152089b89cbb8  explore.js
 35ae07594e56f30a75c30969e5c40ca6d103c468f4a7e9749b39a744a48f5a6b  host.css
@@ -18,7 +18,7 @@ c0b180dab08830cf65d7bd6baaa944bcf3b9ffd2f2eb6eead64ddb0e1bfa1df9  map.html
 641a3ad68262c977eb8f7a820bc8ee49f54212beeeb83909bb26043267de19ef  render.html
 e524f5c8d0e186c0694251dc17b76eea9c9fac1271ad04a96cf1f192d49ed259  render.js
 aac395afb595ba161941ad4e28f8d862c655b096846be2d555035840ba56c7ec  theme.js
-c17759590d7593d407750c4f47c8d6e28472e7e6ba34e85027a64b8cfcf55927  explorer/explorer.css
+590a497522be388c45a6b80a5753904c1037a99618b0e31762d5ef4a5277fdb2  explorer/explorer.css
 fbfbb10e7f471c2a437e550c00309c68e061acc51a5bb6ddc6b5b0cb3b9a5acc  explorer/explorer.js
 caf981bc46f6327ee7e65d5dc964d89d38a69f60edca2bd4c5c890c21b554c6c  vendor/pmtiles-4.5.0.js
 8f6a3587cf8d4f42c7e08120e3eb05d067e746d554e39d2dcf52acc0bd5ba28f  vendor/vega-6.4.0.min.js

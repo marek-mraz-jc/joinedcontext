@@ -14,7 +14,9 @@ export function PublicFrame({ children, anonymous = false }: { children: React.R
   const { status, signIn } = useAuth();
   return (
     <div className="flex min-h-screen flex-col bg-bg font-sans text-fg">
-      <header className="flex h-14 items-center justify-between gap-4 border-b border-border bg-surface px-4">
+      {/* At least `h-14`, and taller when a touch screen grows Sign in to 44 px (T-6955): a fixed
+          height let the button stick out above the screen's top edge. */}
+      <header className="flex min-h-14 items-center justify-between gap-4 border-b border-border bg-surface px-6 py-1">
         <BrandMark short />
         {status === "anonymous" && !anonymous ? (
           <Button size="sm" variant="secondary" onClick={() => signIn(window.location.pathname + window.location.search)}>
