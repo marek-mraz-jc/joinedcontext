@@ -1,13 +1,13 @@
 //! CPU per record of the two validation stages the Portal renders (G-19): one `json_schema` per
 //! class, the shape `jcctl::model_schema` compiles, against `linkml_validate` over the same
 //! 30-attribute class. Both parse the message, as the processors do.
-//! `cargo bench -p ekiben-processors --bench validate_bench`.
+//! `cargo bench -p ekiben-linkml --bench validate_bench`.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ekiben_core::ComponentConfig;
+use ekiben_linkml::LinkmlValidateProcessor;
 use ekiben_processors::json_schema::Schema;
-use ekiben_processors::linkml_validate::LinkmlValidateProcessor;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::hint::black_box;
 
 const SLOTS: usize = 30;

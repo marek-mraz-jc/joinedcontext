@@ -18,10 +18,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use ekiben_core::{Batch, ComponentConfig, CoreError, ProcContext, Processor, Registry};
-use linkml_model::check::{self, Rules};
 use linkml_model::Model;
+use linkml_model::check::{self, Rules};
 use serde_json::Value;
 
+/// Registers `linkml_validate`; the jc binary calls it beside `ekiben_server::build_full_registry`.
 pub fn register(registry: &Registry) {
     registry.register_processor("linkml_validate", |conf, _ctx| {
         Ok(Arc::new(LinkmlValidateProcessor::from_config(conf)?))
@@ -46,7 +47,7 @@ impl LinkmlValidateProcessor {
             Some(_) => {
                 return Err(CoreError::config(
                     "linkml_validate: closed is true or false",
-                ))
+                ));
             }
         };
         let model = Model::read(text.as_bytes(), &linkml_model::SURFACE_LIMITS).map_err(|e| {
