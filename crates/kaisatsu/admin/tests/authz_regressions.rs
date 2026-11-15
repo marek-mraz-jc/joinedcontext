@@ -845,6 +845,73 @@ async fn joining_a_group_with_realm_wide_roles_needs_a_user_manager() {
             .unwrap()
             .is_empty()
     );
+    // A member gets the roles of the group's ancestors and of its role mappings too.
+    for (id, parent) in [("g-child", Some("g-admins")), ("g-mapped", None)] {
+        f.store
+            .upsert_group(GroupRepresentation {
+                id: id.into(),
+                realm_id: "dev".into(),
+                org_id: Some("helsinki".into()),
+                name: id.into(),
+                path: format!("/helsinki/{id}"),
+                parent_id: parent.map(str::to_owned),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    f.store
+        .add_role_mapping(RoleMappingRecord {
+            id: "m-1".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            principal_kind: "group".into(),
+            principal_id: "g-mapped".into(),
+            role_id: "realm-admin".into(),
+            role_name: "realm-admin".into(),
+            client_uuid: None,
+        })
+        .await
+        .unwrap();
+    for group in ["g-child", "g-mapped"] {
+        let st = f
+            .send(
+                Method::PUT,
+                &format!("/admin/realms/dev/users/org-admin-hel/groups/{group}"),
+                &t,
+                None,
+            )
+            .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{group}");
+    }
+    // A refused SCIM write changes nothing of the group, and a refused join creates no person.
+    let st = f
+        .send(
+            Method::PUT,
+            "/api/v1/realms/dev/scim/v2/Groups/g-admins",
+            &t,
+            Some(json!({ "displayName": "renamed", "members": [{ "value": "org-admin-hel" }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let kept = f.store.get_group("dev", None, "g-admins").await.unwrap().unwrap();
+    assert_eq!(kept.name, "g-admins");
+    let st = f
+        .send(
+            Method::POST,
+            "/admin/realms/dev/users",
+            &t,
+            Some(json!({ "username": "joiner", "groups": ["/helsinki/g-admins"] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    assert!(
+        f.store
+            .get_user_by_username_or_email("dev", None, "joiner")
+            .await
+            .unwrap()
+            .is_none()
+    );
     let st = f
         .send(
             Method::PUT,
