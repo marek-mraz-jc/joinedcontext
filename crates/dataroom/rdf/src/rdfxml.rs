@@ -312,12 +312,27 @@ fn xml_name_split(iri: &str) -> Option<(&str, &str)> {
     Some(iri.split_at(tail + start))
 }
 
+/// A character XML 1.0 allows in a document (production 2, `Char`).
+fn xml_char(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..)
+}
+
+/// Escapes markup and writes U+FFFD for a character XML 1.0 cannot carry (no reference to it
+/// is well-formed either), so one stray control character never breaks the whole document.
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c if xml_char(c) => out.push(c),
+            _ => out.push('\u{FFFD}'),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -632,6 +647,24 @@ mod tests {
             .triples
             .iter()
             .any(|t| t.object.string_value() == "it's"));
+    }
+
+    /// XML 1.0 has no form for C0 controls but tab, LF and CR, nor for U+FFFE/U+FFFF: a literal
+    /// holding one is written with U+FFFD in its place, so the document stays well-formed.
+    #[test]
+    fn serialize_writes_only_xml_characters() {
+        let mut g = RdfGraph::new();
+        let ds = SubjectNode::Named("https://e.org/ds".into());
+        g.insert(
+            ds,
+            format!("{}title", ns::DCT),
+            Term::Literal(crate::graph::LiteralValue::plain("a\u{1}b\u{FFFE}c\td")),
+        );
+        let xml = serialize_rdfxml(&g);
+        assert!(!xml.chars().any(|c| !xml_char(c)), "{xml:?}");
+        let back = parse_rdfxml(&xml, &RdfLimits::default()).expect("serialized RDF/XML parses");
+        let title = back.triples.iter().next().expect("one triple");
+        assert_eq!(title.object.string_value(), "a\u{FFFD}b\u{FFFD}c\td");
     }
 
     #[test]

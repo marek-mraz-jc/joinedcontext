@@ -832,7 +832,12 @@ pub async fn create_person(
     State(state): State<AppState>,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let created = create(&state, &user.0.identity, &body).await?;
+    let mut created = create(&state, &user.0.identity, &body).await?;
+    // A temporary password is a person's credential: a token's answer never carries it, and a
+    // person hands it over with Reset password in the Portal, as after `jc_person_create` (AG-133).
+    if user.0.identity.client.is_some() {
+        created.temporary_password = None;
+    }
     Ok((StatusCode::CREATED, Json(created)).into_response())
 }
 

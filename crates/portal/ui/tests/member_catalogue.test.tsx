@@ -161,4 +161,16 @@ describe("the member shell (T-6411)", () => {
     expect(signOut).toHaveBeenCalled();
     await expectNoViolations(container);
   });
+
+  it("carries the skip link, the language switch and the accessibility statement every page has", async () => {
+    const { container } = renderPart(
+      <MemberFrame>
+        <h1>page</h1>
+      </MemberFrame>,
+    );
+    expect(screen.getByRole("link", { name: en.nav.skipToContent })).toHaveAttribute("href", "#main");
+    expect(screen.getByRole("button", { name: en.lang.label })).toBeInTheDocument();
+    expect(container.querySelector('a[href="/accessibility"]')).not.toBeNull();
+    await expectNoViolations(container);
+  });
 });

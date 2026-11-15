@@ -1041,6 +1041,29 @@ fn two_projects_spaces_rendering_one_id_segment_are_refused_naming_both() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// CC-86: in a layout 1 repository too, two projects' ServiceAccounts deriving one Keycloak
+/// client id are refused, naming both: `a-b`/`c` and `a`/`b-c` both derive `a-b-c`.
+#[test]
+fn two_projects_deriving_one_identity_are_refused_in_layout_1() {
+    let dir = valid_repo("derived-identity-clash");
+    for (project_name, account) in [("mesto-doprava", "linky"), ("mesto", "doprava-linky")] {
+        project(&dir, project_name);
+        write(
+            &dir,
+            &format!("projects/{project_name}/access/serviceaccounts/{account}.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: {account}\n  namespace: {project_name}\nspec:\n  owner:\n    user: demo.steward\n  purpose: \"a camera\"\n  roles:\n    - role: space-writer\n      scope:\n        project: {project_name}\n  credentials:\n    - kind: oauth-client\n      name: default\n"),
+        );
+    }
+    let found: Vec<String> = validate::run(&dir)
+        .findings
+        .into_iter()
+        .map(|f| f.message)
+        .filter(|m| m.contains("mesto-doprava-linky") && m.contains("Keycloak client"))
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // --- T-3051: the knowledge assistant's references, resolved in the project (MF-51, MF-52) ---
 
 fn knowledge_source(dir: &Path, name: &str, visibility: &str, ckan: Option<&str>) {

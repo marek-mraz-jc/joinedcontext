@@ -6679,6 +6679,7 @@
       "failed": "Verze {version} se nezveřejní, dokud selhává {failed} jejích testů: {names}. Požádejte asistenta o opravu."
     },
     "publishOver": "Tento běh skončil, takže nemá co zveřejnit.",
+    "publishNotReady": "Zatím není připravena žádná verze k publikování: Publikovat se zpřístupní, až bude sestaven její náhled a projdou její testy.",
     "failedNext": "Nic se nezveřejnilo. Na stránce Asistent aplikaci sestavte znovu.",
     "failedOpen": "Sestavit znovu"
   },

@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   andQ,
+  andScopeQ,
   complete,
   opsForKind,
   queryFromFilters,
@@ -162,6 +163,13 @@ describe("the grid's filter row as an NGSI-LD query", () => {
     expect(andQ("a>1", undefined)).toBe("a>1");
     expect(andQ(" ", undefined)).toBeUndefined();
   });
+
+  it("keeps an either-or part whole when it joins another, since ';' binds tighter than '|'", () => {
+    expect(andQ('!startDate|startDate>="today"', 'category=="music"')).toBe('(!startDate|startDate>="today");category=="music"');
+    expect(andQ("a==1|b==2")).toBe("a==1|b==2");
+    // A '|' inside a quoted text is no either-or.
+    expect(andQ('name=="a|b"', "c==3")).toBe('name=="a|b";c==3');
+  });
 });
 
 describe("a column whose type the caller does not know", () => {
@@ -198,5 +206,11 @@ describe("pageNumbers: a DataTables pager (T-5196)", () => {
     expect(pageNumbers(6, 12)).toEqual([1, null, 5, 6, 7, null, 12]);
     expect(pageNumbers(12, 12)).toEqual([1, null, 11, 12]);
     expect(pageNumbers(3, 4)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("keeps two scope conditions both true", () => {
+    expect(andScopeQ("/city/#", undefined)).toBe("/city/#");
+    expect(andScopeQ("/city/#", "/north")).toBe("(/city/#;/north)");
+    expect(andScopeQ("/a,(/b;/c)", "/d|/e")).toBe("(/a;/d),(/a;/e),(/b;/c;/d),(/b;/c;/e)");
   });
 });

@@ -32,6 +32,7 @@ import { entityTypesOf, isAppEndpoint, pickReadEndpoint, spaceOf } from "../spac
 import { useIdentity } from "../../auth/AuthProvider";
 import { replaceOwnSearch } from "../../assistant/HandOff";
 import { ProjectHidden, projectOutOfReach } from "../../components/ProjectHidden";
+import { REQUEST_ACCESS_ANCHOR } from "../../components/endpoints/EndpointAdmission";
 
 const PAGE_SIZE = 50;
 
@@ -61,6 +62,15 @@ function useProjectList(project: string, plural: string) {
  */
 /** How many of the project's spaces are counted for the one the page opens on. */
 const COUNTED_SPACES = 5;
+
+/**
+ * Where "ask for access" leads: the Endpoint's own request section, which is where a reader asks
+ * for the attributes it hides; the project's members only when no Endpoint is open.
+ */
+export function accessRequestHref(project: string, endpointName: string | undefined): string {
+  const at = `/projects/${encodeURIComponent(project)}`;
+  return endpointName ? `${at}/endpoints/${encodeURIComponent(endpointName)}#${REQUEST_ACCESS_ANCHOR}` : `${at}/access`;
+}
 
 /**
  * The space the page opens on: the first, in the list's order, whose count says it holds
@@ -542,7 +552,7 @@ export function ExplorePage({
             detailTabs={detailTabs}
             access={attributeAccess.isError ? null : attributeAccess.data}
             explainAccess={endpointName ? explainAccess : undefined}
-            accessRequestHref={`/projects/${encodeURIComponent(project)}/access`}
+            accessRequestHref={accessRequestHref(project, endpointName)}
             onRefused={setRefused}
             toolbar={
               slug ? (

@@ -106,6 +106,18 @@ describe("the pipelines page", () => {
     }
   });
 
+  it("a_reader_sees_pause_refused_with_the_reason_and_sends_nothing", async () => {
+    const { calls } = await renderRoute({
+      path: PATH,
+      answer: answering([pipeline("ingest")]),
+      permissions: { project: "helsinki", bootstrap: false, grants: [{ role: "viewer", binding: "viewers", rule: { kinds: ["Pipeline"], verbs: ["read"] } }] },
+    });
+    const pause = await screen.findByRole("button", { name: new RegExp(en.pipelines.pause) });
+    await waitFor(() => expect(pause).toHaveAttribute("aria-disabled", "true"));
+    pause.click();
+    expect(calls().filter((call) => !call.startsWith("GET"))).toEqual([]);
+  });
+
   it("the_add_action_is_reached_and_opened_from_the_keyboard", async () => {
     await renderRoute({ path: PATH, answer: answering([pipeline("ingest")]) });
     const add = await screen.findByRole("button", { name: en.pipelines.add });

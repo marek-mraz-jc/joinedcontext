@@ -120,6 +120,11 @@ export function AgentRunPage({
     (record.unattended === true && record.status === "awaiting_approval" && !record.changeId);
   // A version whose tests fail or still run is not offered for publication (SDK-38).
   const held = publishable ? testsHold(events, record.previewUrl) : null;
+  const heldText = held
+    ? held.running
+      ? t("agentRun.testsHold.running", { version: String(held.version) })
+      : t("agentRun.testsHold.failed", { version: String(held.version), failed: String(held.failed), names: held.names.join("; ") })
+    : undefined;
   const published = publish.data;
   const change: Change | null = published && isChange(published) ? (published as Change) : null;
 
@@ -280,7 +285,13 @@ export function AgentRunPage({
           <Button
             variant="primary"
             disabled={!publishable || held !== null || publish.isPending}
-            aria-describedby={held ? "run-tests-hold" : record.status === "failed" ? "run-publish-over" : undefined}
+            // Held, the button says why and keeps its place in the tab order (UI-44); the line
+            // under it says the same to the eye.
+            disabledReason={
+              publish.isPending
+                ? t("app.busyReason")
+                : (heldText ?? (record.status === "failed" ? t("agentRun.publishOver") : t("agentRun.publishNotReady")))
+            }
             onClick={() => {
               publish.mutate();
             }}
@@ -288,19 +299,18 @@ export function AgentRunPage({
             {t("agentRun.publish")}
           </Button>
           {record.status === "failed" ? (
-            <span id="run-publish-over" className="basis-full text-caption text-fg-muted">
+            <span className="basis-full text-caption text-fg-muted" aria-hidden="true">
               {t("agentRun.publishOver")}
             </span>
           ) : null}
-          {held ? (
-            <span id="run-tests-hold" className="basis-full text-caption text-fg-muted">
-              {held.running
-                ? t("agentRun.testsHold.running", { version: String(held.version) })
-                : t("agentRun.testsHold.failed", {
-                    version: String(held.version),
-                    failed: String(held.failed),
-                    names: held.names.join("; "),
-                  })}
+          {!publishable && !over && !publish.isPending ? (
+            <span className="basis-full text-caption text-fg-muted" aria-hidden="true">
+              {t("agentRun.publishNotReady")}
+            </span>
+          ) : null}
+          {heldText ? (
+            <span className="basis-full text-caption text-fg-muted" aria-hidden="true">
+              {heldText}
             </span>
           ) : null}
         </div>

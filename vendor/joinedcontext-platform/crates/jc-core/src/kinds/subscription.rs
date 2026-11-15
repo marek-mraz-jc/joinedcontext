@@ -251,6 +251,25 @@ impl NotificationEndpoint {
                 reason: "a notification endpoint names a host",
             });
         }
+        if !authority.contains('@') {
+            let host = crate::address::remote_host(authority);
+            // `https` reaches a public host; `http` only a Service name inside the cluster.
+            let refused = if scheme == "https" {
+                crate::address::check_remote_host(host).err()
+            } else {
+                (!is_service_name(host)).then_some(
+                    "http reaches only a Service inside the cluster, e.g. \
+                     http://bento.city.svc:4195/hook; any other receiver is called over https",
+                )
+            };
+            if let Some(reason) = refused {
+                return Err(Error::Name {
+                    field: "spec.notification.endpoint.uri",
+                    value: self.uri.clone(),
+                    reason,
+                });
+            }
+        }
         if authority.contains('@') {
             return Err(Error::Name {
                 field: "spec.notification.endpoint.uri",
@@ -287,6 +306,22 @@ impl NotificationEndpoint {
 
 /// The URL without whatever was written into it, so a refusal can name the field without
 /// repeating the secret it refuses (PL-17).
+/// A Kubernetes Service name: one label (`bento`), or a name under `.svc` or
+/// `.svc.cluster.local`; never an address literal or `localhost`.
+fn is_service_name(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    let host = host.strip_suffix('.').unwrap_or(&host);
+    let last = host.rsplit('.').next().unwrap_or_default();
+    !host.is_empty()
+        && host != "localhost"
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+        && !last.starts_with("0x")
+        && !last.bytes().all(|b| b.is_ascii_digit())
+        && (!host.contains('.') || host.ends_with(".svc") || host.ends_with(".svc.cluster.local"))
+}
+
 fn redacted(uri: &str) -> String {
     match uri.split_once("://") {
         Some((scheme, rest)) => {
@@ -335,5 +370,31 @@ mod tests {
         endpoint("https://alerts.example.sk/hook")
             .validate()
             .expect("an ordinary https endpoint");
+    }
+
+    #[test]
+    fn https_reaches_a_public_host_and_http_only_a_service_in_the_cluster() {
+        for uri in [
+            "https://169.254.169.254/latest",
+            "https://10.0.0.5/x",
+            "https://[::1]/x",
+            "https://portal.city.svc/internal",
+            "http://10.0.0.5/x",
+            "http://169.254.169.254/",
+            "http://2130706433/",
+            "http://localhost:8080/x",
+            "http://[::1]/x",
+            "http://alerts.example.sk/hook",
+        ] {
+            assert!(endpoint(uri).validate().is_err(), "{uri}");
+        }
+        for uri in [
+            "https://alerts.example.sk:8443/hook",
+            "http://bento:4195/hook",
+            "http://bento.city.svc:4195/hook",
+            "http://bento.city.svc.cluster.local/hook",
+        ] {
+            endpoint(uri).validate().expect(uri);
+        }
     }
 }

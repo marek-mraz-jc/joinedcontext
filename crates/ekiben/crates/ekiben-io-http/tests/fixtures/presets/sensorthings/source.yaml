@@ -1,0 +1,10 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata: { name: sensorthings, namespace: bb-ovzdusie }
+spec:
+  type: http
+  http:
+    url: https://iot.hamburg.de/v1.1/Things?$filter=startswith(name,'StadtRad')&$select=@iot.id,name
+    preset:
+      kind: sensorThings
+      pageSize: 150

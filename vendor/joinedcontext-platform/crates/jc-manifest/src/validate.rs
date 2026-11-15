@@ -328,6 +328,16 @@ fn check(repo_dir: &Path, repo: Repository, organization: bool) -> Report {
         });
     }
 
+    // Layout 2 refuses these while assembling; a layout 1 repository is checked here (CC-86).
+    if let Err(conflict) = crate::assemble::unique_slugs_and_identities(&repo) {
+        report.findings.push(Finding {
+            path: PathBuf::new(),
+            document: 1,
+            line: 1,
+            message: conflict.to_string(),
+        });
+    }
+
     for (id, path, why) in repo.unresolved_references() {
         let where_from = repo.get(id);
         report.findings.push(Finding {

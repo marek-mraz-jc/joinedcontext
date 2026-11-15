@@ -35,6 +35,32 @@ export interface AttributeChange {
   /** A LanguageProperty's texts as stored and the language edited: the other texts are kept. */
   languageMap?: Record<string, string>;
   language?: string;
+  /**
+   * The stored instance's other members (`observedAt`, sub-attributes such as `providedBy`).
+   * `PATCH …/attrs` replaces the instance whole (CIM 009 5.6.3), so a member left out is deleted.
+   */
+  kept?: Record<string, unknown>;
+}
+
+/** The members of an instance that its value, type and system stamps do not cover. */
+const VALUE_MEMBERS = new Set([
+  "type", "value", "object", "objectList", "unitCode", "languageMap", "vocab", "vocabList", "json", "valueList",
+  "lang", "datasetId", "createdAt", "modifiedAt", "deletedAt",
+]);
+
+/**
+ * What an update must carry over from the stored attribute so that only its value changes: the
+ * instance of `datasetId` (the default one when absent), without the members the edit rewrites.
+ */
+export function keptMembers(stored: unknown, datasetId?: string): Record<string, unknown> | undefined {
+  const instances = Array.isArray(stored) ? stored : [stored];
+  const instance = instances.find(
+    (item): item is Record<string, unknown> =>
+      typeof item === "object" && item !== null && (item as Record<string, unknown>).datasetId === datasetId,
+  );
+  if (!instance) return undefined;
+  const kept = Object.fromEntries(Object.entries(instance).filter(([key]) => !VALUE_MEMBERS.has(key)));
+  return Object.keys(kept).length > 0 ? kept : undefined;
 }
 
 export interface EntityChange {
@@ -65,7 +91,7 @@ export function attrsBody(
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   for (const change of changes) {
-    const value: Record<string, unknown> =
+    const written: Record<string, unknown> =
       change.kind === "relationship"
         ? { type: "Relationship", object: change.after }
         : change.kind === "language"
@@ -73,6 +99,7 @@ export function attrsBody(
           : change.kind === "vocab"
             ? { type: "VocabProperty", vocab: change.after }
             : { type: change.kind === "geo" ? "GeoProperty" : "Property", value: change.after };
+    const value: Record<string, unknown> = { ...change.kept, ...written };
     // A geometry has no unit, and a Relationship has no value to measure.
     if (change.unitCode !== undefined && (change.kind === undefined || change.kind === "property")) {
       value.unitCode = change.unitCode;

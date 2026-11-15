@@ -461,7 +461,10 @@ impl Authorizer for PolicyAuthorizer {
                         "harvest sources require organization membership",
                     );
                 }
-                if self.holds_rule(ctx, action, None) || self.holds_rule(ctx, Action::Harvest, None)
+                // A Harvest grant runs and reads sources; changing or removing one needs its own rule.
+                if self.holds_rule(ctx, action, None)
+                    || (matches!(action, Action::Harvest | Action::Read)
+                        && self.holds_rule(ctx, Action::Harvest, None))
                 {
                     Decision::allow("granted on harvest source")
                 } else {

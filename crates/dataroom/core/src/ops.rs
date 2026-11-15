@@ -34,7 +34,13 @@ pub struct OpContext {
     /// Harvest sources are written by the Portal's reconciler alone (ODP-11, in `jc`): the
     /// direct `harvest_source.propose` is refused.
     pub sources_by_portal: bool,
+    /// The installation branding a catalogue layers its own over, as `GET /api/v1/branding`
+    /// answers it; `None` answers the neutral defaults.
+    pub branding: Option<BrandingOf>,
 }
+
+/// The installation branding of a catalogue (the host's live addresses, colours and domain).
+pub type BrandingOf = Arc<dyn Fn(&Catalogue) -> crate::BrandingBlock + Send + Sync>;
 
 /// Hook trait so `dataroom-core` operations can invoke SHACL validation without a circular
 /// dependency on `dataroom-shacl`.
@@ -560,7 +566,9 @@ fn public_catalogue(op_ctx: &OpContext, req_ctx: &RequestCtx, mut cat: Catalogue
 
 /// Authorizes saving `proposed` (C16). An update is decided on the stored record, never on the
 /// grants the caller sends along; creating a publisher needs Propose without any editor grant;
-/// and changing who may edit a publisher (its editor grants) needs Admin on it.
+/// changing who may edit a publisher (its editor grants), the publisher it is merged into or the
+/// instance that declared it needs Admin on it; and changing its state needs Delete, as
+/// `publisher.withdraw` does.
 pub fn authorize_publisher_write(
     authorizer: &dyn Authorizer,
     req_ctx: &RequestCtx,
@@ -571,12 +579,19 @@ pub fn authorize_publisher_write(
         Some(p) => p.clone(),
         None => Publisher {
             editor_grants: Vec::new(),
+            merged_into: None,
             ..proposed.clone()
         },
     };
     let target = ObjectTarget::from_publisher(&base);
     enforce_decision(authorizer.check(req_ctx, Action::Propose, &target))?;
-    if proposed.editor_grants != base.editor_grants {
+    if proposed.state != base.state {
+        enforce_decision(authorizer.check(req_ctx, Action::Delete, &target))?;
+    }
+    if proposed.editor_grants != base.editor_grants
+        || proposed.merged_into != base.merged_into
+        || proposed.declared_by_instance != base.declared_by_instance
+    {
         enforce_decision(authorizer.check(req_ctx, Action::Admin, &target))?;
     }
     Ok(())
@@ -1145,10 +1160,17 @@ pub async fn execute_operation(
                 &str_of(&raw_pub, "name"),
             )
             .await?;
-            // An update that leaves out the editor grants keeps the stored ones.
+            // An update that leaves out the editor grants, the merge target or the declaring
+            // instance keeps the stored ones.
             if let (Some(ex), Some(obj)) = (&existing, raw_pub.as_object_mut()) {
-                if !obj.contains_key("editorGrants") {
-                    obj.insert("editorGrants".into(), json!(ex.editor_grants));
+                for (key, stored) in [
+                    ("editorGrants", json!(ex.editor_grants)),
+                    ("mergedInto", json!(ex.merged_into)),
+                    ("declaredByInstance", json!(ex.declared_by_instance)),
+                ] {
+                    if !obj.contains_key(key) {
+                        obj.insert(key.into(), stored);
+                    }
                 }
             }
             let mut publisher: Publisher = serde_json::from_value(raw_pub).map_err(|e| {
@@ -1505,7 +1527,8 @@ pub async fn execute_operation(
                 .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
                 .await?
                 .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
-            let eff = cat.effective_branding(None);
+            let installation = op_ctx.branding.as_ref().map(|of| of(&cat));
+            let eff = cat.effective_branding(installation.as_ref());
             Ok(serde_json::to_value(eff).unwrap_or(Value::Null))
         }
         "branding.propose" => {
@@ -1541,7 +1564,8 @@ pub async fn execute_operation(
                     },
                 )
                 .await?;
-            let eff = saved.effective_branding(None);
+            let installation = op_ctx.branding.as_ref().map(|of| of(&saved));
+            let eff = saved.effective_branding(installation.as_ref());
             Ok(serde_json::to_value(eff).unwrap_or(Value::Null))
         }
         "profile.list" => {

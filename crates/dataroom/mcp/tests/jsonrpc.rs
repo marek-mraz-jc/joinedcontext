@@ -61,6 +61,7 @@ async fn world() -> World {
             validator: None,
             harvester: None,
             sources_by_portal: false,
+            branding: None,
         },
         org,
         cat,

@@ -279,9 +279,8 @@ impl GroupSync {
 
         let existing: Vec<KcGroup> = match self
             .admin
-            .get::<Value>(&token, "/groups?briefRepresentation=false&max=1000")
+            .get_all(&token, "/groups?briefRepresentation=false")
             .await
-            .and_then(|value| serde_json::from_value(value).map_err(|err| err.to_string()))
         {
             Ok(groups) => groups,
             Err(err) => {
@@ -459,9 +458,8 @@ impl GroupSync {
         // without an e-mail is a member like any other (PF-62).
         let held: BTreeSet<String> = match self
             .admin
-            .get::<Value>(token, &format!("/groups/{id}/members?max=1000"))
+            .get_all::<KcUser>(token, &format!("/groups/{id}/members"))
             .await
-            .and_then(|v| serde_json::from_value::<Vec<KcUser>>(v).map_err(|e| e.to_string()))
         {
             Ok(members) => members.into_iter().map(|user| user.id).collect(),
             Err(err) => {

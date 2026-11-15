@@ -288,8 +288,15 @@ async fn world_with(build: impl FnOnce(DataroomState) -> Router) -> World {
     let mut reader = binding("tok-reader", "connector", org, &[]);
     reader.subject.read_only = true;
     reader.subject.client_id = Some("connector".into());
+    let instance = |token: &str, client: &str| {
+        let mut b = binding(token, "admin", org, &[]);
+        b.subject.client_id = Some(client.into());
+        b
+    };
     let state = DataroomState::new(store.clone(), Arc::new(authz), org, cat).with_tokens(vec![
         binding("tok-admin", "admin", org, &[]),
+        instance("tok-alpha", "alpha"),
+        instance("tok-beta", "beta"),
         binding("tok-editor", "eva", org, &["city-editors"]),
         binding("tok-member", "mo", org, &[]),
         binding("tok-proposer", "pat", org, &[]),
@@ -1253,6 +1260,27 @@ async fn ckan_dataset_and_resource_writes() {
         .unwrap()
         .unwrap();
     assert_eq!(ds.title.get("sk").map(String::as_str), Some("Patched"));
+    // A patch of `private` alone changes the visibility the stored record carried.
+    for (private, want) in [
+        (false, dataroom_core::Visibility::Public),
+        (true, dataroom_core::Visibility::Internal),
+    ] {
+        let a = ckan(
+            app,
+            "package_patch",
+            Some("tok-editor"),
+            json!({"id": "fresh", "private": private}),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+        let ds = w
+            .store
+            .get_dataset(&w.admin_ctx(), "fresh")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ds.visibility, want, "private: {private}");
+    }
 
     // Resources: create, update, patch, delete, with their errors.
     let a = ckan(
@@ -1417,10 +1445,19 @@ async fn ckan_dataset_and_resource_writes() {
     )
     .await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
+    // A purge needs Admin: the editor who withdrew the dataset cannot remove it for good.
     let a = ckan(
         app,
         "dataset_purge",
         Some("tok-editor"),
+        json!({"id": "fresh"}),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::FORBIDDEN, "{}", a.body);
+    let a = ckan(
+        app,
+        "dataset_purge",
+        Some("tok-admin"),
         json!({"id": "fresh"}),
     )
     .await;
@@ -1521,8 +1558,8 @@ async fn ckan_organization_writes() {
     let a = ckan(
         app,
         "organization_patch",
-        Some("tok-admin"),
-        json!({"name": "dept", "title": "Odbor A", "instance_name": "alpha", "notes": "Nové", "image_url": "https://dept.example/n.png"}),
+        Some("tok-alpha"),
+        json!({"name": "dept", "title": "Odbor A", "notes": "Nové", "image_url": "https://dept.example/n.png"}),
     )
     .await;
     assert_eq!(a.json()["result"]["title"], "Odbor A", "{}", a.body);
@@ -1531,19 +1568,32 @@ async fn ckan_organization_writes() {
         a.json()["result"]["image_url"],
         "https://dept.example/n.png"
     );
+    // The instance is the token's client: a name in the payload, or no client at all, renames
+    // nothing another instance declared.
+    for (token, body) in [
+        (
+            "tok-beta",
+            json!({"id": "org-dept", "title": "Odbor B", "instance_name": "alpha"}),
+        ),
+        ("tok-beta", json!({"id": "org-dept", "title": "Odbor B"})),
+        (
+            "tok-admin",
+            json!({"id": "org-dept", "title": "Odbor B", "instance_name": "alpha"}),
+        ),
+    ] {
+        let a = ckan(app, "organization_patch", Some(token), body).await;
+        assert_eq!(
+            a.json()["result"]["title"],
+            "Odbor A",
+            "{token}: {}",
+            a.body
+        );
+    }
     let a = ckan(
         app,
         "organization_patch",
-        Some("tok-admin"),
-        json!({"id": "org-dept", "title": "Odbor B", "instance_name": "beta"}),
-    )
-    .await;
-    assert_eq!(a.json()["result"]["title"], "Odbor A", "{}", a.body);
-    let a = ckan(
-        app,
-        "organization_patch",
-        Some("tok-admin"),
-        json!({"id": "dept", "title": "Odbor C", "instance_name": "alpha"}),
+        Some("tok-alpha"),
+        json!({"id": "dept", "title": "Odbor C"}),
     )
     .await;
     assert_eq!(a.json()["result"]["title"], "Odbor C", "{}", a.body);
@@ -1628,7 +1678,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
         (
             &["purge_dataset"],
             "dataset_purge",
-            Some("tok-editor"),
+            Some("tok-admin"),
             json!({"id": "open"}),
         ),
         (
@@ -2708,7 +2758,7 @@ async fn branding_logo_and_static_assets() {
     );
     w.store.heal();
 
-    // Logo upload: Propose on the catalogue, a scripted SVG refused, a clean one served by hash.
+    // Logo upload: Admin on the catalogue, a scripted SVG refused, a clean one served by hash.
     let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"><rect width=\"10\" height=\"10\" fill=\"#123456\"/></svg>";
     let upload = |tok: Option<&'static str>, body: &'static str| {
         send(
@@ -2720,17 +2770,22 @@ async fn branding_logo_and_static_assets() {
             Body::from(body),
         )
     };
-    assert_eq!(
-        upload(Some("tok-member"), svg).await.status,
-        StatusCode::FORBIDDEN
-    );
+    for tok in ["tok-member", "tok-proposer"] {
+        assert_eq!(
+            upload(Some(tok), svg).await.status,
+            StatusCode::FORBIDDEN,
+            "{tok}"
+        );
+    }
+    let cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    assert_eq!(cat.theme.logo, None, "a refused upload keeps the theme");
     let a = upload(
-        Some("tok-proposer"),
+        Some("tok-admin"),
         "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>",
     )
     .await;
     assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
-    let a = upload(Some("tok-proposer"), svg).await;
+    let a = upload(Some("tok-admin"), svg).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
     let url = a.json()["url"].as_str().unwrap().to_owned();
     assert!(url.starts_with("/assets/"), "{url}");
@@ -3711,6 +3766,23 @@ async fn the_login_goes_to_the_portal_address_named_on_its_own() {
     assert_eq!(a.header("location"), "http://localhost:42241/portal/login");
 }
 
+/// The `branding.get` operation (REST, MCP) answers what `GET /api/v1/branding` answers: the
+/// installation branding with the catalogue's own over it.
+#[tokio::test]
+async fn the_branding_operation_answers_the_installation_branding() {
+    let branding = BrandingBlock {
+        domain: "data.city.example".into(),
+        ..BrandingBlock::default()
+    };
+    let w = world_with(|s| router(s.with_installation_branding(branding))).await;
+    let page = get(&w.app, "/api/v1/branding", None).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert_eq!(page.json()["domain"], "data.city.example");
+    let op = post(&w.app, "/api/v1/ops/branding.get", None, json!({})).await;
+    assert_eq!(op.status, StatusCode::OK, "{}", op.body);
+    assert_eq!(op.json(), page.json());
+}
+
 #[tokio::test]
 async fn odata_refuses_what_it_does_not_serve() {
     let w = world().await;
@@ -3923,6 +3995,31 @@ async fn anonymous_listings_hold_no_draft_hidden_or_withdrawn_dataset() {
         assert!(
             a.body.contains("quality check pending") && a.body.contains("harvest.internal"),
             "{op} for a proposer: {}",
+            a.body
+        );
+    }
+}
+
+/// The dataset page and its RDF exports show a draft only to a signed-in caller who may read it,
+/// the same rule as `package_show`.
+#[tokio::test]
+async fn dataset_page_and_rdf_refuse_a_draft_to_anonymous_callers() {
+    let w = world().await;
+    let mut draft = dataset("draft-one", "city", "public", 30);
+    draft.state = dataroom_core::RecordState::Draft;
+    w.store.upsert_dataset(&w.admin_ctx(), draft).await.unwrap();
+    for path in [
+        "/dataset/draft-one",
+        "/dataset/draft-one.ttl",
+        "/dataset/draft-one.rdf",
+    ] {
+        let a = get(&w.app, path, None).await;
+        assert_eq!(a.status, StatusCode::NOT_FOUND, "{path}: {}", a.body);
+        let a = get(&w.app, path, Some("tok-editor")).await;
+        assert_eq!(
+            a.status,
+            StatusCode::OK,
+            "{path} for the editor: {}",
             a.body
         );
     }

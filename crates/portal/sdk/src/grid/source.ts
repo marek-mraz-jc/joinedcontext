@@ -338,6 +338,22 @@ function pairsOf(values: unknown): HistoryPoint[] {
 }
 
 /**
+ * The attributes an UpdateResult lists as not updated, by the names the write used: the broker
+ * names them by their expanded IRI, which ends in the term after its last `/` or `#`.
+ */
+function notUpdatedOf(body: unknown, written: string[]): { attr: string; reason: string }[] {
+  const list = (body as { notUpdated?: unknown } | null)?.notUpdated;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((item) => {
+    const { attributeName, reason } = (item ?? {}) as { attributeName?: unknown; reason?: unknown };
+    if (typeof attributeName !== "string") return [];
+    const term = attributeName.split(/[/#]/).pop() ?? attributeName;
+    const attr = written.find((name) => name === attributeName || name === term) ?? attributeName;
+    return [{ attr, reason: typeof reason === "string" && reason ? reason : "not updated" }];
+  });
+}
+
+/**
  * One NGSI-LD API under `base`. `hidden` is what a 404 becomes on a query or a write: a Context Space surface says the same whether the space is missing or not granted.
  */
 function ngsiSource(base: string, transport: Transport, language: string, hidden?: string, tilesAt?: string): EntitySource {
@@ -440,6 +456,14 @@ function ngsiSource(base: string, transport: Transport, language: string, hidden
     async patch(id, attrs, reason) {
       const { status, body } = await transport({ method: "PATCH", path: `${entity(id)}/attrs`, body: attrs, reason });
       if (!ok(status)) refuse(status, body, "the write was refused");
+      // Update Attributes answers 207 for the attributes it left alone (CIM 009 5.6.3), one the
+      // entity does not hold among them: that part of the write did not land.
+      if (status === 207) {
+        const missed = notUpdatedOf(body, Object.keys(attrs));
+        if (missed.length > 0) {
+          throw new SourceError(207, missed.map(({ attr, reason }) => `${attr}: ${reason}`).join("; "), missed[0].attr);
+        }
+      }
     },
     async remove(id, reason) {
       if (!reasonOk(reason)) throw new SourceError(0, `a delete names why in 1 to ${MAX_REASON} characters`, "reason");

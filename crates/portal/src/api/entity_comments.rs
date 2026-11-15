@@ -301,12 +301,26 @@ pub async fn add_comment(
     let identity = &user.0.identity;
     let now = chrono::Utc::now();
     let me = recipients(&user);
-    let (notified, unknown): (Vec<String>, Vec<String>) = mentions_in(text)
+    let mut notified = Vec::new();
+    let mut unknown = Vec::new();
+    for person in mentions_in(text)
         .into_iter()
         .filter(|person| !me.contains(person))
-        .partition(|person| {
-            crate::permissions::may_read_space(&state.mirror, &project, &space, person, now)
-        });
+    {
+        // A binding names a person by e-mail, or by their Keycloak id since ADR-N-061.
+        let reads = |named: &str| {
+            crate::permissions::may_read_space(&state.mirror, &project, &space, named, now)
+        };
+        let readable = reads(&person)
+            || crate::people::realm_id_of(state.people.as_deref(), &person)
+                .await
+                .is_some_and(|id| reads(&id));
+        if readable {
+            notified.push(person);
+        } else {
+            unknown.push(person);
+        }
+    }
     let name = identity
         .name
         .as_deref()
