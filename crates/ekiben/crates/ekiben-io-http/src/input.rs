@@ -53,7 +53,7 @@ impl HttpClientInput {
             .filter(|v| !v.is_null())
             .map(|v| PaginateConf::from_json(v, &ctx.blobl_env))
             .transpose()?;
-        if paginate.is_some() && stream_lines {
+        if paginate.is_some() && stream.is_some() {
             return Err(CoreError::config(
                 "http_client.paginate cannot be combined with stream.enabled",
             ));
