@@ -17,9 +17,9 @@ use openidconnect::core::{
     CoreResponseType, CoreSubjectIdentifierType,
 };
 use openidconnect::{
-    AdditionalProviderMetadata, ClientId, CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet,
+    AdditionalProviderMetadata, ClaimsVerificationError, ClientId, CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet,
     IssuerUrl, Nonce, OAuth2TokenResponse, PkceCodeChallenge, ProviderMetadata, RedirectUrl, Scope,
-    TokenResponse,
+    SignatureVerificationError, TokenResponse,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -69,6 +69,9 @@ const FLOW_TTL_SECS: i64 = 600;
 const DEFAULT_SESSION_TTL_SECS: i64 = 3600;
 /// Access-token lifetime when the token response does not state one.
 const DEFAULT_ACCESS_TTL_SECS: i64 = 300;
+/// Least time between two reloads of the realm's signing keys: a token naming a key the realm
+/// does not publish cannot make every request ask the realm again (S-5-09).
+const KEYS_RELOAD_COOLDOWN: Duration = Duration::from_secs(30);
 
 /// The gateway's hub audience, which with an `endpoint:{slug}` scope reaches one Endpoint
 /// (context-gateway `HUB_AUDIENCE`, ADR-N-025 4b).
@@ -159,8 +162,15 @@ pub enum OidcError {
 pub struct OidcClient {
     /// The discovered realm: the authorization URL and the ID token verifier. Token requests do
     /// not go through it, because its token requests always carry `client_id`, which a
-    /// `federated-jwt` client refuses beside an assertion (PF-47, T-2868).
-    client: PortalClient,
+    /// `federated-jwt` client refuses beside an assertion (PF-47, T-2868). Rebuilt when a token
+    /// names a signing key it does not hold, so a realm key rotation needs no restart (S-5-09).
+    client: std::sync::RwLock<std::sync::Arc<PortalClient>>,
+    /// Discovery's client and what it rebuilds `client` from.
+    discovery: reqwest::Client,
+    issuer: IssuerUrl,
+    redirect: RedirectUrl,
+    /// When the signing keys were last reloaded; the lock also lets one reload run at a time.
+    keys_reloaded: tokio::sync::Mutex<Option<std::time::Instant>>,
     http: reqwest::Client,
     token_url: Url,
     /// The issuer's `host[:port]`, sent as `Host` when the back channel names another one (slug
@@ -256,7 +266,7 @@ impl OidcClient {
         // A trailing slash makes the discovered `issuer` claim mismatch; Keycloak publishes none.
         let issuer = IssuerUrl::new(config.issuer.as_str().trim_end_matches('/').to_string())
             .map_err(|e| OidcError::Url(e.to_string()))?;
-        let metadata = PortalProviderMetadata::discover_async(issuer, &discovery)
+        let metadata = PortalProviderMetadata::discover_async(issuer.clone(), &discovery)
             .await
             .map_err(|e| OidcError::Discovery(source_chain(&e)))?;
         let end_session_endpoint = metadata
@@ -276,17 +286,14 @@ impl OidcClient {
 
         let redirect = RedirectUrl::new(redirect_uri.to_string())
             .map_err(|e| OidcError::Url(e.to_string()))?;
-        // No secret: the ID token verifier then accepts the realm's signing keys alone, never an
-        // HMAC keyed with a client secret.
-        let client = CoreClient::from_provider_metadata(
-            metadata,
-            ClientId::new(config.client_id.clone()),
-            None,
-        )
-        .set_redirect_uri(redirect);
+        let client = verifying_client(metadata, &config.client_id, redirect.clone());
 
         Ok(Self {
-            client,
+            client: std::sync::RwLock::new(std::sync::Arc::new(client)),
+            discovery,
+            issuer,
+            redirect,
+            keys_reloaded: tokio::sync::Mutex::new(None),
             http,
             token_url,
             token_host,
@@ -297,6 +304,58 @@ impl OidcClient {
             authorization_endpoint,
             service: tokio::sync::Mutex::new(None),
         })
+    }
+
+    fn verifying(&self) -> std::sync::Arc<PortalClient> {
+        self.client
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Runs `check` (an ID or logout token verification) against the realm's signing keys. A
+    /// token signed by a key the Portal does not hold is a realm key rotation: the keys are
+    /// reloaded, at most once per [`KEYS_RELOAD_COOLDOWN`], and the token is checked again.
+    async fn verify<'t, T: 't>(
+        &self,
+        check: impl Fn(&PortalClient) -> Result<&'t T, ClaimsVerificationError>,
+    ) -> Result<&'t T, ClaimsVerificationError> {
+        match check(&self.verifying()) {
+            Err(ClaimsVerificationError::SignatureVerification(
+                SignatureVerificationError::NoMatchingKey,
+            )) => {
+                self.reload_keys().await;
+                check(&self.verifying())
+            }
+            done => done,
+        }
+    }
+
+    /// Discovers the realm again and swaps in its keys. A failed discovery or an empty key set
+    /// keeps the keys held: a realm answering badly for a moment must not make every token fail.
+    async fn reload_keys(&self) {
+        let mut reloaded = self.keys_reloaded.lock().await;
+        if reloaded.is_some_and(|at| at.elapsed() < KEYS_RELOAD_COOLDOWN) {
+            return;
+        }
+        *reloaded = Some(std::time::Instant::now());
+        match PortalProviderMetadata::discover_async(self.issuer.clone(), &self.discovery).await {
+            Ok(metadata) if metadata.jwks().keys().is_empty() => {
+                tracing::warn!("the realm publishes no signing keys; keeping the ones held");
+            }
+            Ok(metadata) => {
+                let client = verifying_client(metadata, &self.client_id, self.redirect.clone());
+                *self
+                    .client
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    std::sync::Arc::new(client);
+                tracing::info!("reloaded the realm's signing keys");
+            }
+            Err(e) => {
+                tracing::warn!(error = %source_chain(&e), "reloading the realm's signing keys failed");
+            }
+        }
     }
 
     /// The realm's authorization request of the silent sign-in check (AP-122, T-3034).
@@ -464,7 +523,12 @@ impl OidcClient {
         if let Some(fresh) = token_response.id_token() {
             // Verified like the logout token: signature, issuer and audience, no nonce (there
             // was no browser round trip to bind one to). Only a verified token changes anything.
-            match fresh.claims(&self.client.id_token_verifier(), |_: Option<&Nonce>| Ok(())) {
+            let verified = self
+                .verify(|client| {
+                    fresh.claims(&client.id_token_verifier(), |_: Option<&Nonce>| Ok(()))
+                })
+                .await;
+            match verified {
                 Ok(_) => {
                     id_token = fresh.to_string();
                     identity.roles = realm_roles(&id_token);
@@ -473,8 +537,11 @@ impl OidcClient {
                     // `amr` in a refreshed token, and the realm session is the same one.
                     identity.second_factor |= second_factor(&id_token);
                 }
+                // The old groups and roles may be the ones the realm just took away: a refresh
+                // whose id token does not verify ends the session (S-5-09).
                 Err(e) => {
-                    tracing::warn!(error = %e, "id_token from the refresh did not verify; keeping the old one")
+                    tracing::warn!(subject = %session.identity.subject, error = %e, "id_token from the refresh did not verify");
+                    return Err(ApiError::Unauthorized);
                 }
             }
         }
@@ -483,6 +550,17 @@ impl OidcClient {
             token_response.access_token().secret().clone(),
         ))
     }
+}
+
+/// The client that verifies the realm's ID and logout tokens. No secret: the verifier then
+/// accepts the realm's signing keys alone, never an HMAC keyed with a client secret.
+fn verifying_client(
+    metadata: PortalProviderMetadata,
+    client_id: &str,
+    redirect: RedirectUrl,
+) -> PortalClient {
+    CoreClient::from_provider_metadata(metadata, ClientId::new(client_id.to_string()), None)
+        .set_redirect_uri(redirect)
 }
 
 /// Builds the cookie session from a token response, at login and at every refresh.
@@ -659,8 +737,8 @@ pub async fn login(
 ) -> Result<Response, ApiError> {
     let client = oidc(&state)?;
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-    let mut request = client
-        .client
+    let realm = client.verifying();
+    let mut request = realm
         .authorize_url(
             CoreAuthenticationFlow::AuthorizationCode,
             CsrfToken::new_random,
@@ -860,8 +938,9 @@ pub async fn callback(
         .id_token()
         .ok_or_else(|| ApiError::BadRequest("the identity provider returned no id_token".into()))?;
     let nonce = Nonce::new(flow.nonce);
-    let claims = id_token
-        .claims(&client.client.id_token_verifier(), &nonce)
+    let claims = client
+        .verify(|realm| id_token.claims(&realm.id_token_verifier(), &nonce))
+        .await
         .map_err(|e| {
             tracing::warn!(error = %e, "id_token verification failed");
             ApiError::BadRequest("the id_token did not verify".into())
@@ -1161,9 +1240,10 @@ pub async fn backchannel_logout(
         .logout_token
         .parse()
         .map_err(|_| ApiError::BadRequest("the logout token is not a JWT".into()))?;
-    let subject = match token.claims(&client.client.id_token_verifier(), |_: Option<&Nonce>| {
-        Ok(())
-    }) {
+    let subject = match client
+        .verify(|realm| token.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+        .await
+    {
         Ok(claims) => claims.subject().as_str().to_owned(),
         // The edge's sessions are the edge client's, so Keycloak addresses their logout token
         // to it (T-5568): signature, issuer, expiry and that audience, and only where an edge
@@ -1800,9 +1880,9 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_refresh_that_brings_no_id_token_keeps_the_roles_the_session_had() {
-        // The realm may answer without an id token, and an id token that does not verify is
-        // ignored on purpose. Either way the identity must stay exactly as it was: taking roles
-        // from an unverified token is how a session grows rights it was never granted.
+        // The realm may answer without an id token. The identity must then stay exactly as it
+        // was: taking roles from an unverified token is how a session grows rights it was never
+        // granted.
         let server = mock_realm().await;
         Mock::given(wm_method("POST"))
             .and(wm_path(format!("{REALM}/protocol/openid-connect/token")))
@@ -1830,6 +1910,167 @@ pub(crate) mod tests {
         );
         assert_eq!(after.refresh_token.as_deref(), Some("fresh-refresh"));
         assert!(after.access_expires_at > session::now_unix());
+    }
+
+    /// An ES256 signing key of the test realm and its public JWK under `kid`.
+    fn signing_key(kid: &str) -> (jsonwebtoken::EncodingKey, serde_json::Value) {
+        use p256::pkcs8::EncodePrivateKey;
+        let secret = p256::SecretKey::random(&mut rand_core::OsRng);
+        let der = secret.to_pkcs8_der().expect("der");
+        let mut jwk: serde_json::Value =
+            serde_json::from_str(&secret.public_key().to_jwk_string()).expect("jwk");
+        jwk["kid"] = serde_json::json!(kid);
+        jwk["alg"] = serde_json::json!("ES256");
+        jwk["use"] = serde_json::json!("sig");
+        (jsonwebtoken::EncodingKey::from_ec_der(der.as_bytes()), jwk)
+    }
+
+    /// An ID token of `issuer` for the Portal, signed by `key` under `kid`.
+    fn id_token_of(issuer: &str, key: &jsonwebtoken::EncodingKey, kid: &str) -> String {
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+        header.kid = Some(kid.into());
+        let now = session::now_unix();
+        let claims = serde_json::json!({
+            "iss": issuer, "aud": "portal", "sub": "ana", "iat": now, "exp": now + 300,
+            "groups": ["/fresh-group"],
+        });
+        jsonwebtoken::encode(&header, &claims, key).expect("signed")
+    }
+
+    /// The realm of [`mock_realm`], signing ES256, whose key set answers `sets` in turn and then
+    /// keeps answering the last one; the issuer is returned beside it.
+    async fn rotating_realm(sets: Vec<serde_json::Value>) -> (MockServer, String) {
+        let server = MockServer::start().await;
+        let issuer = format!("{}{REALM}", server.uri().trim_end_matches('/'));
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/.well-known/openid-configuration")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+                "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+                "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["ES256"]
+            })))
+            .mount(&server)
+            .await;
+        let last = sets.len() - 1;
+        for (i, keys) in sets.into_iter().enumerate() {
+            let mock = Mock::given(wm_method("GET"))
+                .and(wm_path(format!("{REALM}/protocol/openid-connect/certs")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(keys));
+            let mock = if i < last { mock.up_to_n_times(1) } else { mock };
+            mock.mount(&server).await;
+        }
+        (server, issuer)
+    }
+
+    async fn key_set_reads(server: &MockServer) -> usize {
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path().ends_with("/certs"))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_token_signed_by_a_rotated_key_verifies_after_one_reload_of_the_keys() {
+        let (old, old_jwk) = signing_key("old");
+        let (new, new_jwk) = signing_key("new");
+        let (server, issuer) = rotating_realm(vec![
+            serde_json::json!({ "keys": [old_jwk] }),
+            serde_json::json!({ "keys": [new_jwk] }),
+        ])
+        .await;
+        let client = OidcClient::discover(&config_for(&server), "https://portal.test/cb")
+            .await
+            .expect("discovery");
+
+        let before: CoreIdToken = id_token_of(&issuer, &old, "old").parse().expect("jwt");
+        let verified = client
+            .verify(|realm| before.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .await;
+        assert!(verified.is_ok(), "{verified:?}");
+        assert_eq!(key_set_reads(&server).await, 1, "a known key asks nothing");
+
+        // The realm rotated: the first token of the new key reloads the set once.
+        let after: CoreIdToken = id_token_of(&issuer, &new, "new").parse().expect("jwt");
+        let verified = client
+            .verify(|realm| after.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .await;
+        assert_eq!(
+            verified.map(|claims| claims.subject().to_string()).ok().as_deref(),
+            Some("ana")
+        );
+        assert_eq!(key_set_reads(&server).await, 2);
+
+        // A key the realm never published fails, and within the cooldown asks the realm nothing.
+        let (stranger, _) = signing_key("stranger");
+        let forged: CoreIdToken = id_token_of(&issuer, &stranger, "stranger").parse().expect("jwt");
+        let refused = client
+            .verify(|realm| forged.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .await;
+        assert!(refused.is_err());
+        assert_eq!(key_set_reads(&server).await, 2, "the cooldown holds");
+    }
+
+    #[tokio::test]
+    async fn an_empty_or_failed_key_reload_keeps_the_keys_held() {
+        let (key, jwk) = signing_key("held");
+        let (server, issuer) = rotating_realm(vec![
+            serde_json::json!({ "keys": [jwk] }),
+            serde_json::json!({ "keys": [] }),
+        ])
+        .await;
+        let client = OidcClient::discover(&config_for(&server), "https://portal.test/cb")
+            .await
+            .expect("discovery");
+
+        let (stranger, _) = signing_key("stranger");
+        let forged: CoreIdToken = id_token_of(&issuer, &stranger, "stranger").parse().expect("jwt");
+        let refused = client
+            .verify(|realm| forged.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .await;
+        assert!(refused.is_err());
+        assert_eq!(key_set_reads(&server).await, 2, "the unknown key reloaded once");
+
+        let held: CoreIdToken = id_token_of(&issuer, &key, "held").parse().expect("jwt");
+        let verified = client
+            .verify(|realm| held.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .await;
+        assert!(verified.is_ok(), "an empty set replaced the held key: {verified:?}");
+    }
+
+    #[tokio::test]
+    async fn a_refresh_whose_id_token_does_not_verify_ends_the_session() {
+        // Keeping the old groups and roles here is keeping what the realm may just have taken
+        // away (S-5-09): the session ends and the person signs in again.
+        let (_, jwk) = signing_key("realm");
+        let (server, issuer) = rotating_realm(vec![serde_json::json!({ "keys": [jwk] })]).await;
+        let (stranger, _) = signing_key("stranger");
+        Mock::given(wm_method("POST"))
+            .and(wm_path(format!("{REALM}/protocol/openid-connect/token")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "fresh-access",
+                "refresh_token": "fresh-refresh",
+                "id_token": id_token_of(&issuer, &stranger, "stranger"),
+                "token_type": "Bearer",
+                "expires_in": 300
+            })))
+            .mount(&server)
+            .await;
+        let client = OidcClient::discover(&config_for(&server), "https://portal.test/cb")
+            .await
+            .expect("discovery");
+
+        let refused = client.refresh(&a_session(Some("opaque-refresh"))).await;
+        assert!(
+            matches!(refused, Err(ApiError::Unauthorized)),
+            "{refused:?}"
+        );
     }
 
     fn oidc_config(ca_file: Option<&str>) -> crate::config::OidcConfig {
