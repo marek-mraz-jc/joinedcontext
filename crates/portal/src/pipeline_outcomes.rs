@@ -294,7 +294,7 @@ impl RejectedStore {
                     }
                 }
                 // Stable: a tie keeps the group refused last first, as the database orders.
-                groups.sort_by(|a, b| b.count.cmp(&a.count));
+                groups.sort_by_key(|g| std::cmp::Reverse(g.count));
                 groups.truncate(GROUPS);
                 Ok(groups)
             }
