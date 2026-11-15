@@ -16,7 +16,22 @@ use crate::methods::get_optional_arg;
 use crate::value::Value;
 
 /// The function names this module adds (an ekiben extension).
-pub const EXTENSION_FUNCTIONS: &[&str] = &["ngsild_urn"];
+pub const EXTENSION_FUNCTIONS: &[&str] = &[
+    "ngsild_language_map",
+    "ngsild_multi",
+    "ngsild_point",
+    "ngsild_ref",
+    "ngsild_urn",
+];
+
+/// The names a `crs` argument may give WGS 84 by; anything else needs reprojection.
+const WGS84: &[&str] = &[
+    "EPSG:4326",
+    "WGS84",
+    "OGC:CRS84",
+    "urn:ogc:def:crs:EPSG::4326",
+    "http://www.opengis.net/def/crs/EPSG/0/4326",
+];
 
 /// The method names this module adds (an ekiben extension).
 pub const EXTENSION_METHODS: &[&str] = &[
@@ -627,7 +642,7 @@ fn urn_part(
     match ctx.eval_expr(expr)? {
         Value::String(s) if s.is_empty() => Err(format!("parameter {name} must not be empty")),
         Value::String(s) => Ok(s),
-        v @ (Value::Int(_) | Value::Uint(_) | Value::Number(_)) if name == "id" => {
+        v @ (Value::Int(_) | Value::Uint(_) | Value::Number(_)) if name == "id" || name == "local" => {
             Ok(v.to_string_coerced())
         }
         other => Err(format!(
@@ -641,14 +656,7 @@ fn urn_part(
 /// and nothing else (ADR-N-041): no space, organization or right is read from its segments.
 pub(crate) fn eval_urn(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Value, String> {
     let kind = urn_part(args, "type", 0, ctx)?;
-    if !kind
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-    {
-        return Err(format!(
-            "parameter type: {kind:?} must hold only letters, digits, '-', '_' and '.'"
-        ));
-    }
+    check_kind(&kind)?;
     let id = urn_part(args, "id", 1, ctx)?;
     let prefix = opt_string(args, "prefix", 2, ctx)?.unwrap_or_default();
     Ok(Value::String(format!(
@@ -656,6 +664,196 @@ pub(crate) fn eval_urn(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<
         nss_encode(&prefix),
         nss_encode(&id)
     )))
+}
+
+/// A type segment of a URN: letters, digits, `-`, `_` and `.`.
+fn check_kind(kind: &str) -> Result<(), String> {
+    if kind
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "parameter type: {kind:?} must hold only letters, digits, '-', '_' and '.'"
+        ))
+    }
+}
+
+/// A variable the runner injects into a pipeline's stream; never empty.
+fn injected(ctx: &EvalContext<'_, '_>, name: &str) -> Result<String, String> {
+    ctx.env
+        .lookup_env(name)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{name} is not set: the runner injects it into a pipeline's stream"))
+}
+
+/// `ngsild_ref(type, local, space: "")`: the PF-42 URN
+/// `urn:ngsi-ld:{type}:{JC_ORG_ID}:{space or JC_SPACE}:{local}`, each segment NSS-encoded.
+pub(crate) fn eval_ref(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Value, String> {
+    let kind = urn_part(args, "type", 0, ctx)?;
+    check_kind(&kind)?;
+    let local = urn_part(args, "local", 1, ctx)?;
+    let space = match opt_string(args, "space", 2, ctx)? {
+        Some(space) => space,
+        None => injected(ctx, "JC_SPACE")?,
+    };
+    let org = injected(ctx, "JC_ORG_ID")?;
+    Ok(Value::String(format!(
+        "urn:ngsi-ld:{kind}:{}:{}:{}",
+        nss_encode(&org),
+        nss_encode(&space),
+        nss_encode(&local)
+    )))
+}
+
+/// One coordinate: a number, or text that reads as a finite one (a CSV field).
+fn coord(
+    args: &ArgList,
+    name: &str,
+    pos: usize,
+    ctx: &mut EvalContext<'_, '_>,
+) -> Result<f64, String> {
+    let Some(expr) = get_optional_arg(args, name, pos) else {
+        return Err(format!("missing parameter: {name}"));
+    };
+    let v = ctx.eval_expr(expr)?;
+    let n = match &v {
+        Value::String(s) => s.trim().parse::<f64>().ok().filter(|f| f.is_finite()),
+        other => number(other),
+    };
+    n.ok_or_else(|| {
+        format!(
+            "parameter {name}: expected a finite number, got {}",
+            v.type_name()
+        )
+    })
+}
+
+/// `ngsild_point(lat, lon, crs: "")`: a GeoJSON Point `[lon, lat]` in WGS 84. A coordinate out of
+/// range is an error, and one that looks swapped says so; the message never repeats the value.
+pub(crate) fn eval_point(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Value, String> {
+    let lat = coord(args, "lat", 0, ctx)?;
+    let lon = coord(args, "lon", 1, ctx)?;
+    if let Some(crs) = opt_string(args, "crs", 2, ctx)? {
+        if !WGS84.contains(&crs.as_str()) {
+            return Err(format!(
+                "parameter crs: {crs:?} is not WGS 84, and reprojection (geo_transform) is not in this build"
+            ));
+        }
+    }
+    if !(-90.0..=90.0).contains(&lat) {
+        let swapped = (-90.0..=90.0).contains(&lon) && (-180.0..=180.0).contains(&lat);
+        return Err(if swapped {
+            "latitude is out of range -90..90; latitude and longitude look swapped".to_string()
+        } else {
+            "latitude is out of range -90..90".to_string()
+        });
+    }
+    if !(-180.0..=180.0).contains(&lon) {
+        return Err("longitude is out of range -180..180".to_string());
+    }
+    Ok(obj(vec![
+        ("type", Value::String("Point".into())),
+        (
+            "coordinates",
+            Value::Array(vec![Value::Float(lon), Value::Float(lat)].into()),
+        ),
+    ]))
+}
+
+/// `ngsild_multi(instances)`: an object of datasetId (or `@none`) to attribute instance, as the
+/// multi-attribute array NGSI-LD writes (4.5.5), each instance carrying its datasetId.
+pub(crate) fn eval_multi(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Value, String> {
+    let Some(expr) = get_optional_arg(args, "instances", 0) else {
+        return Err("missing parameter: instances".to_string());
+    };
+    let v = ctx.eval_expr(expr)?;
+    let Value::Object(m) = &v else {
+        return Err(format!(
+            "parameter instances: expected object value, got {}",
+            v.type_name()
+        ));
+    };
+    if m.is_empty() {
+        return Err("parameter instances: no instance given".to_string());
+    }
+    let mut items = Vec::with_capacity(m.len());
+    for (dataset, inst) in m.iter() {
+        let Value::Object(im) = inst else {
+            return Err(format!(
+                "instance {dataset:?} is not an NGSI-LD attribute (an object with an attribute type)"
+            ));
+        };
+        if !is_attribute(inst) {
+            return Err(format!(
+                "instance {dataset:?} is not an NGSI-LD attribute (an object with an attribute type)"
+            ));
+        }
+        let mut copy: BTreeMap<String, Value> = (**im).clone();
+        if dataset == "@none" {
+            copy.remove("datasetId");
+        } else if is_uri(dataset) {
+            copy.insert("datasetId".to_string(), Value::String(dataset.clone()));
+        } else {
+            return Err(format!("datasetId {dataset:?} is not a URI"));
+        }
+        items.push(Value::Object(copy.into()));
+    }
+    Ok(Value::Array(items.into()))
+}
+
+/// `ngsild_language_map(texts)`: a LanguageProperty from an object of language tag to text,
+/// empty and null texts dropped; nothing at all when no text is left (no empty attribute).
+pub(crate) fn eval_language_map(
+    args: &ArgList,
+    ctx: &mut EvalContext<'_, '_>,
+) -> Result<Value, String> {
+    let Some(expr) = get_optional_arg(args, "texts", 0) else {
+        return Err("missing parameter: texts".to_string());
+    };
+    let v = ctx.eval_expr(expr)?;
+    let Value::Object(m) = &v else {
+        return Err(format!(
+            "parameter texts: expected object value, got {}",
+            v.type_name()
+        ));
+    };
+    let mut out = BTreeMap::new();
+    for (lang, text) in m.iter() {
+        if !(is_lang_tag(lang) || lang == "@none") {
+            return Err(format!("{lang:?} is not a language tag"));
+        }
+        match text {
+            t if is_absent(t) => {}
+            Value::String(s) if s.trim().is_empty() => {}
+            Value::String(s) => {
+                out.insert(lang.clone(), Value::String(s.clone()));
+            }
+            Value::Array(items) => {
+                let mut kept = Vec::new();
+                for item in items.iter() {
+                    match item {
+                        Value::String(s) if s.trim().is_empty() => {}
+                        Value::String(s) => kept.push(Value::String(s.clone())),
+                        t if is_absent(t) => {}
+                        _ => return Err(format!("the text for {lang:?} must be a string")),
+                    }
+                }
+                if !kept.is_empty() {
+                    out.insert(lang.clone(), Value::Array(kept.into()));
+                }
+            }
+            _ => return Err(format!("the text for {lang:?} must be a string")),
+        }
+    }
+    if out.is_empty() {
+        return Ok(Value::Nothing);
+    }
+    Ok(obj(vec![
+        ("type", Value::String("LanguageProperty".into())),
+        ("languageMap", Value::Object(out.into())),
+    ]))
 }
 
 #[cfg(test)]

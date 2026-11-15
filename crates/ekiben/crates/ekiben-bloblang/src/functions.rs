@@ -69,6 +69,10 @@ pub fn known_functions() -> HashSet<String> {
         "cache_delete",
         "cache_add",
         "ngsild_urn",
+        "ngsild_ref",
+        "ngsild_point",
+        "ngsild_multi",
+        "ngsild_language_map",
     ]
     .into_iter()
     .map(String::from)
@@ -240,6 +244,10 @@ pub(crate) fn eval_function(
         "cosine_similarity" => eval_cosine_similarity(args, ctx),
         "fake" => Ok(Value::String("fake_value".to_string())),
         "ngsild_urn" => crate::ngsild::eval_urn(args, ctx),
+        "ngsild_ref" => crate::ngsild::eval_ref(args, ctx),
+        "ngsild_point" => crate::ngsild::eval_point(args, ctx),
+        "ngsild_multi" => crate::ngsild::eval_multi(args, ctx),
+        "ngsild_language_map" => crate::ngsild::eval_language_map(args, ctx),
         _ => Err(format!("unrecognised function '{name}'")),
     }
 }
