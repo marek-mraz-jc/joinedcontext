@@ -35,6 +35,10 @@ pub const HUBS: usize = 64;
 /// Hubs one space may hold when `JC_GATEWAY_WS_HUBS_PER_SPACE` names no other number: under the
 /// broker's 50 connections per tenant, so the broker never refuses a hub the gateway admitted.
 pub const HUBS_PER_SPACE: usize = 32;
+/// Hubs one signed-in caller may hold in this replica, one per Endpoint they watch (PRF-03): so
+/// one identity cannot take every hub of a space. Anonymous callers share one hub per public
+/// Endpoint and are held by address instead.
+pub const HUBS_PER_CALLER: usize = 8;
 
 /// A positive whole number from `name`, else `default`.
 fn env_cap(name: &str, default: usize) -> usize {
@@ -97,8 +101,12 @@ fn bound() -> usize {
 }
 
 /// Every hub, keyed by `hub_key`: one per Endpoint and caller identity (T-4755).
+/// Each holds the hub's space, its caller ([`caller_of`]) and the hub.
 #[derive(Default)]
-pub struct Hubs(Mutex<HashMap<String, (String, Arc<Hub>)>>);
+pub struct Hubs(Mutex<HashMap<String, Held>>);
+
+/// A hub in the registry: its space, its caller ([`caller_of`], `None` for anonymous) and the hub.
+type Held = (String, Option<String>, Arc<Hub>);
 
 /// Why a connection could not join.
 #[derive(Debug, PartialEq, Eq)]
@@ -109,6 +117,8 @@ pub enum Refused {
     NoIdentity,
     /// The gateway holds [`hubs_cap`] hubs, or the space [`hubs_per_space`], each with a client.
     HubsFull,
+    /// The caller holds [`HUBS_PER_CALLER`] hubs, each with a connection.
+    CallerFull,
 }
 
 impl Hubs {
@@ -129,18 +139,23 @@ impl Hubs {
         let mut hubs = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let in_space: usize = hubs
             .values()
-            .filter(|(space, _)| *space == endpoint.space)
-            .map(|(_, hub)| hub.connections())
+            .filter(|(space, _, _)| *space == endpoint.space)
+            .map(|(_, _, hub)| hub.connections())
             .sum();
         if in_space >= per_space() {
             return Err(Refused::SpaceFull);
         }
         let hub = match hubs.get(&key) {
-            Some((_, hub)) => Arc::clone(hub),
+            Some((_, _, hub)) => Arc::clone(hub),
             None => {
-                make_room(&mut hubs, &endpoint.space, hubs_cap(), hubs_per_space())?;
+                let caller = caller_of(&headers);
+                make_room(
+                    &mut hubs,
+                    (&endpoint.space, caller.as_deref()),
+                    (hubs_cap(), hubs_per_space(), HUBS_PER_CALLER),
+                )?;
                 let hub = Arc::new(Hub::new(&endpoint.slug, bound()));
-                hubs.insert(key, (endpoint.space.clone(), Arc::clone(&hub)));
+                hubs.insert(key, (endpoint.space.clone(), caller, Arc::clone(&hub)));
                 metrics::gauge!("jc_gateway_ws_hubs").set(hubs.len() as f64);
                 if let Some(id) = request_id {
                     headers.insert(tenancy::REQUEST_ID, id);
@@ -160,7 +175,7 @@ impl Hubs {
     /// (T-4874): what [`Hub::recheck`] names ends at once.
     pub fn recheck(&self, gateway: &Gateway) {
         let hubs = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        for (_, hub) in hubs.values() {
+        for (_, _, hub) in hubs.values() {
             recheck(gateway, hub);
         }
     }
@@ -174,11 +189,11 @@ impl Hubs {
     /// Drops `hub` when the registry no longer holds it or `done` says so; `true` when it is gone.
     fn leave(&self, hub: &Arc<Hub>, done: impl Fn(&Hub) -> bool) -> bool {
         let mut hubs = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let held = hubs.values().any(|(_, held)| Arc::ptr_eq(held, hub));
+        let held = hubs.values().any(|(_, _, held)| Arc::ptr_eq(held, hub));
         if held && !done(hub) {
             return false;
         }
-        hubs.retain(|_, (_, held)| !Arc::ptr_eq(held, hub));
+        hubs.retain(|_, (_, _, held)| !Arc::ptr_eq(held, hub));
         metrics::gauge!("jc_gateway_ws_hubs").set(hubs.len() as f64);
         true
     }
@@ -189,28 +204,56 @@ fn lingered(hub: &Hub, linger: Duration) -> bool {
     hub.idle_for().is_some_and(|idle| idle >= linger)
 }
 
-/// Makes room for one more hub in `space`: at a cap, drops the hub idle longest (no connection, in
-/// its linger), whose upstream then stops at its next tick; refused when every hub has a client.
+/// Makes room for one more hub of `caller` in `space`: at a cap (the caller's, the space's, the
+/// replica's), drops the hub idle longest among those the cap counts (no connection, in its
+/// linger), whose upstream then stops at its next tick; refused when every one has a client.
 fn make_room(
-    hubs: &mut HashMap<String, (String, Arc<Hub>)>,
-    space: &str,
-    total: usize,
-    per_space: usize,
+    hubs: &mut HashMap<String, Held>,
+    (space, caller): (&str, Option<&str>),
+    (total, per_space, per_caller): (usize, usize, usize),
 ) -> Result<(), Refused> {
-    for (cap, in_space) in [(per_space, true), (total, false)] {
-        let counted = |held: &str| !in_space || held == space;
-        if hubs.values().filter(|(held, _)| counted(held)).count() < cap {
+    #[derive(PartialEq)]
+    enum Counted {
+        Caller,
+        Space,
+        All,
+    }
+    for (cap, scope) in [
+        (per_caller, Counted::Caller),
+        (per_space, Counted::Space),
+        (total, Counted::All),
+    ] {
+        let counts = |(held, by, _): &Held| match scope {
+            Counted::Caller => caller.is_some() && by.as_deref() == caller,
+            Counted::Space => held == space,
+            Counted::All => true,
+        };
+        if hubs.values().filter(|held| counts(held)).count() < cap {
             continue;
         }
         let idlest = hubs
             .iter()
-            .filter(|(_, (held, _))| counted(held))
-            .filter_map(|(key, (_, hub))| Some((hub.idle_for()?, key.clone())))
+            .filter(|(_, held)| counts(held))
+            .filter_map(|(key, (_, _, hub))| Some((hub.idle_for()?, key.clone())))
             .max();
-        let (_, key) = idlest.ok_or(Refused::HubsFull)?;
+        let (_, key) = idlest.ok_or(if scope == Counted::Caller {
+            Refused::CallerFull
+        } else {
+            Refused::HubsFull
+        })?;
         hubs.remove(&key);
     }
     Ok(())
+}
+
+/// Who a hub's upstream speaks as, from its headers: the person or account, or a participant's
+/// DID; `None` for the anonymous caller.
+fn caller_of(headers: &HeaderMap) -> Option<String> {
+    let named: Vec<&str> = [&tenancy::SUBJECT, &tenancy::CLIENT, &tenancy::DID]
+        .into_iter()
+        .filter_map(|name| headers.get(name)?.to_str().ok())
+        .collect();
+    (!named.is_empty()).then(|| named.join("\n"))
 }
 
 /// A token bucket over the frames one client sends (API/07 §3). It runs before a message is
@@ -1186,18 +1229,90 @@ mod tests {
             );
             hub
         };
-        let mut hubs: HashMap<String, (String, Arc<Hub>)> = HashMap::new();
-        hubs.insert("a1".into(), ("a".into(), busy("a1")));
-        hubs.insert("b1".into(), ("b".into(), busy("b1")));
-        hubs.insert("a2".into(), ("a".into(), busy("a2")));
-        assert_eq!(make_room(&mut hubs, "a", 10, 2), Err(Refused::HubsFull));
-        assert_eq!(make_room(&mut hubs, "b", 3, 2), Err(Refused::HubsFull));
-        assert_eq!(make_room(&mut hubs, "b", 4, 2), Ok(()));
+        let mut hubs: HashMap<String, Held> = HashMap::new();
+        hubs.insert("a1".into(), ("a".into(), None, busy("a1")));
+        hubs.insert("b1".into(), ("b".into(), None, busy("b1")));
+        hubs.insert("a2".into(), ("a".into(), None, busy("a2")));
+        assert_eq!(
+            make_room(&mut hubs, ("a", None), (10, 2, 8)),
+            Err(Refused::HubsFull)
+        );
+        assert_eq!(
+            make_room(&mut hubs, ("b", None), (3, 2, 8)),
+            Err(Refused::HubsFull)
+        );
+        assert_eq!(make_room(&mut hubs, ("b", None), (4, 2, 8)), Ok(()));
 
-        hubs.insert("a3".into(), ("a".into(), Arc::new(Hub::new("a3", 10))));
-        assert_eq!(make_room(&mut hubs, "a", 10, 3), Ok(()), "a3 lingers");
+        hubs.insert(
+            "a3".into(),
+            ("a".into(), None, Arc::new(Hub::new("a3", 10))),
+        );
+        assert_eq!(
+            make_room(&mut hubs, ("a", None), (10, 3, 8)),
+            Ok(()),
+            "a3 lingers"
+        );
         assert!(!hubs.contains_key("a3"), "{:?}", hubs.keys());
         assert_eq!(hubs.len(), 3);
+    }
+
+    /// PRF-03: one caller holds at most its share of hubs, each with a client; another caller,
+    /// and an anonymous one, still joins the same space. The caller's own idle hub makes room.
+    #[test]
+    fn one_caller_cannot_hold_every_hub_of_a_space() {
+        let endpoint = crate::fanout::hub::tests_support::endpoint();
+        let busy = |slug: &str| {
+            let hub = Arc::new(Hub::new(slug, 10));
+            hub.open(Arc::clone(&endpoint), "user:ana".into(), Subject::default());
+            hub
+        };
+        let mut hubs: HashMap<String, Held> = HashMap::new();
+        for n in 0..2 {
+            let key = format!("e{n}");
+            hubs.insert(key.clone(), ("a".into(), Some("ana".into()), busy(&key)));
+        }
+        let caps = (64, 32, 2);
+        assert_eq!(
+            make_room(&mut hubs, ("a", Some("ana")), caps),
+            Err(Refused::CallerFull)
+        );
+        assert_eq!(make_room(&mut hubs, ("a", Some("ola")), caps), Ok(()));
+        assert_eq!(make_room(&mut hubs, ("a", None), caps), Ok(()));
+        hubs.insert(
+            "idle".into(),
+            (
+                "b".into(),
+                Some("ola".into()),
+                Arc::new(Hub::new("idle", 10)),
+            ),
+        );
+        hubs.insert(
+            "e1".into(),
+            ("a".into(), Some("ana".into()), Arc::new(Hub::new("e1", 10))),
+        );
+        assert_eq!(
+            make_room(&mut hubs, ("a", Some("ana")), caps),
+            Ok(()),
+            "e1 lingers"
+        );
+        assert!(
+            !hubs.contains_key("e1") && hubs.contains_key("idle"),
+            "{:?}",
+            hubs.keys()
+        );
+
+        let person = upstream_headers(
+            "a",
+            &Subject {
+                user: Some("ana".into()),
+                id: Some("5b1e".into()),
+                ..Subject::default()
+            },
+        )
+        .expect("headers");
+        assert_eq!(caller_of(&person).as_deref(), Some("5b1e"));
+        let anonymous = upstream_headers("a", &Subject::anonymous()).expect("headers");
+        assert_eq!(caller_of(&anonymous), None);
     }
 
     /// API/07 §3: the burst passes, the next frame is refused, a twentieth of a second earns one
