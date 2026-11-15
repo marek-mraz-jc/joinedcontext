@@ -60,6 +60,7 @@ pub fn known_methods() -> HashSet<String> {
         "sqrt",
         "format_wkt",
         "geo_transform",
+        "parse_gml",
         "parse_wkt",
         // Strings, Regex, Parsing, Encoding & Hash
         "capitalize",

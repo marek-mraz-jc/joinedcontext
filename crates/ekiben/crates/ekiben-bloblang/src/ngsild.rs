@@ -49,6 +49,7 @@ pub const EXTENSION_METHODS: &[&str] = &[
     "ngsild_normalized",
     "ngsild_property",
     "ngsild_relationship",
+    "parse_gml",
     "parse_wkt",
     "sqrt",
 ];

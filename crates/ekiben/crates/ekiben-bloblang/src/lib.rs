@@ -11,6 +11,7 @@ pub mod error;
 pub mod executor;
 pub mod functions;
 pub mod geo;
+pub mod gml;
 pub mod go_fmt;
 pub mod go_json;
 pub mod go_sort;

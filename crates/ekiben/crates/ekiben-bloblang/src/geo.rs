@@ -15,7 +15,7 @@ use proj4rs::proj::Proj;
 
 use crate::ast::ArgList;
 use crate::executor::EvalContext;
-use crate::methods::get_arg;
+use crate::methods::{get_arg, get_optional_arg};
 use crate::ngsild::{MAX_GEO_DEPTH, WGS84};
 use crate::value::Value;
 
@@ -39,6 +39,16 @@ pub(crate) fn eval_geo_family(
     Some(match name {
         "parse_wkt" => target.get_string().and_then(|s| parse_wkt(&s)),
         "format_wkt" => format_wkt(target).map(Value::String),
+        "parse_gml" => (|| {
+            let mut opt = |name, pos| {
+                get_optional_arg(args, name, pos)
+                    .map(|e| ctx.eval_expr(e).and_then(|v| v.get_string()))
+                    .transpose()
+            };
+            let from = opt("from", 0)?;
+            let to = opt("to", 1)?;
+            crate::gml::parse_gml(target, from.as_deref(), to.as_deref())
+        })(),
         "geo_transform" => (|| {
             let from = ctx.eval_expr(get_arg(args, "from", 0)?)?.get_string()?;
             let to = ctx.eval_expr(get_arg(args, "to", 1)?)?.get_string()?;
@@ -52,6 +62,8 @@ pub(crate) fn eval_geo_family(
 /// uses where no grid is installed). None names a `+nadgrids` file, so nothing is read from disk.
 const CRS: &[(u32, &str)] = &[
     (4326, "+proj=longlat +datum=WGS84 +no_defs"),
+    // ETRS89, geographic: within a metre of WGS 84 (EPSG transformation 1149, a null shift).
+    (4258, "+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +no_defs"),
     (3857, "+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +no_defs"),
     // Helsinki (GK25 / EUREF-FIN) and Finland (TM35FIN): EUREF-FIN to WGS 84 is a null shift.
     (3879, "+proj=tmerc +lat_0=0 +lon_0=25 +k=1 +x_0=25500000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"),
@@ -67,20 +79,36 @@ const CRS: &[(u32, &str)] = &[
     (27700, "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs"),
 ];
 
-/// The PROJ definition of a CRS named `EPSG:n`, by its OGC URN or URL, or a WGS 84 alias.
-fn crs(param: &str, name: &str) -> Result<Proj, String> {
-    let code = if WGS84.contains(&name) {
-        Some(4326)
-    } else {
+/// The EPSG code a CRS name gives: `EPSG:n`, its OGC URN or URL forms, or a WGS 84 alias.
+pub(crate) fn epsg_code(name: &str) -> Option<u32> {
+    if WGS84.contains(&name) || name.ends_with(":CRS84") || name.ends_with("/CRS84") {
+        return Some(4326);
+    }
+    // A URN may carry a version: urn:ogc:def:crs:EPSG:6.6:4326.
+    let urn = ["urn:ogc:def:crs:EPSG:", "urn:x-ogc:def:crs:EPSG:"]
+        .iter()
+        .find_map(|p| name.strip_prefix(p))
+        .and_then(|rest| rest.rsplit(':').next());
+    urn.or_else(|| {
         [
             "EPSG:",
-            "urn:ogc:def:crs:EPSG::",
             "http://www.opengis.net/def/crs/EPSG/0/",
+            "http://www.opengis.net/gml/srs/epsg.xml#",
         ]
         .iter()
         .find_map(|p| name.strip_prefix(p))
-        .and_then(|c| c.parse::<u32>().ok())
-    };
+    })
+    .and_then(|c| c.parse::<u32>().ok())
+}
+
+/// Whether `geo_transform` knows EPSG:`code`.
+pub(crate) fn is_known_crs(code: u32) -> bool {
+    CRS.iter().any(|(c, _)| *c == code)
+}
+
+/// The PROJ definition of a CRS named `EPSG:n`, by its OGC URN or URL, or a WGS 84 alias.
+fn crs(param: &str, name: &str) -> Result<Proj, String> {
+    let code = epsg_code(name);
     let known = || {
         CRS.iter()
             .map(|(c, _)| format!("EPSG:{c}"))
