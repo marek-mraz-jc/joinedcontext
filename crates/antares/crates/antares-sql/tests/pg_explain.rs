@@ -1341,7 +1341,14 @@ async fn the_history_write_probes_read_only_the_weeks_that_can_hold_the_instance
         return;
     }
     // A row of a Tenant no retention names keeps each week from being dropped
-    // as emptied by a parallel test.
+    // as emptied by a parallel test. A new partition locks attr_instances,
+    // which a parallel seed holds for seconds: no lock timeout here (55P03
+    // under the pool's 5 s, T-6952).
+    let mut tx = pool.begin().await.expect("tx");
+    sqlx::query("SET LOCAL lock_timeout = 0")
+        .execute(&mut *tx)
+        .await
+        .expect("no lock timeout: a parallel seed holds attr_instances for seconds");
     for (name, lo, hi) in [
         ("attr_instances_2003w10", "2003-03-03", "2003-03-10"),
         ("attr_instances_2003w11", "2003-03-10", "2003-03-17"),
@@ -1357,11 +1364,12 @@ async fn the_history_write_probes_read_only_the_weeks_that_can_hold_the_instance
             ),
         ] {
             sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
-                .execute(&pool)
+                .execute(&mut *tx)
                 .await
                 .expect(&stmt);
         }
     }
+    tx.commit().await.expect("the weeks");
     // The role's grants, under the lock the type-page test takes for its own:
     // two GRANTs at once fail with "tuple concurrently updated".
     let mut tx = pool.begin().await.expect("tx");
