@@ -12,6 +12,7 @@ import { ApprovalsHistory } from "../src/routes/ApprovalsHistory";
 import { DataSourcesPage } from "../src/pages/datasources/DataSourcesPage";
 import { MqttBrokerPage } from "../src/pages/mqttbrokers/MqttBrokerPage";
 import { json, list, problem, renderPage } from "./page_contract";
+import { asOData, odataCall } from "./odata";
 
 const PROJECT = "helsinki";
 const API = "joinedcontext.com/v1alpha1";
@@ -95,7 +96,7 @@ describe("approvals history on the shared grid", () => {
   const show = (answer: () => Response) =>
     renderPage(<ApprovalsHistory project={PROJECT} />, {
       path: `/projects/${PROJECT}/approvals`,
-      answer: (url) => (url.pathname.endsWith("/changes/history") ? answer() : undefined),
+      answer: (url) => (odataCall(url)?.name === "jc_change_history" ? asOData(answer()) : undefined),
     });
 
   it("searches the closed changes", async () => {

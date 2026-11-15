@@ -1,9 +1,11 @@
 {
-  "restPaths": 398,
+  "restPaths": 250,
+  "restCalls": 506,
   "fetchFiles": [
     "api/access.ts",
     "api/client.ts",
     "api/gateway.ts",
+    "api/odata.ts",
     "api/pipelineTest.ts",
     "components/dashboards/TemporalChart.tsx",
     "components/entities/EndpointDataView.tsx",

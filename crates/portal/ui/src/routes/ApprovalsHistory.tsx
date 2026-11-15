@@ -4,6 +4,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../api/client";
+import { call } from "../api/odata";
 import { ownRights, usePermissions } from "../api/permissions";
 import { ChangeNotice } from "../components/ChangeNotice";
 import { changeSentence, landed } from "./changeWords";
@@ -123,15 +124,7 @@ export function ApprovalsHistory({
       filter.until,
     ] as const,
     initialPageParam: 1,
-    queryFn: async ({ pageParam }) =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/history", {
-          params: {
-            path: { project },
-            query: { page: pageParam, ...filterQuery(filter) },
-          },
-        }),
-      ),
+    queryFn: ({ pageParam }) => call("jc_change_history", project, { page: pageParam, ...filterQuery(filter) }),
     getNextPageParam: (last) => last.next ?? undefined,
   });
 
