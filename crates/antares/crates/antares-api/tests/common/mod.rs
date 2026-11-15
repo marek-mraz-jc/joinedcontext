@@ -34,6 +34,9 @@ pub struct Double {
     rows_read: AtomicUsize,
     registration_reads: AtomicUsize,
     tenant_probes: AtomicUsize,
+    /// What `tenant_standing` answers per tenant name; the inner store's
+    /// answer for a name not set here.
+    standing: std::sync::Mutex<std::collections::HashMap<String, antares_store::TenantStanding>>,
     wedged: AtomicBool,
     size_scan_fails: AtomicBool,
     /// Each `query_entities` probing this type waits this long.
@@ -62,6 +65,7 @@ impl Double {
             rows_read: AtomicUsize::new(0),
             registration_reads: AtomicUsize::new(0),
             tenant_probes: AtomicUsize::new(0),
+            standing: std::sync::Mutex::default(),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
@@ -89,6 +93,7 @@ impl Double {
             rows_read: AtomicUsize::new(0),
             registration_reads: AtomicUsize::new(0),
             tenant_probes: AtomicUsize::new(0),
+            standing: std::sync::Mutex::default(),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
@@ -116,6 +121,7 @@ impl Double {
             rows_read: AtomicUsize::new(0),
             registration_reads: AtomicUsize::new(0),
             tenant_probes: AtomicUsize::new(0),
+            standing: std::sync::Mutex::default(),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
@@ -145,6 +151,7 @@ impl Double {
             rows_read: AtomicUsize::new(0),
             registration_reads: AtomicUsize::new(0),
             tenant_probes: AtomicUsize::new(0),
+            standing: std::sync::Mutex::default(),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
@@ -186,6 +193,7 @@ impl Double {
             rows_read: AtomicUsize::new(0),
             registration_reads: AtomicUsize::new(0),
             tenant_probes: AtomicUsize::new(0),
+            standing: std::sync::Mutex::default(),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
@@ -213,6 +221,7 @@ impl Double {
             rows_read: AtomicUsize::new(0),
             registration_reads: AtomicUsize::new(0),
             tenant_probes: AtomicUsize::new(0),
+            standing: std::sync::Mutex::default(),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
@@ -240,6 +249,7 @@ impl Double {
             rows_read: AtomicUsize::new(0),
             registration_reads: AtomicUsize::new(0),
             tenant_probes: AtomicUsize::new(0),
+            standing: std::sync::Mutex::default(),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
@@ -314,6 +324,15 @@ impl Double {
     }
 
     /// How many times a caller asked whether a Tenant exists.
+    /// `tenant_standing` answers `standing` for `tenant` from now on, as a
+    /// renamed or a reassigned row on Postgres would.
+    pub fn set_standing(&self, tenant: &str, standing: antares_store::TenantStanding) {
+        self.standing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(tenant.to_owned(), standing);
+    }
+
     pub fn tenant_probes(&self) -> usize {
         self.tenant_probes.load(Ordering::SeqCst)
     }
@@ -569,6 +588,21 @@ impl CurrentStateDriver for Double {
     async fn tenant_exists(&self, tenant: &TenantId) -> Result<bool, NgsiError> {
         self.tenant_probes.fetch_add(1, Ordering::SeqCst);
         self.inner.tenant_exists(tenant).await
+    }
+    async fn tenant_standing(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<antares_store::TenantStanding, NgsiError> {
+        let set = self
+            .standing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(tenant.as_str())
+            .cloned();
+        match set {
+            Some(standing) => Ok(standing),
+            None => self.inner.tenant_standing(tenant).await,
+        }
     }
     async fn subscription_tenants(&self) -> Result<Vec<String>, NgsiError> {
         self.inner.subscription_tenants().await

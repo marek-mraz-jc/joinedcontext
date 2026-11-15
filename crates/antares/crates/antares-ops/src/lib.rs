@@ -438,6 +438,14 @@ impl Ops {
             .is_some_and(|auth| auth.admits(presented))
     }
 
+    /// The Organization check of a door that resolves its own Tenant and
+    /// creates none (EP-188, `antares_api::admin_auth::tenant_door`): the
+    /// answer to send instead of serving `named`, or `None`. A Tenant of
+    /// another Organization, a renamed one and an absent one get one answer.
+    pub async fn tenant_door(&self, named: Option<&str>, headers: &HeaderMap) -> Option<Response> {
+        antares_api::admin_auth::tenant_door(&self.state, named, headers, true).await
+    }
+
     /// An answer's body read whole, up to the broker's `max_answer_bytes`
     /// ([`bounds::MAX_ANSWER_BYTES`]): the page size bounds the Entities, not the
     /// bytes, and every concurrent request holds its buffer.
@@ -1488,6 +1496,26 @@ pub mod test_kit {
             antares_api::wire(&mut state).await;
             let reload = crate::views::install(&state).await?;
             Ok(Self { state, reload })
+        }
+
+        /// [`TestBroker::new`] under `ANTARES_TENANT_ORGANIZATION=enforce`
+        /// with a required subject, as the platform runs it (EP-188); the
+        /// subject headers are the process's own
+        /// (`antares_api::policy::default_subject_headers`).
+        ///
+        /// # Errors
+        /// The view table's.
+        pub async fn enforcing_tenant_organization() -> Result<Self, String> {
+            let mut state = AppState::new("antares-test".into());
+            state.subject_required = true;
+            state.tenant_organization = true;
+            Self::over(state).await
+        }
+
+        /// Names `headers` (comma-separated) as the policy subject headers of
+        /// this process, as `ANTARES_POLICY_SUBJECT_HEADERS` does.
+        pub fn subject_headers(headers: &str) {
+            antares_api::policy::default_subject_headers(headers);
         }
 
         /// [`TestBroker::new`] with the platform's history retention set

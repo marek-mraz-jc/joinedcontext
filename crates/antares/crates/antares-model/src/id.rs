@@ -47,6 +47,28 @@ impl TenantId {
             || Self::RESERVED_EXACT.contains(&raw)
     }
 
+    /// The Organization id half of a tenant name `{organization id}__{segment}`
+    /// (PF-130): split at the first `__`, so the left half holds no `__`; the
+    /// left half holds a `_`, the segment none, and neither is empty. The full
+    /// grammar of each half is the platform's (`jc_core::names::TenantName`);
+    /// this is the shape a comparison needs and never a prefix match (`sk_a`
+    /// is not `sk_ab`).
+    ///
+    /// ```
+    /// use antares_model::TenantId;
+    /// assert_eq!(TenantId::organization_of("sk_bbsk__mobility"), Some("sk_bbsk"));
+    /// assert_eq!(TenantId::organization_of("mobility"), None);
+    /// ```
+    #[must_use]
+    pub fn organization_of(raw: &str) -> Option<&str> {
+        let (organization, segment) = raw.split_once("__")?;
+        (!organization.is_empty()
+            && organization.contains('_')
+            && !segment.is_empty()
+            && !segment.contains('_'))
+        .then_some(organization)
+    }
+
     /// Whether this is one of the broker's own tenants rather than a client's.
     /// Internal tenants stay out of the `tenants` inventory and out of
     /// `/q/tenants`: that table is the list of customer accounts.

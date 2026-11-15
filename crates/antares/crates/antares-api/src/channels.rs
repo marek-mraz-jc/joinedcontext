@@ -490,6 +490,11 @@ impl crate::ApiSurface for Channels {
                 get(move |st: State<AppState>, h: HeaderMap| list(st, all.clone(), h)),
             )
             .route("/{id}", one)
+            // EP-188: the bind door and every read of a binding
+            .layer(axum::middleware::from_fn_with_state(
+                st,
+                crate::admin_auth::existing_tenant_layer,
+            ))
     }
 
     fn version_info(&self) -> Value {
@@ -711,6 +716,18 @@ async fn restore(st: &AppState, shared: &Shared) {
         let Some(tenant) = stored_tenant(&doc) else {
             continue;
         };
+        // EP-188: the replay acts for the stored Tenant, which no caller
+        // names now: its shape, tombstone and stored Organization decide.
+        if crate::admin_auth::tenant_door(st, Some(tenant.as_str()), &HeaderMap::new(), true)
+            .await
+            .is_some()
+        {
+            tracing::warn!(
+                channel = %ch.id, tenant = tenant.as_str(),
+                "channels: a stored channel's Tenant is refused by the Organization check (EP-188): not restored"
+            );
+            continue;
+        }
         let subject = crate::policy::stored_subject(&tenant, &doc).headers;
         let k = key(&tenant, &ch.id);
         let (st, shared) = (st.clone(), shared.clone());

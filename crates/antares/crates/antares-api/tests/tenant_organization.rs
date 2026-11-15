@@ -403,3 +403,310 @@ async fn the_longest_tenant_round_trips() {
         (StatusCode::OK, Some(tenant.as_str()))
     );
 }
+
+mod common;
+
+/// `st` asking a [`common::Double`] over its own store, which a test tells
+/// what `tenant_standing` answers (T-7042).
+fn doubled(st: &mut AppState) -> std::sync::Arc<common::Double> {
+    let double = std::sync::Arc::new(common::Double::passthrough(st.store.clone()));
+    st.store = double.clone();
+    double
+}
+
+/// Design 10.5: a row whose stored `organization_id` is not its name's is an
+/// unknown Tenant to its own name's members too, so no path that rewrote the
+/// row reassigns the Tenant.
+#[tokio::test]
+async fn a_stored_organization_that_disagrees_with_the_name_refuses() {
+    let mut st = state(true).await;
+    let double = doubled(&mut st);
+    let owner = member("sk_b");
+    let read = "/ngsi-ld/v1/entities?type=Room";
+    let unknown = send(&st, "GET", read, Some("sk_b__x"), &owner, None).await;
+    assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+    let (s, ..) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        Some("sk_b__x"),
+        &owner,
+        Some(room("urn:ngsi-ld:Room:1")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let agrees = antares_store::TenantStanding {
+        tombstoned: false,
+        organization: Some("sk_b".into()),
+    };
+    double.set_standing("sk_b__x", agrees);
+    let (s, ..) = send(&st, "GET", read, Some("sk_b__x"), &owner, None).await;
+    assert_eq!(s, StatusCode::OK, "the stored id agrees");
+    double.set_standing(
+        "sk_b__x",
+        antares_store::TenantStanding {
+            tombstoned: false,
+            organization: Some("sk_c".into()),
+        },
+    );
+    for (method, path, body) in operations() {
+        let refused = send(&st, method, path, Some("sk_b__x"), &owner, body).await;
+        assert_eq!(refused, unknown, "{method} {path}");
+    }
+}
+
+/// Design 10.1: a name the rename moved away is neither served nor created,
+/// by a member or by the admin bearer, and answers as an unknown Tenant.
+#[tokio::test]
+async fn a_tombstoned_name_is_neither_served_nor_created() {
+    let mut st = state(true).await;
+    let double = doubled(&mut st);
+    let owner = member("sk_b");
+    let read = "/ngsi-ld/v1/entities?type=Room";
+    let unknown = send(&st, "GET", read, Some("sk_b__old"), &owner, None).await;
+    assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+    double.set_standing(
+        "sk_b__old",
+        antares_store::TenantStanding {
+            tombstoned: true,
+            organization: None,
+        },
+    );
+    let bearer = format!("Bearer {SECRET}");
+    let admin = [("authorization", bearer.as_str())];
+    for caller in [&owner[..], &admin[..]] {
+        for (method, path, body) in operations() {
+            let refused = send(&st, method, path, Some("sk_b__old"), caller, body).await;
+            assert_eq!(refused, unknown, "{method} {path}");
+        }
+    }
+    let old = antares_model::TenantId::new("sk_b__old").expect("tenant");
+    assert_eq!(
+        st.store.tenant_exists(&old).await.ok(),
+        Some(false),
+        "created nothing"
+    );
+}
+
+/// Remote-notify (CIM 009 clause 5.8.1, step 4) acts for the Tenant its inbound index stored: a
+/// gateway request vouching another Organization gets the answer of a
+/// mapping this broker does not hold.
+#[tokio::test]
+async fn remote_notify_for_another_organizations_tenant_reads_as_an_unknown_mapping() {
+    let st = state(true).await;
+    let owner = member("sk_b");
+    let (s, ..) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/subscriptions",
+        Some("sk_b__x"),
+        &owner,
+        Some(json!({
+            "id": "urn:ngsi-ld:Subscription:own", "type": "Subscription",
+            "entities": [{"type": "Room"}],
+            "notification": {"endpoint": {"uri": "http://127.0.0.1:1/n"}}
+        })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let index = antares_model::TenantId::new_internal("distsub-index").expect("index");
+    let remote = "urn:ngsi-ld:Subscription:remote1";
+    let map = || {
+        st.store.create(
+            &index,
+            antares_store::Kind::DistSub,
+            remote,
+            json!({"tenant": "sk_b__x", "own": "urn:ngsi-ld:Subscription:own"}),
+        )
+    };
+    map().await.expect("mapping");
+    let note = json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification",
+                      "subscriptionId": remote, "notifiedAt": "2026-01-01T00:00:00Z",
+                      "data": []});
+    let notify = |caller: Vec<(&'static str, &'static str)>| {
+        let (st, note) = (st.clone(), note.clone());
+        async move {
+            send(
+                &st,
+                "POST",
+                "/ex/v1/remote-notify",
+                None,
+                &caller,
+                Some(note),
+            )
+            .await
+        }
+    };
+    let served = notify(owner.clone()).await;
+    assert_ne!(
+        served.0,
+        StatusCode::NOT_FOUND,
+        "the owner's notification is taken"
+    );
+    let refused = notify(member("sk_a")).await;
+    st.store
+        .delete(&index, antares_store::Kind::DistSub, remote)
+        .await
+        .expect("unmap");
+    let unknown = notify(member("sk_a")).await;
+    assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+    assert_eq!(refused, unknown);
+}
+
+/// ADR-0031 channels: binding, reading and listing on another
+/// Organization's Tenant answer as an unknown Tenant, and under `enforce` an
+/// absent Tenant answers the same there, so the refusal tells nothing.
+#[cfg(feature = "channels")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_channel_on_another_organizations_tenant_reads_as_an_unknown_tenant() {
+    let st = channel_state(true, None).await;
+    let owner = member("sk_b");
+    let bind = json!({"entity": "urn:ngsi-ld:Bus:1", "attribute": "speed",
+                      "broker": "lo", "topic": "bus/1/speed", "retention": "mirror"});
+    let unknown = send(&st, "GET", "/x/channels", Some("sk_b__x"), &owner, None).await;
+    assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+    make_bus(&st).await;
+    let (s, _, body) = send(
+        &st,
+        "PUT",
+        "/x/channels/c1",
+        Some("sk_b__x"),
+        &owner,
+        Some(bind.clone()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{}", String::from_utf8_lossy(&body));
+    let intruder = member("sk_a");
+    for (method, path, body) in [
+        ("PUT", "/x/channels/c2", Some(bind)),
+        ("GET", "/x/channels", None),
+        ("GET", "/x/channels/c1", None),
+        ("DELETE", "/x/channels/c1", None),
+    ] {
+        let refused = send(&st, method, path, Some("sk_b__x"), &intruder, body).await;
+        // the unknown answer was taken before `sk_b__x` existed
+        assert_eq!(refused, unknown, "{method} {path}");
+    }
+    let (s, ..) = send(&st, "GET", "/x/channels/c1", Some("sk_b__x"), &owner, None).await;
+    assert_eq!(s, StatusCode::OK, "the owner's binding is still there");
+}
+
+/// The replay of a stored Channel acts for the stored Tenant, which no
+/// caller names: a Tenant renamed away since the bind is not restored, one
+/// in good standing is.
+#[cfg(feature = "channels")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_channel_of_a_renamed_tenant_is_not_replayed() {
+    let first = channel_state(true, None).await;
+    make_bus(&first).await;
+    let bind = json!({"entity": "urn:ngsi-ld:Bus:1", "attribute": "speed",
+                      "broker": "lo", "topic": "bus/1/speed", "retention": "mirror"});
+    let (s, ..) = send(
+        &first,
+        "PUT",
+        "/x/channels/c1",
+        Some("sk_b__x"),
+        &member("sk_b"),
+        Some(bind),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let speed = || async {
+        let (_, _, body) = send(
+            &first,
+            "GET",
+            "/ngsi-ld/v1/entities/urn:ngsi-ld:Bus:1?format=keyValues",
+            Some("sk_b__x"),
+            &member("sk_b"),
+            None,
+        )
+        .await;
+        serde_json::from_slice::<Value>(&body)
+            .ok()
+            .map(|e| e["speed"].clone())
+    };
+    for (tombstoned, value) in [(true, "7"), (false, "8")] {
+        let (_st, lo) = channel_state_over(&first, tombstoned).await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut landed = false;
+        while tokio::time::Instant::now() < deadline {
+            lo.publish("bus/1/speed", value);
+            if speed().await.is_some_and(|v| v.to_string().contains(value)) {
+                landed = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(landed, !tombstoned, "tombstoned {tombstoned}");
+    }
+}
+
+#[cfg(feature = "channels")]
+async fn make_bus(st: &AppState) {
+    let (s, ..) = send(
+        st,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        Some("sk_b__x"),
+        &member("sk_b"),
+        Some(json!({"id": "urn:ngsi-ld:Bus:1", "type": "Bus",
+                    "speed": {"type": "Property", "value": 0}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+}
+
+/// [`state`] with the channels surface on a loopback bridge `lo`, over
+/// `store` when given.
+#[cfg(feature = "channels")]
+async fn channel_state(
+    enforce: bool,
+    store: Option<std::sync::Arc<dyn antares_store::CurrentStateDriver>>,
+) -> AppState {
+    channel_state_with(enforce, store).await.0
+}
+
+#[cfg(feature = "channels")]
+async fn channel_state_with(
+    enforce: bool,
+    store: Option<std::sync::Arc<dyn antares_store::CurrentStateDriver>>,
+) -> (AppState, std::sync::Arc<antares_api::channels::Loopback>) {
+    use antares_api::channels::{Bridge, Channels, Loopback};
+    antares_jsonld::allow_private_egress(true);
+    antares_api::policy::default_subject_headers("x-jc-subject,x-jc-member");
+    let lo = std::sync::Arc::new(Loopback::new());
+    let mut bridges: std::collections::HashMap<String, std::sync::Arc<dyn Bridge>> =
+        std::collections::HashMap::new();
+    bridges.insert("lo".into(), lo.clone());
+    let mut st = AppState::new("tenant-organization".into())
+        .with_admin_auth(AdminAuth::new(SECRET, false).expect("secret"))
+        .with_surface(Box::new(Channels::new(bridges)))
+        .expect("mount");
+    if let Some(store) = store {
+        st.store = store;
+    }
+    antares_api::wire(&mut st).await;
+    st.subject_required = true;
+    st.tenant_organization = enforce;
+    // the first router built restores the stored Channels
+    let _ = antares_api::router(st.clone());
+    (st, lo)
+}
+
+/// A second broker over `first`'s store, as after a restart, whose store
+/// says `sk_b__x` was renamed away when `tombstoned`.
+#[cfg(feature = "channels")]
+async fn channel_state_over(
+    first: &AppState,
+    tombstoned: bool,
+) -> (AppState, std::sync::Arc<antares_api::channels::Loopback>) {
+    let double = std::sync::Arc::new(common::Double::passthrough(first.store.clone()));
+    double.set_standing(
+        "sk_b__x",
+        antares_store::TenantStanding {
+            tombstoned,
+            organization: None,
+        },
+    );
+    channel_state_with(true, Some(double)).await
+}
