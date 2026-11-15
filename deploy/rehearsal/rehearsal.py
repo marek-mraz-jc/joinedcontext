@@ -8,6 +8,7 @@ Subcommands (EXPORT.md has the bundle format, REHEARSAL.md the order):
   import   shako repositories, Antares entities and history, daiya dashboards into a running jc
   retain   delete Antares temporal instances older than 24 h from the rehearsal's database
   smoke    sign in as a test person and check every module; a report per check
+  doors    the files that move an export's writes off its open-data Endpoints (EP-187), for Changes
 
 Nothing here writes to dev or prod: every write goes to the jc given by --base, and the importer
 refuses a --base that is not a loopback address. Secrets are read from files, never printed.
@@ -1545,7 +1546,7 @@ def write_doors(prepared: list, refused: list[str], key: str) -> list[dict]:
             # The URN names the space by its segment (urnSegment, else its name) under the
             # organization's domain, which the reconciler fills in for {orgDomain} (CC-74).
             segment = next((d.get("spec", {}).get("urnSegment") for d in spaces.get(space, [])), None) or space
-            urn = lambda kind, n: f"urn:ngsi-ld:{kind}:{{orgDomain}}:{segment}:{n}"
+            ref = f"urn:ngsi-ld:Policy:{{orgDomain}}:{segment}:"
             reads = sorted(n for n, s in policies if n in served_names and _space_of(s) == space and not _writes(s))
             door = f"{name}-write"
             slug = base64.b32encode(hmac.new(key.encode(), f"{project}/{space}/{door}".encode(),
@@ -1558,18 +1559,18 @@ def write_doors(prepared: list, refused: list[str], key: str) -> list[dict]:
                     "apiVersion": endpoint["apiVersion"], "kind": "Endpoint",
                     "metadata": {"name": door, "namespace": project,
                                  "title": {"en": f"{name}: writes"}},
-                    "spec": {"contextSpaceRef": space, "policyRefs": [urn("Policy", n) for n in sorted(served_names)],
+                    "spec": {"contextSpaceRef": space, "policyRefs": [ref + n for n in sorted(served_names)],
                              "slug": slug, "audience": "organization",
                              "enabledRepresentations": ["ngsi-ld", "websocket", "ogc-features", "mcp"]}},
                     sort_keys=False, allow_unicode=True)).encode()
-            files[rel] = _bind_policies(files[rel], [urn("Policy", n) for n in reads])
+            files[rel] = _bind_policies(files[rel], [ref + n for n in reads])
             target = re.compile(r"^(\s*-?\s*targetEndpoint:\s*['\"]?)(urn:ngsi-ld:Endpoint:[^:\s]+:"
                                 + re.escape(space) + ":)?" + re.escape(name) + r"(['\"]?\s*)$", re.M)
             aimed = []
             for prel in sorted(docs):
                 text = files[prel].decode()
                 if any(d.get("kind") == "Pipeline" for d in docs[prel]) and target.search(text):
-                    files[prel] = target.sub(lambda m: m.group(1) + (m.group(2) or "") + door + m.group(3),
+                    files[prel] = target.sub(lambda m, door=door: m.group(1) + (m.group(2) or "") + door + m.group(3),
                                              text).encode()
                     aimed.append(prel)
             moved.append({"endpoint": f"{project}/{name}", "door": f"{project}/{door}", "reads": reads,
@@ -1593,6 +1594,38 @@ def _bind_policies(data: bytes, refs: list[str]) -> bytes:
         if re.match(r"^spec:\s*$", line):
             out.append("  policyRefs:\n" + "".join(f"    - {r}\n" for r in refs) if refs else "  policyRefs: []\n")
     return "".join(out).encode()
+
+
+def cmd_doors(a):
+    """The move `write_doors` makes on import, for a live environment (T-6972): reads the export's
+    repositories as they are (none of the import's own rewrites), and writes under --out only the
+    files the move adds or changes, as <owner>/<repo>/<path>, with doors.json (EP-187 findings
+    before and after, one row per door). Each repository's files are one Change in the Portal;
+    nothing is written anywhere else. The door slugs are keyed by a fresh random key."""
+    export, out = Path(a.export), Path(a.out)
+    if out.exists() and any(out.iterdir()):
+        raise SystemExit(f"not writing: {out} holds files")
+    prepared = []
+    for r in json.loads((export / "gitea" / "repos.json").read_text()):
+        root = export / "gitea" / "files" / r["owner"] / r["name"]
+        files = {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*"))
+                 if p.is_file() and not p.is_symlink()}
+        prepared.append((r, r["owner"], r["name"], r.get("defaultBranch") or "main", files))
+    before = {(owner, name): dict(files) for _, owner, name, _, files in prepared}
+    found = jcctl_refusals(a.jcctl_bin, prepared)
+    doors = write_doors(prepared, found, secrets.token_hex(32))
+    left = jcctl_refusals(a.jcctl_bin, prepared) if doors else found
+    for _, owner, name, _, files in prepared:
+        for rel, data in files.items():
+            if before[owner, name].get(rel) != data:
+                (out / owner / name / rel).parent.mkdir(parents=True, exist_ok=True)
+                (out / owner / name / rel).write_bytes(data)
+    ep187 = lambda lines: sum(1 for line in lines if _OPEN_DATA_WRITE.match(line))
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "doors.json").write_text(json.dumps({"before": ep187(found), "after": ep187(left), "refusalsAfter": [
+        line for line in left if not line.startswith("warning:")], "doors": doors}, indent=1))
+    print(f"EP-187 findings: {ep187(found)} before, {ep187(left)} after; {len(doors)} door(s) in {out}")
+    return 0 if ep187(left) == 0 else 1
 
 
 def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE,
@@ -2991,6 +3024,8 @@ def main(argv=None):
     s.add_argument("--env", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("synth"); s.add_argument("--render", required=True)
     s.add_argument("--env", required=True); s.add_argument("--out", required=True)
+    s = sub.add_parser("doors"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
+    s.add_argument("--jcctl-bin", required=True)
     s = sub.add_parser("realms"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
     s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
     s.add_argument("--public-base", help="the rehearsal's own address: a twin of each client URL on the source host")
@@ -3035,7 +3070,7 @@ def main(argv=None):
     s = sub.add_parser("hub-sources"); s.add_argument("--deployment", required=True)
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"provisioning": cmd_provisioning, "prometheus-config": cmd_prometheus_config, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "digest": cmd_digest, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
+    return {"provisioning": cmd_provisioning, "prometheus-config": cmd_prometheus_config, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "doors": cmd_doors, "realms": cmd_realms, "import": cmd_import, "digest": cmd_digest, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
             "retain": cmd_retain, "smoke": cmd_smoke, "import-runlog": cmd_import_runlog}[a.cmd](a) or 0
 
 

@@ -758,19 +758,47 @@ def test_an_export_older_than_ep187_writes_through_a_door_and_reads_as_before():
     assert prepared == _zl()
 
 
-def test_the_import_judges_the_doors_again_and_reports_them(tmp_path):
-    export = tmp_path
-    (export / "gitea" / "files" / "joinedcontext").mkdir(parents=True)
+def _zl_export(export):
     for rel, data in _zl()[0][4].items():
         p = export / "gitea" / "files" / "joinedcontext" / "zl" / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
-    (export / "gitea" / "repos.json").write_text(json.dumps([{"owner": "joinedcontext", "name": "zl"}]))
+    org = export / "gitea" / "files" / "joinedcontext" / "configuration" / "organizations" / "zl.yaml"
+    org.parent.mkdir(parents=True)
+    org.write_bytes(b"kind: Organization\n")
+    (export / "gitea" / "repos.json").write_text(json.dumps([{"owner": "joinedcontext", "name": "zl"},
+                                                              {"owner": "joinedcontext", "name": "configuration"}]))
+
+
+def test_doors_writes_only_the_moved_files_and_the_counts_for_the_changes(tmp_path):
+    """The live form of the move (T-6972): the files a Change per repository commits, nothing else."""
+    _zl_export(tmp_path / "export")
+    jcctl = tmp_path / "jcctl"
+    jcctl.write_text(f"#!/bin/sh\nfor a; do case $a in zl=*) d=${{a#zl=}};; esac; done\n"
+                     f"[ -f \"$d/spaces/verejne/endpoints/city-write.yaml\" ] && exit 0\necho '{EP187}'\nexit 1\n")
+    jcctl.chmod(0o755)
+    out = tmp_path / "out"
+    a = argparse.Namespace(export=str(tmp_path / "export"), out=str(out), jcctl_bin=str(jcctl))
+    assert rh.cmd_doors(a) == 0
+    written = sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file())
+    assert written == ["doors.json", "joinedcontext/zl/pipelines/feed/pipeline.yaml",
+                       "joinedcontext/zl/spaces/verejne/endpoints/city-write.yaml",
+                       "joinedcontext/zl/spaces/verejne/endpoints/city.yaml"]
+    counts = json.loads((out / "doors.json").read_text())
+    assert (counts["before"], counts["after"], counts["refusalsAfter"]) == (1, 0, [])
+    with pytest.raises(SystemExit, match="holds files"):
+        rh.cmd_doors(a)
+
+
+def test_the_import_judges_the_doors_again_and_reports_them(tmp_path):
+    export = tmp_path
+    _zl_export(export)
     calls = []
 
     def validate(prepared):
-        calls.append(sorted(prepared[0][4]))
-        return [] if "spaces/verejne/endpoints/city-write.yaml" in prepared[0][4] else [EP187]
+        zl = next(files for _, _, name, _, files in prepared if name == "zl")
+        calls.append(sorted(zl))
+        return [] if "spaces/verejne/endpoints/city-write.yaml" in zl else [EP187]
 
     class Stop(Exception):
         pass
