@@ -69,6 +69,10 @@ pub fn known_functions() -> HashSet<String> {
         "cache_delete",
         "cache_add",
         "ngsild_urn",
+        "ngsild_ref",
+        "ngsild_point",
+        "ngsild_multi",
+        "ngsild_language_map",
     ]
     .into_iter()
     .map(String::from)
@@ -240,6 +244,10 @@ pub(crate) fn eval_function(
         "cosine_similarity" => eval_cosine_similarity(args, ctx),
         "fake" => Ok(Value::String("fake_value".to_string())),
         "ngsild_urn" => crate::ngsild::eval_urn(args, ctx),
+        "ngsild_ref" => crate::ngsild::eval_ref(args, ctx),
+        "ngsild_point" => crate::ngsild::eval_point(args, ctx),
+        "ngsild_multi" => crate::ngsild::eval_multi(args, ctx),
+        "ngsild_language_map" => crate::ngsild::eval_language_map(args, ctx),
         _ => Err(format!("unrecognised function '{name}'")),
     }
 }
@@ -447,13 +455,16 @@ fn eval_random_int_fn(
     Ok(Value::Int(min_val + offset))
 }
 
+/// Longest id `nanoid` builds; the length is allocated up front.
+const NANOID_MAX_LEN: i64 = 65_536;
+
 fn eval_nanoid_fn(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Value, String> {
-    let mut len = 21usize;
+    let mut len = 21i64;
     let mut alphabet: Option<String> = None;
     match args {
         ArgList::Positional(v) => {
             if let Some(e) = v.first() {
-                len = ctx.eval_expr(e)?.get_int()? as usize;
+                len = ctx.eval_expr(e)?.get_int()?;
             }
             if let Some(e) = v.get(1) {
                 alphabet = Some(ctx.eval_expr(e)?.get_string()?);
@@ -462,7 +473,7 @@ fn eval_nanoid_fn(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Value
         ArgList::Named(v) => {
             for (k, e) in v {
                 match k.as_str() {
-                    "length" => len = ctx.eval_expr(e)?.get_int()? as usize,
+                    "length" => len = ctx.eval_expr(e)?.get_int()?,
                     "alphabet" => alphabet = Some(ctx.eval_expr(e)?.get_string()?),
                     other => return Err(format!("unknown parameter {other}")),
                 }
@@ -477,6 +488,12 @@ fn eval_nanoid_fn(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Value
     if chars.is_empty() {
         return Err("nanoid alphabet cannot be empty".to_string());
     }
+    if !(1..=NANOID_MAX_LEN).contains(&len) {
+        return Err(format!(
+            "nanoid length {len} must be between 1 and {NANOID_MAX_LEN}"
+        ));
+    }
+    let len = len as usize;
     let mut out = String::with_capacity(len);
     for _ in 0..len {
         let u = Uuid::new_v4().as_u128() as usize;

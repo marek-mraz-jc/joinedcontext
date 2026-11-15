@@ -285,6 +285,19 @@ async fn import_ckan_json_reads_every_dump_shape() {
         Some("Nový názov")
     );
 
+    // A package that breaks the dataset rules (a name that is no slug) is refused by name and
+    // not stored.
+    let err = import_ckan_json(
+        &store,
+        &ctx,
+        &json!([package("Bad Name", "o1")]).to_string(),
+        "sk",
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("package 'Bad Name'"), "{err}");
+    assert!(store.get_dataset(&ctx, "Bad Name").await.unwrap().is_none());
+
     // A hidden value that is neither list nor map changes nothing; a dump with no packages fails.
     let err = import_ckan_json(&store, &ctx, r#"{"hidden": "x"}"#, "sk")
         .await

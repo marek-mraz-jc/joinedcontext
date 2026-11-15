@@ -148,7 +148,8 @@ fn identity_comes_only_from_the_resolver_or_a_hashed_credential() {
     assert_eq!(actor(&HeaderMap::new()), None);
 
     // Org headers choose among the subject's organizations; a numeric Grafana org id maps
-    // through the directory; an unknown one falls back to the subject's first organization.
+    // through the directory; an unknown one falls back to the subject's first organization here,
+    // and the router answers such a request 404 before any handler reads it.
     let pick =
         |pairs: &[(&'static str, &str)]| resolve_request_ctx(&w.state, &headers(pairs)).org_id;
     assert_eq!(pick(&[("authorization", "Bearer admin")]), ORG);

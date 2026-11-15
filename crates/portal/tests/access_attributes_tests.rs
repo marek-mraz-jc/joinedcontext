@@ -200,7 +200,8 @@ fn body(answer: &common::Answer) -> Value {
 }
 
 /// A caller who may read the Policy reads its name and title; the gateway was asked about the
-/// caller as their session names them, with the Portal's token.
+/// caller by their Keycloak id (which a `user` grant names), not their username, with the
+/// Portal's token.
 #[tokio::test]
 async fn a_policy_reader_reads_the_policy_that_refused_them() {
     let r = rig().await;
@@ -219,7 +220,7 @@ async fn a_policy_reader_reads_the_policy_that_refused_them() {
     assert_eq!(
         asked(&r.gateway).await,
         vec![json!({
-            "subject": { "user": "steward@hel.fi", "groups": ["stewards"], "roles": ["viewer"] },
+            "subject": { "user": "sub-steward", "groups": ["/stewards"], "roles": ["viewer"] },
             "action": { "name": "updateAttrs" },
             "resource": { "type": "AirQualityObserved", "properties": { "attribute": "no2" } }
         })]

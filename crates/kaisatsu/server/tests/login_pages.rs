@@ -784,6 +784,11 @@ async fn temporary_password_terms_and_consent() {
     let b = start(&app, "").await;
     let (st, h, _) = b.password(&app, MEMBER, "BrandNewPass456!").await;
     assert!(is_code(st, &h));
+    // A scope the consent did not grant asks again.
+    let c = start(&app, "&scope=openid%20phone").await;
+    let (st, _, html) = c.password(&app, MEMBER, "BrandNewPass456!").await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "consent", "{html}");
     let (_, _, html) = start(&app, "")
         .await
         .password(&app, MEMBER, MEMBER_PW)
@@ -948,6 +953,11 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     let (st_ve, _, html_ve) = ve_attempt.password(&app, MEMBER, MEMBER_PW).await;
     assert_eq!(st_ve, StatusCode::OK);
     assert_eq!(page_id(&html_ve), "verify-email");
+    // The step offers the button that continues once the mail's link is used.
+    assert!(
+        html_ve.contains("method=\"post\"") && html_ve.contains("type=\"submit\""),
+        "{html_ve}"
+    );
     // Outbox has the VERIFY_EMAIL row queued
     let store_dyn: Arc<dyn Store> = store.clone();
     assert!(

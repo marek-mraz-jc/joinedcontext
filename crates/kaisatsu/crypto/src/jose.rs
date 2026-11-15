@@ -73,6 +73,26 @@ pub fn verify_jwt<T: DeserializeOwned>(
     expected_issuer: Option<&str>,
     expected_audience: Option<&str>,
 ) -> Result<(Header, T)> {
+    verify_jwt_signed(token, keys, expected_issuer, expected_audience, true)
+}
+
+/// [`verify_jwt`] that accepts an expired token: for an `id_token_hint`, which RP-Initiated
+/// Logout 1.0 section 2 lets identify the session after the ID token expired.
+pub fn verify_jwt_allowing_expired<T: DeserializeOwned>(
+    token: &str,
+    keys: &[SigningKeyRecord],
+    expected_issuer: Option<&str>,
+) -> Result<(Header, T)> {
+    verify_jwt_signed(token, keys, expected_issuer, None, false)
+}
+
+fn verify_jwt_signed<T: DeserializeOwned>(
+    token: &str,
+    keys: &[SigningKeyRecord],
+    expected_issuer: Option<&str>,
+    expected_audience: Option<&str>,
+    check_exp: bool,
+) -> Result<(Header, T)> {
     let header = decode_header(token)
         .map_err(|_| KaisatsuError::Unauthorized("malformed JWT header".into()))?;
     let kid = header
@@ -91,7 +111,15 @@ pub fn verify_jwt<T: DeserializeOwned>(
     }
     let pub_jwk: PublicJwk = serde_json::from_str(&rec.public_jwk_json)
         .map_err(|_| KaisatsuError::Crypto("invalid stored public JWK".into()))?;
-    verify_jwt_with_public_jwk(token, &pub_jwk, expected_issuer, expected_audience)
+    let jwk_val =
+        serde_json::to_value(&pub_jwk).map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
+    verify_with_jwk(
+        token,
+        &jwk_val,
+        expected_issuer,
+        expected_audience,
+        check_exp,
+    )
 }
 
 pub fn verify_jwt_with_public_jwk<T: DeserializeOwned>(
@@ -113,6 +141,16 @@ pub fn verify_jwt_with_jwk<T: DeserializeOwned>(
     expected_issuer: Option<&str>,
     expected_audience: Option<&str>,
 ) -> Result<(Header, T)> {
+    verify_with_jwk(token, jwk_json, expected_issuer, expected_audience, true)
+}
+
+fn verify_with_jwk<T: DeserializeOwned>(
+    token: &str,
+    jwk_json: &Value,
+    expected_issuer: Option<&str>,
+    expected_audience: Option<&str>,
+    check_exp: bool,
+) -> Result<(Header, T)> {
     let header = decode_header(token)
         .map_err(|_| KaisatsuError::Unauthorized("malformed JWT header".into()))?;
     if !matches!(
@@ -130,7 +168,7 @@ pub fn verify_jwt_with_jwk<T: DeserializeOwned>(
     let mut validation = Validation::new(header.alg);
     // jsonwebtoken checks `iss` and `aud` only when the token carries them; a token that leaves
     // out a claim the caller expects is refused (RFC 7519 section 4.1.1/4.1.3, RFC 7523 section 3).
-    let mut required = vec!["exp"];
+    let mut required = if check_exp { vec!["exp"] } else { Vec::new() };
     if let Some(iss) = expected_issuer {
         validation.set_issuer(&[iss]);
         required.push("iss");
@@ -141,7 +179,7 @@ pub fn verify_jwt_with_jwk<T: DeserializeOwned>(
     } else {
         validation.validate_aud = false;
     }
-    validation.validate_exp = true;
+    validation.validate_exp = check_exp;
     validation.validate_nbf = true;
     validation.leeway = 30;
     validation.set_required_spec_claims(&required);

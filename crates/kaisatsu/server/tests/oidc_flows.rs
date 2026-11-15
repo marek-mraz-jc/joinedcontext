@@ -777,6 +777,49 @@ async fn rp_initiated_logout_and_back_channel_logout() {
     assert!(store.get_sso_session("dev", &sid).await.unwrap().is_none());
 }
 
+/// RP-Initiated Logout 1.0 section 2: an expired ID token still names the session to end; an
+/// access token is no `id_token_hint`.
+#[tokio::test]
+async fn logout_accepts_an_expired_id_token_hint_and_refuses_an_access_token() {
+    let (app, store, _, kek) = app().await;
+    let logout = "/realms/dev/protocol/openid-connect/logout";
+    let (code, _) = browser_login(&app).await;
+    let tokens = exchange(&app, &code).await;
+    let mut claims = decode_jwt_payload(tokens["id_token"].as_str().unwrap());
+    let sid = claims["sid"].as_str().unwrap().to_owned();
+    let key = store
+        .list_signing_keys("dev")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|k| k.status == "ACTIVE")
+        .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    claims["typ"] = json!("Bearer");
+    let access = sign_jwt(&key, &kek, Some("JWT"), &claims).unwrap();
+    let (st, _, _) = get(
+        &app,
+        &format!("{logout}?id_token_hint={access}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    claims["typ"] = json!("ID");
+    claims["iat"] = json!(now - 7200);
+    claims["exp"] = json!(now - 3600);
+    let expired = sign_jwt(&key, &kek, Some("JWT"), &claims).unwrap();
+    let (st, _, _) = get(
+        &app,
+        &format!("{logout}?id_token_hint={expired}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(store.get_sso_session("dev", &sid).await.unwrap().is_none());
+}
+
 async fn admin_token(store: &MemoryStore, kek: &Kek, roles: Value, extra: Value) -> String {
     let key = store
         .list_signing_keys("dev")

@@ -75,6 +75,11 @@ enum Commands {
         /// Organization tokens as `<org> <sha256 hex of the token>` lines, re-read on change
         #[arg(long)]
         org_tokens_file: Option<PathBuf>,
+        /// Directory file components (file, csv, sqlite, credentials and schema files) are
+        /// confined to; with --org-tokens-file each organization gets `<dir>/<org>`, and the
+        /// flag is required (example: /var/lib/ekiben/files)
+        #[arg(long)]
+        file_root: Option<PathBuf>,
         /// A directory of `<org>.yaml` variable maps (`NAME: value`) for `${NAME}` and env()
         /// of each organization's streams, re-read once a second
         #[arg(long)]
@@ -241,6 +246,7 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
             config_dir,
             require_auth,
             org_tokens_file,
+            file_root,
             org_vars,
             ingest_addr,
             metrics,
@@ -256,8 +262,19 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 MetricsRegistry::with_config(metrics_conf).map_err(|e| e.to_string())?;
             // Streams mode reads only EKIBEN_VAR_* process variables and each organization's
             // own variables (E1): a hosted process's environment holds other modules' secrets.
-            let manager = StreamManager::new(reg, resources.clone(), None, EnvAccess::AllowListed)
-                .with_metrics_registry(metrics_registry);
+            if org_tokens_file.is_some() && file_root.is_none() {
+                return Err(
+                    "--org-tokens-file serves several organizations: set --file-root <dir> \
+                    so each organization's file components stay in <dir>/<org>"
+                        .to_string(),
+                );
+            }
+            let mut manager =
+                StreamManager::new(reg, resources.clone(), file_root, EnvAccess::AllowListed)
+                    .with_metrics_registry(metrics_registry);
+            if org_tokens_file.is_some() {
+                manager = manager.with_org_file_roots();
+            }
 
             if let Some(dir) = org_vars {
                 let mut vars = OrgVarsDir::new(dir);

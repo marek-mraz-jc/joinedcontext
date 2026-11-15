@@ -388,6 +388,14 @@ pub async fn import_ckan_json(
         if ds.publisher_id.is_empty() {
             ds.publisher_id = org_slug.to_owned();
         }
+        // The rules `dataset.propose` holds every record to; the import stops at the first
+        // package that breaks one, naming it (a rerun updates what it stored).
+        if let Err(e) = ds.validate_basic() {
+            return Err(DataroomError::field_error(
+                format!("package '{}'", ds.name),
+                e.to_string(),
+            ));
+        }
         store.upsert_dataset(ctx, ds).await?;
         imported_datasets += 1;
     }

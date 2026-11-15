@@ -168,16 +168,13 @@ impl ConfigDir {
                         .map(|_| ())
                         .map_err(|e| e.to_string())
                 }
-                Ok((conf, _)) => {
-                    if let Some(old_org) = &previous_org {
-                        let _ = manager.delete(&id, Some(old_org)).await;
-                    }
-                    manager
-                        .create_posted(id.clone(), conf, posted)
-                        .await
-                        .map(|_| ())
-                        .map_err(|e| e.to_string())
+                Ok((conf, _)) => match &previous_org {
+                    // The file moved to another organization.
+                    Some(old_org) => manager.replace(&id, Some(old_org), conf, posted).await,
+                    None => manager.create_posted(id.clone(), conf, posted).await,
                 }
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
             };
             match applied {
                 Ok(()) => {
