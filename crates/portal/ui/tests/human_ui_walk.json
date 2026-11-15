@@ -2307,6 +2307,24 @@
         "supervisor/reports/workflows-2026-10-21/copies/walk/bring-back-400.png"
       ]
     },
+    "src/pages/scripts/ScriptsPage.tsx": {
+      "walkedBy": "worker-t7083 (stub walk, e2e/scripts.spec.ts)",
+      "date": "2026-11-15",
+      "screenshots": [
+        "evidence/T-7084/scripts-empty-1440.png",
+        "evidence/T-7084/scripts-empty-400.png",
+        "evidence/T-7084/scripts-results-1440.png",
+        "evidence/T-7084/scripts-results-400.png",
+        "evidence/T-7084/scripts-proposed-1440.png",
+        "evidence/T-7084/scripts-proposed-400.png",
+        "evidence/T-7084/scripts-moved-1440.png",
+        "evidence/T-7084/scripts-moved-400.png",
+        "evidence/T-7084/scripts-error-1440.png",
+        "evidence/T-7084/scripts-error-400.png",
+        "evidence/T-7084/scripts-refusal-1440.png",
+        "evidence/T-7084/scripts-refusal-400.png"
+      ]
+    },
     "src/pages/secrets/SecretFormPage.tsx": {
       "walkedBy": "worker-t5971",
       "date": "2026-10-29",
