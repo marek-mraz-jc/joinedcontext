@@ -118,6 +118,16 @@ fn endpoint_document(mut document: Value, endpoint: &Endpoint, subject: &Subject
         "resource".to_owned(),
         json!({ "type": "endpoint", "id": endpoint.slug, "space": endpoint.space }),
     );
+    // EP-187: the gateway refuses every write here whatever a grant says, so the document says
+    // so to every caller, beside the grants.
+    if endpoint.open_data {
+        members.insert(
+            "openData".to_owned(),
+            json!({ "readOnly": true, "problem": "open-data-read-only",
+                    "detail": "this Endpoint publishes open data and only reads; \
+                               the data owner writes through an internal Endpoint" }),
+        );
+    }
     if let Some(limits) = &endpoint.rate_limit {
         let mut named = serde_json::Map::new();
         named.insert(

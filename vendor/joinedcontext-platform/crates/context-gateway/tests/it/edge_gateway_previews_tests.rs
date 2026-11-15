@@ -610,8 +610,9 @@ fn id_of(user: &str) -> String {
     format!("f:1:{user}")
 }
 
-/// A branch of `helsinki` whose space `air` everyone may read and write through the public
-/// Endpoint `public-air`.
+/// A branch of `helsinki` whose space `air` everyone may read and create in through the public
+/// form `public-air` (`creates`, EP-97): without it the Endpoint is open data and takes no write
+/// (EP-187).
 fn public_branch() -> BTreeMap<String, String> {
     files(&[
         (
@@ -620,7 +621,7 @@ fn public_branch() -> BTreeMap<String, String> {
         ),
         (
             "endpoints/public-air.yaml",
-            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: helsinki\nspec:\n  contextSpaceRef: air\n  slug: {PUBLIC_SLUG}\n  audience: public\n  enabledRepresentations: [\"ngsi-ld\"]\n"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: helsinki\nspec:\n  contextSpaceRef: air\n  slug: {PUBLIC_SLUG}\n  audience: public\n  enabledRepresentations: [\"ngsi-ld\"]\n  creates: {{}}\n"),
         ),
         (
             "policies/everyone.yaml",

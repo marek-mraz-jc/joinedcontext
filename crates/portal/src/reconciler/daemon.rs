@@ -1635,6 +1635,11 @@ impl Syncer {
         //       (EP-96, T-3156).
         self.converge_mcp_clients(&fresh_mirror).await;
         steps.mark("mcp_clients");
+
+        // 5d'''. An open-data Endpoint that binds a write Policy says so (EP-187): the gateway
+        //        refuses its writes and it keeps serving reads; no data is changed.
+        mark_open_data_writes(&fresh_mirror);
+        steps.mark("open_data_writes");
         self.say_held(fresh_mirror.held_back());
 
         // 5e. The file the edge serves: helm's base with the routes of every App whose client
@@ -4278,6 +4283,71 @@ fn source_loaded(mirror: &Mirror, unstaged: &[String]) -> bool {
             .is_some()
 }
 
+/// The reason of the `Degraded` mark of an open-data Endpoint that binds a write Policy (EP-187).
+const OPEN_DATA_WRITES: &str = "OpenDataWritePolicy";
+
+/// The condition every open-data Endpoint carries, which the Endpoint page shows (EP-187).
+const OPEN_DATA: &str = "OpenData";
+
+/// Marks every open-data Endpoint `OpenData` (read-only for every caller), and one that binds a
+/// write Policy also `Degraded` with `jcctl validate`'s sentence; takes both off an Endpoint that
+/// no longer is (EP-187, T-6972). Only the status changes: the gateway refuses the writes and the
+/// Endpoint keeps serving reads. An unchanged mark is not written again.
+fn mark_open_data_writes(mirror: &Mirror) {
+    let endpoints = mirror.matching(|env| env.kind == "Endpoint");
+    let projects: BTreeSet<String> = endpoints
+        .iter()
+        .filter_map(|env| env.metadata.namespace.clone())
+        .collect();
+    let found: BTreeMap<(String, String), Option<String>> = projects
+        .iter()
+        .flat_map(|project| {
+            crate::api::mutate::open_data_writes(mirror, project)
+                .into_iter()
+                .map(|(name, why)| ((project.clone(), name), why))
+        })
+        .collect();
+    let ours = |held: &jc_core::Condition| {
+        held.r#type == OPEN_DATA
+            || held.r#type == "Degraded" && held.reason.as_deref() == Some(OPEN_DATA_WRITES)
+    };
+    let said = |held: &jc_core::Condition| (held.r#type.clone(), held.message.clone());
+    for mut envelope in endpoints {
+        let key = (
+            envelope.metadata.namespace.clone().unwrap_or_default(),
+            envelope.metadata.name.clone(),
+        );
+        let Some(status) = envelope.status.as_mut() else {
+            continue;
+        };
+        let mut wanted = Vec::new();
+        if let Some(why) = found.get(&key) {
+            wanted.push(make_condition(
+                OPEN_DATA,
+                "True",
+                "ReadOnly",
+                "open data: every write through this Endpoint is refused (EP-187)",
+            ));
+            if let Some(why) = why {
+                tracing::warn!(project = %key.0, endpoint = %key.1, %why, "open-data Endpoint binds a write Policy");
+                wanted.push(make_condition("Degraded", "True", OPEN_DATA_WRITES, why));
+            }
+        }
+        let held: Vec<_> = status
+            .conditions
+            .iter()
+            .filter(|c| ours(c))
+            .map(said)
+            .collect();
+        if held == wanted.iter().map(said).collect::<Vec<_>>() {
+            continue;
+        }
+        status.conditions.retain(|held| !ours(held));
+        status.conditions.extend(wanted);
+        mirror.upsert(envelope);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::registrations::RegistrationOutcome;
@@ -6663,6 +6733,75 @@ output_error{stream="kpi"} 6
                 notifications: None,
             }),
         }
+    }
+
+    /// EP-187 (T-6972): an open-data Endpoint that binds a write Policy is marked `Degraded`
+    /// naming the Policy, its spec untouched; the mark goes once the write Policy goes, and a
+    /// run that finds what the last one found writes nothing new.
+    #[test]
+    fn an_open_data_endpoint_binding_a_write_is_marked_degraded_and_unmarked() {
+        let mirror = Mirror::new();
+        let policy = |name: &str, assignee: &str, operation: &str| {
+            let mut policy = envelope("Policy", "p", name);
+            policy.spec = serde_json::json!({
+                "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+                "assigner": "did:web:city.example",
+                "assignee": { "kind": "role", "id": assignee },
+                "operations": [operation],
+            });
+            policy
+        };
+        let mut open = envelope("Endpoint", "p", "air-open");
+        open.spec = serde_json::json!({
+            "contextSpaceRef": "air", "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y", "audience": "public",
+        });
+        mirror.upsert(open.clone());
+        mirror.upsert(policy("public-read", "public", "queryEntity"));
+        mirror.upsert(policy("editors-write", "editors", "updateAttrs"));
+        let degraded = |mirror: &Mirror| {
+            status_of(mirror, "Endpoint", "air-open")
+                .conditions
+                .into_iter()
+                .filter(|held| held.r#type == "Degraded")
+                .collect::<Vec<_>>()
+        };
+
+        mark_open_data_writes(&mirror);
+        let marks = degraded(&mirror);
+        assert_eq!(marks.len(), 1, "{marks:?}");
+        assert_eq!(marks[0].reason.as_deref(), Some(OPEN_DATA_WRITES));
+        let said = marks[0].message.clone().unwrap_or_default();
+        assert!(
+            said.contains("Policy editors-write grants updateAttrs"),
+            "{said}"
+        );
+        let endpoint = mirror.get("p", "Endpoint", "air-open").expect("kept");
+        assert_eq!(endpoint.spec, open.spec);
+        assert!(status_of(&mirror, "Endpoint", "air-open")
+            .conditions
+            .iter()
+            .any(|held| held.r#type == "Kept"));
+
+        mark_open_data_writes(&mirror);
+        assert_eq!(
+            degraded(&mirror),
+            marks,
+            "an unchanged mark is not rewritten"
+        );
+
+        mirror.upsert(policy("editors-write", "editors", "queryEntity"));
+        mark_open_data_writes(&mirror);
+        assert!(degraded(&mirror).is_empty());
+        let open_data = |mirror: &Mirror| {
+            status_of(mirror, "Endpoint", "air-open")
+                .conditions
+                .iter()
+                .any(|held| held.r#type == OPEN_DATA && held.status == "True")
+        };
+        assert!(open_data(&mirror), "open data that only reads stays marked");
+        mirror.upsert(policy("public-read", "readers", "queryEntity"));
+        mark_open_data_writes(&mirror);
+        assert!(!open_data(&mirror), "no public grant, no open data");
     }
 
     fn status_of(mirror: &Mirror, kind: &str, name: &str) -> crate::resource::Status {

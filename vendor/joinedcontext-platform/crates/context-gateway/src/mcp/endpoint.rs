@@ -370,7 +370,8 @@ impl Decoration {
             live: initialize && endpoint.serves(Representation::WebSocket),
             // The card leads the instructions of a caller who reads anything here (T-4759 item 1).
             carded: initialize && mcp::tools::reads_anything(gateway, endpoint, subject),
-            narrowed: asked.reads_only
+            // An open-data Endpoint lists the reads alone to everyone (EP-187).
+            narrowed: (asked.reads_only || endpoint.open_data)
                 && asked.method == "tools/list"
                 && answer.status().is_success(),
             json: header(CONTENT_TYPE).is_some_and(|value| value.starts_with("application/json")),

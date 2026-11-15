@@ -889,6 +889,7 @@ fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> 
         )
         .map(Arc::new);
         let page = dataset_page(&spec, &project, &id.name, &ckan_pages);
+        let open_data = spec.is_open_data(&bound);
         endpoints.push(Endpoint {
             roles: match app_client {
                 Some(client) => EndpointRoles::of_app(&project, &id.name, &spec, client),
@@ -921,6 +922,7 @@ fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> 
             calendars,
             map_defaults,
             page,
+            open_data,
             feeds: spec.representations.map(|r| r.feed).unwrap_or_default(),
             view_mapping: spec.view_mapping_ref.and_then(|view| {
                 let named = (
@@ -1132,6 +1134,7 @@ fn spaces_from(repo: &Repository, models: &ModelSet) -> Vec<Space> {
                 calendars: Vec::new(),
                 map_defaults: Default::default(),
                 page: None,
+                open_data: false,
                 base_path: format!("/cs/{segment}"),
             }),
             title: language_map(&resource.manifest.metadata.rest, "title"),
