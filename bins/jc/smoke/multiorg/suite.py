@@ -982,13 +982,16 @@ class Suite:
             self.row("same.entities", ",".join(orgs), "read and write the fixture entities", "own value only", "-", None,
                      "the Endpoint token exchange needs the Portal's client secret of a local jc (--state)")
             return
+        # The platform admin reads the Organizations on the installation's host: on another
+        # Organization's host its project `org` is foreign (404, the hosts.platform rows).
+        st, body = self.session("platform").json("GET", "/api/v1/projects/org/organizations")
+        listed = {(i.get("metadata") or {}).get("name"): i for i in (body or {}).get("items", [])} \
+            if st == 200 and isinstance(body, dict) else {}
         for org in orgs:
-            st, body = self.session("platform", org if self.hosts else None).json(
-                "GET", f"/api/v1/projects/org/organizations/{org}")
-            domain = ((body or {}).get("spec") or {}).get("domain") if isinstance(body, dict) else None
+            domain = (listed.get(org, {}).get("spec") or {}).get("domain")
             if not domain:
-                self.row(f"same.{org}.domain", org, f"GET /api/v1/projects/org/organizations/{org}", "its domain",
-                         f"{st}", False)
+                self.row(f"same.{org}.domain", org, "GET /api/v1/projects/org/organizations on the installation's host",
+                         "it lists the Organization with its domain", f"{st}, listed {sorted(n for n in listed if n)}", False)
                 return
             self.iso_urns |= {s: iso_urn(domain) for s in self.iso[org].values()}
         if self.live:  # the allowlist sends no entity write: reads and refusals only, nothing seeded
@@ -1628,7 +1631,9 @@ class Suite:
             rs = (body or {}).get("result", {}).get("results", []) if st == 200 else []
             found[org] = {r.get("name") for r in rs}
             wrong = sorted({(r.get("organization") or {}).get("name") for r in rs} - {org})
-            publishes = any(p["Endpoint"] for p in self.exp[org]["projects"].values())
+            # only a public Endpoint is published (the same-name fixtures' `iso` is audience organization)
+            publishes = any(set(p["Endpoint"]) - {n for n, _ in p["closed"].values()}
+                            for p in self.exp[org]["projects"].values())
             self.row(f"catalogue.{org}.published", org, "GET {opendata}/api/3/action/package_search",
                      f"> 0 datasets, every one in CKAN organisation {org}", f"{st}, {len(rs)}, other orgs {wrong}",
                      st == 200 and not wrong and (bool(rs) or not publishes))
