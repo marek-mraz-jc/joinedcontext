@@ -207,11 +207,14 @@ fn gateway(
     ])
     .authenticate(Arc::new(realm.verifier()), ServiceAccounts::new(), None);
     let gateway = match token_url {
-        Some(url) => gateway.exchange_with(Exchanger::new(
-            url,
-            "context-gateway".to_owned(),
-            ClientCredential::Secret(Secret::new("gateway-secret")),
-        )),
+        Some(url) => gateway.exchange_with(
+            Exchanger::new(
+                url,
+                "context-gateway".to_owned(),
+                ClientCredential::Secret(Secret::new("gateway-secret")),
+            )
+            .expect("a client builds"),
+        ),
         None => gateway,
     };
     gateway.replace_federation(table);
