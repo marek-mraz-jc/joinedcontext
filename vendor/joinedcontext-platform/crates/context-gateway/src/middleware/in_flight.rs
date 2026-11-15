@@ -443,7 +443,7 @@ fn is_loadtest(gateway: &Gateway, claims: Option<&jc_core::auth::token::Claims>)
 
 /// The 403 of a load generator's request other than a read: its class reads only (T-5921).
 fn loadtest_writes() -> Response<Body> {
-    ProblemDetails::new(403, "forbidden", "Access Denied by Policy")
+    ProblemDetails::new(403, "forbidden", "Forbidden")
         .with_detail(
             "the load generator's client only reads: send GET or HEAD, or use another client",
         )
@@ -652,6 +652,20 @@ mod tests {
             assert!(detail.contains("try again in a moment"), "{detail}");
             assert!(!detail.contains("Retry-After"), "{detail}");
         }
+    }
+
+    /// A class rule refuses the load generator's write, not a Policy: the title says so.
+    #[tokio::test]
+    async fn a_load_generator_write_is_forbidden_without_naming_a_policy() {
+        let answer = loadtest_writes();
+        assert_eq!(answer.status(), 403);
+        let body = axum::body::to_bytes(answer.into_body(), 4096)
+            .await
+            .expect("body");
+        let problem: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(problem["title"], "Forbidden");
+        let detail = problem["detail"].as_str().expect("a detail");
+        assert!(detail.contains("load generator"), "{detail}");
     }
 
     #[test]
