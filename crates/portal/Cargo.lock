@@ -2674,6 +2674,7 @@ dependencies = [
  "jsonschema",
  "jsonwebtoken",
  "ngsild-ql",
+ "pulldown-cmark",
  "regex",
  "reqwest",
  "schemars 0.8.22",
