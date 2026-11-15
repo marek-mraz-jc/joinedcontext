@@ -1,0 +1,12 @@
+## step 1 exit 0
+## step 2 exit 0
+{"i":1}
+{"i":2}
+{"i":3}
+## step 3 exit 0
+[{"bar":2,"foo":"doc-2"},{"bar":3,"foo":"doc-3"}]
+[{"bar":3,"foo":"doc-3"}]
+## step 4 exit 0
+[{"bar":2,"baz":"b2","foo":"doc-9"},{"bar":3,"baz":"b3","foo":"doc-3"}]
+## step 5 exit 0
+[]

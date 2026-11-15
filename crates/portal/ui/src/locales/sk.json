@@ -2503,6 +2503,12 @@
         "url": "Adresa tabuľky",
         "urlHelp": "Adresa, ktorá stiahne samotný súbor, začína https://, napríklad https://data.example.org/stations.xlsx."
       },
+      "shapefile": {
+        "title": "Shapefile (v zipe) na adrese",
+        "what": "Zip s jednou vrstvou shapefile (.shp, .dbf, .prj), jeden prvok GeoJSON na záznam vo WGS 84, načítaný pri každom behu.",
+        "url": "Adresa zipu",
+        "urlHelp": "Adresa, ktorá stiahne samotný zip, začína https://, napríklad https://data.example.org/mestske-casti.zip. Súbor .prj určuje súradnicový systém, napríklad EPSG:5514 pre S-JTSK."
+      },
       "json": {
         "title": "REST API (JSON)",
         "what": "API, ktoré odpovedá v JSON, čítané pri každom behu.",
@@ -2638,7 +2644,16 @@
       "modeChoice": {
         "upsert": "Vytvoriť alebo zlúčiť",
         "replace": "Nahradiť celú entitu",
-        "update-attrs": "Iba aktualizovať atribúty"
+        "update-attrs": "Iba aktualizovať atribúty",
+        "merge": "Zlúčiť do častí atribútov",
+        "backfill": "Iba pridať do histórie"
+      },
+      "modeHint": {
+        "upsert": "Vytvorí entitu alebo aktualizuje atribúty, ktoré záznam uvádza; ostatné atribúty zostanú.",
+        "replace": "Entita bude presne záznam: atribúty, ktoré neuvádza, sa odstránia. Iba keď entitu zapisuje len táto pipeline.",
+        "update-attrs": "Aktualizuje na entite atribúty, ktoré záznam uvádza; ostatné atribúty zostanú.",
+        "merge": "Hĺbkovo zlúči záznam, takže dve pipeline môžu zapisovať každá časť jedného atribútu, napríklad address.streetAddress a address.postalCode.",
+        "backfill": "Pridá minulé merania iba do histórie; aktuálna hodnota zostane. Vyžaduje operáciu pripájania k histórii v Policy endpointu."
       },
       "lastRun": "Posledný beh"
     },
@@ -5850,7 +5865,10 @@
     "observedAt": "Pozorované",
     "unit": "Jednotka",
     "datasetId": "Dataset",
-    "empty": "Žiadne entity.",
+    "empty": "Zatiaľ tu nie sú žiadne entity. Údaje prichádzajú cez zdroj údajov, import alebo pipeline.",
+    "filtersMatchNothing": "Vašim filtrom nezodpovedá žiadny riadok.",
+    "notSaved": "neuložené",
+    "refusedNext": "Zahoďte zmeny a ponechajte uloženú hodnotu. Ak dôvod hovorí, že sem nesmiete zapisovať, požiadajte vlastníka kontextového priestoru o prístup.",
     "loading": "Načítavam…",
     "filtering": "Filtrujem…",
     "previous": "Predchádzajúca",
@@ -5861,6 +5879,7 @@
     "retry": "Skúsiť znova",
     "busy": "zdroj údajov je práve zaneprázdnený",
     "timedOut": "zdroj údajov neodpovedal včas",
+    "unreachable": "zdroj údajov je nedostupný",
     "filter": "Filter",
     "noFilter": "Ľubovoľné",
     "ops": {
@@ -9087,7 +9106,8 @@
     },
     "httpBodyFormat": {
       "csv": "CSV",
-      "xlsx": "Tabuľka (xlsx, ods)"
+      "xlsx": "Tabuľka (xlsx, ods)",
+      "shapefile": "Shapefile (zip)"
     }
   },
   "picker": {

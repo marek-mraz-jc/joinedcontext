@@ -805,6 +805,20 @@
             "update-attrs"
           ],
           "type": "string"
+        },
+        {
+          "description": "Deep-merge the record into the entity (`entityOperations/merge`, NGSI-LD 5.6.20): a sub-attribute the record does not name stays, and `urn:ngsi-ld:null` deletes one, so two pipelines can each own part of one attribute (G-17).",
+          "enum": [
+            "merge"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Append the record's attribute instances to the entity's history only (`POST /temporal/entities/{id}/attrs`, 5.6.12): the current value is never touched, for a backfill of past readings (G-17).",
+          "enum": [
+            "backfill"
+          ],
+          "type": "string"
         }
       ]
     },

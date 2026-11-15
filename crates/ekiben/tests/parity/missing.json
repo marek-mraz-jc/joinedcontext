@@ -91,12 +91,9 @@
   "caches/gcp_cloud_storage",
   "caches/memcached",
   "caches/mongodb",
-  "caches/redis",
   "caches/ristretto",
-  "inputs/amqp_0_9",
   "inputs/amqp_1",
   "inputs/aws_kinesis",
-  "inputs/aws_s3",
   "inputs/aws_sqs",
   "inputs/azure_blob_storage",
   "inputs/azure_cosmosdb",
@@ -135,8 +132,6 @@
   "inputs/redis_scan",
   "inputs/redis_streams",
   "inputs/s2",
-  "inputs/sftp",
-  "inputs/socket",
   "inputs/socket_server",
   "inputs/subprocess",
   "inputs/twitter_search",
@@ -146,7 +141,6 @@
   "outputs/aws_dynamodb",
   "outputs/aws_kinesis",
   "outputs/aws_kinesis_firehose",
-  "outputs/aws_s3",
   "outputs/aws_s3_stream",
   "outputs/aws_sns",
   "outputs/aws_sqs",
@@ -225,8 +219,7 @@
   "processors/template",
   "processors/wasm",
   "rate-limits/redis",
-  "scanners/avro",
-  "scanners/switch"
+  "scanners/avro"
  ],
  "refused": [
   {

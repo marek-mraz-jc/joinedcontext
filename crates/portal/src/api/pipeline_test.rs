@@ -117,6 +117,8 @@ pub enum SampleFormatRequest {
     Json,
     /// A spreadsheet by `url`: one message per row of `sheet`, or of the first sheet.
     Xlsx,
+    /// A zipped shapefile by `url`: one WGS 84 GeoJSON Feature per record.
+    Shapefile,
 }
 
 impl From<SampleRequest> for Sample {
@@ -135,6 +137,7 @@ impl From<SampleRequest> for Sample {
                 SampleFormatRequest::Csv => SampleFormat::Csv,
                 SampleFormatRequest::Json => SampleFormat::Json,
                 SampleFormatRequest::Xlsx => SampleFormat::Xlsx,
+                SampleFormatRequest::Shapefile => SampleFormat::Shapefile,
             },
             records: None,
             sheet,
@@ -282,7 +285,23 @@ pub async fn execute_test_pipeline(
             .await
             .map_err(crate::ops::OpError::into_api_error)?;
     }
-    run_harness(state, project, &spec, &request.sample).await
+    run_harness(
+        state,
+        project,
+        &spec,
+        &manifest_name(&request.pipeline),
+        &request.sample,
+    )
+    .await
+}
+
+/// The `metadata.name` of a candidate manifest, empty when it has none (a draft not named yet).
+pub(crate) fn manifest_name(pipeline: &Value) -> String {
+    pipeline
+        .pointer("/metadata/name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// The spec of a candidate this caller may test: a Pipeline of this project, with a source, that
@@ -378,11 +397,13 @@ pub(crate) async fn run_harness(
     state: &AppState,
     project: &str,
     spec: &PipelineSpec,
+    name: &str,
     sample: &Sample,
 ) -> Result<TestTrace, ApiError> {
+    let attributes = attributes_of(state, project, spec, name)?;
     run_stream(state, project, |capture| {
         let mut config = harnessed(&state.mirror, project, spec, sample, capture)?;
-        with_lifetime(&mut config, spec)?;
+        with_lifetime(&mut config, spec, attributes.clone())?;
         Ok(config)
     })
     .await
@@ -404,16 +425,46 @@ fn harnessed(
     Ok(config)
 }
 
-/// The harness with the pipeline's history and lifetime steps after its own steps, where a live
-/// stream runs them (PL-82, PL-107, T-4840, T-4845), so the trace's records carry the `observedAt`
-/// and `expiresAt` they would be written with. A message that already failed skips them: its
-/// envelope keeps the error it failed with.
-fn with_lifetime(config: &mut Value, spec: &PipelineSpec) -> Result<(), ApiError> {
+/// The step of `spec.attributes` (G-15) as the live stream of the pipeline `name` runs it, its
+/// `unitCode: model` resolved from the models of the spaces it writes, as the reconciler does.
+fn attributes_of(
+    state: &AppState,
+    project: &str,
+    spec: &PipelineSpec,
+    name: &str,
+) -> Result<Option<Value>, ApiError> {
+    if spec.attributes.is_empty() {
+        return Ok(None);
+    }
+    let mut spec = spec.clone();
+    for space in crate::reconciler::streams::StreamSpaces::of(&state.mirror, project, &spec).spaces
+    {
+        if let Some(model) = state.model_schemas.get(project, &space) {
+            jcctl::attributes::resolve_units(&mut spec, &model);
+        }
+    }
+    crate::reconciler::streams::attributes_step(&spec, name)
+        .map_err(|e| ApiError::BadRequest(format!("spec.attributes: {e}")))
+}
+
+/// The harness with the pipeline's attribute, history and lifetime steps after its own steps,
+/// where a live stream runs them (G-15, PL-82, PL-107, T-4840, T-4845), so the trace's records
+/// carry the `unitCode`, `observedAt` and `expiresAt` they would be written with. A message that
+/// already failed skips them: its envelope keeps the error it failed with.
+fn with_lifetime(
+    config: &mut Value,
+    spec: &PipelineSpec,
+    attributes: Option<Value>,
+) -> Result<(), ApiError> {
     let history = crate::reconciler::streams::history_step(spec)
         .map_err(|e| ApiError::BadRequest(format!("spec.history: {e}")))?;
     let lifetime = crate::reconciler::streams::lifetime_step(spec)
         .map_err(|e| ApiError::BadRequest(format!("spec.lifetime: {e}")))?;
-    let steps: Vec<Value> = history.into_iter().chain(lifetime).collect();
+    let steps: Vec<Value> = attributes
+        .into_iter()
+        .chain(history)
+        .chain(lifetime)
+        .collect();
     if steps.is_empty() {
         return Ok(());
     }
@@ -444,13 +495,15 @@ pub(crate) async fn run_messages(
     state: &AppState,
     project: &str,
     spec: &PipelineSpec,
+    name: &str,
     messages: &[Value],
 ) -> Result<TestTrace, ApiError> {
     let sample = messages_sample(messages);
+    let attributes = attributes_of(state, project, spec, name)?;
     run_stream(state, project, |capture| {
         let mut config = harnessed(&state.mirror, project, spec, &sample, capture)?;
         split_messages(&mut config);
-        with_lifetime(&mut config, spec)?;
+        with_lifetime(&mut config, spec, attributes.clone())?;
         Ok(config)
     })
     .await
@@ -792,6 +845,8 @@ pub(crate) fn sampling(
     // (T-7086); it is binary, so neither the XML nor the JSON read below applies to it.
     let format = if body_format == Some("xlsx") {
         SampleFormat::Xlsx
+    } else if body_format == Some("shapefile") {
+        SampleFormat::Shapefile
     } else if xml {
         SampleFormat::Text
     } else if rows {
@@ -844,7 +899,7 @@ pub(crate) async fn probe_source(state: &AppState, project: &str, spec: &Value) 
         Err(err) => return Some(Probe::skipped(format!("probe spec: {err}"))),
     };
     Some(
-        match run_harness(state, project, &probe_spec, &sample).await {
+        match run_harness(state, project, &probe_spec, "", &sample).await {
             Ok(trace) => answer_of(trace),
             Err(err) => Probe::skipped(err.to_string()),
         },
@@ -1075,7 +1130,7 @@ mod tests {
             .as_array()
             .expect("processors")
             .len();
-        with_lifetime(&mut config, &spec).expect("the step");
+        with_lifetime(&mut config, &spec, None).expect("the step");
         let processors = config["pipeline"]["processors"]
             .as_array()
             .expect("processors");
@@ -1094,6 +1149,26 @@ mod tests {
             .as_str()
             .is_some_and(|m| m.starts_with("let failed = errored()")));
 
+        // G-15: the attributes step runs first, as in the live stream.
+        let mut with_rules =
+            harness(&spec, &sample, "http://portal-internal:9090/x").expect("harness");
+        let rules = crate::reconciler::streams::attributes_step(
+            &serde_json::from_value(json!({
+                "class": "auto",
+                "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:vehicles:helsinki-all", "type": "Bus" }],
+                "attributes": [{ "type": "Bus", "systemMembers": "strip" }]
+            }))
+            .expect("spec"),
+            "buses",
+        )
+        .expect("renders");
+        with_lifetime(&mut with_rules, &spec, rules).expect("the steps");
+        let steps = with_rules["pipeline"]["processors"][at]["switch"][0]["processors"]
+            .as_array()
+            .expect("steps");
+        let labels: Vec<&str> = steps.iter().filter_map(|s| s["label"].as_str()).collect();
+        assert_eq!(labels, ["attributes", "lifetime"]);
+
         // No lifetime, the harness jcctl rendered.
         let plain = harness_for(sample);
         let mut unchanged = plain.clone();
@@ -1102,7 +1177,7 @@ mod tests {
             "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe"
         }))
         .expect("spec");
-        with_lifetime(&mut unchanged, &none).expect("nothing to add");
+        with_lifetime(&mut unchanged, &none, None).expect("nothing to add");
         assert_eq!(unchanged, plain);
     }
 
@@ -1361,6 +1436,11 @@ mod tests {
             (
                 json!({ "url": "https://x.example/stats.xlsx", "format": "xlsx" }),
                 SampleFormat::Xlsx,
+            ),
+            // T-7089: a zipped shapefile splits into Features as the live run does.
+            (
+                json!({ "url": "https://x.example/kaupunginosat.zip", "format": "shapefile" }),
+                SampleFormat::Shapefile,
             ),
         ] {
             let url = http["url"].as_str().expect("url").to_owned();

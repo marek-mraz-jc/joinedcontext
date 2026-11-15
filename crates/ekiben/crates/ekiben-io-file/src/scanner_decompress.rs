@@ -43,7 +43,17 @@ impl Algorithm {
 
     /// The whole decompressed stream; concatenated gzip, bzip2, lz4 and zstd members read on as Go's readers do.
     pub fn decompress(self, raw: &[u8]) -> Result<Vec<u8>, CoreError> {
-        let reader: Box<dyn Read + '_> = match self {
+        let mut out = Vec::new();
+        self.reader(raw)?
+            .read_to_end(&mut out)
+            .map_err(|e| CoreError::other(e.to_string()))?;
+        Ok(out)
+    }
+
+    /// The decompressed stream of `raw`, read as the child scanner asks for it.
+    /// ponytail: the cap holds for streaming children too; a larger stream needs a per-child cap.
+    pub fn reader<'a>(self, raw: impl Read + 'a) -> Result<Box<dyn Read + 'a>, CoreError> {
+        let inner: Box<dyn Read + 'a> = match self {
             Self::Gzip | Self::Pgzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
             Self::Zlib => Box::new(flate2::read::ZlibDecoder::new(raw)),
             Self::Flate => Box::new(flate2::read::DeflateDecoder::new(raw)),
@@ -55,17 +65,28 @@ impl Algorithm {
                     .map_err(|e| CoreError::other(e.to_string()))?,
             ),
         };
-        let mut out = Vec::new();
-        reader
-            .take(MAX_DECOMPRESSED_BYTES + 1)
-            .read_to_end(&mut out)
-            .map_err(|e| CoreError::other(e.to_string()))?;
-        if out.len() as u64 > MAX_DECOMPRESSED_BYTES {
-            return Err(CoreError::other(format!(
+        Ok(Box::new(Capped {
+            inner,
+            left: MAX_DECOMPRESSED_BYTES,
+        }))
+    }
+}
+
+/// Fails the read once the decompressed bytes pass the cap.
+struct Capped<R> {
+    inner: R,
+    left: u64,
+}
+
+impl<R: Read> Read for Capped<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.left = self.left.checked_sub(n as u64).ok_or_else(|| {
+            std::io::Error::other(format!(
                 "decompressed data exceeds safety limit ({MAX_DECOMPRESSED_BYTES} bytes)"
-            )));
-        }
-        Ok(out)
+            ))
+        })?;
+        Ok(n)
     }
 }
 

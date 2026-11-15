@@ -12188,7 +12188,7 @@ export interface components {
          * @description How a sample is split: one message, a CSV row each, or a JSON array's elements.
          * @enum {string}
          */
-        PipelineTestSampleFormat: "text" | "csv" | "json" | "xlsx";
+        PipelineTestSampleFormat: "text" | "csv" | "json" | "xlsx" | "shapefile";
         /** @description A page of the Portal a person went to or starred: where it is and what it was called. */
         Place: {
             /** @description A path inside the Portal, with its query: `/projects/helsinki/pipelines/air?tab=runs`. */

@@ -18,6 +18,7 @@ Two shapes (PL-54, ADR-N-023): `v1alpha1` holds one `source`, one `compute`, one
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `allowFeedback` | boolean | no | The author knows this resident pipeline triggers itself and accepts it (PL-37). A derived pipeline whose output type is the type its own subscription watches feeds its own trigger, and the reconciler refuses it. Setting this says the loop is deliberate, which is why PL-37 puts the change in the yellow lane: a person reviews it. |
+| `attributes` | list of [AttributeRules](#attributerules) | no | Per written type, how chosen attributes are written: their `observedAt`, `unitCode` and `datasetId`, the source's system members dropped and its own dates kept (G-15). The rendered stream applies them after the author's steps, before history and lifetime. |
 | `class` | [PipelineClass](#pipelineclass) | yes | Operational execution class (PL-04, PL-05). |
 | `compute` | [Compute](#compute) | no | Optional compute execution specification (PL-33). |
 | `enabled` | boolean | no | Whether the pipeline runs (PL-40). `false` pauses it: the reconciler leaves a resident stream out of the runner and suspends a scheduled CronJob, the manifest stays, and a Resume is the flag flipped back. Absent means `true`, and `true` is not written back. |
@@ -36,6 +37,17 @@ Two shapes (PL-54, ADR-N-023): `v1alpha1` holds one `source`, one `compute`, one
 | `sources` | list of [PipelineSource](#pipelinesource) | no | The inputs, merged by a Bento `broker` when there are several (PL-52, PL-53); `v1alpha2`. |
 | `steps` | list of [Step](#step) | no | The processors, in the order they run (PL-52); `v1alpha2`. |
 | `targetEndpoint` | [Urn](#urn) | no | Target endpoint URN through which writes occur (PF-39, PL-18); `v1alpha1` only. |
+
+## AttributeRules
+
+The attribute rules of one written type (G-15).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `rules` | list of [AttributeRule](#attributerule) | no | Up to 64 rules, each attribute in one of them. |
+| `sourceDates` | [SourceDates](#sourcedates) | no | The record members holding the source's own created and modified dates, kept as the Properties `dateCreated` and `dateModified`. |
+| `systemMembers` | [SystemMembers](#systemmembers) | no | `strip` drops the `createdAt`, `modifiedAt` and `deletedAt` the source carries, which the broker sets itself; absent keeps the record as the steps leave it. |
+| `type` | string | yes | The entity type, one an output of the pipeline writes. |
 
 ## PipelineClass
 
@@ -172,6 +184,32 @@ NGSI-LD entity URN (ADR-N-041, PF-43): urn:ngsi-ld:{Type}:{id}; the prefixed sha
 
 Type: string
 
+## AttributeRule
+
+One rule over chosen attributes of a type (G-15).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `datasetId` | string | no | `pipeline` (`urn:jc:pipeline:<name>`, PL-100) or a template such as `urn:ngsi-ld:Dataset:{station.code}` whose `{path}` reads the record. |
+| `names` | list of string | yes | One to 64 slots of the type. |
+| `observedAt` | string | no | A date-time slot of the type whose value is each instance's `observedAt`, `now` (the write's time) or `received` (none: the broker's receive time, DM-107). |
+| `unitCode` | string | no | `model` (the slot's unit in the space's model) or a UN/CEFACT code such as `CEL`. |
+
+## SourceDates
+
+Where a source's own dates are read (record paths such as `createdAt` or `meta.updated`).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `created` | string | no | Written as `dateCreated`. |
+| `modified` | string | no | Written as `dateModified`. |
+
+## SystemMembers
+
+What happens to the system members a source carries (DM-130).
+
+Type: `"strip"`
+
 ## DatacubeStep
 
 A `datacube` step (PL-112).
@@ -257,7 +295,7 @@ The mint option of a pipeline's output (ADR-N-041 §3.4, Architecture/08).
 
 Mutation mode for pipeline output writers (PL-32).
 
-Type: one of `"upsert"`, `"replace"`, `"update-attrs"`
+Type: one of `"upsert"`, `"replace"`, `"update-attrs"`, `"merge"`, `"backfill"`
 
 ## SourceQuery
 

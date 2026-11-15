@@ -639,11 +639,12 @@ export function dataSourceSchema(
           title: t("datasources.field.records"),
           pattern: RECORDS_PATH,
         },
-        // T-7086: how the body becomes records; a spreadsheet is read one row per record.
+        // T-7086: how the body becomes records; a spreadsheet is read one row per record, a
+        // zipped shapefile one GeoJSON feature per record (T-7089).
         format: {
           type: "string",
           title: t("datasources.field.format"),
-          oneOf: (["csv", "xlsx"] as const).map((format) => ({ const: format, title: t(`choice.httpBodyFormat.${format}`) })),
+          oneOf: (["csv", "xlsx", "shapefile"] as const).map((format) => ({ const: format, title: t(`choice.httpBodyFormat.${format}`) })),
         },
         sheet: { type: "string", title: t("datasources.sheet.label"), pattern: SHEET_NAME },
         authorization: {
@@ -824,6 +825,8 @@ export interface CatalogField {
   optional?: boolean;
   default: unknown;
   description: string;
+  /** The only values the runner takes, offered as a dropdown (ekiben-inputs.json, T-7092). */
+  options?: string[];
 }
 
 /** Bento runner input catalog item (PL-50). */
@@ -971,6 +974,7 @@ export function runnerInputSchema(input: CatalogInput): { schema: JsonSchema; ui
       propSchema.items = { type: scalarType };
     } else if (f.kind === "scalar" && scalarType) {
       propSchema.type = scalarType;
+      if (f.options) propSchema.enum = f.options;
     } else {
       propSchema.type = "string";
       propUi["ui:widget"] = "textarea";
@@ -1173,7 +1177,7 @@ export const PIPELINE_CLASSES = ["auto", "resident", "scheduled"] as const;
 export const COMPUTE_KINDS = ["bloblang", "mapping", "wasm", "container"] as const;
 
 /** How a pipeline writes its result: merge, replace the entity, update attributes (PL-79). */
-export const OUTPUT_MODES = ["upsert", "replace", "update-attrs"] as const;
+export const OUTPUT_MODES = ["upsert", "replace", "update-attrs", "merge", "backfill"] as const;
 
 /** A Bento duration: a positive count and one of the units Bento accepts (PL-26, PL-27). */
 export const PERIOD_PATTERN = "^[1-9][0-9]*(ms|s|m|h)$";

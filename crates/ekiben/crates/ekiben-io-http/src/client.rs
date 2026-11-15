@@ -83,6 +83,32 @@ fn oauth2_form(oa: &OAuth2Config, in_params: bool) -> String {
     form.finish()
 }
 
+/// `oauth2.endpoint_params`: extra token request fields, each a list of strings
+/// (`audience: [https://api.example.com]`).
+fn oauth2_endpoint_params(
+    v: Option<&JsonValue>,
+) -> Result<HashMap<String, Vec<String>>, CoreError> {
+    const HINT: &str = "oauth2.endpoint_params maps a name to a list of strings, for example {audience: [https://api.example.com]}";
+    let Some(v) = v else {
+        return Ok(HashMap::new());
+    };
+    v.as_object()
+        .ok_or_else(|| CoreError::config(HINT))?
+        .iter()
+        .map(|(k, vs)| {
+            let vs = vs
+                .as_array()
+                .and_then(|a| {
+                    a.iter()
+                        .map(|v| v.as_str().map(String::from))
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| CoreError::config(format!("{HINT}; {k} is not")))?;
+            Ok((k.clone(), vs))
+        })
+        .collect()
+}
+
 /// `Basic base64(QueryEscape(id) ":" QueryEscape(secret))`, x/oauth2's AuthStyleInHeader.
 fn oauth2_basic(oa: &OAuth2Config) -> String {
     use base64::Engine as _;
@@ -367,7 +393,7 @@ impl HttpClient {
                     client_secret,
                     token_url,
                     scopes,
-                    endpoint_params: HashMap::new(),
+                    endpoint_params: oauth2_endpoint_params(oa.get("endpoint_params"))?,
                 })
             } else {
                 None
@@ -928,6 +954,45 @@ pub fn validate_resolved_url(url_str: &str, org: &OrgContext) -> Result<Url, Cor
 
     org.check_http_host(host)?;
     Ok(parsed)
+}
+
+/// The three outbound clients of [`HttpClient`] for a component that builds its own requests
+/// (the S3 client): [`Self::for_url`] validates the URL as every `http_client` request is and
+/// hands the client whose resolver enforces the organization's outbound rule for that host.
+pub struct GuardedHttp {
+    public: reqwest::Client,
+    private_host: reqwest::Client,
+    open: reqwest::Client,
+}
+
+impl GuardedHttp {
+    pub fn new(timeout: Duration) -> Result<Self, CoreError> {
+        Ok(Self {
+            public: build_http(timeout, Reach::Public)?,
+            private_host: build_http(timeout, Reach::PrivateHost)?,
+            open: build_http(timeout, Reach::Open)?,
+        })
+    }
+
+    /// The checked URL and the client to send it with; a refused host is an error before any
+    /// connection is made.
+    pub fn for_url(
+        &self,
+        org: &OrgContext,
+        url: &str,
+    ) -> Result<(Url, &reqwest::Client), CoreError> {
+        let url = validate_resolved_url(url, org)?;
+        let client = if org.get_quotas().allow_private_ips {
+            &self.open
+        } else if url.host_str().is_some_and(|h| {
+            org.is_private_host_port_allowed(h, url.port_or_known_default().unwrap_or(0))
+        }) {
+            &self.private_host
+        } else {
+            &self.public
+        };
+        Ok((url, client))
+    }
 }
 
 /// What a client built by [`build_http`] may connect to.

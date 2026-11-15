@@ -78,7 +78,11 @@ export function TemplateGallery({ onUse }: TemplateGalleryProps): JSX.Element {
             errors={errorsFor(["url", "ckanDataset"])}
             required
           >
-            <Input id="template-url" type="url" inputMode="url" value={url} onChange={(e) => setUrl(e.target.value)} />
+            <Input id="template-url" type="url" inputMode="url" value={url} onChange={(e) => {
+                setUrl(e.target.value);
+                // The name derives from the address, so a new address answers both refusals.
+                if (problem === "url" || problem === "ckanDataset" || (problem === "name" && !named)) setProblem(null);
+              }} />
           </Field>
           {picked.asksLayer ? (
             <Field

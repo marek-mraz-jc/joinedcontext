@@ -309,6 +309,7 @@ impl UnarchiveProcessor {
                 | "json_array"
                 | "json_map"
                 | "csv"
+                | "shapefile"
         ) {
             return Err(CoreError::config(format!(
                 "archive format not recognised: {format}"
@@ -517,6 +518,19 @@ impl UnarchiveProcessor {
                     .map(|row| {
                         let mut np = part.shallow_copy();
                         np.set_structured(row);
+                        np
+                    })
+                    .collect())
+            }
+            // ekiben extension (T-7089): one WGS 84 GeoJSON Feature per shapefile record.
+            "shapefile" => {
+                let bytes = part.as_bytes();
+                let features = crate::shapefile::features(&bytes, self.max_members)?;
+                Ok(features
+                    .into_iter()
+                    .map(|f| {
+                        let mut np = part.shallow_copy();
+                        np.set_structured(f);
                         np
                     })
                     .collect())

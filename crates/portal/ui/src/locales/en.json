@@ -2503,6 +2503,12 @@
         "url": "Address of the spreadsheet",
         "urlHelp": "The address that downloads the file itself, starting with https://, for example https://data.example.org/stations.xlsx."
       },
+      "shapefile": {
+        "title": "Shapefile (zipped) at an address",
+        "what": "A zip with one shapefile layer (.shp, .dbf, .prj), one GeoJSON feature per record in WGS 84, read on every run.",
+        "url": "Address of the zip",
+        "urlHelp": "The address that downloads the zip itself, starting with https://, for example https://data.example.org/kaupunginosat.zip. The .prj names the coordinate system, for example EPSG:3879 for Helsinki."
+      },
       "json": {
         "title": "REST API (JSON)",
         "what": "An API that answers JSON, read on every run.",
@@ -2638,7 +2644,16 @@
       "modeChoice": {
         "upsert": "Create or merge",
         "replace": "Replace the whole entity",
-        "update-attrs": "Update attributes only"
+        "update-attrs": "Update attributes only",
+        "merge": "Merge into parts of attributes",
+        "backfill": "Add to history only"
+      },
+      "modeHint": {
+        "upsert": "Creates the entity or updates the attributes the record names; the other attributes stay.",
+        "replace": "The entity becomes exactly the record: attributes it does not name are removed. Use it only when this pipeline alone writes the entity.",
+        "update-attrs": "Updates the attributes the record names on the entity; the other attributes stay.",
+        "merge": "Deep-merges the record, so two pipelines can each write part of one attribute, for example address.streetAddress and address.postalCode.",
+        "backfill": "Adds past readings to the history only; the current value stays. Needs the temporal append operation in the Endpoint's Policy."
       },
       "lastRun": "Last run"
     },
@@ -5850,7 +5865,10 @@
     "observedAt": "Observed",
     "unit": "Unit",
     "datasetId": "Dataset",
-    "empty": "No entities here.",
+    "empty": "No entities here yet. Data arrives through a data source, an import or a pipeline.",
+    "filtersMatchNothing": "None of the rows match your filters.",
+    "notSaved": "not saved",
+    "refusedNext": "Discard the changes to keep what is stored. If the reason says you may not write here, ask the Context Space's owner for access.",
     "loading": "Loading…",
     "filtering": "Filtering…",
     "previous": "Previous",
@@ -5861,6 +5879,7 @@
     "retry": "Try again",
     "busy": "the data source is busy right now",
     "timedOut": "the data source took too long to answer",
+    "unreachable": "the data source could not be reached",
     "filter": "Filter",
     "noFilter": "Any",
     "ops": {
@@ -9087,7 +9106,8 @@
     },
     "httpBodyFormat": {
       "csv": "CSV",
-      "xlsx": "Spreadsheet (xlsx, ods)"
+      "xlsx": "Spreadsheet (xlsx, ods)",
+      "shapefile": "Shapefile (zip)"
     }
   },
   "picker": {

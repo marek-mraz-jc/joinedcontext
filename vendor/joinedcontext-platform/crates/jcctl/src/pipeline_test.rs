@@ -41,6 +41,10 @@ pub enum SampleFormat {
     /// split by the runner's `unarchive` format `xlsx` as a live `format: xlsx` source is
     /// (T-7086). A workbook is binary, so it is never an inline sample.
     Xlsx,
+    /// A zipped shapefile fetched by URL: one WGS 84 GeoJSON Feature per record, split by the
+    /// runner's `unarchive` format `shapefile` as a live `format: shapefile` source is (T-7089).
+    /// A zip is binary, so it is never an inline sample.
+    Shapefile,
 }
 
 /// The sample of one test: inline text, or a URL the runner fetches itself.
@@ -131,6 +135,11 @@ pub fn harness(
     if sample.format == SampleFormat::Xlsx && sample.text.is_some() {
         return Err(HarnessError::Spreadsheet(
             "an xlsx sample is a binary workbook: give its url, not text",
+        ));
+    }
+    if sample.format == SampleFormat::Shapefile && sample.text.is_some() {
+        return Err(HarnessError::Spreadsheet(
+            "a shapefile sample is a binary zip: give its url, not text",
         ));
     }
     match (&sample.sheet, sample.format) {
@@ -238,13 +247,14 @@ pub fn harness(
             )}));
             processors.push(json!({ "unarchive": { "format": "json_array" } }));
         }
-        SampleFormat::Xlsx => {
-            // The rows split as a live `format: xlsx` source splits them (jc_manifest::bento),
-            // then only the first rows go on, as a CSV sample's do. A failed fetch keeps its
-            // own error: its empty body is not read as a workbook.
-            let format = match &sample.sheet {
-                Some(sheet) => format!("xlsx:{sheet}"),
-                None => "xlsx".to_string(),
+        SampleFormat::Xlsx | SampleFormat::Shapefile => {
+            // The rows split as a live `format: xlsx` (or `shapefile`) source splits them
+            // (jc_manifest::bento), then only the first rows go on, as a CSV sample's do. A
+            // failed fetch keeps its own error: its empty body is not read as a workbook.
+            let format = match (sample.format, &sample.sheet) {
+                (SampleFormat::Shapefile, _) => "shapefile".to_string(),
+                (_, Some(sheet)) => format!("xlsx:{sheet}"),
+                (_, None) => "xlsx".to_string(),
             };
             processors.push(json!({ "switch": [{
                 "check": "!errored() && meta(\"jc_fetch_error\").or(\"\") == \"\"",
@@ -670,6 +680,47 @@ mod tests {
                     ..sample.clone()
                 },
                 "none of",
+            ),
+        ] {
+            let err = harness(&spec(None), &refused, "http://portal:9090/c")
+                .expect_err(why)
+                .to_string();
+            assert!(err.contains(why), "{err}");
+        }
+    }
+
+    /// T-7089: a shapefile sample is a zip fetched by URL and split by `unarchive` format
+    /// `shapefile`, as the live source renders it; inline text or a sheet is refused.
+    #[test]
+    fn a_shapefile_sample_is_fetched_and_split_into_features_as_the_live_source_is() {
+        let sample = Sample {
+            text: None,
+            url: Some("https://data.example.org/kaupunginosat.zip".into()),
+            format: SampleFormat::Shapefile,
+            records: None,
+            sheet: None,
+        };
+        let config = harness(&spec(None), &sample, "http://portal:9090/c").expect("a harness");
+        let split = &config["pipeline"]["processors"][3]["switch"][0];
+        assert!(split["check"]
+            .as_str()
+            .is_some_and(|c| c.contains("jc_fetch_error")));
+        assert_eq!(split["processors"][0]["unarchive"]["format"], "shapefile");
+        for (refused, why) in [
+            (
+                Sample {
+                    text: Some("PK".into()),
+                    url: None,
+                    ..sample.clone()
+                },
+                "binary zip",
+            ),
+            (
+                Sample {
+                    sheet: Some("Alueet".into()),
+                    ..sample.clone()
+                },
+                "set format xlsx",
             ),
         ] {
             let err = harness(&spec(None), &refused, "http://portal:9090/c")
