@@ -69,7 +69,7 @@ impl Visible {
     }
 
     /// Whether the model may describe this entity type at all.
-    fn covers_type(&self, name: &str) -> bool {
+    pub(crate) fn covers_type(&self, name: &str) -> bool {
         !self.ungranted
             && !self.denied_types.contains(name)
             && (self.types.is_empty() || self.types.contains(name))
