@@ -1739,7 +1739,7 @@ pub(crate) fn unknown_operation(spec: &Value) -> Option<&str> {
 /// by the project list's own rule (T-4948): the picker offers those alone, and an id typed
 /// through the API meets the same answer. An unknown project reads like an unreadable one. A
 /// project already admitted stays, so a later edit of the title still goes through.
-fn check_admitted_projects(
+pub(crate) fn check_admitted_projects(
     state: &AppState,
     identity: &crate::auth::session::Identity,
     project: &str,
@@ -2550,7 +2550,23 @@ pub(crate) fn check_names_policies(
         };
         return Err(unprocessable(vec![line]));
     };
-    let held = held
+    check_policy_refs_readable(state, identity, project, name, references)
+}
+
+/// The half of [`check_names_policies`] every door asks, import, restore and blueprints too
+/// (S-5-08): a reference the Endpoint `name` did not hold names a Policy the proposer reads, or
+/// the answer is a 403 naming the field. A Policy not on `main` is one the same Change creates.
+pub(crate) fn check_policy_refs_readable(
+    state: &AppState,
+    identity: &crate::auth::session::Identity,
+    project: &str,
+    name: &str,
+    references: &[jc_core::Urn],
+) -> Result<(), ApiError> {
+    use jc_core::kinds::EndpointSpec;
+    let held = state
+        .mirror
+        .get(project, "Endpoint", name)
         .and_then(|held| serde_json::from_value::<EndpointSpec>(held.spec).ok())
         .and_then(|held| held.policy_refs().map(<[jc_core::Urn]>::to_vec))
         .unwrap_or_default();
