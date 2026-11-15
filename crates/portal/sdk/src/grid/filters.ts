@@ -195,11 +195,19 @@ function termOf(
   meta: MetaKey | null | undefined,
   filter: ColumnFilter,
   kind?: FilterKind,
+  datetime?: boolean,
 ): string | undefined {
   if (!complete(filter)) {
     return undefined;
   }
   const path = term(attr, meta);
+  // A date-time picker names a minute, and `==` compares texts (CIM 009 4.9): "is" asks for the
+  // minute's span, so a stored `10:00:00Z` or `10:00:30.5Z` matches the picked 10:00.
+  const minute = datetime && (filter.op === "equals" || filter.op === "notEquals") ? minuteOf(filter.value) : undefined;
+  if (minute) {
+    const [from, to] = minute;
+    return filter.op === "equals" ? `${path}>=${from};${path}<${to}` : `(${path}<${from}|${path}>=${to})`;
+  }
   switch (filter.op) {
     case "empty":
       return `!${path}`;
@@ -230,6 +238,15 @@ function termOf(
     case "startsWith":
       return undefined;
   }
+}
+
+/** The minute a timestamp falls in, as `[start, end)` in UTC without a seconds fraction. */
+function minuteOf(value: string): [string, string] | undefined {
+  const at = Date.parse(value.trim());
+  if (Number.isNaN(at)) return undefined;
+  const start = Math.floor(at / 60_000) * 60_000;
+  const text = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
+  return [text(start), text(start + 60_000)];
 }
 
 /** A column a filter can name: the attribute, the metadata member, and what it holds. */
@@ -283,7 +300,7 @@ export function queryFromFilters(
     if (!column.attr) {
       continue;
     }
-    const built = termOf(qAttr(column.attr, column), column.meta, filter, column.kind);
+    const built = termOf(qAttr(column.attr, column), column.meta, filter, column.kind, column.datetime);
     if (built) {
       terms.push(built);
     }

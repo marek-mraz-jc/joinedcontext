@@ -102,6 +102,17 @@ describe("the filter row, by field kind (T-6328)", () => {
     expect(box.value).toBe("2026-10-02T10:00");
   });
 
+  it("datetime: is asks for the picked minute's span, since == compares texts", async () => {
+    const asked = await grid();
+    op("Observed", "equals");
+    fireEvent.change(screen.getByLabelText("Value: Observed"), { target: { value: "2026-10-02T10:00" } });
+    const from = new Date("2026-10-02T10:00").toISOString().replace(".000Z", "Z");
+    const to = new Date(new Date("2026-10-02T10:00").getTime() + 60_000).toISOString().replace(".000Z", "Z");
+    await waitFor(() => expect(asked.at(-1)?.q).toBe(`dateObserved>=${from};dateObserved<${to}`));
+    op("Observed", "notEquals");
+    await waitFor(() => expect(asked.at(-1)?.q).toBe(`(dateObserved<${from}|dateObserved>=${to})`));
+  });
+
   it("boolean: yes or no, sent bare", async () => {
     const asked = await grid();
     op("Verified", "equals");
