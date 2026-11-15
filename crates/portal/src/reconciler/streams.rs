@@ -5308,6 +5308,63 @@ output:
         assert!(!identity::replaces_any(&plain));
     }
 
+    /// G-17: a `merge` or `backfill` output is written by the `ngsi_ld` processor under the
+    /// write's own label (so its `jc_refused_<label>` metadata reaches the outcome sink as the
+    /// branch's did), through the same Endpoint base, credential, egress limit and refusal
+    /// codes; the upsert outputs beside it keep the branch around the `http` upsert.
+    #[test]
+    fn a_merge_or_backfill_output_is_written_by_the_ngsi_ld_processor() {
+        let spec = second_shape(serde_json::json!({
+            "class": "resident",
+            "period": "30s",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "gbfs" } }],
+            "steps": [{ "kind": "bloblang", "bloblang": "root = this" }],
+            "routes": [
+                { "name": "hot", "when": "this.t > 30",
+                  "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:alerts:hot", "mode": "backfill" }] }
+            ],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:helsinki:ops", "mode": "merge" }]
+        }));
+        let stream = render_routed(&spec);
+        fn at<'a>(value: &'a Value, label: &str) -> Option<&'a Value> {
+            match value {
+                Value::Object(map) if map.get("label").and_then(Value::as_str) == Some(label) => {
+                    Some(value)
+                }
+                Value::Object(map) => map.values().find_map(|v| at(v, label)),
+                Value::Array(items) => items.iter().find_map(|v| at(v, label)),
+                _ => None,
+            }
+        }
+        for (label, slug, operation) in [
+            ("write_0", "opsslug", "merge"),
+            ("route_0_write_0", "hotslug", "temporal_append"),
+        ] {
+            let write = at(&stream, label).expect("the write is labelled");
+            assert!(write.get("branch").is_none(), "{label}: {write}");
+            let ngsi_ld = &write["ngsi_ld"];
+            assert_eq!(ngsi_ld["operation"], operation, "{label}");
+            assert_eq!(
+                ngsi_ld["url"],
+                format!("${{JC_GATEWAY_URL}}/api/endpoint/{slug}/ngsi-ld/v1")
+            );
+            assert_eq!(ngsi_ld["drop_on"], serde_json::json!([400, 413, 422]));
+            assert_eq!(ngsi_ld["timeout"], "30s");
+            assert_eq!(ngsi_ld["rate_limit"], identity::egress_label("helsinki"));
+            // The pipeline's own client, as the upsert's (PL-19); never a secret literal.
+            assert_eq!(ngsi_ld["oauth2"], identity::pipeline_oauth2("helsinki"));
+        }
+        // A replay of a backfill's rejected records appends to history too.
+        let replay =
+            identity::replay_output("helsinki", "opsslug", jc_core::kinds::OutputMode::Backfill);
+        assert_eq!(replay["ngsi_ld"]["operation"], "temporal_append");
+        assert!(
+            identity::replay_output("helsinki", "opsslug", jc_core::kinds::OutputMode::Upsert)
+                .get("http_client")
+                .is_some()
+        );
+    }
+
     /// PL-73: each record takes the first route whose `when` holds, runs that route's steps, and
     /// is written through that route's outputs; the rest go through the default lane.
     #[test]

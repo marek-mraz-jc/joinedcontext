@@ -587,6 +587,14 @@ pub enum OutputMode {
     Replace,
     /// Update or append attributes onto existing entity.
     UpdateAttrs,
+    /// Deep-merge the record into the entity (`entityOperations/merge`, NGSI-LD 5.6.20): a
+    /// sub-attribute the record does not name stays, and `urn:ngsi-ld:null` deletes one, so two
+    /// pipelines can each own part of one attribute (G-17).
+    Merge,
+    /// Append the record's attribute instances to the entity's history only
+    /// (`POST /temporal/entities/{id}/attrs`, 5.6.12): the current value is never touched, for
+    /// a backfill of past readings (G-17).
+    Backfill,
 }
 
 impl OutputMode {
@@ -596,6 +604,19 @@ impl OutputMode {
             Self::Upsert => "upsert",
             Self::Replace => "replace",
             Self::UpdateAttrs => "update-attrs",
+            Self::Merge => "merge",
+            Self::Backfill => "backfill",
+        }
+    }
+
+    /// The one operation a Policy grants for this mode's write (PL-20, G-17): the gateway
+    /// authorizes the Endpoint call it renders to by exactly this operation.
+    pub const fn grant(&self) -> crate::kinds::policy::Operation {
+        use crate::kinds::policy::Operation;
+        match self {
+            Self::Upsert | Self::Replace | Self::UpdateAttrs => Operation::UpsertBatch,
+            Self::Merge => Operation::MergeBatch,
+            Self::Backfill => Operation::AppendAttrsTemporal,
         }
     }
 }

@@ -257,7 +257,7 @@ The mint option of a pipeline's output (ADR-N-041 §3.4, Architecture/08).
 
 Mutation mode for pipeline output writers (PL-32).
 
-Type: one of `"upsert"`, `"replace"`, `"update-attrs"`
+Type: one of `"upsert"`, `"replace"`, `"update-attrs"`, `"merge"`, `"backfill"`
 
 ## SourceQuery
 

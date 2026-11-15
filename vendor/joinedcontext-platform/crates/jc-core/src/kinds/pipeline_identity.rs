@@ -10,7 +10,7 @@
 //! [`derive()`], so the principal the gateway decides for is the one whose client the Portal writes.
 
 use crate::envelope::{Ref, TypedRef};
-use crate::kinds::pipeline::PipelineSpec;
+use crate::kinds::pipeline::{OutputMode, PipelineSpec};
 use crate::kinds::pipeline_source_deletes::SourceDeleteMode;
 use crate::kinds::policy::{
     EntitySelector, Operation, OperationGroup, OperationRef, PolicyEffect, PolicySpec, Principal,
@@ -126,6 +126,11 @@ pub fn derive(
         });
         if spec.expiry.is_some() || deletes {
             operations.push(OperationRef::Single(Operation::DeleteBatch));
+        }
+        // A merge or a backfill is its own Endpoint call, granted by its one operation (G-17).
+        let grant = output.mode.unwrap_or(OutputMode::Upsert).grant();
+        if grant != Operation::UpsertBatch {
+            operations.push(OperationRef::Single(grant));
         }
         let name = bounded(&format!("{account}-w-{}", index + 1));
         endpoints.insert(name.clone(), target.to_owned());
@@ -432,6 +437,41 @@ outputs: [{ targetEndpoint: "urn:ngsi-ld:Endpoint:zilina.sk:zilina-uniza:zilina-
                 ("pl-drepo-w-2", "zilina-kpi")
             ]
         );
+    }
+
+    /// G-17: a merge output is granted the batch merge and a backfill output the temporal
+    /// append, each beside the upsert every output holds and nothing else; an upsert output
+    /// gains neither.
+    #[test]
+    fn a_merge_or_backfill_output_is_granted_its_one_operation() {
+        for (mode, extra) in [
+            ("upsert", None),
+            ("replace", None),
+            ("update-attrs", None),
+            ("merge", Some("mergeBatch")),
+            ("backfill", Some("appendAttrsTemporal")),
+        ] {
+            let spec = DREPO
+                .replace("mode: upsert", &format!("mode: {mode}"))
+                .replace("expiry: { after: 21d, types: [CreativeWork] }\n", "");
+            let derived = derive(
+                "zilina",
+                "drepo",
+                &pipeline(&spec),
+                "pipeline-runner",
+                "zilina.sk",
+                spaces,
+            );
+            let operations: Vec<&str> = derived.policies[0]
+                .1
+                .operations
+                .iter()
+                .map(OperationRef::as_str)
+                .collect();
+            let mut expected = vec!["upsertBatch", "createBatch", "queryBatch"];
+            expected.extend(extra);
+            assert_eq!(operations, expected, "{mode}");
+        }
     }
 
     /// PL-20: the write grant is on the output's space over its type, with the sweep's delete

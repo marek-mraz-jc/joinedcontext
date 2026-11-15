@@ -494,6 +494,40 @@ pub(crate) fn gateway_output(project: &str, slug: &str) -> serde_json::Value {
     serde_json::json!({ "http_client": upsert(project, slug, false) })
 }
 
+/// The replay's output in the pipeline's own `mode`: a merge or a backfill is written as it was
+/// meant to be, so replaying a backfill's rejected readings never overwrites the current value.
+pub(crate) fn replay_output(project: &str, slug: &str, mode: OutputMode) -> serde_json::Value {
+    match ngsi_ld_operation(mode) {
+        Some(operation) => serde_json::json!({ "ngsi_ld": ngsi_ld(project, slug, operation) }),
+        None => gateway_output(project, slug),
+    }
+}
+
+/// The `ngsi_ld` writer's operation for a mode the batch upsert cannot write (G-17): `merge`
+/// (`entityOperations/merge`) and `backfill` (`temporal/entities/{id}/attrs`). The upsert modes
+/// stay on the `http` upsert, whose render the 738 running pipelines are measured on.
+fn ngsi_ld_operation(mode: OutputMode) -> Option<&'static str> {
+    match mode {
+        OutputMode::Merge => Some("merge"),
+        OutputMode::Backfill => Some("temporal_append"),
+        OutputMode::Upsert | OutputMode::Replace | OutputMode::UpdateAttrs => None,
+    }
+}
+
+/// The `ngsi_ld` writer (ekiben-io-ngsild, E5) through the Endpoint `slug`, as the pipeline's
+/// service account, with the upsert's timeout, egress limit and refusal codes. It leaves the
+/// same `jc_refused_<label>` and `jc_failed` metadata the branch around the upsert does.
+fn ngsi_ld(project: &str, slug: &str, operation: &str) -> Value {
+    serde_json::json!({
+        "url": format!("${{JC_GATEWAY_URL}}/api/endpoint/{slug}/ngsi-ld/v1"),
+        "operation": operation,
+        "oauth2": pipeline_oauth2(project),
+        "timeout": "30s",
+        "rate_limit": egress_label(project),
+        "drop_on": [400, 413, 422]
+    })
+}
+
 /// The label of a stream's write to its `at`-th target, `prefix` naming the route it belongs to.
 pub(super) fn write_label(prefix: &str, at: usize) -> String {
     format!("{prefix}write_{at}")
@@ -515,12 +549,13 @@ fn refused_key(label: &str) -> String {
     format!("{}{label}", crate::pipeline_log::REFUSED_PREFIX)
 }
 
-/// Whether the `at`-th output of `outputs()` replaces its entities (PL-79).
-pub(super) fn replaces(pipeline: &PipelineSpec, at: usize) -> bool {
+/// The mode the `at`-th output of `outputs()` writes in; absent is `upsert` (PL-79, G-17).
+pub(super) fn mode_of(pipeline: &PipelineSpec, at: usize) -> OutputMode {
     pipeline
         .outputs()
         .get(at)
-        .is_some_and(|output| output.mode == Some(OutputMode::Replace))
+        .and_then(|output| output.mode)
+        .unwrap_or(OutputMode::Upsert)
 }
 
 /// Whether any output replaces its entities (PL-79): a changed stream then runs at once (T-5824).
@@ -531,8 +566,9 @@ pub(super) fn replaces_any(pipeline: &PipelineSpec) -> bool {
         .any(|output| output.mode == Some(OutputMode::Replace))
 }
 
-/// The writes to `targets` (an Endpoint slug and whether its output replaces the entity, PL-79),
-/// one after the other, each a `branch` around the upsert (T-4056).
+/// The writes to `targets` (an Endpoint slug and its output's mode, PL-79), one after the
+/// other, each a `branch` around the upsert (T-4056), or for a merge or a backfill the
+/// `ngsi_ld` processor, which leaves the same metadata (G-17).
 ///
 /// Bento's `http_client` output never shows its answer to anything, so a `207` whose items the
 /// endpoint refused was logged as sent. As a processor the write keeps the answer: the branch's
@@ -542,7 +578,7 @@ pub(super) fn replaces_any(pipeline: &PipelineSpec) -> bool {
 /// replays it (T-2983) as the output's failure did.
 pub(super) fn writes(
     project: &str,
-    targets: &[(String, bool)],
+    targets: &[(String, OutputMode)],
     prefix: &str,
 ) -> Result<Vec<Value>, RenderError> {
     if targets.is_empty() {
@@ -553,13 +589,19 @@ pub(super) fn writes(
     let mut processors: Vec<Value> = targets
         .iter()
         .enumerate()
-        .map(|(at, (slug, replace))| {
+        .map(|(at, (slug, mode))| {
             let label = write_label(prefix, at);
+            if let Some(operation) = ngsi_ld_operation(*mode) {
+                return serde_json::json!({
+                    "label": label,
+                    "ngsi_ld": ngsi_ld(project, slug, operation),
+                });
+            }
             let key = refused_key(&label);
             serde_json::json!({
                 "label": label,
                 "branch": {
-                    "processors": [{ "http": upsert(project, slug, *replace) }],
+                    "processors": [{ "http": upsert(project, slug, *mode == OutputMode::Replace) }],
                     "result_map": format!(
                         "let errors = content().parse_json().catch({{}}).errors.or([])\n\
                          meta {key} = $errors.map_each(e -> {{ \"id\": e.entityId.or(\"\"), \

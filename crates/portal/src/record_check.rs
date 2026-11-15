@@ -21,7 +21,7 @@ use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::{evaluate, Constraints, Request, Verdict as Decision};
 use context_gateway::pdp::write_guard::{self, Refusal};
 use jc_core::kinds::pipeline_identity;
-use jc_core::kinds::{Operation, PipelineSpec, PolicySpec};
+use jc_core::kinds::{Operation, OutputMode, PipelineSpec, PolicySpec};
 use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -48,7 +48,8 @@ const NO_ATTRIBUTE: [&str; 8] = [
     "@context",
 ];
 
-/// Every pipeline writes through its Endpoint's batch upsert (`streams::upsert`).
+/// A pipeline writes through its Endpoint's batch upsert (`streams::upsert`), unless its output's
+/// mode names another call ([`OutputMode::grant`], G-17).
 const WRITE: Operation = Operation::UpsertBatch;
 
 /// Where a finding comes from.
@@ -188,6 +189,8 @@ struct Target {
     /// `None` when this Portal writes no views (no broker configured); `Some(None)` when it does
     /// but has not read the Endpoint yet.
     write: Option<Option<WriteView>>,
+    /// The operation the output's mode writes by ([`OutputMode::grant`]).
+    operation: Operation,
 }
 
 /// Judges `records` as the pipeline `pipeline` (its manifest) would write them, at `now`.
@@ -365,6 +368,7 @@ fn writer(state: &AppState, project: &str, pipeline: &Value) -> Result<Writer, A
             let space =
                 crate::pipeline_expiry::space_of_endpoint(&state.mirror, project, &endpoint);
             Target {
+                operation: output.mode.unwrap_or(OutputMode::Upsert).grant(),
                 requestable: (space.is_some() && space != own_space).then(|| project.to_owned()),
                 space,
                 write: state.views.as_ref().map(|views| {
@@ -653,12 +657,24 @@ fn judge_write(
     };
     match evaluate(
         subject,
-        WRITE,
+        target.operation,
         &request,
         &write.tenant,
         &write.policies,
         now,
     ) {
+        // An access request asks for the upsert a pipeline's write grant holds (PL-90); a merge
+        // or a backfill is a Policy of the Endpoint's to extend.
+        Decision::Deny if target.operation != WRITE => findings.push(endpoint_finding(
+            "policy",
+            "",
+            format!(
+                "no Policy bound to Endpoint {endpoint} grants this pipeline {} of {entity_type}: \
+                 extend that Policy with the operation {}",
+                operation_words(target.operation),
+                target.operation.as_str()
+            ),
+        )),
         Decision::Deny => findings.push(Finding {
             access: target.requestable.as_ref().map(|project| Access {
                 project: project.clone(),
@@ -686,7 +702,13 @@ fn judge_write(
         }
     }
     match &write.view {
-        Ok(view) => findings.extend(judge_view(view, endpoint, entity_type, record)),
+        Ok(view) => findings.extend(judge_view_by(
+            view,
+            target.operation,
+            endpoint,
+            entity_type,
+            record,
+        )),
         Err(why) => findings.push(endpoint_finding(
             "view",
             "",
@@ -714,6 +736,26 @@ pub(crate) fn judge_view(
     entity_type: &str,
     record: &Value,
 ) -> Vec<Finding> {
+    judge_view_by(view, WRITE, endpoint, entity_type, record)
+}
+
+/// The write `operation` in words, for a finding.
+fn operation_words(operation: Operation) -> &'static str {
+    match operation {
+        Operation::MergeBatch => "a batch merge",
+        Operation::AppendAttrsTemporal => "a temporal append",
+        _ => "a batch upsert",
+    }
+}
+
+/// [`judge_view`] for the write `operation` an output's mode makes.
+fn judge_view_by(
+    view: &Value,
+    operation: Operation,
+    endpoint: &str,
+    entity_type: &str,
+    record: &Value,
+) -> Vec<Finding> {
     let names_of = |value: &Value| -> BTreeSet<String> {
         value
             .as_array()
@@ -724,14 +766,17 @@ pub(crate) fn judge_view(
             .collect()
     };
     let rows = names_of(&view["operations"]);
-    if !crate::reconciler::views::rows_of(WRITE)
+    if !crate::reconciler::views::rows_of(operation)
         .iter()
         .any(|row| rows.contains(*row))
     {
         return vec![endpoint_finding(
             "NOT_WRITABLE",
             "",
-            format!("the view of Endpoint {endpoint} admits no batch upsert: its Policies grant no write"),
+            format!(
+                "the view of Endpoint {endpoint} admits no {}: its Policies grant no write",
+                operation_words(operation).trim_start_matches("a ")
+            ),
         )];
     }
     let rules: Vec<BTreeSet<String>> = view["rules"]
@@ -1081,6 +1126,7 @@ mod tests {
             endpoint: "helsinki-all".into(),
             space: Some("vehicles".into()),
             requestable: None,
+            operation: WRITE,
             write: Some(Some(WriteView {
                 space: "vehicles".into(),
                 tenant: "helsinki-vehicles".into(),
@@ -1277,6 +1323,42 @@ mod tests {
             ..target(json!([grant(json!({}))]), Ok(view()))
         };
         assert!(endpoint_findings(&granted, &record).is_empty());
+    }
+
+    /// G-17: a backfill or merge output is judged by its own operation. An upsert grant alone
+    /// leaves it refused, naming the Policy to extend and the operation, with no access request
+    /// (the door asks for the upsert); the operation granted and in the view writes.
+    #[test]
+    fn a_backfill_or_merge_without_its_grant_names_the_policy_to_extend() {
+        let record = bus(json!(41));
+        for (operation, row) in [
+            (Operation::AppendAttrsTemporal, "temporal_add_attributes"),
+            (Operation::MergeBatch, "batch_merge"),
+        ] {
+            let upsert_only = Target {
+                operation,
+                requestable: Some("helsinki".into()),
+                ..target(json!([grant(json!({}))]), Ok(view()))
+            };
+            let findings = endpoint_findings(&upsert_only, &record);
+            assert_eq!(findings[0].rule, "policy", "{operation:?}");
+            assert!(findings[0].reason.contains("Endpoint helsinki-all"));
+            assert!(findings[0].reason.contains(operation.as_str()));
+            assert_eq!(findings[0].access, None);
+            let mut granted_view = view();
+            granted_view["operations"] = json!([row]);
+            let granted = Target {
+                operation,
+                ..target(
+                    json!([grant(json!({ "operations": [operation.as_str()] }))]),
+                    Ok(granted_view),
+                )
+            };
+            assert!(
+                endpoint_findings(&granted, &record).is_empty(),
+                "{operation:?}"
+            );
+        }
     }
 
     /// An output Endpoint the project holds is one the request door takes (PL-90), by the rule

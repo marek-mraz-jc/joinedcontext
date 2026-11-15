@@ -6,12 +6,12 @@
 use std::time::Duration;
 
 use jc_core::kinds::data_source::{check_class, DataSourceSpec, DataSourceType};
-use jc_core::kinds::pipeline::{Compute, PipelineSource, PipelineSpec, Step};
+use jc_core::kinds::pipeline::{Compute, OutputMode, PipelineSource, PipelineSpec, Step};
 use jcctl::bento::InputContext;
 use serde_json::Value;
 
 use super::identity::{
-    bound_in_flight, in_flight, pipeline_oauth2, reads_in_batches, replaces, writes, written,
+    bound_in_flight, in_flight, mode_of, pipeline_oauth2, reads_in_batches, writes, written,
 };
 use super::RenderError;
 use crate::store::Mirror;
@@ -59,7 +59,7 @@ pub fn render_stream(
     processors.extend(batching());
     processors.extend(writes(
         project,
-        &[(slug.to_owned(), replaces(pipeline, 0))],
+        &[(slug.to_owned(), mode_of(pipeline, 0))],
         "",
     )?);
 
@@ -582,7 +582,7 @@ pub fn render_endpoint_stream(
     processors.extend(batching());
     processors.extend(writes(
         project,
-        &[(target_slug.to_owned(), replaces(pipeline, 0))],
+        &[(target_slug.to_owned(), mode_of(pipeline, 0))],
         "",
     )?);
 
@@ -1010,10 +1010,10 @@ pub fn render_merged(
 
     // `outputs()` is the default lane's, then each route's in order (PL-73).
     // The slugs follow `outputs()`, so the n-th slug is written in the n-th output's mode.
-    let targets: Vec<(String, bool)> = target_slugs
+    let targets: Vec<(String, OutputMode)> = target_slugs
         .iter()
         .enumerate()
-        .map(|(at, slug)| (slug.clone(), replaces(pipeline, at)))
+        .map(|(at, slug)| (slug.clone(), mode_of(pipeline, at)))
         .collect();
     let lane = pipeline.lane_outputs().len().min(targets.len());
     let lane_writes = writes(project, &targets[..lane], "")?;
@@ -1274,7 +1274,7 @@ fn step_processor(step: Step) -> Result<Option<Value>, RenderError> {
 pub(super) fn routes(
     pipeline: &PipelineSpec,
     project: &str,
-    slugs: &[(String, bool)],
+    slugs: &[(String, OutputMode)],
 ) -> Result<(Vec<Value>, Vec<Value>), RenderError> {
     let mut processors: Vec<Value> = batching().into_iter().take(2).collect();
     let mut pick = String::from("meta jc_route = ");
