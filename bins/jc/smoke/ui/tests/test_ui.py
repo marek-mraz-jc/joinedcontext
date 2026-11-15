@@ -86,6 +86,75 @@ def test_a_signed_in_browser_on_a_127_origin_reads_the_api_with_its_session_cook
         page.context.clear_cookies()
 
 
+def forwarded_jc():
+    """A jc reached on a loopback forward that keeps its own public address: its issuer, every
+    redirect and the session cookie name `public` (jc-dev: base http://127.0.0.1:18081, jc at
+    https://jc.jcdev.dev.joinedcontext.com); here localhost against the forward's 127.0.0.1."""
+    import http.server
+    import threading
+
+    class Jc(http.server.BaseHTTPRequestHandler):
+        def answer(self, status, headers=(), body=b""):
+            self.send_response(status)
+            for k, v in headers:
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            public, cookie = self.server.public, self.headers.get("Cookie") or ""
+            if self.path == "/id/realms/dev/.well-known/openid-configuration":
+                return self.answer(200, [("Content-Type", "application/json")],
+                                   json.dumps({"issuer": f"{public}/id/realms/dev"}).encode())
+            if self.path == "/api/v1/auth/login":
+                return self.answer(303, [("Location", f"{public}/id/realms/dev/login")])
+            if self.path == "/id/realms/dev/login":
+                return self.answer(200, [("Content-Type", "text/html")], b'<form method="post">'
+                                   b'<input name="username"><input name="password" type="password"><button>Sign in</button></form>')
+            if self.path == "/api/v1/auth/callback":
+                # Only the public host's own page gets the session: a request to the forward has none.
+                ok = self.headers.get("Host") == public.split("//")[1]
+                return self.answer(303, [("Set-Cookie", "jc_session=s1; Path=/; HttpOnly; SameSite=Lax")] * ok
+                                   + [("Location", f"{public}/projects")])
+            if self.path == "/api/v1/auth/me":
+                return self.answer(200 if "jc_session=s1" in cookie else 401)
+            return self.answer(200, [("Content-Type", "text/html")], b"<main><h1>Projects</h1></main>")
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.answer(303, [("Location", f"{self.server.public}/api/v1/auth/callback")])
+
+        def log_message(self, *_):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Jc)
+    srv.public = f"http://localhost:{srv.server_port}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_a_sign_in_through_a_forward_walks_jcs_public_origin_and_reads_the_session(page, monkeypatch):
+    """jc-dev smoke 2026-11-15T050045Z: the walker waited for the forward's address while jc's
+    callback sends the browser to its public one, so each persona timed out after a good login
+    (T-6969). The walk now starts where jc's issuer says jc lives."""
+    srv = forwarded_jc()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    public = suite.public_origin(suite.Http(base), "dev")
+    assert public == srv.public
+    monkeypatch.setattr(suite, "SECOND_FACTOR", type("NoOtp", (), {"browser": lambda *_: None})())
+    try:
+        for seen, ok in ((public, True), (None, False)):
+            a = suite.argparse.Namespace(base_url=base, public=seen, widths=[1440])
+            w = suite.Walker(a, page.context.browser, Results("ui", base), Path("."))
+            ctx, signing = w.context("admin")
+            signed, said = w.sign_in(signing, "admin", "smoke-ui-admin", "pw")
+            assert signed is ok, said
+            assert not ok or (signing.url == f"{public}/projects" and "auth/me 200" in said)
+            ctx.close()
+    finally:
+        srv.shutdown()
+
+
 def test_the_stripped_source_keeps_no_typescript():
     js = checks.script()
     assert not re.search(r"\bas HTML|: string\b|: Element\b|<string>", js)
