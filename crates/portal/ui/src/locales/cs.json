@@ -2638,7 +2638,8 @@
         "typeNames": "Typ prvku",
         "collection": "Kolekce",
         "thing": "Thing"
-      }
+      },
+      "refused": "Požádejte správce projektu o roli, která navrhuje datové zdroje."
     }
   },
   "pipelines": {

@@ -120,7 +120,7 @@ test.describe("an http source with an open data API preset", () => {
     await stubApi(page, "refused");
     await openWfsForm(page);
     await page.getByRole("button", { name: "Find", exact: true }).click();
-    await expect(page.getByText(/No grant proposes a DataSource in project helsinki/)).toBeVisible();
+    await expect(page.getByText(/No grant proposes a DataSource in project helsinki\. Ask a project administrator for a role/)).toBeVisible();
     await shot(page, "presets-refused");
   });
 

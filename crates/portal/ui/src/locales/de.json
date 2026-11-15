@@ -2638,7 +2638,8 @@
         "typeNames": "Objektart",
         "collection": "Sammlung",
         "thing": "Thing"
-      }
+      },
+      "refused": "Bitten Sie eine Projektverwaltung um eine Rolle, die Datenquellen vorschlägt."
     }
   },
   "pipelines": {

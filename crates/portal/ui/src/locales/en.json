@@ -2545,7 +2545,7 @@
     },
     "preset": {
       "title": "Open data API preset",
-      "hint": "For a CKAN, ArcGIS, OData, WFS, OGC API Features or SensorThings service: the platform pages it and finds the records itself. Leave Paging and Records are in empty when you pick one.",
+      "hint": "For a CKAN, ArcGIS, OData, WFS, OGC API Features or SensorThings service: the platform pages it and finds the records itself, so a source with a preset needs no \"Paging\" and no \"Records are in\".",
       "kind": "API",
       "kindHint": "The kind of service the URL names, for example ArcGIS Feature Service for …/FeatureServer/0/query.",
       "kinds": {
@@ -2638,7 +2638,8 @@
         "typeNames": "Feature type",
         "collection": "Collection",
         "thing": "Thing"
-      }
+      },
+      "refused": "Ask a project administrator for a role that proposes data sources."
     }
   },
   "pipelines": {

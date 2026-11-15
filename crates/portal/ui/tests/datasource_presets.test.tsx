@@ -134,7 +134,7 @@ describe("Find in the service", () => {
     await userEvent.selectOptions(select, "avoindata:Kadut");
     await userEvent.click(screen.getByRole("button", { name: "Use" }));
     expect(onUse).toHaveBeenCalledWith({ url: WFS, preset: { kind: "wfs", typeNames: "avoindata:Kadut" } });
-    expect(screen.getByText("Written into the form: avoindata:Kadut.")).toBeInTheDocument();
+    expect(screen.getByText(/Written into the form: avoindata:Kadut\./)).toBeInTheDocument();
   });
 
   it("says why nothing was listed, in the server's words", async () => {
@@ -156,7 +156,7 @@ describe("Find in the service", () => {
       problem(403, "no grant proposes a DataSource in project helsinki"),
     );
     await userEvent.click(await screen.findByRole("button", { name: "Find" }));
-    expect(await screen.findByText(/no grant proposes a DataSource/)).toBeInTheDocument();
+    expect(await screen.findByText(/no grant proposes a DataSource in project helsinki Ask a project administrator/)).toBeInTheDocument();
   });
 });
 

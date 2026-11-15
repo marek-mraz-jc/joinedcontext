@@ -87,9 +87,12 @@ export function PresetDiscovery({
   // An answer belongs to the kind and URL it was asked for; another one in the form hides it.
   const answer =
     find.data && find.variables?.kind === kind && find.variables?.url === url ? find.data : undefined;
+  // A refusal says what to do next beside the server's words.
   const failure =
     find.error instanceof ApiError
-      ? (find.error.problem?.detail ?? find.error.message)
+      ? [find.error.problem?.detail ?? find.error.message, find.error.status === 403 ? t("datasources.discover.refused") : null]
+          .filter(Boolean)
+          .join(" ")
       : find.error
         ? t("app.error.generic")
         : null;
@@ -99,7 +102,7 @@ export function PresetDiscovery({
       <h2 id="preset-discovery-heading" className="text-body font-medium">
         {t("datasources.discover.title")}
       </h2>
-      <p className="text-caption text-fg-muted">{t("datasources.discover.hint")}</p>
+      {kind && url ? <p className="text-caption text-fg-muted">{t("datasources.discover.hint")}</p> : null}
       {kind && url ? (
         <div>
           <Button
@@ -115,10 +118,10 @@ export function PresetDiscovery({
       ) : (
         <p className="text-caption text-fg-muted">{t("datasources.discover.needs")}</p>
       )}
-      <div role="status" aria-live="polite" className="flex flex-col gap-2">
-        {failure ? <p className="text-body text-danger">{failure}</p> : null}
+      <div role="status" aria-live="polite" className="mt-1 flex flex-col gap-2">
+        {failure ? <p className="text-body font-medium text-danger">{failure}</p> : null}
         {answer?.skipped ? (
-          <p className="text-body text-danger">{t("datasources.discover.failed", { reason: answer.skipped })}</p>
+          <p className="text-body font-medium text-danger">{t("datasources.discover.failed", { reason: answer.skipped })}</p>
         ) : answer && answer.choices.length === 0 ? (
           <p className="text-body">{t("datasources.discover.none")}</p>
         ) : answer ? (
@@ -157,7 +160,7 @@ export function PresetDiscovery({
               </div>
             </Field>
             {answer.truncated ? <p className="text-caption text-fg-muted">{t("datasources.discover.truncated")}</p> : null}
-            {used ? <p className="text-caption">{t("datasources.discover.used", { value: used })}</p> : null}
+            {used ? <p className="text-body font-medium text-success">✓ {t("datasources.discover.used", { value: used })}</p> : null}
           </>
         ) : null}
       </div>

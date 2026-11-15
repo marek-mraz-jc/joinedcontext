@@ -67,7 +67,7 @@ export function ConnectionTest({ project, name }: { project: string; name: strin
         ) : probe ? (
           <>
             {probe.pages !== undefined ? (
-              <p className="text-body" data-testid="datasource-test-pages">
+              <p className="text-body font-medium" data-testid="datasource-test-pages">
                 {t("datasources.test.pages", { pages: probe.pages })}
               </p>
             ) : null}
