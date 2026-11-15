@@ -284,6 +284,10 @@ impl KafkaInput {
     /// Joins the group (or, without one, takes every partition) and sets each partition's
     /// position from its committed offset or the reset rule.
     async fn assign(&mut self) -> Result<(), CoreError> {
+        // an assignment that failed half way left a membership whose heartbeats still run
+        if let Some(m) = self.member.take() {
+            m.heartbeat.abort();
+        }
         self.refresh().await?;
         let topics = self.subscribed();
         if topics.is_empty() {

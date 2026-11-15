@@ -633,7 +633,9 @@ describe("the manifest a data source form describes", () => {
     const dialog = await findFormPage();
     await userEvent.selectOptions(within(dialog).getByLabelText(en.datasources.field.type), "csv");
 
-    expect(await within(dialog).findAllByText(/^A list of file paths to read from/)).toHaveLength(1);
+    // shown once; the list's first item (a required list opens with one) reads it to a screen reader only
+    const hints = await within(dialog).findAllByText(/^A list of file paths to read from/);
+    expect(hints.filter((hint) => !hint.classList.contains("sr-only"))).toHaveLength(1);
   });
 
   it("renders grouped select with an optgroup 'Message brokers' holding only what the runner builds", async () => {

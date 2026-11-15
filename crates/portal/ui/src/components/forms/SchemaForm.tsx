@@ -23,6 +23,14 @@ import { errorMessageKey } from "./errorMessages";
 /** The theme's widgets and the Portal's own (`secretRef`, `entityPicker`), which a uiSchema names. */
 const widgets = { ...portalThemeWidgets, ...portalWidgets };
 
+/** The value at an rjsf error's property path (`.seed_brokers.0`). */
+function valueAt(data: unknown, property: string | undefined): unknown {
+  return (property ?? "")
+    .split(".")
+    .filter(Boolean)
+    .reduce<unknown>((at, key) => (at !== null && typeof at === "object" ? (at as Record<string, unknown>)[key] : undefined), data);
+}
+
 export interface SchemaFormProps<T> {
   schema: JsonSchema;
   uiSchema?: UiSchema;
@@ -199,9 +207,16 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
       // rjsf validates the schema resolved for the data (an `if`/`then` merged into the field,
       // T-6545), so an error's path is read against that schema, not the one written.
       const resolved = retrieveSchema(validator, schema as RJSFSchema, schema as RJSFSchema, held ?? shown) as JsonSchema;
+      const data = held ?? shown;
       return errors.map((error) => ({
         ...error,
-        message: t(errorMessageKey(error, resolved)),
+        // a field with no value at all breaks its type only because it is empty (T-7093: a
+        // required list's first item said "Invalid type" beside Name's "This field is required")
+        message: t(
+          error.name === "type" && valueAt(data, error.property) == null
+            ? "form.required"
+            : errorMessageKey(error, resolved),
+        ),
       }));
     },
     [t, schema, held, shown],
