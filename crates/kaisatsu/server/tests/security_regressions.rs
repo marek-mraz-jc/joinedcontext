@@ -469,6 +469,61 @@ async fn refresh_grant(app: &axum::Router, refresh: &str) -> (StatusCode, Value)
     (st, json_body(&body))
 }
 
+/// A disabled realm answers every protocol and login route like an unknown one (S-4-10): no
+/// token by password or refresh, no keys, no sign-in page, no userinfo; enabled again, it serves.
+#[tokio::test]
+async fn a_disabled_realm_serves_no_protocol_or_login_route() {
+    let (state, store, _) = setup_dev_realm_state().await;
+    let app = router(state, mount());
+    let (st, tokens) =
+        password_grant(&app, "demo.analyst@hel.fi", "AnalystPass123!Valid", &[]).await;
+    assert_eq!(st, StatusCode::OK, "{tokens}");
+    let access = tokens["access_token"].as_str().expect("access").to_string();
+    let refresh = tokens["refresh_token"]
+        .as_str()
+        .expect("refresh")
+        .to_string();
+
+    let set_enabled = async |enabled: bool| {
+        let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+        realm.enabled = enabled;
+        store.upsert_realm(realm).await.unwrap();
+    };
+    let get = async |uri: &str, bearer: Option<&str>| {
+        let mut req = Request::builder().uri(uri);
+        if let Some(token) = bearer {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let resp = app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        resp.status()
+    };
+    let routes = [
+        "/realms/dev/protocol/openid-connect/certs",
+        "/realms/dev/.well-known/openid-configuration",
+        "/realms/dev/protocol/openid-connect/auth?client_id=apisix-gateway&response_type=code",
+        "/realms/dev/login-actions/authenticate",
+    ];
+
+    set_enabled(false).await;
+    for uri in routes {
+        assert_eq!(get(uri, None).await, StatusCode::NOT_FOUND, "{uri}");
+    }
+    let userinfo = "/realms/dev/protocol/openid-connect/userinfo";
+    assert_eq!(get(userinfo, Some(&access)).await, StatusCode::NOT_FOUND);
+    let (st, body) = password_grant(&app, "demo.analyst@hel.fi", "AnalystPass123!Valid", &[]).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    let (st, body) = refresh_grant(&app, &refresh).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+
+    set_enabled(true).await;
+    assert_eq!(get(routes[0], None).await, StatusCode::OK);
+    assert_eq!(get(userinfo, Some(&access)).await, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn the_password_grant_obeys_the_floor() {
     let (state, _store, _) = setup_dev_realm_state().await;

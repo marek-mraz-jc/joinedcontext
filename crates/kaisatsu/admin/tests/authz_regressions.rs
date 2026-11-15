@@ -14,7 +14,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use jc_router::Mount;
-use kaisatsu_admin::{AdminState, admin_router, scim_router};
+use kaisatsu_admin::{AdminState, admin_router, odata_router, scim_router};
 use kaisatsu_core::*;
 use kaisatsu_crypto::{Kek, sha256_hex, sign_jwt};
 use kaisatsu_oidc::{OidcState, OutboundGuard};
@@ -120,7 +120,9 @@ impl Fixture {
             second_factor: Default::default(),
         };
         let state = AdminState::new(oidc, Arc::new(LocalAuthorizer));
-        let app = admin_router(state.clone()).merge(scim_router(state));
+        let app = admin_router(state.clone())
+            .merge(scim_router(state.clone()))
+            .merge(odata_router(state));
         Self { app, store }
     }
 
@@ -509,6 +511,84 @@ async fn a_revoked_admin_token_is_refused() {
     );
 }
 
+/// A live refresh family of `hel-person` in `hel-app`.
+fn live_family(id: &str, sso: &str) -> RefreshTokenFamily {
+    let now = chrono::Utc::now();
+    RefreshTokenFamily {
+        id: id.into(),
+        realm_id: "dev".into(),
+        org_id: Some("helsinki".into()),
+        sso_session_id: sso.into(),
+        user_id: "hel-person".into(),
+        client_id: "hel-app".into(),
+        scope: "openid".into(),
+        mapper_scopes: Vec::new(),
+        acr: "pwd".into(),
+        amr: Vec::new(),
+        auth_time: now.timestamp(),
+        rotation_counter: 0,
+        current_jti_hash: "h".into(),
+        previous_hashes: Vec::new(),
+        dpop_jkt: None,
+        offline: false,
+        revoked: false,
+        expires_at: now + chrono::Duration::hours(1),
+        act: None,
+        only_audience: None,
+    }
+}
+
+/// Disabling a person through the Admin REST PUT or an OData update ends their sessions as SCIM
+/// deactivation does (S-4-10); an update that leaves them enabled ends nothing.
+#[tokio::test]
+async fn disabling_a_person_by_admin_rest_or_odata_ends_their_sessions() {
+    let f = Fixture::new().await;
+    let admin = f
+        .token(
+            "dev",
+            "boss",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let live = async |id: &str| {
+        let fam = f.store.get_refresh_family("dev", id).await.unwrap();
+        fam.is_some_and(|fam| !fam.revoked)
+    };
+
+    f.store
+        .upsert_refresh_family(live_family("fam-rest", "sso-rest"))
+        .await
+        .unwrap();
+    let put = async |enabled: bool| {
+        f.send(
+            Method::PUT,
+            "/admin/realms/dev/users/hel-person",
+            &admin,
+            Some(json!({ "enabled": enabled })),
+        )
+        .await
+    };
+    assert_eq!(put(true).await, StatusCode::NO_CONTENT);
+    assert!(live("fam-rest").await, "an enabled update ended a session");
+    assert_eq!(put(false).await, StatusCode::NO_CONTENT);
+    assert!(!live("fam-rest").await, "a disabled person kept a session");
+
+    f.store
+        .upsert_refresh_family(live_family("fam-odata", "sso-odata"))
+        .await
+        .unwrap();
+    let patched = f
+        .send(
+            Method::PATCH,
+            "/api/v1/realms/dev/odata/People('hel-person')",
+            &admin,
+            Some(json!({ "enabled": false })),
+        )
+        .await;
+    assert!(patched.is_success(), "{patched}");
+    assert!(!live("fam-odata").await, "a disabled person kept a session");
+}
+
 /// Deleting a person ends their sessions (refresh families revoked, clients told); a client's
 /// service-account user is its own, never a person who took the name.
 #[tokio::test]
@@ -534,6 +614,8 @@ async fn person_delete_and_service_account_user_follow_the_person() {
         offline: false,
         revoked: false,
         expires_at: now + chrono::Duration::hours(1),
+        act: None,
+        only_audience: None,
     };
     f.store.upsert_refresh_family(fam.clone()).await.unwrap();
     let admin = f

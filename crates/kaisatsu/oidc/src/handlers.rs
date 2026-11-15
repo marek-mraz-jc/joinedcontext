@@ -104,7 +104,30 @@ pub fn oidc_router(state: OidcState) -> Router {
             "/realms/{realm}/protocol/openid-connect/logout",
             get(logout_get_endpoint).post(logout_post_endpoint),
         )
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            active_realm,
+        ))
         .with_state(state)
+}
+
+/// Serves a route that names a realm only while that realm exists and is enabled (S-4-10): a
+/// disabled realm answers like an unknown one, so it shows no sign-in, mints no code or token and
+/// publishes no keys. Layered on the protocol and login routers; admin routes keep their own rule.
+pub async fn active_realm(
+    State(state): State<OidcState>,
+    params: Option<Path<HashMap<String, String>>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if let Some(name) = params.as_ref().and_then(|Path(p)| p.get("realm")) {
+        match state.store.get_realm(name).await {
+            Ok(Some(realm)) if realm.enabled => {}
+            Ok(_) => return KaisatsuError::NotFound("realm not found".into()).into_response(),
+            Err(e) => return e.into_response(),
+        }
+    }
+    next.run(request).await
 }
 
 async fn realm_info(
@@ -255,6 +278,9 @@ pub async fn resolve_or_fetch_client(
 
 /// Validates requested scopes against the client's allowed scopes and parameterized scope regexps
 /// (`connector:{id}` with regexp `[a-z2-7]{26}`, W1).
+/// The scope that takes every write right from a token (jc-core `READ_ONLY_SCOPE`, T-5955).
+const READ_ONLY_SCOPE: &str = "jc:read-only";
+
 pub async fn resolve_scopes_for_client(
     store: &Arc<dyn Store>,
     realm: &RealmConfig,
@@ -359,6 +385,14 @@ pub async fn resolve_scopes_for_client(
             || all_scopes
                 .iter()
                 .any(|s| s.name == token && client.has_optional_scope(s));
+        // `jc:read-only` only takes rights away (the gateway refuses every write of its token):
+        // any client may narrow its own token with it, and an exchanged token's refresh keeps it.
+        if !allowed_on_client && token == READ_ONLY_SCOPE {
+            if !granted_tokens.iter().any(|t| t == token) {
+                granted_tokens.push(token.to_owned());
+            }
+            continue;
+        }
         if !allowed_on_client {
             return Err(KaisatsuError::invalid_scope(format!(
                 "Invalid scopes: {token}"
@@ -1675,14 +1709,14 @@ async fn mint_tokens_for_principal(
         exp: access_exp,
         auth_time,
         dpop_jkt,
-        act,
+        act: act.clone(),
         active_org: resolved_active_org.as_deref(),
     };
 
     let mut access_claims = evaluate_mappers(&mapper_ctx, TokenKind::AccessToken)?;
     // A token exchange naming `audience` gets that audience alone, as Keycloak 26's standard
-    // exchange issues it: the requester's own audience mappers do not ride along.
-    // ponytail: a SAME_SESSION refresh of such a token mints the requester's full audience again.
+    // exchange issues it: the requester's own audience mappers do not ride along. Its refresh
+    // family keeps the audience, so a SAME_SESSION refresh mints it alone again.
     if let Some(only) = only_audience {
         access_claims["aud"] = Value::String(only.to_owned());
     }
@@ -1794,6 +1828,8 @@ async fn mint_tokens_for_principal(
                         offline: is_offline,
                         revoked: false,
                         expires_at: Utc::now() + Duration::seconds(refresh_ttl),
+                        act,
+                        only_audience: only_audience.map(str::to_owned),
                     })
                     .await?;
             }
@@ -2465,6 +2501,9 @@ async fn handle_refresh_token_grant(
         .or_else(|| family.dpop_jkt.clone());
 
     let reused = family.clone();
+    // An exchanged token's refresh is still the actor's and still for its one audience (S-4-08).
+    let act = family.act.clone();
+    let only_audience = family.only_audience.clone();
     match mint_tokens_for_principal(
         state,
         mount,
@@ -2479,10 +2518,10 @@ async fn handle_refresh_token_grant(
         None,
         Some(auth_time),
         bound_jkt.as_deref(),
-        None,
+        act,
         true,
         Some(family),
-        None,
+        only_audience.as_deref(),
     )
     .await
     {
@@ -2766,6 +2805,13 @@ async fn handle_token_exchange_grant(
         form.get("scope").map(String::as_str),
     )
     .await?;
+    let granted_scope_str = narrowed_like_subject(
+        &granted_scope_str,
+        subj_claims
+            .get("scope")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
 
     // Check that any requested `audience` is mapped by one of the requester's active scopes or mappers
     if let Some(req_aud) = form.get("audience").filter(|s| !s.is_empty()) {
@@ -2874,6 +2920,31 @@ async fn handle_token_exchange_grant(
     out["issued_token_type"] =
         Value::String("urn:ietf:params:oauth:token-type:access_token".into());
     Ok(out)
+}
+
+/// The scope of an exchanged token keeps every narrowing of its subject token (S-4-08): a
+/// `jc:read-only` subject exchanges for a read-only token, and a subject pinned to one
+/// organization for a token of that organization alone (another one asked for is refused).
+fn narrowed_like_subject(granted: &str, subject: &str) -> Result<String> {
+    let mut tokens: Vec<&str> = granted.split_whitespace().collect();
+    let subject: Vec<&str> = subject.split_whitespace().collect();
+    if let Some(pin) = subject.iter().find(|t| t.starts_with("organization:")) {
+        if let Some(other) = tokens
+            .iter()
+            .find(|t| t.starts_with("organization:") && *t != pin)
+        {
+            return Err(KaisatsuError::invalid_scope(format!(
+                "Invalid scopes: {other} (the subject token is for {pin})"
+            )));
+        }
+        if !tokens.contains(pin) {
+            tokens.push(pin);
+        }
+    }
+    if subject.contains(&READ_ONLY_SCOPE) && !tokens.contains(&READ_ONLY_SCOPE) {
+        tokens.push(READ_ONLY_SCOPE);
+    }
+    Ok(tokens.join(" "))
 }
 
 /// RFC 7523 JWT Authorization Grant (`urn:ietf:params:oauth:grant-type:jwt-bearer`, W1).
