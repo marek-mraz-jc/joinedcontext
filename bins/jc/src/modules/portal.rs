@@ -126,21 +126,47 @@ fn organization_addresses(cfg: &crate::config::Config) -> serde_json::Value {
     let bare = |host: &str| host.split(':').next().unwrap_or(host).to_owned();
     let base = bare(&cfg.base_host);
     let base_bound = cfg.hosts.iter().any(|row| bare(&row.host) == base)
-        || cfg
-            .organizations
-            .iter()
-            .any(|org| org.hosts.by_module().iter().any(|(_, h)| bare(h) == base));
+        || cfg.organizations.iter().any(|org| {
+            org.hosts
+                .by_module()
+                .iter()
+                .any(|m| m.bound && bare(m.host) == base)
+        });
     let orgs: Vec<serde_json::Value> = cfg
         .organizations
         .iter()
         .map(|org| {
             let h = &org.hosts;
-            let mut addresses = vec![
-                at("portal", &h.portal, "/"),
-                at("opendata", &h.opendata, "/"),
-                at("api", &h.api, "/"),
-                at("mcp", &h.mcp, "/api/mcp/"),
-            ];
+            // The router's first segment on a shared host: the id once set, else the name.
+            let segment = org.id.as_ref().map_or(org.name.as_str(), |id| id.as_str());
+            let root = if h.shared {
+                format!("/{segment}/")
+            } else {
+                "/".to_owned()
+            };
+            let opendata = match &h.opendata {
+                Some(host) => at("opendata", host, &root),
+                None => at(
+                    "opendata",
+                    &h.portal,
+                    &format!("{}/", crate::config::DATAROOM_ON_WORKING_HOST),
+                ),
+            };
+            // Without an API host of its own the gateway answers on the working host's paths.
+            let (api_host, api_root, api_path) = match &h.api {
+                Some(host) => (host.as_str(), root.clone(), root.clone()),
+                None => (
+                    h.portal.as_str(),
+                    "/".to_owned(),
+                    "/api/endpoint/".to_owned(),
+                ),
+            };
+            let mcp = match h.mcp.as_deref().filter(|m| Some(*m) != h.api.as_deref()) {
+                Some(host) => at("mcp", host, "/api/mcp/"),
+                None => at("mcp", api_host, &format!("{api_root}api/mcp/")),
+            };
+            let api = at("api", api_host, &api_path);
+            let mut addresses = vec![at("portal", &h.portal, "/"), opendata, api, mcp];
             addresses.extend(h.portals.iter().map(|p| at("portal-site", p, "/")));
             addresses.extend(
                 cfg.hosts
@@ -157,7 +183,6 @@ fn organization_addresses(cfg: &crate::config::Config) -> serde_json::Value {
                     }),
             );
             if !base_bound {
-                let segment = org.id.as_ref().map_or(org.name.as_str(), |id| id.as_str());
                 addresses.push(at("shared", &cfg.base_host, &format!("/{segment}/")));
             }
             serde_json::json!({
@@ -505,6 +530,48 @@ mod tests {
             parsed[0].addresses[4].url.path() == "/test_alpha/",
             "{:?}",
             parsed[0].addresses
+        );
+        // `host = "auto"`: the shared open data and API hosts carry the id as the first segment;
+        // with the working host alone, the open data and the gateway are its paths.
+        let urls = |cfg: &crate::config::Config, i: usize| -> Vec<String> {
+            joinedcontext_portal::organization_host::parse_addresses(
+                &organization_addresses(cfg).to_string(),
+            )
+            .expect("parses")[i]
+                .addresses
+                .iter()
+                .take(4)
+                .map(|a| a.url.to_string())
+                .collect()
+        };
+        with_id.organizations[0].hosts = crate::config::OrganizationHosts {
+            portal: "alpha.base.test".into(),
+            opendata: Some("opendata.base.test".into()),
+            api: Some("api.base.test".into()),
+            shared: true,
+            ..crate::config::OrganizationHosts::default()
+        };
+        with_id.organizations[1].hosts = crate::config::OrganizationHosts {
+            portal: "portal.beta.test".into(),
+            ..crate::config::OrganizationHosts::default()
+        };
+        assert_eq!(
+            urls(&with_id, 0),
+            [
+                format!("{s}://alpha.base.test/"),
+                format!("{s}://opendata.base.test/test_alpha/"),
+                format!("{s}://api.base.test/test_alpha/"),
+                format!("{s}://api.base.test/test_alpha/api/mcp/"),
+            ]
+        );
+        assert_eq!(
+            urls(&with_id, 1),
+            [
+                format!("{s}://portal.beta.test/"),
+                format!("{s}://portal.beta.test/data/"),
+                format!("{s}://portal.beta.test/api/endpoint/"),
+                format!("{s}://portal.beta.test/api/mcp/"),
+            ]
         );
         // Without dataroom here, the hosts alone; without Organizations, nothing.
         let mut portal_only = crate::config::Config::merge(cli("portal"), file).expect("config");
