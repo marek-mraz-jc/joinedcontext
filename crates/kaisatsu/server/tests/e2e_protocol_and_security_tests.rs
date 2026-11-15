@@ -13,7 +13,7 @@
 //! 5. Back-channel logout (`POST` to `backchannel.logout.url` with `typ: "Logout"` and `events` claim,
 //!    no `nonce`) and RFC 7009 refresh token revocation ending the client's grant.
 //! 6. Refresh token rotation and reuse detection revoking the entire family.
-//! 7. Mount under a path prefix (`/id` on `city.example`) beside sibling modules on one host vs
+//! 7. Mount under a path prefix (`/login` on `city.example`) beside sibling modules on one host vs
 //!    dedicated host (`id.example` at root), verifying issuer strings and `__Secure-wk_*` vs
 //!    `__Host-wk_*` cookies (W9).
 //! 8. W12 attack & 2026 advisory regression suite:
@@ -750,7 +750,7 @@ async fn mcp_portal_stays_refused_for_realm_clients_without_it() {
     }
 }
 
-/// T-6974: under a path prefix (slug mode, `/id` on a host Apps share a domain with) the sign-in
+/// T-6974: under a path prefix (slug mode, `/login` on a host Apps share a domain with) the sign-in
 /// cookies are `__Host-` with `Path=/` and no `Domain`, and an SSO cookie under the old
 /// `__Secure-wk_sso` name, which a sibling host can plant with `Domain=`, is never read.
 #[tokio::test]
@@ -758,7 +758,7 @@ async fn a_sign_in_cookie_planted_from_a_sibling_host_is_never_read() {
     let (state, _store, _kek) = setup_dev_realm_state().await;
     let slug = router(
         state.clone(),
-        Mount::new("kaisatsu", "https", "city.example", "/id").unwrap(),
+        Mount::new("kaisatsu", "https", "city.example", "/login").unwrap(),
     );
     state
         .store()
@@ -837,9 +837,9 @@ async fn a_sign_in_cookie_planted_from_a_sibling_host_is_never_read() {
 async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_suite() {
     let (state, _store, _kek) = setup_dev_realm_state().await;
 
-    // W9 test: Mount kaisatsu at `/id` on `city.example` beside `/portal` and `/opendata`,
+    // W9 test: Mount kaisatsu at `/login` on `city.example` beside `/portal` and `/opendata`,
     // AND at `/` on `id.example` in one JcRouter
-    let mount_slug = Mount::new("kaisatsu", "https", "city.example", "/id").unwrap();
+    let mount_slug = Mount::new("kaisatsu", "https", "city.example", "/login").unwrap();
     let mount_root = Mount::new("kaisatsu", "https", "id.example", "").unwrap();
     let wk_slug_router = router(state.clone(), mount_slug);
     let wk_root_router = router(state.clone(), mount_root);
@@ -849,7 +849,7 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
             MountSpec {
                 module: "kaisatsu".into(),
                 host: Some("city.example".into()),
-                path_prefix: Some("/id".into()),
+                path_prefix: Some("/login".into()),
             },
             wk_slug_router,
         )
@@ -872,9 +872,9 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
         .build()
         .unwrap();
 
-    // 1. Discovery under `/id/realms/dev/.well-known/openid-configuration` on `city.example`
+    // 1. Discovery under `/login/realms/dev/.well-known/openid-configuration` on `city.example`
     let disc_req1 = Request::builder()
-        .uri("/id/realms/dev/.well-known/openid-configuration")
+        .uri("/login/realms/dev/.well-known/openid-configuration")
         .header("host", "city.example")
         .body(Body::empty())
         .unwrap();
@@ -882,7 +882,10 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
     assert_eq!(disc_res1.status(), StatusCode::OK);
     let disc_json1: Value =
         serde_json::from_slice(&disc_res1.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(disc_json1["issuer"], "https://city.example/id/realms/dev");
+    assert_eq!(
+        disc_json1["issuer"],
+        "https://city.example/login/realms/dev"
+    );
     assert!(disc_json1.get("registration_endpoint").is_none());
 
     // 2. Discovery at root on `id.example`

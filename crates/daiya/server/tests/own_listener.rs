@@ -228,7 +228,7 @@ async fn a_person_made_datasource_reaches_no_other_mount_of_the_own_listener() {
     let (_, app) = app(own, &root).await;
     let mut leaks = Vec::new();
     for (i, path) in [
-        "/id/realms/jc/protocol",
+        "/login/realms/jc/protocol",
         "/portal/api/v1/me",
         "/git/api/v1/user",
         "/api/v1/d/x",
@@ -370,7 +370,7 @@ async fn call_as_person(app: &Router, uri: &str, token: &str) -> (StatusCode, Va
     )
 }
 
-/// The own listener holds the host's other mounts beside the gateway (`/id`, `/portal`, `/git`,
+/// The own listener holds the host's other mounts beside the gateway (`/login`, `/portal`, `/git`,
 /// the assistant at `/api/v1/d`): a provisioned datasource of any kind naming one of them, or
 /// walking out of `/api/endpoint/<slug>` by dot segments or encoded separators, is refused.
 /// (A bare `/api/endpoint` base is no case: the NGSI-LD driver appends `/ngsi-ld/v1/...`, an
@@ -379,7 +379,7 @@ async fn call_as_person(app: &Router, uri: &str, token: &str) -> (StatusCode, Va
 async fn a_provisioned_datasource_reaches_no_other_mount_of_the_own_listener() {
     let (own, served) = listener().await;
     let paths = [
-        "/id/realms/jc",
+        "/login/realms/jc",
         "/portal/api/v1/projects",
         "/git/api/v1/repos",
         "/api/v1/d/x",

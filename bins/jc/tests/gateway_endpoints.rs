@@ -612,7 +612,7 @@ async fn scoped_token(
     scope: &str,
 ) -> Result<String, String> {
     let resp = Client::new()
-        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "password"),
             ("client_id", client),
@@ -635,7 +635,9 @@ async fn scoped_token(
 /// A person's token from `client` of `realm` by the password grant.
 async fn token_in(jc: &Jc, realm: &str, client: &str, username: &str) -> String {
     let resp = Client::new()
-        .post(jc.url(&format!("/id/realms/{realm}/protocol/openid-connect/token")))
+        .post(jc.url(&format!(
+            "/login/realms/{realm}/protocol/openid-connect/token"
+        )))
         .form(&[
             ("grant_type", "password"),
             ("client_id", client),
@@ -1207,7 +1209,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     // `service-account-portal-api` user, whom no Policy grants, so it reads nothing and the link
     // opens no Endpoint beyond the person exchange below.
     let portal = Client::new()
-        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "client_credentials"),
             ("client_id", "portal-api"),
@@ -1757,7 +1759,7 @@ fn pipeline() -> Value {
 /// A client-credentials token of `client` in realm `jc`.
 async fn client_token(jc: &Jc, client: &str, secret: &str) -> String {
     let resp = Client::new()
-        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "client_credentials"),
             ("client_id", client),
@@ -1775,7 +1777,7 @@ async fn client_token(jc: &Jc, client: &str, secret: &str) -> String {
 /// A kaisatsu admin token of the Portal's own people client.
 async fn kaisatsu_admin_token(jc: &Jc) -> String {
     let resp = Client::new()
-        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "client_credentials"),
             ("client_id", "portal-reconciler"),
@@ -1800,7 +1802,7 @@ async fn second_admin(jc: &Jc, password: &str) -> String {
     let token = kaisatsu_admin_token(jc).await;
     let admin = |m: reqwest::Method, path: &str| {
         Client::new()
-            .request(m, jc.url(&format!("/id/admin/realms/jc{path}")))
+            .request(m, jc.url(&format!("/login/admin/realms/jc{path}")))
             .bearer_auth(&token)
     };
     let username = "e2e.approver@jc.invalid";
@@ -2390,7 +2392,9 @@ fn claims_of(token: &str) -> Value {
 /// A service-account token of `client` in `realm` (client credentials, the secret jc keeps).
 async fn service_token(jc: &Jc, realm: &str, client: &str, secret: &str) -> String {
     let resp = Client::new()
-        .post(jc.url(&format!("/id/realms/{realm}/protocol/openid-connect/token")))
+        .post(jc.url(&format!(
+            "/login/realms/{realm}/protocol/openid-connect/token"
+        )))
         .form(&[
             ("grant_type", "client_credentials"),
             ("client_id", client),
@@ -2411,7 +2415,7 @@ async fn admin_read(jc: &Jc, realm: &str, path: &str) -> Value {
     let (status, body) = call(
         jc,
         reqwest::Method::GET,
-        &format!("/id/admin/realms/{realm}{path}"),
+        &format!("/login/admin/realms/{realm}{path}"),
         Some(&token),
         None,
     )
@@ -2466,7 +2470,7 @@ async fn portal_me(jc: &Jc, token: &str, edge: bool) -> StatusCode {
 async fn exchange_at_dev(jc: &Jc, subject: &str) -> (StatusCode, Value) {
     let scope = format!("gateway-hub endpoint:{CLOSED}");
     let resp = Client::new()
-        .post(jc.url("/id/realms/dev/protocol/openid-connect/token"))
+        .post(jc.url("/login/realms/dev/protocol/openid-connect/token"))
         .form(&[
             (
                 "grant_type",
@@ -2498,7 +2502,7 @@ async fn kids(jc: &Jc, realm: &str) -> Vec<String> {
     let (status, body) = call(
         jc,
         reqwest::Method::GET,
-        &format!("/id/realms/{realm}/protocol/openid-connect/certs"),
+        &format!("/login/realms/{realm}/protocol/openid-connect/certs"),
         None,
         None,
     )
@@ -2576,7 +2580,7 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
 
     // The gateway admits dev's tokens: a writer's create and a reader's read land.
     let reader = token_in(&jc, "dev", "e2e-reader", PERSON).await;
-    assert_eq!(issuer_of(&reader), format!("{base}/id/realms/dev"));
+    assert_eq!(issuer_of(&reader), format!("{base}/login/realms/dev"));
     let thing = entity("Thing", "one");
     eventually("a dev writer's create lands", &jc, 60, || async {
         let (status, body) = call(
@@ -2602,7 +2606,7 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     // Endpoint, and on the public one too (a presented token is never read as anonymous).
     for realm in TWINS {
         let twin = token_in(&jc, realm, "e2e-reader", PERSON).await;
-        assert_eq!(issuer_of(&twin), format!("{base}/id/realms/{realm}"));
+        assert_eq!(issuer_of(&twin), format!("{base}/login/realms/{realm}"));
         for path in [read.clone(), format!("{public}/entities?type=Thing")] {
             let (status, body) = call(&jc, get.clone(), &path, Some(&twin), None).await;
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{realm} {path}: {body}");
@@ -2710,7 +2714,7 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     let (status, body) = call(
         &jc,
         get.clone(),
-        "/id/realms/jc/.well-known/openid-configuration",
+        "/login/realms/jc/.well-known/openid-configuration",
         None,
         None,
     )

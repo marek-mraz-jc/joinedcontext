@@ -11,7 +11,7 @@ Branch `jc-one-binary-1` (from `daiya-argon-1`), local only, never pushed. Plan:
   optional internal admin listener `/metrics`, behind its bearer token since the review), one allocator (jemalloc, feature `jemalloc`, `main.rs`), one rustls
   crypto provider (ring, `runtime::install_crypto_provider`, skipped when one is installed), one
   `CancellationToken` and one `TaskTracker` for shutdown (SIGTERM/Ctrl-C in `main.rs`).
-- Mounting through `crates/shared/jc-router`: `--mode slug` (any host, `/<slug>`: `/id`, `/opendata`, `/dashboards`,
+- Mounting through `crates/shared/jc-router`: `--mode slug` (any host, `/<slug>`: `/login` (`/id` answers 308 there), `/opendata`, `/dashboards`,
   later `/streams`, `/broker`, `/portal`) or `--mode host` (`<label>.<base_host>`), plus `[mounts.<module>]`
   overrides (host and/or path prefix) to mix both, or `[[mounts.<module>]]` arrays for several entries per module
   (the first is its own address; CUTOVER.md section 4 has dev's table). Overlap is refused before any module state is built
@@ -190,7 +190,7 @@ turns it all off.
 
 | Portal setting | sibling | filled keys | status |
 |---|---|---|---|
-| OIDC, Keycloak admin | kaisatsu | `JC_OIDC_ISSUER` (public `{base}/id/realms/jc`), `JC_OIDC_CLIENT_ID/SECRET`, `JC_COOKIE_KEY`, `JC_KEYCLOAK_ADMIN_CLIENT_ID/SECRET`, `JC_KEYCLOAK_ADMIN_URL` (jc's listener when it differs from the public origin) | works: sign-in, people, groups, approval |
+| OIDC, Keycloak admin | kaisatsu | `JC_OIDC_ISSUER` (public `{base}/login/realms/jc`), `JC_OIDC_CLIENT_ID/SECRET`, `JC_COOKIE_KEY`, `JC_KEYCLOAK_ADMIN_CLIENT_ID/SECRET`, `JC_KEYCLOAK_ADMIN_URL` (jc's listener when it differs from the public origin) | works: sign-in, people, groups, approval |
 | `JC_SHAKO_*` | shako | `URL`, `PUBLIC_URL`, `OWNER`, `REPO` (`setup::forge_repo`: the environment's, else `jc`/`config`; the gateway checks out the same), `TOKEN`, `TOKEN`, `APPS_OWNER=jc-apps`, `APPS_TOKEN`, `WEBHOOK_SECRET` | works: proposal commits, approval merges, sync reads them back |
 | pipeline runner | ekiben | `JC_PIPELINE_RUNNER_URL` | wired, refused: no runner credential (gap d) |
 | CKAN | dataroom | `JC_CKAN_URL`, `JC_CKAN_API_URL`, only when the public URL is https (EP-67) | wired for https installs; the http e2e leaves it unset (gap e) |

@@ -596,7 +596,7 @@ mod tests {
         assert_eq!(filled["JC_ASSISTANT_GATEWAY_URL"], "http://127.0.0.1:8443");
         assert_eq!(
             filled["JC_ASSISTANT_TOKEN_URL"],
-            "https://city.example/id/realms/jc/protocol/openid-connect/token"
+            "https://city.example/login/realms/jc/protocol/openid-connect/token"
         );
         assert_eq!(filled["JC_ASSISTANT_PUBLIC_ORIGIN"], "https://city.example");
         assert_eq!(filled["JC_ASSISTANT_ORG_DOMAIN"], "city.example");

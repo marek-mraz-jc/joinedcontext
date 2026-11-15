@@ -73,8 +73,8 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
       --cap-drop ALL --security-opt no-new-privileges --memory 1g --pids-limit 256 \
       --entrypoint /usr/local/bin/jc-functions \
       -e JC_FUNCTIONS_BIND="127.0.0.1:$functions_port" \
-      -e JC_OIDC_ISSUER="$origin/id/realms/$functions_realm" \
-      -e JC_OIDC_JWKS_URL="$origin/id/realms/$functions_realm/protocol/openid-connect/certs" \
+      -e JC_OIDC_ISSUER="$origin/login/realms/$functions_realm" \
+      -e JC_OIDC_JWKS_URL="$origin/login/realms/$functions_realm/protocol/openid-connect/certs" \
       -e JC_FUNCTIONS_CALLER=portal-api -e JC_FUNCTIONS_ASSISTANT_CALLER=jc-assistant \
       -e JC_FUNCTIONS_AUDIENCE=jc-functions -e JC_GATEWAY_URL="$origin" \
       "$functions_image" >/dev/null || { echo "apps.sh: jc-functions did not start" >&2; exit 1; }

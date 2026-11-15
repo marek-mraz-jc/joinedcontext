@@ -346,7 +346,7 @@ JC_CLIENTS = {"portal-api": "KC_PORTAL_API_SECRET", "portal-reconciler": "KC_POR
 
 
 def grant(base, realm, client, secret):
-    st, _ = rh.Http(base).json("POST", f"/id/realms/{realm}/protocol/openid-connect/token", form={
+    st, _ = rh.Http(base).json("POST", f"/login/realms/{realm}/protocol/openid-connect/token", form={
         "grant_type": "client_credentials", "client_id": client, "client_secret": secret})
     return st
 
@@ -1558,7 +1558,7 @@ def test_the_rehearsal_signs_in_at_the_realm_of_the_export(tmp_path):
             return 200, {"access_token": "t"}
 
     assert rh.admin_token(H(), tmp_path) == "t"
-    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+    assert seen == ["/login/realms/smartcity/protocol/openid-connect/token"]
 
 
 def test_an_imported_realm_gets_the_test_persons_admin_group_once():

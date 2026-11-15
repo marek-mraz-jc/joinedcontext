@@ -1298,7 +1298,7 @@ mod tests {
 
     #[test]
     fn the_account_console_client_is_public_pkce_and_bound_to_kaisatsus_own_path() {
-        let mount = Mount::new("kaisatsu", "https", "jc.example", "/id").unwrap();
+        let mount = Mount::new("kaisatsu", "https", "jc.example", "/login").unwrap();
         let (name, file) =
             account_console_realm_file(&mount.public_base(), &setup::Realm::default());
         assert!(name.ends_with(".json"));
@@ -1310,7 +1310,7 @@ mod tests {
         assert_eq!(client["attributes"]["pkce.code.challenge.method"], "S256");
         assert_eq!(
             client["redirectUris"],
-            serde_json::json!(["https://jc.example/id/realms/jc/account/*"])
+            serde_json::json!(["https://jc.example/login/realms/jc/account/*"])
         );
         assert_eq!(client["webOrigins"], serde_json::json!(["+"]));
         assert_eq!(

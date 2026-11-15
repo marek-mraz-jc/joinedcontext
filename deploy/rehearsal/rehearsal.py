@@ -2335,7 +2335,7 @@ def sign_in(h: Http, username: str, password: str):
 
 
 def admin_token(h: Http, state: Path) -> str:
-    st, body = h.json("POST", f"/id/realms/{realm_of(state)}/protocol/openid-connect/token", form={
+    st, body = h.json("POST", f"/login/realms/{realm_of(state)}/protocol/openid-connect/token", form={
         "grant_type": "client_credentials", "client_id": PORTAL_ADMIN_CLIENT,
         "client_secret": read_secret(state, "portal-admin-client-secret")})
     if st != 200:
@@ -2348,20 +2348,20 @@ def make_person(h: Http, token: str, realm: str, username: str, groups=()):
     auth = {"Authorization": f"Bearer {token}"}
     # The random part carries the entropy; the suffix meets a realm password policy (digit, cases, symbol).
     password = secrets.token_urlsafe(18) + "-7aZ"
-    st, body = h.json("POST", f"/id/admin/realms/{realm}/users", headers=auth, body={
+    st, body = h.json("POST", f"/login/admin/realms/{realm}/users", headers=auth, body={
         "username": username, "enabled": True, "email": f"{username}@rehearsal.invalid",
         "emailVerified": True, "firstName": "Rehearsal", "lastName": username, "groups": list(groups)})
     if st not in (201, 409):
         raise RuntimeError(f"create {username} in {realm}: {st} {body}")
-    st, users = h.json("GET", f"/id/admin/realms/{realm}/users?username={username}&exact=true", headers=auth)
+    st, users = h.json("GET", f"/login/admin/realms/{realm}/users?username={username}&exact=true", headers=auth)
     uid = users[0]["id"]
-    st, body = h.json("PUT", f"/id/admin/realms/{realm}/users/{uid}/reset-password", headers=auth,
+    st, body = h.json("PUT", f"/login/admin/realms/{realm}/users/{uid}/reset-password", headers=auth,
                       body={"type": "password", "value": password, "temporary": False})
     if st not in (200, 204):
         raise RuntimeError(f"password of {username}: {st} {body}")
-    SECOND_FACTOR.fresh(lambda m, p: h.json(m, f"/id/admin/realms/{realm}{p}", headers=auth), username, uid)
+    SECOND_FACTOR.fresh(lambda m, p: h.json(m, f"/login/admin/realms/{realm}{p}", headers=auth), username, uid)
     # Group membership is set explicitly: a create body's `groups` is not honoured everywhere.
-    st, tree = h.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
+    st, tree = h.json("GET", f"/login/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
     by_path, todo = {}, list(tree or [])
     while todo:
         g = todo.pop()
@@ -2370,7 +2370,7 @@ def make_person(h: Http, token: str, realm: str, username: str, groups=()):
     for path in groups:
         if path not in by_path:
             raise RuntimeError(f"group {path} of {username}: not in realm {realm}")
-        st, body = h.json("PUT", f"/id/admin/realms/{realm}/users/{uid}/groups/{by_path[path]}", headers=auth)
+        st, body = h.json("PUT", f"/login/admin/realms/{realm}/users/{uid}/groups/{by_path[path]}", headers=auth)
         if st not in (200, 204):
             raise RuntimeError(f"group {path} of {username}: {st} {body}")
     return uid, password
@@ -2383,7 +2383,7 @@ def code_flow(h: Http, realm: str, client: dict, password: str):
     q = urllib.parse.urlencode({"client_id": client["clientId"], "redirect_uri": redirect, "response_type": "code",
                                 "scope": "openid", "state": "rh", "code_challenge": challenge,
                                 "code_challenge_method": "S256"})
-    login_url, st, page = follow(h, f"/id/realms/{realm}/protocol/openid-connect/auth?{q}")
+    login_url, st, page = follow(h, f"/login/realms/{realm}/protocol/openid-connect/auth?{q}")
     if st != 200:
         return False, f"auth -> {st} {page[:200]!r}"
     text = page.decode(errors="replace")
@@ -2401,7 +2401,7 @@ def code_flow(h: Http, realm: str, client: dict, password: str):
     if "code=" not in loc:
         return False, f"login -> {st} {loc or body[:300]!r}"
     code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)["code"][0]
-    st, tok = h.json("POST", f"/id/realms/{realm}/protocol/openid-connect/token", form={
+    st, tok = h.json("POST", f"/login/realms/{realm}/protocol/openid-connect/token", form={
         "grant_type": "authorization_code", "client_id": client["clientId"], "code": code,
         "redirect_uri": redirect, "code_verifier": verifier})
     return st == 200 and "id_token" in (tok or {}), f"token -> {st}"
@@ -2424,7 +2424,7 @@ def cmd_smoke(a):
         ok, detail = sign_in(h, "rehearsal-steward", pw)
         check("sign-in as a test person", ok, detail, "GET /api/v1/auth/login")
     except Exception as e:  # noqa: BLE001 - every failure is a report row
-        check("sign-in as a test person", False, str(e)[:300], f"/id/admin/realms/{realm_of(state)}/users")
+        check("sign-in as a test person", False, str(e)[:300], f"/login/admin/realms/{realm_of(state)}/users")
     st, me = h.json("GET", "/api/v1/auth/me")
     check("Portal knows the person", st == 200, f"{st}", "GET /api/v1/auth/me")
     # 2. Portal pages load (the SPA shell and its API reads)
@@ -2437,16 +2437,16 @@ def cmd_smoke(a):
     for f in sorted(Path(a.realms).glob("*.json")) if a.realms else []:
         realm = json.loads(f.read_text())
         name = realm["realm"]
-        st, disc = h.json("GET", f"/id/realms/{name}/.well-known/openid-configuration")
-        check(f"realm {name}: discovery", st == 200, f"{st}", f"GET /id/realms/{name}/.well-known/openid-configuration")
+        st, disc = h.json("GET", f"/login/realms/{name}/.well-known/openid-configuration")
+        check(f"realm {name}: discovery", st == 200, f"{st}", f"GET /login/realms/{name}/.well-known/openid-configuration")
         conf = next((c for c in realm.get("clients", []) if str(c.get("secret", "")).startswith("$(")
                      and c.get("serviceAccountsEnabled")), None)
         if conf:
             secret = secret_file(conf["secret"], state.parent / "secrets").read_text().strip()
-            st, tok = h.json("POST", f"/id/realms/{name}/protocol/openid-connect/token", form={
+            st, tok = h.json("POST", f"/login/realms/{name}/protocol/openid-connect/token", form={
                 "grant_type": "client_credentials", "client_id": conf["clientId"], "client_secret": secret})
             check(f"realm {name}: client {conf['clientId']} gets a token", st == 200 and "access_token" in (tok or {}),
-                  f"{st} {'' if st == 200 else str(tok)[:200]}", f"POST /id/realms/{name}/protocol/openid-connect/token")
+                  f"{st} {'' if st == 200 else str(tok)[:200]}", f"POST /login/realms/{name}/protocol/openid-connect/token")
         publics = [c for c in realm.get("clients", []) if c.get("publicClient")
                    and c.get("standardFlowEnabled", True) and c.get("redirectUris")]
         # The Portal's own sign-in client first; a client asking for consent last.
@@ -2456,7 +2456,7 @@ def cmd_smoke(a):
             ok, detail = code_flow(Http(a.base), name, public,
                                    (state.parent / "secrets" / "realm-REHEARSAL_TESTER_PASSWORD").read_text().strip())
             check(f"realm {name}: test person signs in through {public['clientId']}", ok, detail,
-                  f"/id/realms/{name}/protocol/openid-connect/auth")
+                  f"/login/realms/{name}/protocol/openid-connect/auth")
     # 4. every exported repository is in shako with the exported files
     listing = json.loads((export / "gitea" / "repos.json").read_text())
     auth = {"Authorization": f"token {read_secret(state, 'shako-token')}"}

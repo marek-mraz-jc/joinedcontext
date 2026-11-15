@@ -740,7 +740,7 @@ mod tests {
             assert!(guard.validate(url).unwrap().3.is_some(), "{url}");
         }
         for url in [
-            "http://127.0.0.1:8080/id/realms/jc",
+            "http://127.0.0.1:8080/login/realms/jc",
             "http://127.0.0.1:8080/portal/api/v1/me",
             "http://127.0.0.1:8080/git/api/v1/user",
             "http://127.0.0.1:8080/api/v1/d/x",

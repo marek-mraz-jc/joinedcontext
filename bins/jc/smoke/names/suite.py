@@ -19,7 +19,7 @@ fetch_prod_tools.py writes by hand once: this suite never contacts prod or dev. 
                  write and admin tool names of prod's pinned source against this clone's
   dataset        /opendata/api/3/action/package_list (CKAN dataset names)
   app, dashboard GET /api/v1/projects/{p}/apps, .../dashboards
-  realm, client  /id/realms/{realm}, and each prod client id of it is known: an anonymous
+  realm, client  /login/realms/{realm}, and each prod client id of it is known: an anonymous
                  authorization request without redirect is refused otherwise than an unknown id
   connector      skipped: /c/{id} is runtime state in the Portal database, no read-only source
 
@@ -157,7 +157,7 @@ class Jc:
         return {str(x) for x in body["result"]}, ""
 
     def realm(self, name: str):
-        path = f"/id/realms/{q(name)}/.well-known/openid-configuration"
+        path = f"/login/realms/{q(name)}/.well-known/openid-configuration"
         st, _, raw = self.http.call("GET", path, headers={"Accept": "application/json"})
         return st == 200 and isinstance(as_json(raw), dict), f"GET {path} {st}"
 
@@ -165,7 +165,7 @@ class Jc:
         """(status, OAuth error) of an authorization request naming `client` and no redirect: an
         unknown client id gets the realm's `invalid_client`, a known one another refusal (missing
         redirect_uri, flow disabled). Read-only and anonymous: nothing signs in."""
-        path = (f"/id/realms/{q(realm)}/protocol/openid-connect/auth?client_id={q(client)}"
+        path = (f"/login/realms/{q(realm)}/protocol/openid-connect/auth?client_id={q(client)}"
                 "&response_type=code&scope=openid")
         st, _, raw = self.http.call("GET", path, headers={"Accept": "application/json"})
         body = as_json(raw)
@@ -251,14 +251,14 @@ def run(a, prod: dict, jc: Jc, res: Results, renames, prod_tools: dict | None, e
                      f"package_show {old}"), "GET /opendata/api/3/action/package_list", why)
     jc_realms = {r for r in [*prod["realms"], *renamed.get("realm", {}).values()] if jc.realm(r)[0]}
     extra["realm"] = cmp.compare(res, "realm", sorted(prod["realms"]), jc_realms, renames, jc.realm,
-                                 "GET /id/realms/{realm}/.well-known/openid-configuration")
+                                 "GET /login/realms/{realm}/.well-known/openid-configuration")
     for realm, clients in sorted(prod["realms"].items()):
         target = renamed.get("realm", {}).get(realm, realm)
         control = "smoke-names-" + secrets.token_hex(6)
         news = [r.new.split("/", 1)[1] for r in renames if r.kind == "client" and r.old.startswith(f"{realm}/")]
         got = jc.client_answers(target, [control, *clients, *news])
         unknown = got.pop(control)
-        res.check("client.control", target, f"GET /id/realms/{target}/protocol/openid-connect/auth?client_id=<unknown>",
+        res.check("client.control", target, f"GET /login/realms/{target}/protocol/openid-connect/auth?client_id=<unknown>",
                   "the realm's refusal of an unknown client", f"{unknown[0]} {unknown[1]}",
                   unknown[0] not in (0, 200, 404), "without it an answering client id proves nothing")
         known = None if unknown[0] in (0, 200, 404) else {f"{realm}/{c}" for c, ans in got.items() if ans != unknown}
@@ -266,7 +266,7 @@ def run(a, prod: dict, jc: Jc, res: Results, renames, prod_tools: dict | None, e
             res, "client", [f"{realm}/{c}" for c in clients], known, renames,
             lambda old, got=got, unknown=unknown: (got.get(old.split("/", 1)[1], unknown) != unknown,
                                                    "the old client id is still known"),
-            f"GET /id/realms/{target}/protocol/openid-connect/auth?client_id={{id}} (not {unknown[0]} {unknown[1]})",
+            f"GET /login/realms/{target}/protocol/openid-connect/auth?client_id={{id}} (not {unknown[0]} {unknown[1]})",
             f"the realm answers an unknown client {unknown[0]}", "no listing: extra client ids are not seen")
     res.skip("connector", "/c/{id}", "", "every prod connector id answers on jc", CONNECTORS)
     return extra

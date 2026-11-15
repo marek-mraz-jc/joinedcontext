@@ -103,12 +103,12 @@ def forwarded_jc():
 
         def do_GET(self):
             public, cookie = self.server.public, self.headers.get("Cookie") or ""
-            if self.path == "/id/realms/dev/.well-known/openid-configuration":
+            if self.path == "/login/realms/dev/.well-known/openid-configuration":
                 return self.answer(200, [("Content-Type", "application/json")],
-                                   json.dumps({"issuer": f"{public}/id/realms/dev"}).encode())
+                                   json.dumps({"issuer": f"{public}/login/realms/dev"}).encode())
             if self.path == "/api/v1/auth/login":
-                return self.answer(303, [("Location", f"{public}/id/realms/dev/login")])
-            if self.path == "/id/realms/dev/login":
+                return self.answer(303, [("Location", f"{public}/login/realms/dev/login")])
+            if self.path == "/login/realms/dev/login":
                 return self.answer(200, [("Content-Type", "text/html")], b'<form method="post">'
                                    b'<input name="username"><input name="password" type="password"><button>Sign in</button></form>')
             if self.path == "/api/v1/auth/callback":
@@ -231,7 +231,7 @@ def test_the_persona_admin_calls_the_realm_it_is_given():
 
     h = H()
     personas.Admin(h, "t", "smartcity").groups()
-    assert h.seen == ["/id/admin/realms/smartcity/groups?briefRepresentation=false&max=1000"]
+    assert h.seen == ["/login/admin/realms/smartcity/groups?briefRepresentation=false&max=1000"]
 
 
 def test_the_persona_admin_mints_its_token_in_the_realm_and_names_a_refusal():
@@ -248,7 +248,7 @@ def test_the_persona_admin_mints_its_token_in_the_realm_and_names_a_refusal():
     h = H(200, b'{"access_token": "jwt"}')
     assert personas.admin_token(h, "s3", "smartcity") == "jwt"
     m, path, headers, body = h.seen[0]
-    assert (m, path) == ("POST", "/id/realms/smartcity/protocol/openid-connect/token")
+    assert (m, path) == ("POST", "/login/realms/smartcity/protocol/openid-connect/token")
     assert headers["Content-Type"] == "application/x-www-form-urlencoded"
     assert b"client_id=portal-reconciler" in body and b"grant_type=client_credentials" in body
     with pytest.raises(RuntimeError, match="portal-reconciler token: 401"):

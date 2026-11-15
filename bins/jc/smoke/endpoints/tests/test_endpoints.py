@@ -690,7 +690,7 @@ def test_the_person_realm_and_its_token_call_name_the_state_realm(tmp_path, monk
     a = argparse.Namespace(base_url="http://127.0.0.1:9", secrets_dir=str(tmp_path), state=str(tmp_path),
                            out=str(tmp_path / "tok"))
     assert person.cmd_token(a) == 1
-    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+    assert seen == ["/login/realms/smartcity/protocol/openid-connect/token"]
 
 
 def test_a_busy_gateway_answer_is_sent_again_a_bounded_number_of_times_and_named_on_the_row(monkeypatch):
