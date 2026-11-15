@@ -448,7 +448,7 @@ async fn read_surface(
 /// DM-128 on the view's other surfaces (S-3-09): a read of an Endpoint serving personal
 /// attributes leaves the line NGSI-LD writes, with the Entities' URNs the answer names. A file
 /// streamed through (`f=csv|parquet|zip`) is not held to list them, so its line names the
-/// query that chose them instead; either way no value is written.
+/// parameters of the query that chose them instead; either way no value is written.
 async fn logged(
     endpoint: &Endpoint,
     subject: &Subject,
