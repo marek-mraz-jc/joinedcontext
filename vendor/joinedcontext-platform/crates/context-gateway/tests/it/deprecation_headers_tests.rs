@@ -95,6 +95,7 @@ fn endpoint(slug: &str, audience: Audience, deprecation: Option<Deprecation>) ->
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         base_path: format!("/api/endpoint/{slug}"),
         models: Vec::new(),
         policy_names: Vec::new(),

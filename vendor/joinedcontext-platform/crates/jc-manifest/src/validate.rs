@@ -1414,12 +1414,7 @@ impl<'a> WriteBindings<'a> {
                 (None, None) => "spec.contextSpaceRef",
             };
             found.push(UnmadeWrite {
-                id: ResourceId::new(
-                    "joinedcontext.com",
-                    "Endpoint",
-                    Some(key.0.clone()),
-                    &key.1,
-                ),
+                id: ResourceId::new("joinedcontext.com", "Endpoint", Some(key.0.clone()), &key.1),
                 field: Some(field.to_owned()),
                 message: format!("Endpoint {}: {message}", key.1),
             });

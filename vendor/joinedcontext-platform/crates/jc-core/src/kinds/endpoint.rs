@@ -692,12 +692,14 @@ fn facets_gap(facets: &[String]) -> Option<String> {
 impl EndpointSpec {
     /// Whether this Endpoint is open data (EP-62, EP-187): it publishes to an open-data
     /// catalogue, or a Policy it serves (`served`, as the gateway binds them) grants the role
-    /// `public`. The gateway, `jcctl validate` and the Portal all decide it here.
+    /// `public` and it is no public form (`spec.creates`, EP-97), which takes anonymous creates.
+    /// The gateway, `jcctl validate` and the Portal all decide it here.
     pub fn is_open_data<'a>(&self, served: impl IntoIterator<Item = &'a PolicySpec>) -> bool {
         self.publish.is_some()
-            || served
-                .into_iter()
-                .any(|policy| policy.is_public() && !policy.effect.is_prohibition())
+            || self.creates.is_none()
+                && served
+                    .into_iter()
+                    .any(|policy| policy.is_public() && !policy.effect.is_prohibition())
     }
 
     /// Why this Endpoint cannot serve `served`, each a Policy's name and spec (EP-187): an
@@ -1330,10 +1332,21 @@ mod tests {
     /// T-6972: every caller holds `public`, so a public grant that writes lets anyone write.
     #[test]
     fn a_public_policy_that_writes_is_refused_with_or_without_attributes() {
-        for ops in ["updateAttrs", "queryEntity,createEntity", "updateOps", "deleteTemporal"] {
+        for ops in [
+            "updateAttrs",
+            "createEntity,mergeEntity",
+            "updateOps",
+            "deleteTemporal",
+        ] {
             let err = policy("public", ops).validate().expect_err(ops);
-            assert!(err.to_string().contains("a public grant never writes"), "{err}");
+            assert!(
+                err.to_string().contains("open data is read-only (EP-187)"),
+                "{err}"
+            );
         }
+        policy("public", "queryEntity,createEntity")
+            .validate()
+            .expect("a public form creates (EP-97)");
         policy("public", "queryEntity,retrieveEntity,queryTemporal")
             .validate()
             .expect("a public read stays");
@@ -1371,6 +1384,13 @@ mod tests {
         assert_eq!(endpoint(true).open_data_write(&reads), None);
         assert!(endpoint(false).is_open_data([&read]));
         assert!(!endpoint(false).is_open_data([&write]));
+        // A public form takes anonymous creates and is no open data, unless it publishes.
+        let create = policy("public", "createEntity");
+        let mut form = endpoint(false);
+        form.creates = Some(Creates::default());
+        assert!(!form.is_open_data([&read, &create]));
+        form.publish = endpoint(true).publish;
+        assert!(form.open_data_write(&[("public-form", &create)]).is_some());
     }
 
     #[test]

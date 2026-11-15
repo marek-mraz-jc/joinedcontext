@@ -979,13 +979,21 @@ impl PolicySpec {
 
         self.validate_assignee()?;
         // Every caller holds the role `public`, anonymous or signed in, so a grant to it that
-        // writes lets anyone change the data (ODP-02, T-6972); a prohibition takes, never gives.
-        if let Some(op) = self.entity_write().filter(|_| self.is_public()) {
+        // changes data lets anyone change it (EP-187, T-6972). It may create only, the public
+        // form of EP-97; a prohibition takes, never gives.
+        let changes = |op: &&OperationRef| {
+            op.writes_entities() && **op != OperationRef::Single(Operation::CreateEntity)
+        };
+        let public_write = (self.is_public() && !self.effect.is_prohibition())
+            .then(|| self.operations.iter().find(changes))
+            .flatten();
+        if let Some(op) = public_write {
             return Err(Error::Name {
                 field: "spec.operations",
                 value: op.as_str().to_owned(),
-                reason: "a public grant never writes: open data is read-only (EP-187); grant the \
-                         write to a group or a service account in a Policy of its own",
+                reason: "a public grant only reads, or creates through a form Endpoint (EP-97): \
+                         open data is read-only (EP-187); grant the change to a group or a \
+                         service account in a Policy of its own",
             });
         }
 

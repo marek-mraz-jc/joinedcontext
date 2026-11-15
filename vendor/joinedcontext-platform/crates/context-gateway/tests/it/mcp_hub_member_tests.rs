@@ -83,6 +83,7 @@ fn endpoint(
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         base_path: format!("/api/endpoint/{slug}"),
         models: vec![Model {
             name: "traffic".to_owned(),
