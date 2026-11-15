@@ -95,7 +95,12 @@ door=$(printf '\n[door]\nissuer = "%s"\njwks_url = "%s/protocol/openid-connect/c
 for m in "${remote_modules[@]}"; do
   {
     printf '%s\n%s\n%s\n' "$profile_line" "${part[$m]}" "$door"
-    [ "$m" = dataroom ] && dataroom_tail "$split"
+    if [ "$m" = dataroom ]; then
+      # Where the catalogue's live parts answer: in the one layout jc takes them from the gateway,
+      # Portal and viz beside dataroom; apart, from here (the harvest reads Endpoints at api).
+      printf '\n[dataroom.addresses]\napi = "%s"\nportal = "%s"\nviz = "%s/embed"\n' "$origin" "$origin" "$origin"
+      dataroom_tail "$split"
+    fi
   } > "$split/$m.toml"
 done
 {
