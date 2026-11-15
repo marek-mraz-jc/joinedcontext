@@ -249,7 +249,7 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
     if cfg.organizations.is_empty() {
         return Ok(None);
     }
-    let mut table = HostTable::new();
+    let mut table = HostTable::new().reserving(jc_core::names::RESERVED_LABELS);
     let mut bound = std::collections::BTreeSet::new();
     for org in &cfg.organizations {
         table = table.organization(&org.name)?;
@@ -1302,6 +1302,86 @@ mod tests {
             .await
             .unwrap();
         (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// T-6974: every name jc places (the first path segment of each mount in slug mode, host
+    /// mode, dev's edge table and the two-Organization fixture, each module's slug, root paths
+    /// and host label, jc's own pages and the Portal's page roots) is in jc-core's
+    /// `RESERVED_LABELS`, so no Organization can take it from the service.
+    #[test]
+    fn every_placed_segment_and_host_label_is_reserved() {
+        fn first_segment(path: &str) -> &str {
+            path.trim_start_matches('/')
+                .split('/')
+                .next()
+                .unwrap_or_default()
+        }
+        let mut placed = std::collections::BTreeSet::new();
+        let mut label = |host: &str, base: &str| {
+            let host = host.split(':').next().unwrap_or(host);
+            let host = host.strip_prefix("*.").unwrap_or(host);
+            if let Some(sub) = host.strip_suffix(base).and_then(|h| h.strip_suffix('.')) {
+                placed.insert(sub.split('.').next().unwrap_or(sub).to_owned());
+            }
+        };
+        let configs = [
+            ("all", "mode = \"slug\"\nbase_host = \"city.test\"\n"),
+            ("all", "mode = \"host\"\nbase_host = \"city.test\"\n"),
+            ("all", DEV_MOUNTS),
+        ];
+        let mut segments = std::collections::BTreeSet::new();
+        for (roles, file) in configs {
+            let cfg = dev_config(roles, file);
+            for plan in plan_mounts(&cfg).expect("plans") {
+                for spec in plan.specs() {
+                    if let Some(host) = spec.host.as_deref() {
+                        label(host, &cfg.base_host);
+                    }
+                    segments.insert(
+                        first_segment(spec.path_prefix.as_deref().unwrap_or_default()).to_owned(),
+                    );
+                }
+            }
+        }
+        for org in
+            dev_config("dataroom", include_str!("../tests/fixtures/two-orgs.toml")).organizations
+        {
+            for (_, host) in org.hosts.by_module() {
+                placed.insert(host.split('.').next().unwrap_or(host).to_owned());
+            }
+        }
+        for module in Module::ALL {
+            placed.insert(module.slug().to_owned());
+            placed.insert(module.host_label().to_owned());
+            segments.extend(
+                module
+                    .root_paths()
+                    .iter()
+                    .map(|p| first_segment(p).to_owned()),
+            );
+        }
+        // jc's own pages (`/closed`, `/healthz`, `/metrics`) and the Portal's server and page roots.
+        segments
+            .extend(["closed", "healthz", "metrics", "api", "assets", "docs"].map(str::to_owned));
+        let pages = include_str!("../../../crates/portal/ui/src/router.tsx");
+        segments.extend(pages.split("path: \"/").skip(1).map(|rest| {
+            rest.split(['/', '"', '$'])
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        }));
+        placed.extend(segments);
+        // A name with a dot or an underscore (`.well-known`, `catalog.jsonld`) is no Organization
+        // name, so it needs no entry.
+        let missing: Vec<_> = placed
+            .iter()
+            .filter(|n| jc_core::names::validate_dns1123_label(n).is_ok())
+            .filter(|n| !jc_core::names::RESERVED_LABELS.contains(&n.as_str()))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "add to jc_core::names::RESERVED_LABELS: {missing:?}"
+        );
     }
 
     /// T-6705: host mode routes by name, so the kubelet's probe names a host jc serves:

@@ -81,6 +81,7 @@ fn under<'a>(path: &'a str, root: &str) -> Option<&'a str> {
 pub struct HostTable {
     rows: BTreeMap<String, HostRow>,
     organizations: BTreeSet<String>,
+    reserved: BTreeSet<String>,
 }
 
 /// Whether `host` is an authority a URL can be built from: a lowercase name or IPv4 address, or
@@ -149,11 +150,24 @@ impl HostTable {
         Self::default()
     }
 
+    /// The names no Organization may take (jc passes jc-core's `RESERVED_LABELS`, T-6974):
+    /// set before the Organizations, which [`HostTable::organization`] then refuses.
+    #[must_use]
+    pub fn reserving(mut self, names: &[&str]) -> Self {
+        self.reserved.extend(names.iter().map(|n| (*n).to_owned()));
+        self
+    }
+
     /// An Organization of the deployment, selectable by path on every shared host.
     pub fn organization(mut self, name: &str) -> Result<Self, RouterError> {
         if !valid_organization(name) {
             return Err(RouterError::InvalidHostRow(format!(
                 "'{name}' is not an Organization id"
+            )));
+        }
+        if self.reserved.contains(name) {
+            return Err(RouterError::InvalidHostRow(format!(
+                "Organization '{name}' is reserved for the platform"
             )));
         }
         self.organizations.insert(name.to_owned());
@@ -538,5 +552,20 @@ mod tests {
             shadow,
             Err(crate::RouterError::OrganizationShadowsMount { .. })
         ));
+    }
+
+    /// T-6974: a reserved name is refused as an Organization even where no module is mounted
+    /// under it (an edge-only prefix such as `/grafana`, a host label).
+    #[test]
+    fn a_reserved_name_is_no_organization() {
+        let table = HostTable::new().reserving(&["grafana", "login"]);
+        for name in ["grafana", "login"] {
+            let err = table.clone().organization(name).expect_err(name);
+            assert!(
+                err.to_string().contains("reserved for the platform"),
+                "{err}"
+            );
+        }
+        table.organization("bbsk").expect("an ordinary name");
     }
 }
