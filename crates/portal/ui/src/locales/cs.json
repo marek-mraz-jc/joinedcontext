@@ -10439,7 +10439,6 @@
     "openChange": "Otevřít změnu",
     "showDiff": "Ukázat, co mění",
     "hideDiff": "Skrýt, co mění",
-    "diffFailed": "Změnu nebylo možné přečíst; otevřete ji a zkuste znovu.",
     "reasonFirst": "Nejprve uveďte důvod: autor si ho přečte.",
     "decided": {
       "approved": "Schváleno: nasazuje se.",

@@ -10439,7 +10439,6 @@
     "openChange": "Otvoriť zmenu",
     "showDiff": "Ukázať, čo mení",
     "hideDiff": "Skryť, čo mení",
-    "diffFailed": "Zmenu nebolo možné prečítať; otvorte ju a skúste znova.",
     "reasonFirst": "Najprv uveďte dôvod: autor si ho prečíta.",
     "decided": {
       "approved": "Schválené: nasadzuje sa.",

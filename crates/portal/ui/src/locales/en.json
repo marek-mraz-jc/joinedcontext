@@ -10439,7 +10439,6 @@
     "openChange": "Open the change",
     "showDiff": "Show what it changes",
     "hideDiff": "Hide what it changes",
-    "diffFailed": "The change could not be read; open it to try again.",
     "reasonFirst": "Say why first: the author reads it.",
     "decided": {
       "approved": "Approved: it is being deployed.",

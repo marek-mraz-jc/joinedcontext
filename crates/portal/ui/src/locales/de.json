@@ -10439,7 +10439,6 @@
     "openChange": "Änderung öffnen",
     "showDiff": "Zeigen, was sie ändert",
     "hideDiff": "Ausblenden, was sie ändert",
-    "diffFailed": "Die Änderung ließ sich nicht lesen; öffnen Sie sie, um es erneut zu versuchen.",
     "reasonFirst": "Nennen Sie zuerst den Grund: der Autor liest ihn.",
     "decided": {
       "approved": "Genehmigt: wird bereitgestellt.",

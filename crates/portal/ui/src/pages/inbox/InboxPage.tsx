@@ -9,7 +9,7 @@ import { useDecision, useDecisions, useDecisionsError } from "../../api/decision
 import { useProjects } from "../../api/projects";
 import { PlanDiffViewer } from "../../components/diff/PlanDiffViewer";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
-import { Alert, Button, Card, Field, Input, PageHeader, Textarea, safeHref } from "../../components/ui";
+import { Alert, Button, Card, Field, Input, PageFailed, PageHeader, Textarea, safeHref } from "../../components/ui";
 import { AccessRequestInbox } from "../pipelines/AccessRequests";
 import { NOTIFICATIONS_KEY, notificationHref, notificationText } from "../spaces/Comments";
 
@@ -62,9 +62,7 @@ function Decision({ project, change }: { project: string; change: ChangeProposal
         detail.isPending ? (
           <p className="text-caption text-fg-muted">{t("app.loading")}</p>
         ) : detail.isError ? (
-          <Alert role="alert" tone="danger">
-            {t("inbox.diffFailed")}
-          </Alert>
+          <PageFailed error={detail.error} onRetry={() => void detail.refetch()} />
         ) : (
           <PlanDiffViewer fields={detail.data.planFields} />
         )

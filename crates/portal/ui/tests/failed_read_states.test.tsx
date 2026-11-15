@@ -4,7 +4,7 @@
  * at "0 of 5 done", "no create form here", a bare "Internal Server Error" without the page's
  * heading, or a page without its navigation.
  */
-import { screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../src/locales/en.json";
 import { queryKeys } from "../src/api/client";
@@ -49,6 +49,27 @@ describe("a failed read", () => {
     // The project navigation and the person's menu stay, so they can go elsewhere.
     expect(screen.getAllByRole("navigation").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: en.nav.projects })).toBeInTheDocument();
+  });
+
+  // A-8-07: the Dashboards and Organization endpoints pages say a failure through PageFailed: a
+  // server failure is quoted with Retry, a refusal gets no Retry that cannot help.
+  it.each([
+    ["/projects/helsinki/dashboards", (path: string) => path.endsWith("/dashboards")],
+    ["/organization/endpoints", (path: string) => path.endsWith("/endpoints")],
+  ])("says a failure on %s the shared way", async (page, failing) => {
+    const problem = (status: number) =>
+      new Response(JSON.stringify({ type: "about:blank", title: "x", status, detail: `answered ${status}` }), {
+        status,
+        headers: { "Content-Type": "application/problem+json", "X-Request-Id": `req-${status}` },
+      });
+    await renderRoute({ path: page, answer: (path) => (failing(path) ? problem(500) : undefined) });
+    expect(await screen.findByText("answered 500")).toBeInTheDocument();
+    expect(screen.getByText(/req-500/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.app.error.retry })).toBeInTheDocument();
+    cleanup();
+    await renderRoute({ path: page, answer: (path) => (failing(path) ? problem(403) : undefined) });
+    expect(await screen.findByText("answered 403")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en.app.error.retry })).not.toBeInTheDocument();
   });
 
   it("is not told as a missing create form", async () => {
