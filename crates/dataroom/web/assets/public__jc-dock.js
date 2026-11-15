@@ -32,13 +32,15 @@
   } catch (e) { /* storage off: the panel opens closed */ }
 })();
 // T-6748, T-6758, T-7030: the closed assistant corner never covers what a visitor came for. While
-// it would sit over a connect card, a code block, a form control, an open Subscribe menu or, on a
-// phone, a live data frame, it steps aside (jc-theme.css): the launcher fades, a keyboard still
-// reaches it, and it is back once that scrolls past. Its area is measured while it shows, so the
+// it would sit over a connect card, a code block, a form control or an open Subscribe menu, and on
+// a phone over any text, picture or frame of the page, it steps aside (jc-theme.css): the
+// launcher fades, a keyboard still reaches it, and it is back over empty room and in its own row
+// above the footer. Its area is measured while it shows, so the
 // bar going does not shrink the area and flicker it back.
 window.jcCornerAside = (function () {
   var phone = window.matchMedia("(max-width: 40rem)");
   var under = ".jc-connect, .jc-code, .jc-copy, .jc-address, input:not([type=hidden]), select, textarea, .jc-subscribe[open] > .jc-subscribe-menu";
+  var text = "#content :is(p, li, dt, dd, h1, h2, h3, h4, pre, table, blockquote, figure, img, iframe, .btn)";
   var size = null;
   var queued = false;
   function check() {
@@ -54,7 +56,7 @@ window.jcCornerAside = (function () {
       size = { width: c.width, height: c.height };
     }
     var zone = { left: c.right - size.width, right: c.right, top: c.bottom - size.height, bottom: c.bottom };
-    var over = Array.prototype.some.call(document.querySelectorAll(under + (phone.matches ? ", iframe[data-jc-viz]" : "")), function (el) {
+    var over = Array.prototype.some.call(document.querySelectorAll(under + (phone.matches ? ", " + text : "")), function (el) {
       if (corner.contains(el)) return false;
       var r = el.getBoundingClientRect();
       return r.width > 0 && r.left < zone.right && zone.left < r.right && r.top < zone.bottom && zone.top < r.bottom;

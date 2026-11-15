@@ -390,7 +390,7 @@ only where the template put a <wbr> (before a slash). */
 .jc-code-copy { display: inline-flex; align-items: center; gap: .375rem; min-height: 2.25rem; padding: 0 .75rem; border: 1px solid color-mix(in oklab, var(--jc-paper) 22%, transparent); border-radius: calc(var(--jc-radius) - 2px); background: color-mix(in oklab, var(--jc-paper) 8%, transparent); color: inherit; font: inherit; font-weight: 500; cursor: pointer; }
 .jc-code-copy:hover { background: color-mix(in oklab, var(--jc-paper) 16%, transparent); }
 .jc-code-copy:focus-visible { outline: 2px solid var(--jc-paper); outline-offset: 1px; }
-.jc-live .jc-code pre, .jc-code .jc-code-url { margin: 0; padding: .75rem var(--jc-code-pad); background: transparent; color: inherit; border-radius: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8125rem; line-height: 1.5; }
+.jc-live .jc-code pre, .jc-guide .jc-code pre, .jc-code .jc-code-url { margin: 0; padding: .75rem var(--jc-code-pad); background: transparent; color: inherit; border-radius: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8125rem; line-height: 1.5; }
 .jc-code code { font: inherit; color: inherit; background: none; padding: 0; }
 .jc-live .jc-code pre { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 .jc-code .jc-code-url { overflow-wrap: normal; word-break: normal; }
@@ -398,7 +398,7 @@ only where the template put a <wbr> (before a slash). */
 .jc-code-copy { min-height: 2.75rem; }
 /* A phone's card gives the code the width its longest line needs. */
 .jc-mcp { padding: 1rem; --jc-code-pad: .625rem; }
-.jc-live .jc-code pre, .jc-code .jc-code-url { font-size: .75rem; }
+.jc-live .jc-code pre, .jc-guide .jc-code pre, .jc-code .jc-code-url { font-size: .75rem; }
 }
 .jc-section + .jc-section { margin-top: 1.5rem; }
 .jc-section h3 { margin: 0; font-size: 1.0625rem; }
@@ -755,6 +755,9 @@ row of logo buttons that wraps, and the sections stack at every width, each a ca
 .jc-guide-steps { padding-inline-start: 1.25rem; }
 .jc-guide-steps li { margin-block-end: .75rem; }
 .jc-guide .jc-code { --jc-code-pad: .875rem; }
+.jc-guide .jc-code pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A step's card is narrower than the page's: its address also breaks inside a host name. */
+.jc-guide .jc-code .jc-code-url { overflow-wrap: anywhere; }
 .jc-guide-trouble dt { font-weight: 600; margin-block-start: .75rem; }
 .jc-guide-trouble dd { margin: .25rem 0 0; }
 .jc-guide-checked { color: var(--jc-muted); overflow-wrap: anywhere; }
