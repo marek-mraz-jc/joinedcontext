@@ -7,7 +7,7 @@ import { Skeleton } from "../components/ui/Skeleton";
 import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, whilePending } from "../api/client";
+import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
 import { proposeChecked } from "../api/proposal";
 import { exactBytes, sizeText, spaceUsageQuery, usageRefusal } from "../api/spaceUsage";
 import type { SpaceUsage } from "../api/spaceUsage";
@@ -291,13 +291,7 @@ export function SpacesPage({ project }: { project: string }): JSX.Element {
       void queryClient.invalidateQueries({ queryKey: queryKeys.list(project, "spaces") });
     },
     onError: (err) => {
-      setFormError(
-        err instanceof ApiError
-          ? (err.problem?.detail ?? err.message)
-          : err instanceof Error
-            ? err.message
-            : t("app.error.generic"),
-      );
+      setFormError(problemOf(err, err instanceof Error ? err.message : t("app.error.generic")));
     },
   });
 

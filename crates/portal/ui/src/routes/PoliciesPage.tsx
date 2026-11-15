@@ -8,7 +8,7 @@ import { GranteeInWords, OperationsInWords } from "../components/AccessWords";
 import { policySentence } from "../pages/policies/policySentence";
 import { PolicySummary } from "../pages/policies/PolicySummary";
 import { TryAPerson } from "../pages/policies/TryAPerson";
-import { api, ApiError, queryKeys, unwrap, whilePending } from "../api/client";
+import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
 import { proposeChecked } from "../api/proposal";
 import { asManifests, isChange, localized, storedMetadata } from "../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../api/manifest";
@@ -201,13 +201,7 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
       void queryClient.invalidateQueries({ queryKey: queryKeys.list(project, "policies") });
     },
     onError: (err) => {
-      setFormError(
-        err instanceof ApiError
-          ? (err.problem?.detail ?? err.message)
-          : err instanceof Error
-            ? err.message
-            : t("app.error.generic"),
-      );
+      setFormError(problemOf(err, err instanceof Error ? err.message : t("app.error.generic")));
     },
   });
 
