@@ -102,10 +102,11 @@ describe("edit mode", () => {
 
     fireEvent.click(within(panel).getByRole("button", { name: DEFAULT_LABELS.apply }));
     await waitFor(() => expect(written).toHaveLength(1));
-    // One entity, one PATCH, the number as a number and the unit kept.
+    // One entity, one PATCH, the number as a number, the unit kept and, since an update replaces
+    // the instance, the time it was observed kept too.
     expect(written[0]).toEqual({
       id: "urn:ngsi-ld:BikeHireDockingStation:hel:helsinki:001",
-      attrs: { availableBikeNumber: { type: "Property", value: 4, unitCode: "C62" } },
+      attrs: { availableBikeNumber: { type: "Property", value: 4, unitCode: "C62", observedAt: "2026-01-01T10:00:00Z" } },
     });
     // Applied cells are no longer pending, and the endpoint's own answer is read again.
     await waitFor(() => expect(screen.queryByText(`1 ${DEFAULT_LABELS.pending}`)).toBeNull());
@@ -553,7 +554,7 @@ describe("editing from the keyboard and with a reason (T-4826, DM-113)", () => {
     await waitFor(() => expect(written).toHaveLength(2));
     expect(written[1]).toEqual({
       id: "urn:ngsi-ld:BikeHireDockingStation:hel:helsinki:001",
-      attrs: { availableBikeNumber: { type: "Property", value: 5, unitCode: "C62" } },
+      attrs: { availableBikeNumber: { type: "Property", value: 5, unitCode: "C62", observedAt: "2026-01-01T10:00:00Z" } },
     });
     expect(reasons[1]).toBe(`${DEFAULT_LABELS.undoReason}: Sensor stuck`);
     expect(await screen.findByText(DEFAULT_LABELS.undone)).toBeInTheDocument();

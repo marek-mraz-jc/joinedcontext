@@ -24,6 +24,7 @@ import {
 } from "../components/ui";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
 import { SPACE_LABEL } from "../schemas/modelprojection";
+import { endpointView } from "../components/ui/safeHref";
 
 export interface SubscriptionForm {
   name: string;
@@ -368,8 +369,9 @@ export function SubscriptionsPage({ project, edit }: { project: string; edit?: s
           {
             id: "receiver",
             label: t("subscriptions.field.receiver"),
-            text: (row) => fromSubscriptionEnvelope(row).notification.endpoint.uri,
-            cell: (row) => <span className="break-all font-mono text-caption">{fromSubscriptionEnvelope(row).notification.endpoint.uri || "—"}</span>,
+            // Host and path only (T-4991): a receiver's address may carry a password or a token.
+            text: (row) => endpointView(fromSubscriptionEnvelope(row).notification.endpoint.uri).shown,
+            cell: (row) => <span className="break-all font-mono text-caption">{endpointView(fromSubscriptionEnvelope(row).notification.endpoint.uri).shown || "—"}</span>,
           },
           {
             id: "deliveries",

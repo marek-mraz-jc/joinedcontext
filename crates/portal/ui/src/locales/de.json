@@ -5874,7 +5874,10 @@
     "observedAt": "Beobachtet",
     "unit": "Einheit",
     "datasetId": "Datensatz",
-    "empty": "Keine Entitäten.",
+    "empty": "Hier gibt es noch keine Entitäten. Daten kommen über eine Datenquelle, einen Import oder eine Pipeline.",
+    "filtersMatchNothing": "Keine Zeile passt zu Ihren Filtern.",
+    "notSaved": "nicht gespeichert",
+    "refusedNext": "Verwerfen Sie die Änderungen, um den gespeicherten Wert zu behalten. Wenn der Grund sagt, dass Sie hier nicht schreiben dürfen, bitten Sie den Eigentümer des Kontextraums um Zugriff.",
     "loading": "Lädt…",
     "filtering": "Filtert…",
     "previous": "Zurück",
@@ -5885,6 +5888,7 @@
     "retry": "Erneut versuchen",
     "busy": "die Datenquelle ist gerade ausgelastet",
     "timedOut": "die Datenquelle hat zu lange nicht geantwortet",
+    "unreachable": "die Datenquelle ist nicht erreichbar",
     "filter": "Filter",
     "noFilter": "Beliebig",
     "ops": {
@@ -6706,6 +6710,7 @@
       "failed": "Version {version} wird nicht veröffentlicht, solange {failed} ihrer Tests fehlschlagen: {names}. Bitten Sie den Assistenten, sie zu beheben."
     },
     "publishOver": "Dieser Lauf ist beendet und hat nichts zu veröffentlichen.",
+    "publishNotReady": "Noch ist keine Version zum Veröffentlichen bereit: Veröffentlichen wird möglich, sobald ihre Vorschau gebaut ist und ihre Tests bestehen.",
     "failedNext": "Es wurde nichts veröffentlicht. Bauen Sie die App auf der Seite Assistent neu.",
     "failedOpen": "Neu bauen"
   },

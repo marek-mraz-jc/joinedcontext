@@ -57,6 +57,9 @@ describe("readHistory", () => {
     expect(read.versions).toBe(false);
     expect(read.measurements).toHaveLength(1);
     expect(urls).toHaveLength(2);
+    // lastN counts the instances it returns, so only the default instance is asked for: a page
+    // of other datasetIds would otherwise read as the last one.
+    expect(urls.every((url) => new URL(url).searchParams.get("datasetId") === "@none")).toBe(true);
 
     vi.restoreAllMocks();
     capture(404);

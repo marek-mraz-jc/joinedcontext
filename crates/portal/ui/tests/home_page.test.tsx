@@ -19,6 +19,8 @@ interface World {
   entities?: number;
   pipelines?: string[];
   dismissed?: boolean;
+  /** What `GET /api/v1/preferences` answers now, read on each request; `dismissed` when unset. */
+  preferences?: { current: Record<string, unknown> };
   /** The project's Endpoints; `true` carries a catalogue publication. */
   endpoints?: [string, boolean][];
   /** Arrived through an invitation's link (PF-108). */
@@ -53,7 +55,7 @@ function show(world: World) {
       }
       if (path === "/api/v1/shared-apps") return json(world.shared ?? []);
       if (path === "/api/v1/organization/widgets") return json({ widgets: world.widgets ?? [] });
-      if (path === "/api/v1/preferences") return json(world.dismissed ? { firstRunDismissed: true } : {});
+      if (path === "/api/v1/preferences") return json(world.preferences?.current ?? (world.dismissed ? { firstRunDismissed: true } : {}));
       if (path === "/api/v1/projects") return json({ apiVersion: "v1", kind: "List", items: world.projects ?? [{ name: "helsinki", sample: false }] });
       if (path === "/api/v1/projects/helsinki/spaces") return json(list((world.spaces ?? []).map((s) => named(s))));
       if (path.match(/\/spaces\/[^/]+\/usage$/)) return json({ entities: world.entities ?? 0, observedAt: "2026-10-07T20:00:00Z" });
@@ -107,6 +109,17 @@ describe("the project home (T-3233, T-3235)", () => {
     await waitFor(() => expect(screen.queryByRole("region", { name: en.home.firstRun.title })).toBeNull());
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(screen.queryByRole("region", { name: en.home.firstRun.title })).toBeNull();
+  });
+
+  it("keeps the pages starred since the home page opened when the checklist is put away", async () => {
+    const preferences = { current: {} as Record<string, unknown> };
+    const { sent } = show({ verbs: ["read", "propose"], preferences });
+    const dismiss = await screen.findByRole("button", { name: en.home.firstRun.dismiss });
+    // A star saved after the home page read the preferences.
+    const starred = { path: "/projects/helsinki/spaces/air", title: "Air" };
+    preferences.current = { favourites: [starred] };
+    await userEvent.click(dismiss);
+    await waitFor(() => expect(sent).toEqual([{ method: "PUT", path: "/api/v1/preferences", body: { favourites: [starred], firstRunDismissed: true } }]));
   });
 
   it("puts the checklist away for the person, in their preferences", async () => {

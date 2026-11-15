@@ -6,7 +6,7 @@
  * belongs to its entity, in the endpoint's own words, and the entities that landed stay landed.
  */
 import { describe, expect, it } from "vitest";
-import { applyChanges, attrsBody, MAX_ENTITIES, MAX_REASON } from "../src/grid/apply";
+import { applyChanges, attrsBody, keptMembers, MAX_ENTITIES, MAX_REASON } from "../src/grid/apply";
 import { SourceError } from "../src/grid/source";
 
 /** A source that records what it was asked to write and refuses whichever entity a test names. */
@@ -84,6 +84,33 @@ describe("applying edited cells", () => {
       unitCode: "C62",
       observedAt: "2026-09-19T09:00:00.000Z",
     });
+  });
+
+  it("keeps the stored observedAt and sub-attributes of a corrected value, since an update replaces the instance", () => {
+    const stored = {
+      type: "Property",
+      value: 3,
+      unitCode: "C62",
+      observedAt: "2026-09-18T07:00:00Z",
+      createdAt: "2026-09-01T00:00:00Z",
+      modifiedAt: "2026-09-18T07:00:00Z",
+      providedBy: { type: "Relationship", object: "urn:ngsi-ld:Device:hel:1" },
+    };
+    const kept = keptMembers(stored);
+    const change = { attribute: "availableBikeNumber", before: 3, after: 4, unitCode: "C62", kept };
+    expect(attrsBody([change], "keep").availableBikeNumber).toEqual({
+      type: "Property",
+      value: 4,
+      unitCode: "C62",
+      observedAt: "2026-09-18T07:00:00Z",
+      providedBy: { type: "Relationship", object: "urn:ngsi-ld:Device:hel:1" },
+    });
+    expect(attrsBody([change], "now", () => "2026-09-19T09:00:00.000Z").availableBikeNumber).toMatchObject({
+      observedAt: "2026-09-19T09:00:00.000Z",
+      providedBy: { type: "Relationship", object: "urn:ngsi-ld:Device:hel:1" },
+    });
+    expect(keptMembers([{ type: "Property", value: 1 }, { type: "Property", value: 2, datasetId: "urn:d:2", note: { type: "Property", value: "x" } }], "urn:d:2")).toEqual({ note: { type: "Property", value: "x" } });
+    expect(keptMembers(undefined)).toBeUndefined();
   });
 
   it("keeps a refusal with its own entity, in the endpoint's words", async () => {

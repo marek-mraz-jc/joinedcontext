@@ -5874,7 +5874,10 @@
     "observedAt": "Pozorováno",
     "unit": "Jednotka",
     "datasetId": "Dataset",
-    "empty": "Žádné entity.",
+    "empty": "Zatím tu nejsou žádné entity. Data přicházejí přes zdroj dat, import nebo pipeline.",
+    "filtersMatchNothing": "Vašim filtrům neodpovídá žádný řádek.",
+    "notSaved": "neuloženo",
+    "refusedNext": "Zahoďte změny a ponechte uloženou hodnotu. Pokud důvod říká, že sem nesmíte zapisovat, požádejte vlastníka kontextového prostoru o přístup.",
     "loading": "Načítám…",
     "filtering": "Filtruji…",
     "previous": "Předchozí",
@@ -5885,6 +5888,7 @@
     "retry": "Zkusit znovu",
     "busy": "zdroj dat je právě zaneprázdněný",
     "timedOut": "zdroj dat neodpověděl včas",
+    "unreachable": "zdroj dat je nedostupný",
     "filter": "Filtr",
     "noFilter": "Libovolné",
     "ops": {
@@ -6706,6 +6710,7 @@
       "failed": "Verze {version} se nezveřejní, dokud selhává {failed} jejích testů: {names}. Požádejte asistenta o opravu."
     },
     "publishOver": "Tento běh skončil, takže nemá co zveřejnit.",
+    "publishNotReady": "Zatím není připravena žádná verze k publikování: Publikovat se zpřístupní, až bude sestaven její náhled a projdou její testy.",
     "failedNext": "Nic se nezveřejnilo. Na stránce Asistent aplikaci sestavte znovu.",
     "failedOpen": "Sestavit znovu"
   },

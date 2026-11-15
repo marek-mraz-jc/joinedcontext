@@ -5874,7 +5874,10 @@
     "observedAt": "Pozorované",
     "unit": "Jednotka",
     "datasetId": "Dataset",
-    "empty": "Žiadne entity.",
+    "empty": "Zatiaľ tu nie sú žiadne entity. Údaje prichádzajú cez zdroj údajov, import alebo pipeline.",
+    "filtersMatchNothing": "Vašim filtrom nezodpovedá žiadny riadok.",
+    "notSaved": "neuložené",
+    "refusedNext": "Zahoďte zmeny a ponechajte uloženú hodnotu. Ak dôvod hovorí, že sem nesmiete zapisovať, požiadajte vlastníka kontextového priestoru o prístup.",
     "loading": "Načítavam…",
     "filtering": "Filtrujem…",
     "previous": "Predchádzajúca",
@@ -5885,6 +5888,7 @@
     "retry": "Skúsiť znova",
     "busy": "zdroj údajov je práve zaneprázdnený",
     "timedOut": "zdroj údajov neodpovedal včas",
+    "unreachable": "zdroj údajov je nedostupný",
     "filter": "Filter",
     "noFilter": "Ľubovoľné",
     "ops": {
@@ -6706,6 +6710,7 @@
       "failed": "Verzia {version} sa nezverejní, kým zlyháva {failed} jej testov: {names}. Požiadajte asistenta o opravu."
     },
     "publishOver": "Tento beh sa skončil, takže nemá čo zverejniť.",
+    "publishNotReady": "Zatiaľ nie je pripravená žiadna verzia na zverejnenie: Zverejniť sa sprístupní, keď bude zostavený jej náhľad a prejdú jej testy.",
     "failedNext": "Nič sa nezverejnilo. Na stránke Asistent aplikáciu zostavte znova.",
     "failedOpen": "Zostaviť znova"
   },

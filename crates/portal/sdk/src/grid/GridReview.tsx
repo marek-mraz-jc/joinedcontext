@@ -114,9 +114,17 @@ export function GridReview({ view }: { view: GridView }): React.JSX.Element | nu
       {pendingChanges.length > MAX_ENTITIES && (
         <p className="jc-grid-error">{`${labels.error}: ${MAX_ENTITIES}`}</p>
       )}
-      {refused.map((one) => (
-        <p key={one.id} className="jc-grid-error">{`${one.id}: ${one.detail}`}</p>
-      ))}
+      {/* By the row's name, never its URN (T-7063): the value stays the person's until Discard. */}
+      {refused.map((one) => {
+        const row = rows.find((each) => each.id === one.id);
+        const name = row ? rowName(row) : targetName(one.id).name;
+        return (
+          <p key={one.id} className="jc-grid-error" role="alert">
+            {`${name} — ${labels.notSaved}: ${one.detail}`}
+          </p>
+        );
+      })}
+      {refused.length > 0 && <p className="jc-grid-refused-next">{labels.refusedNext}</p>}
       <label className="jc-grid-reason">
         <span>{labels.reason}</span>
         <input

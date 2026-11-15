@@ -5874,7 +5874,10 @@
     "observedAt": "Observed",
     "unit": "Unit",
     "datasetId": "Dataset",
-    "empty": "No entities here.",
+    "empty": "No entities here yet. Data arrives through a data source, an import or a pipeline.",
+    "filtersMatchNothing": "None of the rows match your filters.",
+    "notSaved": "not saved",
+    "refusedNext": "Discard the changes to keep what is stored. If the reason says you may not write here, ask the Context Space's owner for access.",
     "loading": "Loading…",
     "filtering": "Filtering…",
     "previous": "Previous",
@@ -5885,6 +5888,7 @@
     "retry": "Try again",
     "busy": "the data source is busy right now",
     "timedOut": "the data source took too long to answer",
+    "unreachable": "the data source could not be reached",
     "filter": "Filter",
     "noFilter": "Any",
     "ops": {
@@ -6706,6 +6710,7 @@
       "failed": "Version {version} is not published while {failed} of its tests fail: {names}. Ask the assistant to fix them."
     },
     "publishOver": "This run has ended, so it has nothing to publish.",
+    "publishNotReady": "No version is ready to publish yet: Publish opens once its preview is built and its tests pass.",
     "failedNext": "Nothing was published. Open the Assistant page to build it again.",
     "failedOpen": "Build it again"
   },
