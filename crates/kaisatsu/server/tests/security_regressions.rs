@@ -475,10 +475,14 @@ async fn refresh_grant(app: &axum::Router, refresh: &str) -> (StatusCode, Value)
 async fn a_disabled_realm_serves_no_protocol_or_login_route() {
     let (state, store, _) = setup_dev_realm_state().await;
     let app = router(state, mount());
-    let (st, tokens) = password_grant(&app, "demo.analyst@hel.fi", "AnalystPass123!Valid", &[]).await;
+    let (st, tokens) =
+        password_grant(&app, "demo.analyst@hel.fi", "AnalystPass123!Valid", &[]).await;
     assert_eq!(st, StatusCode::OK, "{tokens}");
     let access = tokens["access_token"].as_str().expect("access").to_string();
-    let refresh = tokens["refresh_token"].as_str().expect("refresh").to_string();
+    let refresh = tokens["refresh_token"]
+        .as_str()
+        .expect("refresh")
+        .to_string();
 
     let set_enabled = async |enabled: bool| {
         let mut realm = store.get_realm("dev").await.unwrap().unwrap();
@@ -490,7 +494,11 @@ async fn a_disabled_realm_serves_no_protocol_or_login_route() {
         if let Some(token) = bearer {
             req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
         }
-        let resp = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         resp.status()
     };
     let routes = [

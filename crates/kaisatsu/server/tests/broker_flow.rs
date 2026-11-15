@@ -517,8 +517,14 @@ async fn a_brokered_sign_in_asks_for_consent_and_required_actions_before_any_cod
     edge.consent_required = true;
     store.upsert_client(edge).await.unwrap();
 
-    let (next, cookie) =
-        upstream_sign_in(&app, &up_issuer, &up_state, "entra-sub-c", "consent.broker@hel.fi").await;
+    let (next, cookie) = upstream_sign_in(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-c",
+        "consent.broker@hel.fi",
+    )
+    .await;
     let (st, _, html) = get_with_ck(&app, &next, &cookie).await;
     assert_eq!((st, page_id(&html)), (StatusCode::OK, "consent"), "{html}");
 
@@ -530,8 +536,14 @@ async fn a_brokered_sign_in_asks_for_consent_and_required_actions_before_any_cod
         .expect("the brokered person");
     person.required_actions = vec!["TERMS_AND_CONDITIONS".into()];
     store.update_user(person).await.unwrap();
-    let (next, cookie) =
-        upstream_sign_in(&app, &up_issuer, &up_state, "entra-sub-c", "consent.broker@hel.fi").await;
+    let (next, cookie) = upstream_sign_in(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-c",
+        "consent.broker@hel.fi",
+    )
+    .await;
     let (st, _, html) = get_with_ck(&app, &next, &cookie).await;
     assert_eq!((st, page_id(&html)), (StatusCode::OK, "terms"), "{html}");
 }

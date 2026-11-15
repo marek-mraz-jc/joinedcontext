@@ -17,9 +17,9 @@ use openidconnect::core::{
     CoreResponseType, CoreSubjectIdentifierType,
 };
 use openidconnect::{
-    AdditionalProviderMetadata, ClaimsVerificationError, ClientId, CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet,
-    IssuerUrl, Nonce, OAuth2TokenResponse, PkceCodeChallenge, ProviderMetadata, RedirectUrl, Scope,
-    SignatureVerificationError, TokenResponse,
+    AdditionalProviderMetadata, ClaimsVerificationError, ClientId, CsrfToken, EndpointMaybeSet,
+    EndpointNotSet, EndpointSet, IssuerUrl, Nonce, OAuth2TokenResponse, PkceCodeChallenge,
+    ProviderMetadata, RedirectUrl, Scope, SignatureVerificationError, TokenResponse,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -1960,7 +1960,11 @@ pub(crate) mod tests {
             let mock = Mock::given(wm_method("GET"))
                 .and(wm_path(format!("{REALM}/protocol/openid-connect/certs")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(keys));
-            let mock = if i < last { mock.up_to_n_times(1) } else { mock };
+            let mock = if i < last {
+                mock.up_to_n_times(1)
+            } else {
+                mock
+            };
             mock.mount(&server).await;
         }
         (server, issuer)
@@ -2002,14 +2006,19 @@ pub(crate) mod tests {
             .verify(|realm| after.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
             .await;
         assert_eq!(
-            verified.map(|claims| claims.subject().to_string()).ok().as_deref(),
+            verified
+                .map(|claims| claims.subject().to_string())
+                .ok()
+                .as_deref(),
             Some("ana")
         );
         assert_eq!(key_set_reads(&server).await, 2);
 
         // A key the realm never published fails, and within the cooldown asks the realm nothing.
         let (stranger, _) = signing_key("stranger");
-        let forged: CoreIdToken = id_token_of(&issuer, &stranger, "stranger").parse().expect("jwt");
+        let forged: CoreIdToken = id_token_of(&issuer, &stranger, "stranger")
+            .parse()
+            .expect("jwt");
         let refused = client
             .verify(|realm| forged.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
             .await;
@@ -2030,18 +2039,27 @@ pub(crate) mod tests {
             .expect("discovery");
 
         let (stranger, _) = signing_key("stranger");
-        let forged: CoreIdToken = id_token_of(&issuer, &stranger, "stranger").parse().expect("jwt");
+        let forged: CoreIdToken = id_token_of(&issuer, &stranger, "stranger")
+            .parse()
+            .expect("jwt");
         let refused = client
             .verify(|realm| forged.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
             .await;
         assert!(refused.is_err());
-        assert_eq!(key_set_reads(&server).await, 2, "the unknown key reloaded once");
+        assert_eq!(
+            key_set_reads(&server).await,
+            2,
+            "the unknown key reloaded once"
+        );
 
         let held: CoreIdToken = id_token_of(&issuer, &key, "held").parse().expect("jwt");
         let verified = client
             .verify(|realm| held.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
             .await;
-        assert!(verified.is_ok(), "an empty set replaced the held key: {verified:?}");
+        assert!(
+            verified.is_ok(),
+            "an empty set replaced the held key: {verified:?}"
+        );
     }
 
     #[tokio::test]

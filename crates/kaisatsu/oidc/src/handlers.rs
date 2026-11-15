@@ -2807,7 +2807,10 @@ async fn handle_token_exchange_grant(
     .await?;
     let granted_scope_str = narrowed_like_subject(
         &granted_scope_str,
-        subj_claims.get("scope").and_then(Value::as_str).unwrap_or_default(),
+        subj_claims
+            .get("scope")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
     )?;
 
     // Check that any requested `audience` is mapped by one of the requester's active scopes or mappers

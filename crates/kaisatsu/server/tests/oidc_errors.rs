@@ -514,14 +514,21 @@ async fn token_exchange_and_its_refresh_keep_read_only_the_organization_pin_and_
         ("scope", "openid organization:t-other"),
     ])
     .await;
-    assert_eq!((st, other["error"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_scope")), "{other}");
+    assert_eq!(
+        (st, other["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_scope")),
+        "{other}"
+    );
 
     let (st, exchanged) = as_tx(&[("grant_type", exchange), ("subject_token", &subject)]).await;
     assert_eq!(st, StatusCode::OK, "{exchanged}");
     narrowed(&exchanged);
     let (st, refreshed) = as_tx(&[
         ("grant_type", "refresh_token"),
-        ("refresh_token", exchanged["refresh_token"].as_str().expect("refresh")),
+        (
+            "refresh_token",
+            exchanged["refresh_token"].as_str().expect("refresh"),
+        ),
     ])
     .await;
     assert_eq!(st, StatusCode::OK, "{refreshed}");
