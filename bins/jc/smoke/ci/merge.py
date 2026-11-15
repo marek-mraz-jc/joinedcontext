@@ -26,7 +26,7 @@ from pathlib import Path
 
 SMOKE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SMOKE))
-from common import FAIL, PASS, SKIP  # noqa: E402
+from common import FAIL, PASS, SKIP
 
 # by path: every suite's module is suite.py, and the ci tests share one process with the others
 _spec = importlib.util.spec_from_file_location("smoke_all", SMOKE / "all" / "suite.py")
@@ -45,7 +45,7 @@ def fold(rows: list[tuple[str, dict]]) -> dict:
     """One row of an EVERY suite from each shard's row of that id: the worst wins, naming its shards."""
     worst = min(RANK[r["result"]] for _, r in rows)
     named = [(s, r) for s, r in rows if RANK[r["result"]] == worst]
-    shard, first = named[0]
+    first = named[0][1]
     reason = "; ".join(f"shard {s}: {r['reason']}" if r.get("reason") else f"shard {s}" for s, r in named)
     return {**first, "reason": reason[:400]}
 

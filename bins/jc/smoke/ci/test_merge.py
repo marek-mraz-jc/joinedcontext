@@ -99,7 +99,7 @@ def test_the_shards_hold_the_rows_and_verdict_of_one_run(tmp_path, monkeypatch):
     assert run_all(tmp_path / "whole") == 0
     code = merge.main(["--out", str(tmp_path / "m"), "--expect", "s1,s2", *map(str, shards(tmp_path))])
     whole, merged = doc(tmp_path / "whole"), doc(tmp_path / "m")
-    ids = lambda d: Counter(r["id"] for r in d["checks"])  # noqa: E731
+    ids = lambda d: Counter(r["id"] for r in d["checks"])
     # the one-run e2e placeholder is the only row a shard (no --e2e) leaves out
     assert ids(merged) == ids(whole) - Counter(["e2e/cargo"])
     assert code == 0 and merged["verdict"] == whole["verdict"] == "GREEN"
