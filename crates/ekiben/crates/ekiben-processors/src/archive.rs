@@ -241,6 +241,8 @@ pub struct UnarchiveProcessor {
     format: String,
     csv_delim: u8,
     max_members: usize,
+    /// The sheet of an `xlsx` or `ods` format (`xlsx:<sheet>`); the first one when `None`.
+    sheet: Option<String>,
 }
 
 impl UnarchiveProcessor {
@@ -272,6 +274,26 @@ impl UnarchiveProcessor {
                 format: "csv".to_string(),
                 csv_delim: ch as u8,
                 max_members: MAX_ARCHIVE_MEMBERS,
+                sheet: None,
+            });
+        }
+
+        // ekiben extension (T-7058 G-10): one message per row of a spreadsheet sheet.
+        let (base, sheet) = match format.split_once(':') {
+            Some((base @ ("xlsx" | "ods"), sheet)) => (base, Some(sheet)),
+            _ => (format.as_str(), None),
+        };
+        if matches!(base, "xlsx" | "ods") {
+            if sheet.is_some_and(|s| s.trim().is_empty()) {
+                return Err(CoreError::config(
+                    "a spreadsheet format names its sheet after the colon, e.g. xlsx:Data",
+                ));
+            }
+            return Ok(Self {
+                format: "spreadsheet".to_string(),
+                csv_delim: b',',
+                max_members: MAX_ARCHIVE_MEMBERS,
+                sheet: sheet.map(str::to_string),
             });
         }
 
@@ -287,6 +309,7 @@ impl UnarchiveProcessor {
                 | "json_array"
                 | "json_map"
                 | "csv"
+                | "shapefile"
         ) {
             return Err(CoreError::config(format!(
                 "archive format not recognised: {format}"
@@ -297,10 +320,11 @@ impl UnarchiveProcessor {
             format,
             csv_delim: b',',
             max_members: MAX_ARCHIVE_MEMBERS,
+            sheet: None,
         })
     }
 
-    fn unarchive_part(&self, part: &mut Part) -> Result<Batch, String> {
+    pub(crate) fn unarchive_part(&self, part: &mut Part) -> Result<Batch, String> {
         match self.format.as_str() {
             "json_array" => {
                 let parsed = !part.holds_structured();
@@ -484,6 +508,32 @@ impl UnarchiveProcessor {
                     out.push(csv_row(part, hdrs, &rec));
                 }
                 Ok(out)
+            }
+            "spreadsheet" => {
+                let bytes = part.as_bytes();
+                let rows =
+                    crate::spreadsheet::rows(&bytes, self.sheet.as_deref(), self.max_members)?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| {
+                        let mut np = part.shallow_copy();
+                        np.set_structured(row);
+                        np
+                    })
+                    .collect())
+            }
+            // ekiben extension (T-7089): one WGS 84 GeoJSON Feature per shapefile record.
+            "shapefile" => {
+                let bytes = part.as_bytes();
+                let features = crate::shapefile::features(&bytes, self.max_members)?;
+                Ok(features
+                    .into_iter()
+                    .map(|f| {
+                        let mut np = part.shallow_copy();
+                        np.set_structured(f);
+                        np
+                    })
+                    .collect())
             }
             "xml_documents_to_json" | "xml_documents_to_json:cast" => {
                 let cast = self.format.ends_with(":cast");

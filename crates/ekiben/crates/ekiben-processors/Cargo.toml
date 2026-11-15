@@ -6,8 +6,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
+calamine = { version = "=0.38.0", features = ["dates"] }
 ekiben-bloblang = { workspace = true }
 ekiben-core = { workspace = true }
+encoding_rs = "0.8"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

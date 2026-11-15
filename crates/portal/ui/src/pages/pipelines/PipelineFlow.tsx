@@ -11,7 +11,7 @@ import { TypePicker } from "../../components/pickers/TypePicker";
 import { CodeBlock, Button, Field, Input, Select, Tabs, tabPanelProps, Textarea } from "../../components/ui";
 import processorCatalogue from "../../schemas/bento-processors.json";
 import { COMPUTE_KINDS, OUTPUT_MODES, YamlFieldError } from "../../schemas/kinds";
-import { RUNNER_PROCESSORS } from "../../schemas/runner";
+import { offeredProcessor } from "../../schemas/runner";
 import type { OutputForm, PipelineForm, RouteForm, SourceForm, StepForm } from "./PipelineEditor";
 import { spaceOf } from "../spaces/spaceFacts";
 import { sourceKindOf } from "./PipelineStudio";
@@ -30,7 +30,7 @@ export interface Processor {
 
 /** The palette: the Bento catalogue kept to the processors the runner builds (T-6825). A step
  * already written with another one still draws, and the server refuses it on save. */
-const paletteProcessors = (processorCatalogue as Processor[]).filter(({ name }) => RUNNER_PROCESSORS.has(name));
+const paletteProcessors = (processorCatalogue as Processor[]).filter(({ name }) => offeredProcessor(name));
 
 /** The runner's processors by category, in the catalogue's order (PL-56). */
 export const PROCESSOR_GROUPS: { category: string; processors: Processor[] }[] = (() => {

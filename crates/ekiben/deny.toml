@@ -8,6 +8,9 @@ exceptions = [{ allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" }]
 
 [advisories]
 yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.1 unmaintained (no vulnerability; std::pin::pin! replaces it): only via async-imap 0.12.0 (newest) -> ekiben-io-remote, the imap input (T-7087). Drop when async-imap releases without pin-utils" },
+]
 
 [bans]
 multiple-versions = "warn"

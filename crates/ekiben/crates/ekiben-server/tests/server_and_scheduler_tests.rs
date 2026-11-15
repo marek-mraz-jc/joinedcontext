@@ -46,6 +46,7 @@ run: once
 input:
   generate:
     count: 5
+    interval: ""
     mapping: 'root = {"n": count("one_shot_test")}'
 pipeline:
   processors:
@@ -71,6 +72,7 @@ run: once
 input:
   generate:
     count: 2
+    interval: ""
     mapping: 'root = {"msg": "fail_me"}'
 output:
   reject: "downstream database offline: ${! json(\"msg\") }"
@@ -156,6 +158,7 @@ schedule:
 input:
   generate:
     count: 3
+    interval: ""
     mapping: 'root = {"tick": true}'
 output:
   drop: {}
@@ -242,6 +245,7 @@ run: once
 input:
   generate:
     count: 20
+    interval: ""
     mapping: 'root = {"id": uuid_v4(), "items": range(0, 10)}'
 pipeline:
   processors:
@@ -374,6 +378,7 @@ run: once
 input:
   generate:
     count: 3
+    interval: ""
     mapping: 'root = {"v": 1}'
 pipeline:
   processors:

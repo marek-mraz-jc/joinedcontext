@@ -37,6 +37,14 @@ pub enum SampleFormat {
     Csv,
     /// A JSON document; an array becomes one message per element.
     Json,
+    /// A spreadsheet fetched by URL: one message per row of a sheet keyed by its header row,
+    /// split by the runner's `unarchive` format `xlsx` as a live `format: xlsx` source is
+    /// (T-7086). A workbook is binary, so it is never an inline sample.
+    Xlsx,
+    /// A zipped shapefile fetched by URL: one WGS 84 GeoJSON Feature per record, split by the
+    /// runner's `unarchive` format `shapefile` as a live `format: shapefile` source is (T-7089).
+    /// A zip is binary, so it is never an inline sample.
+    Shapefile,
 }
 
 /// The sample of one test: inline text, or a URL the runner fetches itself.
@@ -57,6 +65,10 @@ pub struct Sample {
     /// it (PL-114).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub records: Option<String>,
+    /// The sheet of an `xlsx` sample by its tab name, as the DataSource's `http.sheet` names it;
+    /// absent, the first sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
 }
 
 /// Why a harness cannot be built from this manifest and sample.
@@ -80,6 +92,9 @@ pub enum HarnessError {
     /// The pipeline's compute stage is not a Bento processor this harness can run.
     #[error("compute kind {0} is not tested as a Bento processor")]
     NotABentoProcessor(ComputeKind),
+    /// An `xlsx` sample given inline, or a sheet that is not one a workbook holds.
+    #[error("sample: {0}")]
+    Spreadsheet(&'static str),
     /// A connector step whose parameters do not render (PL-112).
     #[error("{0}")]
     Step(String),
@@ -117,6 +132,29 @@ pub fn harness(
     // A URL sample is fetched by a processor rather than read by an input, which the branch
     // below explains; the prelude that does it is pushed once the processor list exists.
     let mut fetch_once = false;
+    if sample.format == SampleFormat::Xlsx && sample.text.is_some() {
+        return Err(HarnessError::Spreadsheet(
+            "an xlsx sample is a binary workbook: give its url, not text",
+        ));
+    }
+    if sample.format == SampleFormat::Shapefile && sample.text.is_some() {
+        return Err(HarnessError::Spreadsheet(
+            "a shapefile sample is a binary zip: give its url, not text",
+        ));
+    }
+    match (&sample.sheet, sample.format) {
+        (Some(_), format) if format != SampleFormat::Xlsx => {
+            return Err(HarnessError::Spreadsheet(
+                "sheet names the sheet of an xlsx sample: set format xlsx, or drop sheet",
+            ))
+        }
+        (Some(sheet), _) => {
+            if let Some(reason) = jc_core::kinds::data_source::sheet_name_gap(sheet) {
+                return Err(HarnessError::Spreadsheet(reason));
+            }
+        }
+        (None, _) => {}
+    }
     let input = match (&sample.text, &sample.url) {
         (Some(_), Some(_)) => return Err(HarnessError::TwoSamples),
         (None, None) => return Err(HarnessError::NoSample),
@@ -208,6 +246,23 @@ pub fn harness(
                 "let rows = content().string().parse_csv()\nroot = if $rows.length() > 0 {{ $rows.slice(0, {MAX_MESSAGES}) }} else {{ [$rows] }}"
             )}));
             processors.push(json!({ "unarchive": { "format": "json_array" } }));
+        }
+        SampleFormat::Xlsx | SampleFormat::Shapefile => {
+            // The rows split as a live `format: xlsx` (or `shapefile`) source splits them
+            // (jc_manifest::bento), then only the first rows go on, as a CSV sample's do. A
+            // failed fetch keeps its own error: its empty body is not read as a workbook.
+            let format = match (sample.format, &sample.sheet) {
+                (SampleFormat::Shapefile, _) => "shapefile".to_string(),
+                (_, Some(sheet)) => format!("xlsx:{sheet}"),
+                (_, None) => "xlsx".to_string(),
+            };
+            processors.push(json!({ "switch": [{
+                "check": "!errored() && meta(\"jc_fetch_error\").or(\"\") == \"\"",
+                "processors": [
+                    { "unarchive": { "format": format } },
+                    { "mapping": format!("root = if batch_index() >= {MAX_MESSAGES} {{ deleted() }} else {{ this }}") },
+                ],
+            }]}));
         }
     }
     processors.push(json!({ "mapping": "meta jc_input = content().string()" }));
@@ -550,6 +605,131 @@ mod tests {
         serde_json::from_value(value).expect("a pipeline spec")
     }
 
+    /// T-7086: an xlsx sample is fetched by URL and split by the runner's `unarchive` format
+    /// `xlsx`, the processor a live `format: xlsx` source renders, so the test sees the rows the
+    /// live run sees; only the first rows go on, and an inline workbook or a sheet without xlsx
+    /// is refused before anything runs.
+    #[test]
+    fn an_xlsx_sample_is_fetched_and_split_into_rows_as_the_live_source_is() {
+        let sample = Sample {
+            text: None,
+            url: Some("https://data.example.org/stations.xlsx".into()),
+            format: SampleFormat::Xlsx,
+            records: None,
+            sheet: Some("Stations 2026".into()),
+        };
+        let config = harness(
+            &spec(Some("root.id = this.station_id")),
+            &sample,
+            "http://portal:9090/internal/pipeline-tests/abc",
+        )
+        .expect("a harness");
+        let processors = config["pipeline"]["processors"]
+            .as_array()
+            .expect("processors");
+        assert_eq!(
+            processors[0]["http"]["url"],
+            "https://data.example.org/stations.xlsx"
+        );
+        let split = &processors[3]["switch"][0];
+        assert!(split["check"]
+            .as_str()
+            .is_some_and(|c| c.contains("jc_fetch_error")));
+        assert_eq!(
+            split["processors"][0]["unarchive"]["format"],
+            "xlsx:Stations 2026"
+        );
+        assert!(split["processors"][1]["mapping"]
+            .as_str()
+            .is_some_and(|m| m.contains("batch_index() >= 20")));
+        assert!(processors[4]["mapping"]
+            .as_str()
+            .is_some_and(|m| m.contains("meta jc_input")));
+        assert_eq!(processors[6]["mapping"], "root.id = this.station_id");
+
+        let first_sheet = Sample {
+            sheet: None,
+            ..sample.clone()
+        };
+        let config = harness(&spec(None), &first_sheet, "http://portal:9090/c").expect("a harness");
+        assert_eq!(
+            config["pipeline"]["processors"][3]["switch"][0]["processors"][0]["unarchive"]
+                ["format"],
+            "xlsx"
+        );
+
+        for (refused, why) in [
+            (
+                Sample {
+                    text: Some("PK".into()),
+                    url: None,
+                    ..sample.clone()
+                },
+                "give its url",
+            ),
+            (
+                Sample {
+                    format: SampleFormat::Csv,
+                    ..sample.clone()
+                },
+                "set format xlsx",
+            ),
+            (
+                Sample {
+                    sheet: Some("a/b".into()),
+                    ..sample.clone()
+                },
+                "none of",
+            ),
+        ] {
+            let err = harness(&spec(None), &refused, "http://portal:9090/c")
+                .expect_err(why)
+                .to_string();
+            assert!(err.contains(why), "{err}");
+        }
+    }
+
+    /// T-7089: a shapefile sample is a zip fetched by URL and split by `unarchive` format
+    /// `shapefile`, as the live source renders it; inline text or a sheet is refused.
+    #[test]
+    fn a_shapefile_sample_is_fetched_and_split_into_features_as_the_live_source_is() {
+        let sample = Sample {
+            text: None,
+            url: Some("https://data.example.org/kaupunginosat.zip".into()),
+            format: SampleFormat::Shapefile,
+            records: None,
+            sheet: None,
+        };
+        let config = harness(&spec(None), &sample, "http://portal:9090/c").expect("a harness");
+        let split = &config["pipeline"]["processors"][3]["switch"][0];
+        assert!(split["check"]
+            .as_str()
+            .is_some_and(|c| c.contains("jc_fetch_error")));
+        assert_eq!(split["processors"][0]["unarchive"]["format"], "shapefile");
+        for (refused, why) in [
+            (
+                Sample {
+                    text: Some("PK".into()),
+                    url: None,
+                    ..sample.clone()
+                },
+                "binary zip",
+            ),
+            (
+                Sample {
+                    sheet: Some("Alueet".into()),
+                    ..sample.clone()
+                },
+                "set format xlsx",
+            ),
+        ] {
+            let err = harness(&spec(None), &refused, "http://portal:9090/c")
+                .expect_err(why)
+                .to_string();
+            assert!(err.contains(why), "{err}");
+        }
+    }
+
     #[test]
     fn a_csv_sample_reaches_the_mapping_one_row_each_the_way_the_csv_input_sends_it() {
         let sample = Sample {
@@ -557,6 +737,7 @@ mod tests {
             url: None,
             format: SampleFormat::Csv,
             records: None,
+            sheet: None,
         };
         let config = harness(
             &spec(Some("root.id = this.station_id")),
@@ -623,6 +804,7 @@ mod tests {
             url: Some("https://feeds.example/gbfs/station_information.json".into()),
             format: SampleFormat::Json,
             records: Some("data.stations".into()),
+            sheet: None,
         };
         let config = harness(
             &spec(Some("root.id = this.station_id")),
@@ -655,6 +837,7 @@ mod tests {
 
         let refused = Sample {
             records: Some("data[0]".into()),
+            sheet: None,
             ..sample
         };
         let error = harness(&spec(None), &refused, "http://p").unwrap_err();
@@ -673,6 +856,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         };
         let config = harness(&spec(None), &sample, "http://p").expect("a harness");
         let written = config["input"]["generate"]["mapping"]
@@ -692,6 +876,7 @@ mod tests {
             url: Some("https://feeds.example/air.json".into()),
             format: SampleFormat::Text,
             records: None,
+            sheet: None,
         };
         let config = harness(&spec(None), &sample, "http://portal/c").expect("a harness");
         // The input emits one empty message and a processor does the fetch. An `http_client`
@@ -743,6 +928,7 @@ mod tests {
             url: Some("https://feeds.example/air.json".into()),
             format: SampleFormat::Text,
             records: None,
+            sheet: None,
         };
         let config = harness(&spec(None), &sample, "http://portal/c").expect("a harness");
         let envelope = config["pipeline"]["processors"]
@@ -777,6 +963,7 @@ mod tests {
             url: Some("http://a".into()),
             format: SampleFormat::Text,
             records: None,
+            sheet: None,
         };
         assert_eq!(
             harness(&spec(None), &both, "http://p").unwrap_err(),
@@ -787,6 +974,7 @@ mod tests {
             url: Some("ftp://a".into()),
             format: SampleFormat::Text,
             records: None,
+            sheet: None,
         };
         assert!(matches!(
             harness(&spec(None), &ftp, "http://p").unwrap_err(),
@@ -806,6 +994,7 @@ mod tests {
                 url: Some(url.into()),
                 format: SampleFormat::Json,
                 records: None,
+                sheet: None,
             };
             let refused = harness(&spec(None), &sample, "http://p").unwrap_err();
             assert!(
@@ -822,6 +1011,7 @@ mod tests {
             url: Some("https://opendata.example/aq.json".into()),
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         };
         assert!(harness(&spec(None), &public, "http://p").is_ok());
         let big = Sample {
@@ -829,6 +1019,7 @@ mod tests {
             url: None,
             format: SampleFormat::Text,
             records: None,
+            sheet: None,
         };
         assert!(matches!(
             harness(&spec(None), &big, "http://p").unwrap_err(),
@@ -845,6 +1036,7 @@ mod tests {
             url: None,
             format: SampleFormat::Text,
             records: None,
+            sheet: None,
         };
         assert!(matches!(
             harness(&wasm, &text, "http://p").unwrap_err(),
@@ -944,6 +1136,7 @@ mod tests {
                 url: None,
                 format: SampleFormat::Json,
                 records: None,
+                sheet: None,
             },
             "http://portal:9090/internal/pipeline-tests/abc",
         )
@@ -977,6 +1170,7 @@ mod tests {
                 url: None,
                 format: SampleFormat::Json,
                 records: None,
+                sheet: None,
             },
             "http://p",
         )
@@ -1153,6 +1347,7 @@ mod tests {
             url: None,
             format: SampleFormat::Csv,
             records: None,
+            sheet: None,
         };
         let config = harness(
             &second,

@@ -1,0 +1,35 @@
+{
+  "deprecated": {
+    "bloblang-functions/count": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-functions/meta": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-functions/root_meta": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-methods/format_timestamp": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-methods/format_timestamp_strftime": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-methods/format_timestamp_unix": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-methods/format_timestamp_unix_micro": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-methods/format_timestamp_unix_milli": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-methods/format_timestamp_unix_nano": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-methods/parse_timestamp": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "bloblang-methods/parse_timestamp_strptime": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)",
+    "outputs/sql": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)"
+  },
+  "extension": {
+    "bloblang-functions/ngsild_urn": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
+    "bloblang-functions/uuid_v7": "RFC 9562 time-ordered UUID for event, complaint and incident ids (T-7054 G-03)",
+    "bloblang-methods/ngsild_geoproperty": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
+    "bloblang-methods/ngsild_key_values": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
+    "bloblang-methods/ngsild_language_property": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
+    "bloblang-methods/ngsild_normalized": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
+    "bloblang-methods/ngsild_property": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
+    "bloblang-methods/ngsild_relationship": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
+    "inputs/ftp": "files under a path glob of an FTP server, explicit FTPS unless the allow_plain_ftp quota (ekiben-io-remote, T-7087 G-11)",
+    "inputs/imap": "attachments of the unread mails of an IMAPS mailbox, marked or moved after the ack (ekiben-io-remote, T-7087 G-11)",
+    "inputs/ngsi_ld": "E7 NGSI-LD component (ekiben-io-ngsild), the runner's own way to an Endpoint",
+    "outputs/ngsi_ld": "E7 NGSI-LD component (ekiben-io-ngsild), the runner's own way to an Endpoint",
+    "processors/ngsi_ld": "E7 NGSI-LD component (ekiben-io-ngsild), the runner's own way to an Endpoint"
+  },
+  "refused": {
+    "bloblang-functions/file": "PL-52: reads a host file; registered but refused for authors by validate_author_bloblang",
+    "bloblang-functions/file_rel": "PL-52: reads a host file; registered but refused for authors by validate_author_bloblang"
+  }
+}

@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -136,13 +136,70 @@ impl RateLimit for LocalRateLimit {
 struct CacheEntry {
     value: Bytes,
     expires_at: Option<Instant>,
+    /// When the key was last read or written, on `Entries::clock`.
+    used: u64,
 }
 
-/// Implements `memory` / `lru` / `ttlru` cache (`internal/impl/pure/cache_memory.go`).
+/// The keys with their last use, so a capped cache (`lru`, `ttlru`) evicts the least recently
+/// used key, as Bento's do, rather than an arbitrary map key.
+#[derive(Default)]
+struct Entries {
+    map: HashMap<String, CacheEntry>,
+    by_use: BTreeMap<u64, String>,
+    clock: u64,
+}
+
+impl Entries {
+    fn tick(&mut self) -> u64 {
+        self.clock += 1;
+        self.clock
+    }
+
+    fn touch(&mut self, key: &str) {
+        let now = self.tick();
+        if let Some(e) = self.map.get_mut(key) {
+            self.by_use.remove(&e.used);
+            e.used = now;
+            self.by_use.insert(now, key.to_string());
+        }
+    }
+
+    fn insert(&mut self, key: &str, value: Bytes, expires_at: Option<Instant>, cap: Option<usize>) {
+        if let Some(cap) = cap {
+            while !self.map.contains_key(key) && self.map.len() >= cap.max(1) {
+                let Some((_, oldest)) = self.by_use.pop_first() else {
+                    break;
+                };
+                self.map.remove(&oldest);
+            }
+        }
+        let used = self.tick();
+        let entry = CacheEntry {
+            value,
+            expires_at,
+            used,
+        };
+        if let Some(old) = self.map.insert(key.to_string(), entry) {
+            self.by_use.remove(&old.used);
+        }
+        self.by_use.insert(used, key.to_string());
+    }
+
+    fn remove(&mut self, key: &str) {
+        if let Some(e) = self.map.remove(key) {
+            self.by_use.remove(&e.used);
+        }
+    }
+}
+
+/// Implements `memory` / `lru` / `ttlru` cache (`internal/impl/pure/cache_memory.go`,
+/// `cache_lru.go`, `cache_ttlru.go`). A `cap` evicts the least recently used key.
+/// ponytail: `lru`/`ttlru` keep no cap unless one is configured (Bento defaults to 1000/1024),
+/// so live pipelines keep every key they kept before.
 pub struct MemoryCache {
     default_ttl: Option<Duration>,
     cap: Option<usize>,
-    entries: Mutex<HashMap<String, CacheEntry>>,
+    entries: Mutex<Entries>,
 }
 
 impl MemoryCache {
@@ -150,7 +207,7 @@ impl MemoryCache {
         Self {
             default_ttl,
             cap,
-            entries: Mutex::new(HashMap::new()),
+            entries: Mutex::new(Entries::default()),
         }
     }
 
@@ -174,7 +231,7 @@ impl MemoryCache {
             .and_then(JsonValue::as_u64)
             .map(|c| c as usize);
 
-        let mut entries = HashMap::new();
+        let mut entries = Entries::default();
         if let Some(init_map) = conf
             .config
             .get("init_values")
@@ -183,11 +240,10 @@ impl MemoryCache {
             for (k, v) in init_map {
                 let s = v.as_str().unwrap_or("").to_string();
                 entries.insert(
-                    k.clone(),
-                    CacheEntry {
-                        value: Bytes::from(s.into_bytes()),
-                        expires_at: default_ttl.map(|d| Instant::now() + d),
-                    },
+                    k,
+                    Bytes::from(s.into_bytes()),
+                    default_ttl.map(|d| Instant::now() + d),
+                    cap,
                 );
             }
         }
@@ -202,60 +258,48 @@ impl MemoryCache {
     fn effective_expiry(&self, ttl: Option<Duration>) -> Option<Instant> {
         ttl.or(self.default_ttl).map(|d| Instant::now() + d)
     }
+
+    fn lock(&self) -> MutexGuard<'_, Entries> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 #[async_trait]
 impl Cache for MemoryCache {
     async fn get(&self, key: &str) -> Result<Bytes, CoreError> {
-        let mut guard = self.entries.lock().unwrap();
-        if let Some(entry) = guard.get(key) {
-            if entry.expires_at.is_some_and(|exp| Instant::now() >= exp) {
-                guard.remove(key);
-                return Err(CoreError::KeyNotFound(key.to_string()));
-            }
-            return Ok(entry.value.clone());
+        let mut guard = self.lock();
+        let Some(entry) = guard.map.get(key) else {
+            return Err(CoreError::KeyNotFound(key.to_string()));
+        };
+        if entry.expires_at.is_some_and(|exp| Instant::now() >= exp) {
+            guard.remove(key);
+            return Err(CoreError::KeyNotFound(key.to_string()));
         }
-        Err(CoreError::KeyNotFound(key.to_string()))
+        let value = entry.value.clone();
+        guard.touch(key);
+        Ok(value)
     }
 
     async fn set(&self, key: &str, value: Bytes, ttl: Option<Duration>) -> Result<(), CoreError> {
-        let mut guard = self.entries.lock().unwrap();
-        if let Some(cap) = self.cap {
-            if guard.len() >= cap && !guard.contains_key(key) {
-                if let Some(first_k) = guard.keys().next().cloned() {
-                    guard.remove(&first_k);
-                }
-            }
-        }
-        guard.insert(
-            key.to_string(),
-            CacheEntry {
-                value,
-                expires_at: self.effective_expiry(ttl),
-            },
-        );
+        let expires_at = self.effective_expiry(ttl);
+        self.lock().insert(key, value, expires_at, self.cap);
         Ok(())
     }
 
     async fn add(&self, key: &str, value: Bytes, ttl: Option<Duration>) -> Result<(), CoreError> {
-        let mut guard = self.entries.lock().unwrap();
-        if let Some(entry) = guard.get(key) {
+        let mut guard = self.lock();
+        if let Some(entry) = guard.map.get(key) {
             if entry.expires_at.is_none_or(|exp| Instant::now() < exp) {
                 return Err(CoreError::KeyAlreadyExists(key.to_string()));
             }
         }
-        guard.insert(
-            key.to_string(),
-            CacheEntry {
-                value,
-                expires_at: self.effective_expiry(ttl),
-            },
-        );
+        let expires_at = self.effective_expiry(ttl);
+        guard.insert(key, value, expires_at, self.cap);
         Ok(())
     }
 
     async fn delete(&self, key: &str) -> Result<(), CoreError> {
-        self.entries.lock().unwrap().remove(key);
+        self.lock().remove(key);
         Ok(())
     }
 }
@@ -344,5 +388,47 @@ impl Cache for MultiLevelCache {
             tier.delete(key).await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn b(s: &'static str) -> Bytes {
+        Bytes::from_static(s.as_bytes())
+    }
+
+    #[tokio::test]
+    async fn a_capped_cache_evicts_the_least_recently_used_key() {
+        let c = MemoryCache::new(None, Some(2));
+        c.set("a", b("1"), None).await.unwrap();
+        c.set("b", b("2"), None).await.unwrap();
+        c.get("a").await.unwrap();
+        c.set("c", b("3"), None).await.unwrap();
+        assert!(matches!(c.get("b").await, Err(CoreError::KeyNotFound(_))));
+        assert_eq!(c.get("a").await.unwrap(), b("1"));
+        // Overwriting a held key evicts nothing.
+        c.set("a", b("4"), None).await.unwrap();
+        assert_eq!(c.get("c").await.unwrap(), b("3"));
+        assert_eq!(c.get("a").await.unwrap(), b("4"));
+    }
+
+    #[tokio::test]
+    async fn an_uncapped_cache_keeps_every_key_and_expired_ones_go() {
+        let c = MemoryCache::new(None, None);
+        for k in ["a", "b", "c", "d"] {
+            c.set(k, b("v"), None).await.unwrap();
+        }
+        for k in ["a", "b", "c", "d"] {
+            assert!(c.get(k).await.is_ok(), "{k}");
+        }
+        c.set("t", b("v"), Some(Duration::from_nanos(1)))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        assert!(c.get("t").await.is_err());
+        c.add("t", b("w"), None).await.unwrap();
+        assert!(c.add("t", b("x"), None).await.is_err());
     }
 }
