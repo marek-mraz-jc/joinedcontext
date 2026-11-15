@@ -2503,6 +2503,12 @@
         "url": "Address of the spreadsheet",
         "urlHelp": "The address that downloads the file itself, starting with https://, for example https://data.example.org/stations.xlsx."
       },
+      "shapefile": {
+        "title": "Shapefile (zipped) at an address",
+        "what": "A zip with one shapefile layer (.shp, .dbf, .prj), one GeoJSON feature per record in WGS 84, read on every run.",
+        "url": "Address of the zip",
+        "urlHelp": "The address that downloads the zip itself, starting with https://, for example https://data.example.org/kaupunginosat.zip. The .prj names the coordinate system, for example EPSG:3879 for Helsinki."
+      },
       "json": {
         "title": "REST API (JSON)",
         "what": "An API that answers JSON, read on every run.",
@@ -9087,7 +9093,8 @@
     },
     "httpBodyFormat": {
       "csv": "CSV",
-      "xlsx": "Spreadsheet (xlsx, ods)"
+      "xlsx": "Spreadsheet (xlsx, ods)",
+      "shapefile": "Shapefile (zip)"
     }
   },
   "picker": {

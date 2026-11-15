@@ -117,6 +117,8 @@ pub enum SampleFormatRequest {
     Json,
     /// A spreadsheet by `url`: one message per row of `sheet`, or of the first sheet.
     Xlsx,
+    /// A zipped shapefile by `url`: one WGS 84 GeoJSON Feature per record.
+    Shapefile,
 }
 
 impl From<SampleRequest> for Sample {
@@ -135,6 +137,7 @@ impl From<SampleRequest> for Sample {
                 SampleFormatRequest::Csv => SampleFormat::Csv,
                 SampleFormatRequest::Json => SampleFormat::Json,
                 SampleFormatRequest::Xlsx => SampleFormat::Xlsx,
+                SampleFormatRequest::Shapefile => SampleFormat::Shapefile,
             },
             records: None,
             sheet,
@@ -792,6 +795,8 @@ pub(crate) fn sampling(
     // (T-7086); it is binary, so neither the XML nor the JSON read below applies to it.
     let format = if body_format == Some("xlsx") {
         SampleFormat::Xlsx
+    } else if body_format == Some("shapefile") {
+        SampleFormat::Shapefile
     } else if xml {
         SampleFormat::Text
     } else if rows {
@@ -1361,6 +1366,11 @@ mod tests {
             (
                 json!({ "url": "https://x.example/stats.xlsx", "format": "xlsx" }),
                 SampleFormat::Xlsx,
+            ),
+            // T-7089: a zipped shapefile splits into Features as the live run does.
+            (
+                json!({ "url": "https://x.example/kaupunginosat.zip", "format": "shapefile" }),
+                SampleFormat::Shapefile,
             ),
         ] {
             let url = http["url"].as_str().expect("url").to_owned();

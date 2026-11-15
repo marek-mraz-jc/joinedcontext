@@ -152,10 +152,10 @@ spec:
         de: Bei einer JSON-Antwort mit Datensätzen in einem Array der Pfad dorthin, etwa data.stations; jedes Element wird ein Datensatz.
     http.format:
       help:
-        en: "How the answer becomes records: CSV or a spreadsheet gives one record per row, with the header row's names as keys. Leave empty to read the whole answer as one record."
-        sk: "Ako sa z odpovede stanú záznamy: CSV alebo tabuľka dáva jeden záznam na riadok s názvami z hlavičky ako kľúčmi. Prázdne pole číta celú odpoveď ako jeden záznam."
-        cs: "Jak se z odpovědi stanou záznamy: CSV nebo tabulka dává jeden záznam na řádek s názvy z hlavičky jako klíči. Prázdné pole čte celou odpověď jako jeden záznam."
-        de: "Wie aus der Antwort Datensätze werden: CSV oder eine Tabelle ergibt einen Datensatz je Zeile, mit den Namen der Kopfzeile als Schlüsseln. Leer gelassen wird die ganze Antwort ein Datensatz."
+        en: "How the answer becomes records: CSV or a spreadsheet gives one record per row, with the header row's names as keys; a zipped shapefile (.shp, .dbf, .prj) one GeoJSON feature per record in WGS 84. Leave empty to read the whole answer as one record."
+        sk: "Ako sa z odpovede stanú záznamy: CSV alebo tabuľka dáva jeden záznam na riadok s názvami z hlavičky ako kľúčmi; shapefile v zipe (.shp, .dbf, .prj) jeden prvok GeoJSON na záznam vo WGS 84. Prázdne pole číta celú odpoveď ako jeden záznam."
+        cs: "Jak se z odpovědi stanou záznamy: CSV nebo tabulka dává jeden záznam na řádek s názvy z hlavičky jako klíči; shapefile v zipu (.shp, .dbf, .prj) jeden prvek GeoJSON na záznam ve WGS 84. Prázdné pole čte celou odpověď jako jeden záznam."
+        de: "Wie aus der Antwort Datensätze werden: CSV oder eine Tabelle ergibt einen Datensatz je Zeile, mit den Namen der Kopfzeile als Schlüsseln; ein gezipptes Shapefile (.shp, .dbf, .prj) ein GeoJSON-Feature je Datensatz in WGS 84. Leer gelassen wird die ganze Antwort ein Datensatz."
     http.sheet:
       help:
         en: "Only for a spreadsheet: the sheet to read by its tab name, for example Stations 2026. Leave empty for the first sheet."

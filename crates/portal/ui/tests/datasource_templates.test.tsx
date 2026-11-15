@@ -67,6 +67,16 @@ describe("data source templates", () => {
     });
   });
 
+  it("reads a zipped shapefile one WGS 84 feature per record, asking only its address (T-7089)", () => {
+    const shapefile = template("shapefile");
+    expect(shapefile.asksSheet || shapefile.asksLayer || shapefile.asksRecords).toBeFalsy();
+    expect(problemOf(shapefile, { name: "kaupunginosat", url: "ftp://data.example.org/k.zip" })).toBe("url");
+    expect(fromTemplate(shapefile, { name: "kaupunginosat", url: " https://data.example.org/kaupunginosat.zip " })).toEqual({
+      type: "http",
+      form: { name: "kaupunginosat", http: { url: "https://data.example.org/kaupunginosat.zip", verb: "GET", format: "shapefile" } },
+    });
+  });
+
   it("names a source after its address, as a DNS label", () => {
     expect(nameFrom("https://data.example.org/files/Kvalita_ovzdušia 2026.csv")).toBe("kvalita-ovzdusia-2026");
     expect(nameFrom("https://api.example.org/")).toBe("api-example-org");

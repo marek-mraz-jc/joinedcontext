@@ -57210,7 +57210,8 @@
           "text",
           "csv",
           "json",
-          "xlsx"
+          "xlsx",
+          "shapefile"
         ]
       },
       "Place": {

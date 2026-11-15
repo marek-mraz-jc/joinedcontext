@@ -2503,6 +2503,12 @@
         "url": "Adresa tabulky",
         "urlHelp": "Adresa, která stáhne samotný soubor, začíná https://, například https://data.example.org/stations.xlsx."
       },
+      "shapefile": {
+        "title": "Shapefile (v zipu) na adrese",
+        "what": "Zip s jednou vrstvou shapefile (.shp, .dbf, .prj), jeden prvek GeoJSON na záznam ve WGS 84, načtený při každém běhu.",
+        "url": "Adresa zipu",
+        "urlHelp": "Adresa, která stáhne samotný zip, začíná https://, například https://data.example.org/mestske-casti.zip. Soubor .prj určuje souřadnicový systém, například EPSG:5514 pro S-JTSK."
+      },
       "json": {
         "title": "REST API (JSON)",
         "what": "API, které odpovídá v JSON, čtené při každém běhu.",
@@ -9087,7 +9093,8 @@
     },
     "httpBodyFormat": {
       "csv": "CSV",
-      "xlsx": "Tabulka (xlsx, ods)"
+      "xlsx": "Tabulka (xlsx, ods)",
+      "shapefile": "Shapefile (zip)"
     }
   },
   "picker": {

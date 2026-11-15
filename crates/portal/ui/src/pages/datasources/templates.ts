@@ -1,12 +1,13 @@
 /**
  * Data source templates (T-3249): the public sources a city starts from, each asking only what it
  * needs and turned into the DataSource form of an existing type. No new kind: a CSV file, a
- * spreadsheet, a REST API, a CKAN resource and a WFS layer are all `http`, a GTFS Realtime feed is `gtfs-rt`.
+ * spreadsheet, a zipped shapefile, a REST API, a CKAN resource and a WFS layer are all `http`, a GTFS
+ * Realtime feed is `gtfs-rt`.
  */
 import { RECORDS_PATH, SHEET_NAME } from "../../schemas/kinds";
 import type { TypedDataSourceType } from "../../schemas/kinds";
 
-export type TemplateId = "csv" | "xlsx" | "json" | "ckan" | "wfs" | "gtfs-rt";
+export type TemplateId = "csv" | "xlsx" | "shapefile" | "json" | "ckan" | "wfs" | "gtfs-rt";
 
 export interface Template {
   id: TemplateId;
@@ -22,6 +23,7 @@ export interface Template {
 export const TEMPLATES: Template[] = [
   { id: "csv", type: "http", asksLayer: false },
   { id: "xlsx", type: "http", asksLayer: false, asksSheet: true },
+  { id: "shapefile", type: "http", asksLayer: false },
   { id: "json", type: "http", asksLayer: false, asksRecords: true },
   { id: "ckan", type: "http", asksLayer: false },
   { id: "wfs", type: "http", asksLayer: true },
@@ -116,6 +118,10 @@ export function fromTemplate(template: Template, values: TemplateValues): { type
     // The runner splits the workbook into one record per row of the sheet (T-7086).
     const sheet = (values.sheet ?? "").trim();
     return { type: "http", form: { name, http: { url, verb: "GET", format: "xlsx", ...(sheet ? { sheet } : {}) } } };
+  }
+  if (template.id === "shapefile") {
+    // The runner reads the zipped layer as one WGS 84 GeoJSON feature per record (T-7089).
+    return { type: "http", form: { name, http: { url, verb: "GET", format: "shapefile" } } };
   }
   const records = template.asksRecords ? (values.records ?? "").trim() : "";
   return { type: "http", form: { name, http: records ? { url, verb: "GET", records } : { url, verb: "GET" } } };

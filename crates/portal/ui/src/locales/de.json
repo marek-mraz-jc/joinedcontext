@@ -2503,6 +2503,12 @@
         "url": "Adresse der Tabelle",
         "urlHelp": "Die Adresse, die die Datei selbst herunterlädt, beginnend mit https://, zum Beispiel https://data.example.org/stations.xlsx."
       },
+      "shapefile": {
+        "title": "Shapefile (gezippt) unter einer Adresse",
+        "what": "Ein Zip mit einer Shapefile-Ebene (.shp, .dbf, .prj), ein GeoJSON-Feature je Datensatz in WGS 84, bei jedem Lauf gelesen.",
+        "url": "Adresse des Zips",
+        "urlHelp": "Die Adresse, die das Zip selbst herunterlädt, beginnend mit https://, zum Beispiel https://data.example.org/stadtteile.zip. Die .prj nennt das Koordinatensystem, zum Beispiel EPSG:25832 für UTM 32N."
+      },
       "json": {
         "title": "REST-API (JSON)",
         "what": "Eine API, die JSON liefert, bei jedem Lauf gelesen.",
@@ -9087,7 +9093,8 @@
     },
     "httpBodyFormat": {
       "csv": "CSV",
-      "xlsx": "Tabelle (xlsx, ods)"
+      "xlsx": "Tabelle (xlsx, ods)",
+      "shapefile": "Shapefile (zip)"
     }
   },
   "picker": {
