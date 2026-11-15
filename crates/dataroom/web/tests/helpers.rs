@@ -1420,6 +1420,23 @@ fn jc_assistant_guide_has_three_guides_in_two_languages() {
     );
 }
 
+#[test]
+fn every_assistant_guide_says_how_a_signed_in_connector_differs() {
+    // T-7043: the Portal links these sections for its own connectors, which need sign-in.
+    let b = branding();
+    for id in ["claude", "chatgpt", "grok", "other"] {
+        for lang in ["en", "sk"] {
+            let guide = jc_assistant_guide(id, &b, lang).expect(id);
+            let (problem, fix) = guide.trouble.last().expect(id);
+            assert_eq!(problem, &jc_t("guide_signed_in", lang), "{id} {lang}");
+            assert!(
+                fix.contains("OAuth") && fix.contains(&guide.name),
+                "{id} {lang}: {fix}"
+            );
+        }
+    }
+}
+
 // ---- sitemap, robots, publisher card ----
 
 #[test]

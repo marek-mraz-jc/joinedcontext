@@ -40,6 +40,8 @@ type Reply = { status: number; body?: unknown; headers?: Record<string, string> 
 function serve(replies: Record<string, Reply>) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const request = input as Request;
+    // Anything but the server itself is the Portal's API, which a stranger is not signed in to.
+    if (!request.url.includes("/api/mcp/")) return new Response("", { status: 401 });
     const { method } = (await request.clone().json()) as { method: string };
     const reply = replies[method] ?? { status: 500 };
     return new Response(reply.body === undefined ? "" : JSON.stringify(reply.body), {
@@ -79,14 +81,17 @@ describe("the public MCP connect page (T-4169)", () => {
     expect(screen.getByRole("heading", { level: 2, name: "2 tools" })).toBeInTheDocument();
     expect(screen.getByText("list_types")).toBeInTheDocument();
     expect(screen.getByText("The entity types every member serves.")).toBeInTheDocument();
-    for (const client of ["Claude Code", "Claude Desktop", "ChatGPT", en.connect.generic.title]) {
+    // T-7043: the clicks per assistant live on the open data /connector page; a stranger's Portal
+    // knows no open data host, so the page says only where the address goes.
+    expect(screen.getByText(en.assistantGuides.noHost)).toBeInTheDocument();
+    for (const client of ["Claude Code", "Claude Desktop", en.connect.generic.title]) {
       expect(screen.getByRole("heading", { level: 3, name: client })).toBeInTheDocument();
     }
     const url = `${window.location.origin}/api/mcp/bbsk/otvorene-data`;
     expect(screen.getByText(`claude mcp add --transport http bbsk-otvorene-data ${url}`)).toBeInTheDocument();
     expect(screen.getByText(/Up to 60 requests a minute/)).toBeInTheDocument();
 
-    const requests = fetchMock.mock.calls.map(([input]) => input as Request);
+    const requests = fetchMock.mock.calls.map(([input]) => input as Request).filter((request) => request.url.includes("/api/mcp/"));
     expect(requests).toHaveLength(2);
     for (const request of requests) {
       expect(request.url).toBe(url);

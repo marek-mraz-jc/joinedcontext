@@ -10989,11 +10989,8 @@
       "copy": "Copy the command"
     },
     "claudeDesktop": {
-      "steps": "In Settings, Connectors, choose Add custom connector and paste the address. Or add this to claude_desktop_config.json (needs Node.js) and restart Claude Desktop.",
+      "steps": "Add this to claude_desktop_config.json (needs Node.js) and restart Claude Desktop.",
       "copy": "Copy the configuration"
-    },
-    "chatgpt": {
-      "steps": "In Settings, Apps and Connectors, turn on Developer mode, create a connector, paste the address and choose No authentication."
     },
     "generic": {
       "title": "Other MCP clients",
@@ -11704,10 +11701,6 @@
       "mcp-local": "Claude Code, VS Code and other local clients",
       "mcp-hub": "The organization's MCP hub",
       "mcp-mobile": "The mobile assistant"
-    },
-    "steps": {
-      "claudeAi": "Settings → Connectors → Add custom connector. Paste the address, choose Add, then Connect and sign in with your Portal account.",
-      "chatgpt": "Settings → Apps & Connectors → Advanced settings: turn on Developer mode. Then Create, paste the address, choose OAuth and sign in with your Portal account."
     },
     "call": {
       "at": "When",
@@ -12847,5 +12840,12 @@
       "toSources": "Go to Sources",
       "noCatalogueTitle": "No open data catalogue here yet"
     }
+  },
+  "assistantGuides": {
+    "lead": "Where to click in each assistant, step by step:",
+    "noHost": "Paste the address into your assistant where it adds a custom connector or MCP server.",
+    "signIn": "This connector needs sign-in: where the assistant asks how to sign in, choose OAuth, then sign in with your Portal account.",
+    "list": "Setup steps per assistant",
+    "other": "Any other MCP client"
   }
 }

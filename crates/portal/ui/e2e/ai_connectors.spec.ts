@@ -83,6 +83,9 @@ async function stubApi(page: Page, stub: Stub = {}) {
     const json = (body: unknown, status = 200) =>
       route.fulfill({ status, contentType: status >= 400 ? "application/problem+json" : "application/json", body: JSON.stringify(body) });
     if (path.endsWith("/auth/me")) return json(IDENTITY);
+    if (path === "/api/v1/organization/addresses") {
+      return json({ items: [{ organization: "hel", title: "Helsinki", addresses: [{ kind: "opendata", url: "https://opendata.hel.example/" }] }] });
+    }
     if (path === "/api/v1/projects") return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ProjectList", items: stub.member ? [] : [{ name: "doprava" }] });
     if (path.startsWith("/api/v1/connectors")) {
       const body = request.method() === "POST" ? request.postDataJSON() : undefined;
@@ -187,6 +190,12 @@ for (const width of [1440, 400]) {
       expect(created.segments).toContain("knowledge");
       expect(created.scope).toEqual([{ project: "doprava", endpoint: "bike-counters", access: "read" }]);
       expect(created.allowedClients).toEqual(["mcp-local"]);
+      // T-7043: the clicks per assistant live on the open data /connector page, one link each.
+      const guides = card.getByRole("list", { name: "Setup steps per assistant" });
+      await expect(guides.getByRole("link", { name: /ChatGPT/ })).toHaveAttribute("href", "https://opendata.hel.example/connector#chatgpt");
+      await expect(guides.getByRole("link")).toHaveCount(4);
+      await expect(card.getByText(/This connector needs sign-in: .*choose OAuth/)).toBeVisible();
+      await shot(page, `ai-connectors-guides-${width}`);
       await card.getByRole("button", { name: "Activity" }).click();
       await expect(card.getByRole("table", { name: "Calls through doprava-in-claude" })).toBeVisible();
       await shot(page, `ai-connectors-filled-${width}`);

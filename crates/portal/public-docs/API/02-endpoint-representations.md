@@ -202,9 +202,11 @@ Every refusal is `application/problem+json` (RFC 7807) with a `type` under
 | a verified token whose `azp` names no `ServiceAccount` in the repository, or an account whose project the endpoint's audience excludes | 403 | `forbidden` |
 | a write whose entity id is not an NGSI-LD URN of this organization and this space | 400 | `urn-scheme` |
 | a write method on a read-only representation (`file.*`, OGC, STA) | 405 | `method-not-allowed`, with `Allow: GET, HEAD, OPTIONS` |
+| any write (create, update, append, merge, replace, delete, batch, temporal, an OData write or an MCP write tool) through an open-data Endpoint, for every caller and before any Policy decides; a subscription is no write here | 403 | [`open-data-read-only`](09-errors.md#open-data-read-only) |
 | the broker behind the endpoint did not answer | 502 | `upstream-unavailable` |
 
 - **EP-03** [endpoints] — an unknown slug and an endpoint the caller may not use answer the same 404.
+- **EP-187** [endpoints] — an open-data Endpoint (`spec.publish` set, or `audience: public` with a Policy granted to the role `public` and no `spec.creates`) only reads: its writes answer `403 open-data-read-only`, its MCP `tools/list` names the reads alone, and its access document carries `"openData": {"readOnly": true, "problem": "open-data-read-only"}`. The data owner writes the same entities through an internal Endpoint of the space.
 - **GW1** [gateway] — a refused single-entity read answers 404, anything else 403.
 - **R22** [policy] — a narrowed answer says so in `NGSILD-Results-Restricted`, to a caller who sent the same header on the request, and carries no `NGSILD-Results-Count` when entities were dropped from it.
 - **MP-02** [models] — a request that selects or orders on an attribute a type does not serve leaves that type out of the query, and the answer names it in `NGSILD-Warning`; an MCP tool result carries the same sentence in `structuredContent.warnings`.

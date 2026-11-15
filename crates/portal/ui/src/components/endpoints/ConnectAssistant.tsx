@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
+import { AssistantGuides } from "./AssistantGuides";
 import { CopyUrlButton, hubUrl } from "./links";
 import { CodeBlock } from "../ui";
 
@@ -50,6 +51,7 @@ export function ConnectAssistant({
         <code className="break-all font-mono text-caption">{hub}</code>
         <CopyUrlButton url={hub} />
       </div>
+      <AssistantGuides />
       <div className="flex flex-wrap items-center gap-4">
         <a className={link} href={lines.vscode}>
           {t("endpoints.hub.vscode")}
