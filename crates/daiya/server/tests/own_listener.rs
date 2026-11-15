@@ -175,6 +175,19 @@ async fn made(app: &Router, uid: &str, kind: &str, url: &str, json_data: Value) 
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 
+/// A datasource `made` would save, now refused on save (T-6965): 422 naming `url`, nothing stored.
+async fn refused_on_save(app: &Router, uid: &str, kind: &str, url: &str) {
+    let (status, body) = call(
+        app,
+        "POST",
+        "/api/datasources",
+        Some(json!({ "uid": uid, "name": uid, "type": kind, "url": url, "jsonData": {} })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{uid}: {body}");
+    assert!(body.to_string().contains("url"), "{uid}: {body}");
+}
+
 #[tokio::test]
 async fn an_endpoint_datasource_reaches_the_own_gateway_whoever_made_it() {
     let (own, served) = listener().await;
@@ -211,7 +224,8 @@ async fn a_datasource_of_another_kind_never_reaches_the_own_gateway() {
     let url = format!("http://{own}/api/endpoint/{SLUG}");
     let root = provisioning_typed(&[("file-prom", "prometheus", url.clone())]);
     let (_, app) = app(own, &root).await;
-    made(&app, "api-prom", "prometheus", &url, json!({})).await;
+    refused_on_save(&app, "api-prom", "prometheus", &url).await;
+    // The provisioned one (a file, no save check) stays refused when it is used.
     for uid in ["file-prom", "api-prom"] {
         let (reached, health) = reaches(&app, uid, &served).await;
         assert!(!reached, "{uid} stays refused: {health}");
@@ -240,7 +254,19 @@ async fn a_person_made_datasource_reaches_no_other_mount_of_the_own_listener() {
         for kind in ["prometheus", "ngsild", "odata"] {
             let uid = format!("{kind}-{i}");
             let url = format!("http://{own}{path}");
-            made(&app, &uid, kind, &url, json!({})).await;
+            // Refused on save (422 naming url) or saved and refused when used: never reached.
+            let (status, body) = call(
+                &app,
+                "POST",
+                "/api/datasources",
+                Some(json!({ "uid": uid, "name": uid, "type": kind, "url": url, "jsonData": {} })),
+            )
+            .await;
+            if status == StatusCode::UNPROCESSABLE_ENTITY {
+                assert!(body.to_string().contains("url"), "{uid}: {body}");
+                continue;
+            }
+            assert_eq!(status, StatusCode::OK, "{uid}: {body}");
             if reaches(&app, &uid, &served).await.0 {
                 leaks.push(format!("{uid} at {url}"));
             }

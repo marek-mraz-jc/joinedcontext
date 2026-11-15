@@ -240,6 +240,52 @@ async fn updating_an_unknown_datasource_is_404_and_creates_nothing() {
     assert_eq!(w.ok("GET", "/api/datasources", None).await, json!([]));
 }
 
+/// A datasource URL the outbound guard refuses before any lookup (scheme, address literal,
+/// metadata) is refused on save with 422 naming `url`, on create and on update, and nothing is
+/// stored.
+#[tokio::test]
+async fn a_datasource_url_the_guard_refuses_is_refused_on_save() {
+    let w = world();
+    for url in [
+        "ftp://prom.example:9090",
+        "https://169.254.169.254/latest",
+        "https://10.0.0.1:9090",
+        "https://user:pw@prom.example",
+    ] {
+        let (st, body) = w
+            .call(
+                "POST",
+                "/api/datasources",
+                Some("admin"),
+                Some(json!({ "uid": "bad", "name": "Bad", "type": "prometheus", "url": url })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{url}: {body}");
+        assert!(body.to_string().contains("url"), "{url}: {body}");
+    }
+    let (st, _) = w
+        .call("GET", "/api/datasources/uid/bad", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "nothing was stored");
+    w.ok(
+        "POST",
+        "/api/datasources",
+        Some(json!({ "uid": "ok", "name": "Ok", "type": "prometheus", "url": "https://prom.example" })),
+    )
+    .await;
+    let (st, body) = w
+        .call(
+            "PUT",
+            "/api/datasources/uid/ok",
+            Some("admin"),
+            Some(json!({ "name": "Ok", "type": "prometheus", "url": "https://192.168.1.9:9090" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let kept = w.ok("GET", "/api/datasources/uid/ok", None).await;
+    assert_eq!(kept["url"], "https://prom.example");
+}
+
 /// Raw credentials never enter the store through the API: `secureJsonData` is refused with
 /// 400 naming `secretRefs`, on create and on update (§7.1, the same rule provisioning keeps).
 #[tokio::test]

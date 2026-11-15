@@ -36,7 +36,7 @@ pub fn validate_dns1123_label(name: &str) -> Result<()> {
 /// paths, jc's and the Portal's own pages and the deployment's extra prefixes), every host label
 /// below the deployment's domain (module hosts, the deployment's `idm`, `data`, `status`, `ai`,
 /// `mqtt`), the segments docs/API/15-addresses-v1.md fixes (`data`, `dash`, `dsc`, `app`, `c`) and
-/// the labels the domain layout plans (`login`, `embed`, `apps`, ...). An Organization named like one
+/// labels held for hosts not served yet (`login`, `embed`, `apps`, ...). An Organization named like one
 /// would take that segment or label from the service on a host the Organizations share, so no
 /// Organization takes one. The list only grows; bins/jc fails a test when a mount, host label or
 /// Portal page root it places is missing here. No live Organization's name is on it: `bbsk`

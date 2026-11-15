@@ -72,6 +72,7 @@ function answer(
     smtp = true,
     next = null as number | null,
     refuseEva = false,
+    refuseReset = false,
   } = {},
 ) {
   return async (url: URL, request: Request) => {
@@ -92,6 +93,9 @@ function answer(
         emailSent: smtp,
         ...(smtp ? {} : { temporaryPassword: PASSWORD }),
       });
+    }
+    if (path.endsWith("/reset-password") && refuseReset) {
+      return reply(403, { title: "Forbidden", status: 403, detail: "jana@hel.fi holds Policy air/read; the realm cannot send mail (PF-93)" });
     }
     if (path.endsWith("/reset-password")) {
       return reply(smtp ? 202 : 200, { emailSent: smtp, ...(smtp ? {} : { temporaryPassword: PASSWORD }) });
@@ -422,6 +426,20 @@ describe("a person's page", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: P.password.title })).toBeNull());
     expectPasswordGone(log);
+  });
+
+  it("closes the dialog on a refusal and shows the server's reason on the page (PF-93)", async () => {
+    const user = userEvent.setup();
+    const sent: Sent[] = [];
+    renderPage(<PersonPage id="jana-id" />, { path: "/organization/people/jana-id", answer: answer(sent, { refuseReset: true }) });
+
+    await user.click(await screen.findByRole("button", { name: P.action["reset-password"] }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByTestId("confirm-accept"));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    const reason = screen.getByText(/holds Policy air\/read; the realm cannot send mail/);
+    expect(reason.closest('[role="alert"]')).not.toBeNull();
+    expect(reason.closest('[role="dialog"], [role="alertdialog"]')).toBeNull();
+    expect(screen.queryByRole("dialog", { name: P.password.title })).toBeNull();
   });
 
   it("disables every action the caller's role does not allow, with the reason", async () => {

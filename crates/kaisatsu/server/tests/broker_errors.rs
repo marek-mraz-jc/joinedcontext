@@ -154,7 +154,7 @@ async fn setup() -> (Router, Arc<MemoryStore>, Upstream) {
             .unwrap();
     }
     let guard = OutboundGuard::new(OutboundPolicy {
-        in_cluster_hosts: vec!["127.0.0.1".into()],
+        test_loopback: true,
         ..OutboundPolicy::default()
     });
     let state = KaisatsuState::new(

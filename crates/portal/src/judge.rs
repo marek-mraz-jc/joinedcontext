@@ -934,10 +934,7 @@ mod tests {
         for name in ["api", "opendata", "oauth", "login"] {
             for (door, refused) in [
                 ("propose", manifest(&ground, ORG_NAMESPACE, &named(name))),
-                (
-                    "approval",
-                    manifest_at_approval(&ground, ORG_NAMESPACE, &named(name)),
-                ),
+                ("approval", change(&ground, ORG_NAMESPACE, &[named(name)])),
             ] {
                 match refused {
                     Err(ApiError::Unprocessable { detail, .. }) => assert!(

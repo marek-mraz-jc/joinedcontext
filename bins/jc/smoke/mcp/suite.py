@@ -74,15 +74,15 @@ def narrowed_count(a) -> tuple[str, str]:
 
 def seen_as(uid: str, status: int, me) -> tuple[str, bool]:
     """The verdict on the Portal's `/api/v1/auth/me` for a persona's token: its subject must be
-    the person's realm id, the only thing a RoleBinding subject names. The actual names what the
-    Portal saw (client, groups, second factor) and never the token."""
-    identity = me.get("identity") if isinstance(me, dict) else None
-    if status != 200 or not isinstance(identity, dict):
+    the person's realm id, the only thing a RoleBinding subject names. The answer is the Portal's
+    `Me`: the identity's members flattened beside `front` (crates/portal auth/oidc.rs). The actual
+    names what the Portal saw (front, groups, second factor) and never the token."""
+    if status != 200 or not isinstance(me, dict) or "front" not in me:
         return f"{status}; no identity in the answer", False
-    subject = identity.get("subject")
-    groups = identity.get("groups") or []
-    actual = (f"200 subject {'is' if subject == uid else 'is not'} the realm id; client {identity.get('client')}; "
-              f"{len(groups)} groups; second factor {identity.get('second_factor')}")
+    subject = me.get("subject")
+    groups = me.get("groups") or []
+    actual = (f"200 subject {'is' if subject == uid else 'is not'} the realm id; front {me.get('front')}; "
+              f"{len(groups)} groups; second factor {me.get('second_factor')}")
     return actual, bool(uid) and subject == uid
 
 
