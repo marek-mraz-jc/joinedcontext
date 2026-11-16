@@ -287,6 +287,15 @@
     "withdrawn": "Túto zmenu ste stiahli. Zatvorila sa bez zlúčenia a váš dôvod je v jej zázname.",
     "withdrawReason": "Prečo ju sťahujete?",
     "withdrawReasonHint": "Zapíše sa pri zmene, napríklad: navrhol som zlú verziu modelu.",
+    "decision": {
+      "rejectedTitle": "Zamietnuté",
+      "approvedTitle": "Schválené",
+      "by": "Rozhodol(a) {by}.",
+      "byAt": "Rozhodol(a) {by} dňa {at}.",
+      "reason": "Dôvod: {reason}",
+      "noReason": "Dôvod nebol uvedený.",
+      "rejectedNext": "Nič z tejto zmeny sa nepoužilo. Ak to chcete skúsiť znova, opravte v zdroji to, čo uvádza dôvod, a uložte ho: tým navrhnete novú zmenu."
+    },
     "rejectCancel": "Zrušiť",
     "rejectReasonHint": "Autor si to prečíta pri zmene a potrebuje to na jej opravu.",
     "filterMine": "Iba moje",
@@ -8256,6 +8265,7 @@
         "localeHelp": "Jazyk prihlasovacích stránok a e-mailov domény pre túto osobu.",
         "localeRealm": "Predvolený jazyk domény",
         "emailInvalid": "Zadajte e-mailovú adresu, napríklad jana.novakova@example.org.",
+        "emailTakenNext": "Nájdite túto osobu v zozname Ľudia a pridajte jej rolu na jej stránke.",
         "required": "Povinné."
       },
       "language": {

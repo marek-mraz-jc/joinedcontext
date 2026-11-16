@@ -73,6 +73,7 @@ function answer(
     next = null as number | null,
     refuseEva = false,
     refuseReset = false,
+    taken = false,
   } = {},
 ) {
   return async (url: URL, request: Request) => {
@@ -87,6 +88,9 @@ function answer(
       return reply(200, { items: [JANA, EVA], ...(next === null ? {} : { next }) });
     }
     if (request.method === "GET") return reply(200, DETAIL);
+    if (request.method === "POST" && path === "/api/v1/organization/people" && taken) {
+      return reply(409, { title: "Conflict", status: 409, detail: "nora@example.org already belongs to a person of the realm" });
+    }
     if (request.method === "POST" && path === "/api/v1/organization/people") {
       return reply(201, {
         person: person("new-id", "Nora", "Nová"),
@@ -241,6 +245,29 @@ describe("Organization → People", () => {
       locale: "sk",
     });
     expect(await screen.findByText(/sent nora@hel\.fi an e-mail/)).toBeInTheDocument();
+  });
+
+  it("puts a taken e-mail's reason on the E-mail field with the next step, and clears it once the address changes (T-7071)", async () => {
+    const user = userEvent.setup();
+    const sent: Sent[] = [];
+    renderPage(<People />, { path: "/organization/people", answer: answer(sent, { taken: true }) });
+
+    await user.click(await screen.findByRole("button", { name: P.new }));
+    const dialog = await screen.findByRole("dialog", { name: P.newTitle });
+    const email = within(dialog).getByRole("textbox", { name: new RegExp(P.form.email) });
+    await user.type(email, "nora@example.org");
+    await user.type(within(dialog).getByRole("textbox", { name: new RegExp(P.form.firstName) }), "Nora");
+    await user.type(within(dialog).getByRole("textbox", { name: new RegExp(P.form.lastName) }), "Nová");
+    await user.click(within(dialog).getByRole("button", { name: P.create }));
+
+    await waitFor(() => expect(email).toHaveAccessibleDescription(/already belongs to a person of the realm/));
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(email).toHaveAccessibleDescription(new RegExp(P.form.emailTakenNext));
+    // Said once, on the field: no second copy at the foot of the form.
+    expect(within(dialog).getAllByText(/already belongs to a person of the realm/)).toHaveLength(1);
+
+    await user.type(email, "x");
+    expect(email).not.toHaveAccessibleDescription(/already belongs/);
   });
 
   it("deletes the ticked people in one Change after a confirm naming the count (T-5606)", async () => {
