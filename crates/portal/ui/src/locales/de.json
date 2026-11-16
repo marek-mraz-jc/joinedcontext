@@ -9304,7 +9304,7 @@
     "httpBodyFormat": {
       "csv": "CSV",
       "xlsx": "Tabelle (xlsx, ods)",
-      "shapefile": "Shapefile (zip)"
+      "shapefile": "Shapefile (als zip)"
     }
   },
   "picker": {
