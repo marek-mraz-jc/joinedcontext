@@ -178,6 +178,7 @@ pub async fn build(
                 cfg.portal_siblings,
                 &cfg.organizations,
                 organizations,
+                portal::registry_seed(cfg),
                 mount,
                 shutdown,
             )
