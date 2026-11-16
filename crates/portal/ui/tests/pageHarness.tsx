@@ -20,6 +20,7 @@ import { expect, vi } from "vitest";
 import i18n from "../src/i18n";
 import { App } from "../src/App";
 import { EXACT_PROJECTS } from "./exactProjects";
+import { doorsAsRest } from "./odata";
 
 export const VIEWER = {
   subject: "b7c1e0f4",
@@ -68,6 +69,8 @@ export interface RouteOptions {
   projects?: () => Response;
   /** A brand that is not the default, to catch a colour written as a literal (UI-15). */
   brand?: Record<string, unknown>;
+  /** The Portal doors (preferences, notifications) reach `answer` as their REST paths, for a test written against REST. */
+  doorsAsRest?: boolean;
 }
 
 const DEFAULT_BRAND = {
@@ -149,6 +152,7 @@ export async function renderRoute(options: RouteOptions): Promise<Rendered> {
     return Promise.resolve(answered ?? jsonResponse(list([])));
   });
   vi.stubGlobal("fetch", fetchMock);
+  if (options.doorsAsRest) doorsAsRest();
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rendered = render(
