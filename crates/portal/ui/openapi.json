@@ -3638,7 +3638,7 @@
             }
           },
           "409": {
-            "description": "The bucket's versioning is not on",
+            "description": "The bucket's versioning is not on, or a restore request is pending",
             "content": {
               "application/json": {
                 "schema": {
@@ -62520,7 +62520,7 @@
           "refused": {
             "type": "integer",
             "format": "int64",
-            "description": "Rows whose key is not the Organization's today, or whose id another Organization's\nrow holds: never written.",
+            "description": "Rows whose key is not the Organization's today, whose id another Organization's row\nholds, or that would break a unique rule a row of today holds: never written.",
             "minimum": 0
           },
           "unchanged": {

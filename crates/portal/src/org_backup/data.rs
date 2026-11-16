@@ -616,6 +616,10 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
     ("feedback", "the installation's feedback inbox"),
     ("organization_ids", "the installation's id registry"),
     (
+        "organization_hosts",
+        "the installation's host registry: a host is proposed and approved again, never restored",
+    ),
+    (
         "organization_backup_targets",
         "the backup's own target: it holds a sealed secret",
     ),

@@ -13876,8 +13876,8 @@ export interface components {
             create: number;
             /**
              * Format: int64
-             * @description Rows whose key is not the Organization's today, or whose id another Organization's
-             *     row holds: never written.
+             * @description Rows whose key is not the Organization's today, whose id another Organization's row
+             *     holds, or that would break a unique rule a row of today holds: never written.
              */
             refused: number;
             /** Format: int64 */
@@ -18032,7 +18032,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description The bucket's versioning is not on */
+            /** @description The bucket's versioning is not on, or a restore request is pending */
             409: {
                 headers: {
                     [name: string]: unknown;
