@@ -55,6 +55,15 @@ async function stub(page: Page, reads: Record<string, Answer>): Promise<string[]
     if (path.includes("JoinedContext.Portal.portal_person_names")) {
       return route.fulfill({ status: 200, contentType: "application/json", body: odataBody({ items: [{ id: JANA, name: "Jana Novák" }] }) });
     }
+    // The reads beside the moved ones, so a filled page shows no failed section: the group's
+    // datasets (jc_organization_read dataAccess) and the gateway's query card.
+    if (path.includes("JoinedContext.Portal.jc_organization_read")) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: odataBody({ rows: [] }) });
+    }
+    if (path === "/api/endpoint/air-quality/mcp") {
+      const text = "Query AirQualityObserved: GET /ngsi-ld/v1/entities?type=AirQualityObserved";
+      return json({ jsonrpc: "2.0", id: 1, result: { contents: [{ uri: "card://air-quality", mimeType: "text/markdown", text }] } });
+    }
     if (path.endsWith("/auth/me")) return json({ subject: "s1", username: "admin", name: "Ada Admin", email: "admin@example.org", roles: [] });
     if (path.endsWith("/permissions/me")) {
       return json({ project: "org", grants: [{ role: "org-admin", binding: "admins", scope: "organization", rule: { kinds: KINDS, verbs: ["read", "propose", "approve"] } }] });
