@@ -44,6 +44,20 @@ struct Args {
     kubeconfig: Option<PathBuf>,
 }
 
+/// The Portal's database for the host registry read: `JC_PORTAL_DATABASE_URL`, as the Portal in
+/// jc's pod reads it. Taken from the environment alone (it carries the password; a command line
+/// is visible to every process), never printed.
+#[derive(clap::Parser)]
+struct PortalDatabase {
+    #[arg(
+        long = "env-only",
+        env = "JC_PORTAL_DATABASE_URL",
+        hide = true,
+        hide_env_values = true
+    )]
+    url: Option<String>,
+}
+
 /// The keys of jc.toml this command reads; every other key is left to jc's own parser.
 #[derive(Debug, Default, Deserialize)]
 struct DomainsFile {
@@ -171,7 +185,11 @@ pub fn command(args: &[String]) -> u8 {
             return 2;
         }
     };
-    let world = match Net::new(args.kubeconfig.clone()) {
+    let database = PortalDatabase::try_parse_from(["jc"])
+        .ok()
+        .and_then(|d| d.url)
+        .filter(|u| !u.trim().is_empty());
+    let world = match Net::new(args.kubeconfig.clone(), database) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("jc doctor: {e}");
@@ -662,10 +680,14 @@ struct Net {
     system: hickory_resolver::TokioResolver,
     http: reqwest::blocking::Client,
     kubeconfig: Option<PathBuf>,
+    portal_database_url: Option<String>,
 }
 
 impl Net {
-    fn new(kubeconfig: Option<PathBuf>) -> Result<Self, String> {
+    fn new(
+        kubeconfig: Option<PathBuf>,
+        portal_database_url: Option<String>,
+    ) -> Result<Self, String> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -687,6 +709,7 @@ impl Net {
             system,
             http,
             kubeconfig,
+            portal_database_url,
         })
     }
 
@@ -860,14 +883,12 @@ impl World for Net {
     /// Read with the Portal's own `JC_PORTAL_DATABASE_URL` where it is set (in jc's pod); the
     /// address is never printed, a refused connection says only that.
     fn registry(&self) -> Option<Result<Vec<RegistryRow>, String>> {
-        let url = std::env::var("JC_PORTAL_DATABASE_URL")
-            .ok()
-            .filter(|u| !u.trim().is_empty())?;
+        let url = self.portal_database_url.as_deref()?;
         Some(self.rt.block_on(async {
             let pool = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(1)
                 .acquire_timeout(TIMEOUT)
-                .connect(&url)
+                .connect(url)
                 .await
                 .map_err(|_| {
                     "the Portal's database (JC_PORTAL_DATABASE_URL) refused the connection"
