@@ -1743,7 +1743,7 @@ async fn an_imported_pipeline_client_gains_the_audience_of_its_re_aimed_endpoint
     let keycloak = realm(json!([])).await;
     let mut imported = desired_external("zilina", "pl-drepo", &ClientCredential::Secret);
     imported["id"] = json!("uuid-imported");
-    imported["attributes"] = json!({});
+    imported["attributes"] = json!({ "audiences-managed-by": "joinedcontext" });
     client_lookup(&keycloak, "zilina-pl-drepo", json!([imported])).await;
     let mut name = audience_mapper(SLUG);
     name["id"] = json!("m-old");
@@ -1796,7 +1796,7 @@ async fn an_imported_declared_pipelines_client_gains_the_new_endpoint_of_its_spa
     let keycloak = realm(json!([])).await;
     let mut imported = desired_external("helsinki", "pipelines", &ClientCredential::Secret);
     imported["id"] = json!("uuid-imported");
-    imported["attributes"] = json!({});
+    imported["attributes"] = json!({ "audiences-managed-by": "joinedcontext" });
     client_lookup(&keycloak, "helsinki-pipelines", json!([imported])).await;
     mappers(&keycloak, "uuid-imported", json!([audience_mapper(SLUG)])).await;
     let mirror = mirror_with(vec![
@@ -1825,6 +1825,47 @@ async fn an_imported_declared_pipelines_client_gains_the_new_endpoint_of_its_spa
             "POST {REALM}/clients/uuid-imported/protocol-mappers/models"
         )]
     );
+}
+
+/// T-6972: an imported pipeline client the realm file did not mark `audiences-managed-by`
+/// gains nothing (kaisatsu refuses the Portal that write; train smoke 3330f6ef answered 404): the
+/// wave writes nothing to it and names the attribute the deployment must set.
+#[tokio::test]
+async fn an_unmarked_imported_pipelines_client_is_left_alone_and_the_error_names_the_mark() {
+    const DOOR: &str = "d4wq6xm2tb7nc3vk5rzh2jyfa6";
+    let keycloak = realm(json!([])).await;
+    let mut imported = desired_external("helsinki", "pipelines", &ClientCredential::Secret);
+    imported["id"] = json!("uuid-imported");
+    imported["attributes"] = json!({});
+    client_lookup(&keycloak, "helsinki-pipelines", json!([imported])).await;
+    mappers(&keycloak, "uuid-imported", json!([audience_mapper(SLUG)])).await;
+    let mirror = mirror_with(vec![
+        external(
+            "helsinki",
+            "pipelines",
+            json!([{ "kind": "oauth-client", "name": "main" }]),
+        ),
+        endpoint("helsinki", "helsinki-all", "air", SLUG),
+        endpoint("helsinki", "helsinki-all-write", "air", DOOR),
+    ]);
+
+    let outcomes = sync(&keycloak)
+        .with_host_runner(true)
+        .converge(&mirror, &Bentos::new())
+        .await;
+
+    let error = outcomes
+        .iter()
+        .find(|o| o.app == "helsinki/pipelines")
+        .and_then(|o| o.error.clone())
+        .unwrap_or_default();
+    assert!(
+        error.contains("helsinki-pipelines")
+            && error.contains(DOOR)
+            && error.contains("audiences-managed-by: joinedcontext"),
+        "{outcomes:?}"
+    );
+    assert!(wrote(&keycloak).await.is_empty());
 }
 
 /// T-6832: a deleted project's pipeline client goes with it, its tokens revoked by the wave's
