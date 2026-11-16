@@ -8,8 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError } from "../../api/client";
-import type { components } from "../../api/schema";
+import { door, type RestAnswer } from "../../api/odata";
 import { RecordLink } from "../../components/RecordLink";
 import { TypePicker } from "../../components/pickers/TypePicker";
 import { CodeBlock, Alert, Badge, Button, Field, Input, Select } from "../../components/ui";
@@ -69,15 +68,8 @@ const choiceOf = (source: Source | undefined): Choice => {
   return "point";
 };
 
-type ClassAttributes = components["schemas"]["ClassAttributes"];
-
-export async function attributesOf(project: string, space: string, type: string): Promise<ClassAttributes> {
-  const { data, error, response } = await api.GET("/api/v1/projects/{project}/spaces/{space}/types/{type}/attributes", {
-    params: { path: { project, space, type } },
-  });
-  if (data) return data;
-  const detail = (error as { detail?: unknown } | undefined)?.detail;
-  throw new ApiError(response.status, typeof detail === "string" ? detail : response.statusText);
+export async function attributesOf(project: string, space: string, type: string): Promise<RestAnswer<"type_attributes">> {
+  return (await door("portal_type_attributes", { space, type }, project)) as RestAnswer<"type_attributes">;
 }
 
 export function OutputMapper({ project, space, orgDomain, records, bloblang, onBloblang, expiry, lifetime, onEnds }: OutputMapperProps): JSX.Element {

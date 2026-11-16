@@ -1,6 +1,6 @@
 {
-  "restPaths": 122,
-  "restCalls": 203,
+  "restPaths": 117,
+  "restCalls": 197,
   "fetchFiles": [
     "api/access.ts",
     "api/client.ts",
@@ -31,7 +31,6 @@
     "pages/grafana/GrafanaPage.tsx",
     "pages/knowledge/knowledge.ts",
     "pages/mcp/mcp.ts",
-    "pages/pipelines/PipelineEditor.tsx",
     "pages/spaces/FormView.tsx",
     "pages/spaces/PublicView.tsx",
     "pages/spaces/SpaceInside.tsx",

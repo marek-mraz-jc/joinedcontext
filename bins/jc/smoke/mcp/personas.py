@@ -25,7 +25,7 @@ from pathlib import Path
 
 import yaml
 
-from common import SECOND_FACTOR, Http, as_json, realm_of
+from common import SECOND_FACTOR, Http, as_json, public_origin, realm_of
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "rehearsal"))
 import rehearsal as R  # noqa: E402  (merge_change: the kit's one way onto a protected main)
@@ -138,6 +138,9 @@ class Fixture:
         self.realm = realm_of(state)
         self.owner, self.repo = config_repo.split("/", 1)
         self.http = Http(base)
+        # Tokens are minted where jc's Portal accepts their issuer: its public address on a forward
+        # (jc-dev), where kaisatsu's issuer would otherwise name the forward (T-6969).
+        self.site = public_origin(self.http, self.realm) or base
         self.people: dict[str, Person] = {}
         self.files: list[str] = []
         self.connectors: list[tuple[Browser, str]] = []
@@ -181,7 +184,7 @@ class Fixture:
     def mcp_token(self, p: Person, scope: str = "mcp:portal") -> str:
         """The person's own token from `mcp-local` by code + PKCE: the code is read from the
         redirect to the loopback callback, never sent anywhere."""
-        b = Browser(self.base)
+        b = Browser(self.site)
         verifier = secrets.token_urlsafe(48)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
         q = urllib.parse.urlencode({"client_id": MCP_CLIENT, "redirect_uri": REDIRECT, "response_type": "code",
@@ -197,8 +200,8 @@ class Fixture:
         code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query).get("code", [""])[0]
         form = urllib.parse.urlencode({"grant_type": "authorization_code", "client_id": MCP_CLIENT, "code": code,
                                        "redirect_uri": REDIRECT, "code_verifier": verifier}).encode()
-        st, _, raw = self.http.call("POST", f"/login/realms/{self.realm}/protocol/openid-connect/token",
-                                    headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
+        st, _, raw = Http(self.site).call("POST", f"/login/realms/{self.realm}/protocol/openid-connect/token",
+                                          headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
         if st != 200:
             raise RuntimeError(f"token for {p.username} ({scope}): {st} {raw[:200]!r}")
         return json.loads(raw)["access_token"]

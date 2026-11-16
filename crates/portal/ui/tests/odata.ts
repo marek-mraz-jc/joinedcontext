@@ -92,7 +92,11 @@ export async function asOData(rest: Response, shape?: (body: unknown) => unknown
 }
 
 async function asODataBody(rest: Response, shape?: (body: unknown) => unknown): Promise<Response> {
-  const body: unknown = await rest.json().catch(() => null);
+  // A file a door answers (a pipeline's bento.yaml) is its text as a JSON string (odata_org.rs
+  // door_value); a stub's `new Response(json)` says text/plain, so that one stays JSON here.
+  const type = rest.headers.get("Content-Type") ?? "";
+  const file = rest.ok && type.startsWith("text/") && !type.startsWith("text/plain");
+  const body: unknown = file ? await rest.text() : await rest.json().catch(() => null);
   // A `204` of the REST door is the service's `200` with `null` (API/13 §2b).
   if (rest.ok) return odataValue(shape ? shape(body) : body, rest.status === 204 ? 200 : rest.status);
   // A bare failure stays bare: the service passes on a door's answer that said nothing.
@@ -253,6 +257,13 @@ const OPERATIONS: Record<string, Door> = {
     "/projects/{project}/pipelines/{pipeline}/access-requests/endpoints",
   ],
   portal_access_request_incoming: ["GET", "/projects/{project}/access-requests"],
+  // The pipeline workbench's mapping file, templates, flow map and a type's attributes (T-7120).
+  portal_pipeline_bento: ["GET", "/projects/{project}/pipelines/{pipeline}/bento"],
+  portal_pipeline_template_list: ["GET", "/projects/{project}/pipelinetemplates"],
+  portal_pipeline_template_create: ["POST", "/projects/{project}/pipelinetemplates"],
+  portal_pipeline_template_delete: ["DELETE", "/projects/{project}/pipelinetemplates/{id}"],
+  portal_flow_map: ["GET", "/projects/{project}/flow-map"],
+  portal_type_attributes: ["GET", "/projects/{project}/spaces/{space}/types/{type}/attributes"],
   portal_access_request_approve: ["POST", "/projects/{project}/access-requests/{id}/approve"],
   portal_access_request_decline: ["POST", "/projects/{project}/access-requests/{id}/decline"],
   portal_access_request_revoke: ["POST", "/projects/{project}/access-requests/{id}/revoke"],

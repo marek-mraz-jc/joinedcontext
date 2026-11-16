@@ -210,12 +210,43 @@ def test_the_public_origin_is_the_issuers_only_when_it_differs_from_the_base():
         return answer
     for issuer, want in ((lambda h: "https://jc.smoke.invalid/login/realms/dev", "https://jc.smoke.invalid"),
                          (lambda h: f"http://127.0.0.1:{h.server.server_port}/login/realms/dev", None),
+                         # jc-dev smoke 2026-11-15T134027Z: the issuer follows the Host (T-7005), so
+                         # through the forward it names https on the forward's own address.
+                         (lambda h: f"https://127.0.0.1:{h.server.server_port}/login/realms/dev", None),
                          (lambda h: "javascript:alert(1)", None)):
         srv = stub(doc(issuer))
         try:
             assert suite.public_origin(suite.Http(f"http://127.0.0.1:{srv.server_port}"), "dev") == want
         finally:
             srv.shutdown()
+
+
+def test_the_public_origin_is_the_portals_sign_in_address_over_an_issuer_that_follows_the_host():
+    """jc-dev since T-7005: through the forward the issuer names https://<forward>, nothing listens
+    there; the Portal's sign-in redirect names jc's configured public URL, the address the realm
+    registers and the Portal accepts tokens from (T-6969)."""
+    class Jc(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            port = self.server.server_port
+            if self.path == "/api/v1/auth/login":
+                self.send_response(303)
+                self.send_header("Location", "https://jc.smoke.invalid/login/realms/dev/protocol/openid-connect/auth"
+                                 "?client_id=portal-ui&redirect_uri=https%3A%2F%2Fjc.smoke.invalid%2Fapi%2Fv1%2Fauth%2Fcallback")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps({"issuer": f"https://127.0.0.1:{port}/login/realms/dev"}).encode())
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Jc)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        assert suite.public_origin(suite.Http(f"http://127.0.0.1:{srv.server_port}"), "dev") == "https://jc.smoke.invalid"
+    finally:
+        srv.shutdown()
 
 
 def test_a_url_client_id_signs_in_only_where_the_realm_has_the_cimd_policy(tmp_path, monkeypatch):
