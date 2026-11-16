@@ -201,14 +201,20 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
         hidden: at > 0 && column.hidden,
         align: column.align,
         kind: column.numeric ? ("number" as const) : ("text" as const),
-        cell: (row: T) =>
-          at === 0 ? (
-            column.cell ? column.cell(row) : column.text(row)
+        cell: (row: T) => {
+          if (at === 0) return column.cell ? column.cell(row) : column.text(row);
+          const shown = column.cell ? column.cell(row) : column.text(row);
+          // One element per cell: a phone card lays label and value out as a two-column grid, and a
+          // second child (a list of chips) would wrap into the label column (T-6115 judge). A cell
+          // with nothing to say is marked, so a phone card leaves its line out (T-7111 judge).
+          return shown === "" || shown === "—" || shown === null || shown === undefined ? (
+            <div className="min-w-0" data-grid-empty="">
+              <span className="text-fg-subtle">—</span>
+            </div>
           ) : (
-            // One element per cell: a phone card lays label and value out as a two-column grid, and a
-            // second child (a list of chips) would wrap into the label column (T-6115 judge).
-            <div className="min-w-0">{column.cell ? column.cell(row) : column.text(row) || <span className="text-fg-subtle">—</span>}</div>
-          ),
+            <div className="min-w-0">{shown}</div>
+          );
+        },
       })),
       {
         key: "actions",

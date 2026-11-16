@@ -225,13 +225,15 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
               numeric: true,
               align: "right",
               text: (row) => (row.state === "crawled" ? String(row.pages ?? 0) : ""),
-              cell: (row) => (
-                <span className="whitespace-nowrap tabular-nums">
-                  {row.state === "crawled"
-                    ? t("knowledge.ofTotal", { part: number.format(row.pagesIncluded ?? 0), total: number.format(row.pages ?? 0) })
-                    : "—"}
-                </span>
-              ),
+              // A bare "—" is the grid's empty cell, which a phone card leaves out (T-7111 judge).
+              cell: (row) =>
+                row.state === "crawled" ? (
+                  <span className="whitespace-nowrap tabular-nums">
+                    {t("knowledge.ofTotal", { part: number.format(row.pagesIncluded ?? 0), total: number.format(row.pages ?? 0) })}
+                  </span>
+                ) : (
+                  "—"
+                ),
             },
             {
               id: "documents",
@@ -239,7 +241,7 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
               numeric: true,
               align: "right",
               text: (row) => (row.state === "crawled" ? String(row.documents ?? 0) : ""),
-              cell: (row) => <span className="tabular-nums">{row.state === "crawled" ? number.format(row.documents ?? 0) : "—"}</span>,
+              cell: (row) => (row.state === "crawled" ? <span className="tabular-nums">{number.format(row.documents ?? 0)}</span> : "—"),
             },
             {
               id: "passages",
@@ -247,15 +249,16 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
               numeric: true,
               align: "right",
               text: (row) => (row.state === "crawled" ? String(row.passages ?? 0) : ""),
-              cell: (row) => (
-                <span className="whitespace-nowrap tabular-nums">
-                  {row.state !== "crawled"
-                    ? "—"
-                    : (row.embedded ?? 0) === (row.passages ?? 0)
+              cell: (row) =>
+                row.state !== "crawled" ? (
+                  "—"
+                ) : (
+                  <span className="whitespace-nowrap tabular-nums">
+                    {(row.embedded ?? 0) === (row.passages ?? 0)
                       ? number.format(row.passages ?? 0)
                       : t("knowledge.embeddedOf", { embedded: number.format(row.embedded ?? 0), total: number.format(row.passages ?? 0) })}
-                </span>
-              ),
+                  </span>
+                ),
             },
             {
               id: "languages",

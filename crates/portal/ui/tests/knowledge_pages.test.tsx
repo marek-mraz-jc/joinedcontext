@@ -282,6 +282,10 @@ describe("the knowledge sources page (T-3057)", () => {
     expect(within(data).getByText("Data catalogue")).toBeInTheDocument();
     // T-5328: a source not crawled yet opens too, and every row hands its click to its link.
     expect(within(data).getByRole("link", { name: "bb-data" })).toHaveAttribute("href", "/projects/banskabystrica/knowledge/bb-data");
+    // T-7111 judge: a source not crawled yet says nothing of its documents, so a phone card leaves the line out.
+    const documents = (tr: HTMLElement) => tr.querySelector('td[data-label="Documents"]') as HTMLElement;
+    expect(documents(data).querySelector("[data-grid-empty]")).not.toBeNull();
+    expect(documents(web).querySelector("[data-grid-empty]")).toBeNull();
     for (const row of within(table).getAllByRole("row").slice(1)) {
       expect(row.querySelector("a[data-row-link]")).not.toBeNull();
     }

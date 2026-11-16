@@ -3206,6 +3206,8 @@ a.jc-cell--link:focus-visible {
   /* A card reads top to bottom: a number column's right alignment would make the eye jump. */
   .jc-data-grid--stack tbody td.jc-data-grid-end { text-align: start; }
   .jc-data-grid--stack tbody td:empty { display: none; }
+  /* A cell the list marks as saying nothing ("—") leaves its card line out (T-7111 judge). */
+  .jc-data-grid--stack tbody td:has([data-grid-empty]) { display: none; }
   .jc-data-grid--stack tbody td:not(.jc-grid-empty)[data-label]::before {
     content: attr(data-label);
     display: block;
