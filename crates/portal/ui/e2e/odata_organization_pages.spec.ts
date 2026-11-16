@@ -58,8 +58,8 @@ function costs(month: string, projects = true) {
       : [],
     platform: { node: 30, storage: 4.5, total: 34.5 },
     infrastructure: 45,
-    ai: 3.78,
-    total: 48.78,
+    ai: projects ? 3.78 : 0,
+    total: projects ? 48.78 : 45,
   };
 }
 
@@ -164,6 +164,7 @@ for (const width of [1440, 400]) {
       await page.reload();
       const empty = page.getByText(/No project has a space or an assistant yet/);
       await expect(empty).toBeVisible();
+      await expect(page.getByRole("link", { name: "Open the projects" })).toBeVisible();
       await shoot(page, "costs-empty", width, empty);
       expect([...asked, ...later].filter((path) => OLD_DOORS.test(path))).toEqual([]);
     });
@@ -196,7 +197,8 @@ for (const width of [1440, 400]) {
       await page.goto("/organization/setup?lang=en");
       const checklist = page.getByRole("main");
       await expect(checklist.getByRole("listitem").first()).toBeVisible();
-      await shoot(page, "setup-filled", width, checklist);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: join(SHOTS, `setup-filled-${width}.png`) });
       expect(await axeViolations(page)).toEqual([]);
       expect(asked.filter((path) => OLD_DOORS.test(path))).toEqual([]);
     });
