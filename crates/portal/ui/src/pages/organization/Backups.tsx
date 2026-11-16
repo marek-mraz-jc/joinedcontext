@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Link } from "@tanstack/react-router";
 import { ApiError, api, reasonOf, unwrap } from "../../api/client";
 import { useAdministers } from "../../api/permissions";
 import type { components } from "../../api/schema";
@@ -304,6 +305,7 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
   const projectChanges = (shown?.groups ?? []).filter(
     (group) => group.name !== "organization" && group.name !== PEOPLE && group.created.length + group.changed.length > 0,
   );
+  const toInvite = shown?.groups.find((group) => group.name === PEOPLE)?.created.length ?? 0;
   return (
     <Dialog
       open
@@ -316,7 +318,11 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
         {plan.isLoading ? <p className="text-body text-fg-muted">{t("backups.restore.planning")}</p> : null}
         {plan.isError ? <Alert tone="danger">{reasonOf(plan.error, t("backups.unreadable"))}</Alert> : null}
         {apply.isError ? <Alert tone="danger">{reasonOf(apply.error, t("backups.unreadable"))}</Alert> : null}
-        {shown && shown.changes === 0 ? <Alert tone="success">{t("backups.restore.same")}</Alert> : null}
+        {shown && shown.changes === 0 ? (
+          <Alert tone={toInvite > 0 ? "info" : "success"}>
+            {t(toInvite > 0 ? "backups.restore.sameButPeople" : "backups.restore.same")}
+          </Alert>
+        ) : null}
         {shown?.groups.map((group) => (
           <section key={group.name} className="flex flex-col gap-1">
             <h3 className="text-body font-semibold">
@@ -327,12 +333,26 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
                   : t("backups.restore.project", { project: group.name })}
             </h3>
             <p className="text-caption text-fg-muted">
-              {t("backups.restore.counts", {
-                created: group.created.length,
-                changed: group.changed.length,
-                unchanged: group.unchanged,
-              })}
+              {group.name === PEOPLE
+                ? t("backups.restore.peopleCounts", {
+                    missing: group.created.length,
+                    present: group.unchanged,
+                    total: group.created.length + group.unchanged,
+                  })
+                : t("backups.restore.counts", {
+                    created: group.created.length,
+                    changed: group.changed.length,
+                    unchanged: group.unchanged,
+                  })}
             </p>
+            {group.note && group.name === PEOPLE ? (
+              <p className="text-caption text-fg-muted">
+                {t("backups.restore.peopleNote")}{" "}
+                <Link to="/organization/$tab" params={{ tab: "people" }} className="underline">
+                  {t("backups.restore.invite")}
+                </Link>
+              </p>
+            ) : null}
             {[...group.created, ...group.changed].length > 0 ? (
               <ul className="list-disc pl-5 text-caption">
                 {[...group.created, ...group.changed].map((item) => (
@@ -340,10 +360,8 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
                 ))}
               </ul>
             ) : null}
-            {group.note ? (
-              <p className="text-caption text-fg-muted">
-                {t(group.name === PEOPLE ? "backups.restore.peopleNote" : "backups.restore.organizationNote")}
-              </p>
+            {group.note && group.name !== PEOPLE ? (
+              <p className="text-caption text-fg-muted">{t("backups.restore.organizationNote")}</p>
             ) : null}
             {group.change ? <Alert tone="success">{t("backups.restore.proposed")}</Alert> : null}
           </section>

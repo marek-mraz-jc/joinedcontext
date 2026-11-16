@@ -133,7 +133,11 @@ describe("Administration → Backups", () => {
     const plan = await screen.findByTestId("backup-restore-plan");
     expect(await screen.findByText(en.backups.restore.people)).toBeInTheDocument();
     expect(screen.getByText("aino <aino@example.org>")).toBeInTheDocument();
-    expect(screen.getByText(en.backups.restore.peopleNote)).toBeInTheDocument();
+    expect(screen.getByText("3 of the 4 people in this version are in the Organization today; 1 to invite by hand")).toBeInTheDocument();
+    expect(screen.getByText(en.backups.restore.sameButPeople)).toBeInTheDocument();
+    expect(screen.queryByText(en.backups.restore.same)).toBeNull();
+    expect(screen.getByText(en.backups.restore.peopleNote, { exact: false })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: en.backups.restore.invite })).toHaveAttribute("href", "/organization/people");
     expect(plan).not.toHaveTextContent(en.backups.restore.organizationNote);
     expect(screen.queryByRole("button", { name: en.backups.restore.propose })).toBeNull();
     await expectNoAxeViolations(container);
