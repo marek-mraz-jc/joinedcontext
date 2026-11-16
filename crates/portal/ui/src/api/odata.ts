@@ -416,6 +416,14 @@ function asManifest(row: ManifestRow, kind?: string): Manifest {
   return manifest;
 }
 
+/**
+ * Whether `plural`'s rows are keyed in a project: a set keyed by name alone is the Organization's
+ * (Group, RoleBinding) and no project's navigation, which the service answers 400 (T-7118).
+ */
+function inProject(plural: ManifestSet): boolean {
+  return (ODATA_ENTITY_KEYS[plural] as readonly string[]).includes("project");
+}
+
 /** The Organization set of the `org` namespace's `plural`: its own Roles are `organizationRoles`. */
 function orgSet(plural: ManifestSet): ManifestSet {
   return plural === "roles" ? "organizationRoles" : plural;
@@ -432,6 +440,8 @@ export async function listManifests(
 ): Promise<{ items: Manifest[] }> {
   if (activeWorkspace()) return inCopy.list(project, of);
   const plural = manifestSet(of);
+  // The REST door listed the project's namespace, where an Organization kind is never stored.
+  if (project !== ORG_NAMESPACE && !inProject(plural)) return { items: [] };
   // `$select` names manifest members (metadata, spec) the generated row types of a set leave out.
   const query: { select(...members: string[]): { all(): AsyncIterable<unknown> } } =
     project === ORG_NAMESPACE
@@ -469,6 +479,7 @@ export async function readManifest(
 ): Promise<Manifest> {
   if (activeWorkspace()) return inCopy.read(project, of, name);
   const plural = manifestSet(of);
+  if (project !== ORG_NAMESPACE && !inProject(plural)) throw notFound(name);
   const members = membersOf(plural);
   const row = (await refusedAs(
     project === ORG_NAMESPACE
@@ -511,6 +522,7 @@ export async function listOrganizations(several = false): Promise<{ items: Manif
 
 /** The address of manifest `name` of `plural` in `project`, the entity its write actions are bound to. */
 export function manifestBound(project: string, plural: ManifestSet, name: string): string {
+  if (project !== ORG_NAMESPACE && !inProject(plural)) throw notFound(name);
   return project === ORG_NAMESPACE
     ? `${orgSet(plural)}(${quoted(name)})`
     : `${plural}(project=${quoted(project)},name=${quoted(name)})`;

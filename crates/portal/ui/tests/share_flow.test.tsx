@@ -68,19 +68,15 @@ describe("what a share is made of (T-3275)", () => {
   });
 });
 
-describe("which Group names a share knows of (F-R2UI3-005, T-3852)", () => {
-  const group = (name: string) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "Group", metadata: { name, namespace: "x" }, spec: {} });
+describe("which Group names a share knows of (F-R2UI3-005, T-3852, T-7118)", () => {
+  const group = (name: string) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "Group", metadata: { name, namespace: "org" }, spec: {} });
   const list = (...names: string[]) => ({ hidden: false, data: { items: names.map(group) } });
-  it("joins the organization's and the project's groups once both are read", () => {
-    expect(knownGroupNames(list("org-a"), list("praha"))).toEqual(new Set(["org-a", "praha"]));
+  it("knows the Organization's groups once they are read", () => {
+    expect(knownGroupNames(list("org-a", "praha"))).toEqual(new Set(["org-a", "praha"]));
   });
-  it("counts an organization list the person does not read as empty", () => {
-    expect(knownGroupNames({ hidden: true }, list("praha"))).toEqual(new Set(["praha"]));
-  });
-  it("knows nothing while a list loads or when the project's list is hidden", () => {
-    expect(knownGroupNames({ hidden: false }, list("praha"))).toBeUndefined();
-    expect(knownGroupNames(list("org-a"), { hidden: false })).toBeUndefined();
-    expect(knownGroupNames(list("org-a"), { hidden: true })).toBeUndefined();
+  it("knows nothing while the list loads or when the person does not read it", () => {
+    expect(knownGroupNames({ hidden: false })).toBeUndefined();
+    expect(knownGroupNames({ hidden: true })).toBeUndefined();
   });
 });
 
@@ -183,17 +179,21 @@ describe("the share flow on an Endpoint's page (T-3275)", () => {
     show({ allowedProjects: [] }, [], { grants: [{ rule: { kinds: ["Endpoint"], verbs: ["read"] } }] });
     const pick = await screen.findByLabelText(en.endpoints.shareFlow.project);
     await within(pick).findByRole("option", { name: "bbsk" });
-    await waitFor(() => expect(asked.filter((path) => path.endsWith("/permissions/me"))).toHaveLength(2));
+    await waitFor(() => expect(asked).toContain("/api/v1/projects/org/permissions/me"));
     expect(asked.filter((path) => path.endsWith("/groups"))).toEqual([]);
   });
 
-  it("asks for no organization group list when no binding covers the organization (T-5754)", async () => {
-    show({ allowedProjects: [] }, [], { grants: [{ rule: { kinds: ["Group", "Endpoint"], verbs: ["read"] } }] }, true);
+  it("asks for no organization group list when no binding covers the organization, and proposes no Group (T-5754, T-7118)", async () => {
+    show({ allowedProjects: [] }, [], { grants: [{ rule: { kinds: ["Group", "Endpoint", "Policy"], verbs: ["read", "propose"] } }] }, true);
     const pick = await screen.findByLabelText(en.endpoints.shareFlow.project);
     await within(pick).findByRole("option", { name: "bbsk" });
-    await waitFor(() => expect(asked).toContain("/api/v1/projects/helsinki/groups"));
-    expect(asked).toContain("/api/v1/projects/org/permissions/me");
-    expect(asked).not.toContain("/api/v1/projects/org/groups");
+    await waitFor(() => expect(asked).toContain("/api/v1/projects/org/permissions/me"));
+    await userEvent.selectOptions(pick, "bbsk");
+    await userEvent.click(screen.getByRole("button", { name: en.endpoints.shareFlow.propose }));
+    await waitFor(() => expect(imports).toHaveLength(2));
+    expect(imports[1].manifests.map((manifest) => manifest.kind)).not.toContain("Group");
+    // A Group is the Organization's: no project holds one to ask for (T-7118).
+    expect(asked.filter((path) => path.endsWith("/groups"))).toEqual([]);
   });
 
   it("offers no share for an endpoint every project or anyone reads already", async () => {
