@@ -334,7 +334,7 @@ export async function listManifests(
       : client.under(project, plural);
   const items: Manifest[] = [];
   const kind = KIND_OF[plural];
-  const rows = query.select(...(membersOf(plural) as never[])).all();
+  const rows = query.select(...membersOf(plural)).all();
   await refusedAs(
     (async () => {
       for await (const row of rows) {
