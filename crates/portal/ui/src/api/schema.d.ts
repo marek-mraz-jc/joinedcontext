@@ -2594,6 +2594,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/changes/outside": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Merge Requests That Are Not Changes
+         * @description The open merge requests of the project repository that nobody can approve here, a fork's or a non-writer's, each with why. An organization administrator reads them; anyone else who reads the project an empty list.
+         */
+        get: operations["list_outside"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/changes/{id}": {
         parameters: {
             query?: never;
@@ -11952,6 +11972,10 @@ export interface components {
          * @enum {string}
          */
         Outcome: "ok" | "refused" | "unchecked";
+        /** @description The open merge requests of a project repository that are not Changes, and why (T-3433). */
+        OutsideList: {
+            items: components["schemas"]["OutsideMergeRequest"][];
+        };
         /** @description An open merge request in the forge that the Portal does not offer for approval (T-3433). */
         OutsideMergeRequest: {
             /** @description The forge account that opened it. */
@@ -22180,6 +22204,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Git forge unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_outside: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The merge requests outside the Changes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutsideList"];
                 };
             };
             /** @description Unauthorized */

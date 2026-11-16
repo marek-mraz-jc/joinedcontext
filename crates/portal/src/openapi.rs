@@ -22,7 +22,8 @@ use crate::api::catalogue::{
     CatalogueSample, CatalogueTemporal, CatalogueTheme,
 };
 use crate::api::changes::{
-    ChangeAuthor, ChangeDecision, ChangeList, ChangeProposal, ChangeSummary, OutsideMergeRequest,
+    ChangeAuthor, ChangeDecision, ChangeList, ChangeProposal, ChangeSummary, OutsideList,
+    OutsideMergeRequest,
 };
 use crate::api::ckan::{CkanStatus, InstanceSummary, PublicationStatus, ResourceLink};
 use crate::api::datamodels::{
@@ -335,6 +336,7 @@ use crate::tools::model_tools::{
         crate::api::mutate::patch,
         crate::api::changes::list_changes,
         crate::api::changes::list_change_history,
+        crate::api::changes::list_outside,
         crate::api::change_export::export_change_history,
         crate::api::restore::restore_change,
         crate::api::feedback::send_feedback,
@@ -785,6 +787,7 @@ use crate::tools::model_tools::{
         ChangeProposal,
         ChangeList,
         ChangeDecision,
+        OutsideList,
         OutsideMergeRequest,
         ChangeSummary,
         ChangeAuthor,

@@ -4,7 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { isOwn } from "../api/approval";
-import { api, queryKeys, unwrap } from "../api/client";
+import { queryKeys } from "../api/client";
+import { listChanges, listOutside } from "../api/odata";
+import { useAdministers } from "../api/permissions";
 import { useAuth } from "../auth/AuthProvider";
 import { AdminGrid } from "../components/grid/AdminGrid";
 import type { DataColumn } from "../components/grid/AdminGrid";
@@ -37,12 +39,15 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
 
   const list = useQuery({
     queryKey: queryKeys.changes(project),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes", {
-          params: { path: { project } },
-        }),
-      ),
+    queryFn: () => listChanges(project),
+  });
+  // A fork's or a non-writer's merge request in the forge, which nobody can approve here; the
+  // API names them to an organization administrator alone (T-3433), so nobody else asks.
+  const { administers } = useAdministers();
+  const outsideList = useQuery({
+    queryKey: [...queryKeys.changes(project), "outside"],
+    enabled: administers,
+    queryFn: () => listOutside(project),
   });
 
   const header = (
@@ -54,9 +59,7 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
   );
 
   const all = list.data?.items ?? [];
-  // A fork's or a non-writer's merge request in the forge, which nobody can approve here; the
-  // API names them to an organization administrator alone (T-3433).
-  const outside = list.data?.outside ?? [];
+  const outside = outsideList.data ?? [];
   // The phases the list holds, in the order a change goes through them.
   const phases = [...new Set(all.map((proposal) => proposal.status.phase))];
   // Both filters narrow what the API already let this caller read; they decide nothing.

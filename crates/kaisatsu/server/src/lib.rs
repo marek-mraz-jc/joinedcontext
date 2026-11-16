@@ -21,6 +21,9 @@ use kaisatsu_store_memory::MemoryStore;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+mod realm_hosts;
+pub use realm_hosts::RealmHosts;
+
 /// Server state with private key-encryption key and private store pool (W2, W9).
 #[derive(Clone)]
 pub struct KaisatsuState {
@@ -29,6 +32,7 @@ pub struct KaisatsuState {
     guard: OutboundGuard,
     authorizer: Arc<dyn Authorizer>,
     second_factor: SecondFactor,
+    realm_hosts: RealmHosts,
 }
 
 impl KaisatsuState {
@@ -45,6 +49,7 @@ impl KaisatsuState {
             guard,
             authorizer,
             second_factor: SecondFactor::Optional,
+            realm_hosts: RealmHosts::default(),
         }
     }
 
@@ -52,6 +57,14 @@ impl KaisatsuState {
     #[must_use]
     pub fn with_second_factor(mut self, second_factor: SecondFactor) -> Self {
         self.second_factor = second_factor;
+        self
+    }
+
+    /// Pins realms to sign-in hosts of their own (T-7001): each answers there alone, under the
+    /// issuer the registry names.
+    #[must_use]
+    pub fn with_realm_hosts(mut self, realm_hosts: RealmHosts) -> Self {
+        self.realm_hosts = realm_hosts;
         self
     }
 
@@ -65,6 +78,7 @@ impl KaisatsuState {
             guard: OutboundGuard::default(),
             authorizer: Arc::new(LocalAuthorizer),
             second_factor: SecondFactor::Optional,
+            realm_hosts: RealmHosts::default(),
         }
     }
 
@@ -79,6 +93,7 @@ impl KaisatsuState {
 
 /// Builds the complete `kaisatsu` Axum [`Router`] for `mount` (W9).
 pub fn router(state: KaisatsuState, mount: Mount) -> Router {
+    let pins = (Arc::new(state.realm_hosts.clone()), Arc::new(mount.clone()));
     let oidc_state = OidcState {
         store: state.store.clone(),
         kek: state.kek.clone(),
@@ -98,6 +113,10 @@ pub fn router(state: KaisatsuState, mount: Mount) -> Router {
         .merge(oidc_router(oidc_state.clone()))
         .merge(login_router(oidc_state))
         .merge(kaisatsu_admin::compat::with_dpop_req_info(protected_apis))
+        .layer(axum::middleware::from_fn_with_state(
+            pins,
+            realm_hosts::pin_realm,
+        ))
 }
 
 #[derive(Debug, Clone)]

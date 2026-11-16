@@ -234,6 +234,7 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("GET", "/projects/{project}/basemap/{style}/{z}/{x}/{tile}", "map tiles the browser fetches"),
 ("GET", "/projects/{project}/changes", "jc_change_list"),
 ("GET", "/projects/{project}/changes/history", "jc_change_history"),
+("GET", "/projects/{project}/changes/outside", "an organization administrator reads the forge merge requests nobody can approve on the Approvals page (T-3433, T-7126); a merge request outside the Changes is no input an agent acts on"),
 ("GET", "/projects/{project}/changes/history/export", "a person or auditor downloads the closed changes under the history filter as CSV from the Approvals history (T-5114)"),
 ("GET", "/projects/{project}/changes/{id}", "jc_change_get"),
 ("POST", "/projects/{project}/changes/{id}/approve", "jc_change_approve"),

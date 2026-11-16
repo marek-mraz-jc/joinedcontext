@@ -16,7 +16,7 @@ use kaisatsu_core::{
 use kaisatsu_crypto::Kek;
 use kaisatsu_import::{ApplyOptions, apply_realm_files};
 use kaisatsu_oidc::{OutboundGuard, OutboundPolicy, PrivateHost};
-use kaisatsu_server::{KaisatsuState, load_realm_files_from_path, router};
+use kaisatsu_server::{KaisatsuState, RealmHosts, load_realm_files_from_path, router};
 use kaisatsu_store_memory::MemoryStore;
 use kaisatsu_store_pg::{PgStore, PgStoreConfig};
 use std::sync::Arc;
@@ -304,6 +304,59 @@ async fn apply_portal_realm(
     Ok(())
 }
 
+/// Applies the realm of each Organization with its own sign-in host (`hosts.idm`, T-7001): named
+/// like the Organization, `jc`'s own (no deployment import writes it), with the Portal's, the
+/// gateway's and the assistant's clients redirecting to that Organization's hosts alone.
+async fn apply_organization_realms(
+    store: &Arc<dyn Store>,
+    ctx: BuildCtx<'_>,
+    organizations: &[crate::config::OrganizationSection],
+    scheme: &str,
+) -> Result<(), StartError> {
+    let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
+    if ctx.siblings.portal_base().is_none()
+        || ctx.setup.value(setup::Secret::PortalClientSecret).is_none()
+    {
+        return Ok(());
+    }
+    for org in organizations.iter().filter(|o| o.hosts.idm.is_some()) {
+        let realm = setup::Realm::parse(&org.name).map_err(|e| err(&e))?;
+        let bases: Vec<String> = std::iter::once(&org.hosts.portal)
+            .chain(&org.hosts.portals)
+            .map(|h| format!("{scheme}://{h}"))
+            .collect();
+        let mut files = setup::organization_realm_files(&bases, &realm).map_err(|e| err(&e))?;
+        if ctx
+            .setup
+            .value(setup::Secret::GatewayClientSecret)
+            .is_some()
+        {
+            files.push(setup::gateway_realm_file(&realm));
+        }
+        if ctx
+            .setup
+            .value(setup::Secret::AssistantClientSecret)
+            .is_some()
+        {
+            setup::add_assistant_audience(&mut files);
+            files.push(setup::assistant_realm_file(&realm));
+        }
+        let options = ApplyOptions {
+            env_vars: setup::realm_env(ctx.setup),
+            ..ApplyOptions::default()
+        };
+        let report = apply_realm_files(store, &files, &options)
+            .await
+            .map_err(|e| err(&e))?;
+        tracing::info!(
+            organization = %org.name,
+            changed = report.has_changes(),
+            "kaisatsu: the Organization's realm is applied"
+        );
+    }
+    Ok(())
+}
+
 /// Leaves the first administrator out of `files` once the realm holds it: applied again on every
 /// start, its file would enable the account and put it back into the bootstrap group after an
 /// administrator disabled it or took it out.
@@ -524,9 +577,12 @@ fn follow_appearances(
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
 ) {
-    let hosts: std::collections::BTreeMap<String, String> = organizations
+    let hosts: std::collections::BTreeMap<String, (String, bool)> = organizations
         .iter()
-        .map(|org| (org.name.clone(), org.hosts.portal.clone()))
+        .map(|org| {
+            let own_realm = org.hosts.idm.is_some();
+            (org.name.clone(), (org.hosts.portal.clone(), own_realm))
+        })
         .collect();
     let (store, realm) = (store.clone(), realm.as_str().to_owned());
     super::appearance::follow(
@@ -536,7 +592,9 @@ fn follow_appearances(
         move |name, look| {
             let (store, realm, host) = (store.clone(), realm.clone(), hosts.get(&name).cloned());
             async move {
-                let Some(host) = host else { return };
+                let Some((host, own_realm)) = host else {
+                    return;
+                };
                 let base = match realm_branding(&store, &realm).await {
                     Ok(Some(base)) => base,
                     Ok(None) => return,
@@ -546,6 +604,9 @@ fn follow_appearances(
                     }
                 };
                 let block = organization_block(base, &host, look.as_ref());
+                if own_realm {
+                    own_realm_branding(&store, &name, &block).await;
+                }
                 match store.upsert_branding(block).await {
                     Ok(()) => {
                         tracing::info!(organization = %name, appearance = look.is_some(), "kaisatsu: sign-in pages follow the Organization")
@@ -575,6 +636,33 @@ async fn realm_branding(
         org_id: None,
         ..base.unwrap_or_default()
     }))
+}
+
+/// The Organization's look as its own realm's block (T-7001): every page of its sign-in host
+/// shows it. A realm not created yet takes it at the next appearance change.
+#[cfg(feature = "portal")]
+async fn own_realm_branding(
+    store: &Arc<dyn Store>,
+    realm: &str,
+    block: &kaisatsu_core::BrandingBlock,
+) {
+    let found = match store.get_realm(realm).await {
+        Ok(found) => found,
+        Err(e) => {
+            tracing::warn!(%realm, error = %e, "kaisatsu: Organization realm unreadable");
+            return;
+        }
+    };
+    let Some(own) = found else { return };
+    let block = kaisatsu_core::BrandingBlock {
+        id: own.id.clone(),
+        realm_id: own.id,
+        org_id: None,
+        ..block.clone()
+    };
+    if let Err(e) = store.upsert_branding(block).await {
+        tracing::warn!(%realm, error = %e, "kaisatsu: Organization realm branding not stored");
+    }
 }
 
 /// The realm's block `base` as the Organization on Portal host `host` shows it: its
@@ -660,6 +748,7 @@ pub async fn build(
         .await?;
     }
     apply_portal_realm(&store, ctx, existed_before, import_brings_portal).await?;
+    apply_organization_realms(&store, ctx, organizations, &mount.scheme).await?;
     if let Some(file) = &cfg.branding_file {
         // A broken file leaves the pages plain; sign-in stays up.
         match kaisatsu_server::apply_branding_file(&store, file).await {
@@ -672,14 +761,30 @@ pub async fn build(
     sweep_expired_rows(store.clone(), SWEEP_EVERY, shutdown, tasks);
     #[cfg(feature = "portal")]
     follow_appearances(&store, realm, organizations, shutdown, tasks);
-    #[cfg(not(feature = "portal"))]
-    let _ = organizations;
     let state = KaisatsuState::new(store, kek, outbound_guard(cfg), Arc::new(LocalAuthorizer))
         .with_second_factor(match cfg.second_factor {
             crate::config::SecondFactorFloor::Optional => kaisatsu_server::SecondFactor::Optional,
             crate::config::SecondFactorFloor::Required => kaisatsu_server::SecondFactor::Required,
-        });
+        })
+        .with_realm_hosts(realm_hosts(organizations, &mount.scheme).map_err(|e| err(&e))?);
     Ok(router(state, mount))
+}
+
+/// Each Organization with `hosts.idm` signs in there, in the realm named like it (T-7001); the
+/// sibling modules reach that realm's back channel on loopback.
+fn realm_hosts(
+    organizations: &[crate::config::OrganizationSection],
+    scheme: &str,
+) -> Result<RealmHosts, jc_router::RouterError> {
+    let mut hosts = ["localhost", "127.0.0.1", "[::1]"]
+        .into_iter()
+        .fold(RealmHosts::default(), RealmHosts::internal);
+    for org in organizations {
+        if let Some(idm) = &org.hosts.idm {
+            hosts = hosts.pin(&org.name, Mount::new("kaisatsu", scheme, idm, "")?);
+        }
+    }
+    Ok(hosts)
 }
 
 #[cfg(test)]
@@ -803,6 +908,75 @@ mod tests {
         // A second pass writes nothing.
         assert!(link_endpoint_scopes(&portal, &ours, false).is_none());
         assert!(link_endpoint_scopes(&hub, &ours, true).is_none());
+    }
+
+    /// T-7001 (T-6991 §7): Organization A's realm on idm.a.test answers its sign-in for A's
+    /// working host and refuses B's as `redirect_uri`, so a code of A never reaches B; the realm
+    /// is 404 on B's sign-in host.
+    #[tokio::test]
+    async fn a_code_for_one_organization_never_goes_to_anothers_working_host() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode, header};
+        use tower::ServiceExt;
+        let dir = tempfile::tempdir().unwrap();
+        let roles = crate::module::Module::ALL;
+        let setup = setup::Setup::prepare(dir.path(), &roles, &Default::default()).unwrap();
+        let kek = Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
+        let a = setup::Realm::parse("a").unwrap();
+        let files =
+            setup::organization_realm_files(&["https://smartcity.a.test".to_owned()], &a).unwrap();
+        let options = ApplyOptions {
+            env_vars: setup::realm_env(&setup),
+            ..ApplyOptions::default()
+        };
+        apply_realm_files(&store, &files, &options).await.unwrap();
+        assert!(
+            store
+                .get_user_by_username_or_email("a", None, setup::FIRST_ADMIN)
+                .await
+                .unwrap()
+                .is_none(),
+            "an Organization realm holds no first administrator"
+        );
+        let idm = |h: &str| Mount::new("kaisatsu", "https", h, "").unwrap();
+        let pins = RealmHosts::default()
+            .pin("a", idm("idm.a.test"))
+            .pin("b", idm("idm.b.test"));
+        let state = KaisatsuState::new(
+            store,
+            kek,
+            OutboundGuard::default(),
+            Arc::new(LocalAuthorizer),
+        )
+        .with_realm_hosts(pins);
+        let app = router(state, idm("login.city.test"));
+        let auth = |host: &str, working: &str| {
+            let uri = format!(
+                "/realms/a/protocol/openid-connect/auth?client_id={}&response_type=code&scope=openid\
+                 &state=s1&nonce=n1&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM\
+                 &code_challenge_method=S256&redirect_uri=https%3A%2F%2F{working}%2Fapi%2Fv1%2Fauth%2Fcallback",
+                setup::PORTAL_CLIENT
+            );
+            let req = Request::get(uri)
+                .extension(idm(host))
+                .body(Body::empty())
+                .unwrap();
+            app.clone().oneshot(req)
+        };
+        let own = auth("idm.a.test", "smartcity.a.test").await.unwrap();
+        // A's own working host: on to the sign-in page of A's host, never to a working host.
+        assert_eq!(own.status(), StatusCode::SEE_OTHER);
+        let next = own.headers()[header::LOCATION].to_str().unwrap();
+        assert!(
+            next.contains("/realms/a/") && !next.contains("smartcity."),
+            "{next}"
+        );
+        let sibling = auth("idm.a.test", "smartcity.b.test").await.unwrap();
+        assert_eq!(sibling.status(), StatusCode::BAD_REQUEST);
+        assert!(sibling.headers().get(header::LOCATION).is_none());
+        let elsewhere = auth("idm.b.test", "smartcity.a.test").await.unwrap();
+        assert_eq!(elsewhere.status(), StatusCode::NOT_FOUND);
     }
 
     /// The realm `apply_portal_realm` writes when the assistant runs: kaisatsu takes it, the

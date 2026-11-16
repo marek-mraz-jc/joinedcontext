@@ -952,6 +952,8 @@ export interface Functions {
   portal_app_checks: Record<string, never>;
   portal_app_dashboard: { name: string };
   portal_app_templates: Record<string, never>;
+  portal_change_manifests: { id: string };
+  portal_change_outside: Record<string, never>;
   portal_comment_list: { space: string; urn?: string };
   portal_connector_list: Record<string, never>;
   portal_datasource_webhook: { name: string };
@@ -1081,6 +1083,8 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_app_checks: ["Project"],
   portal_app_dashboard: ["Project"],
   portal_app_templates: ["Organization"],
+  portal_change_manifests: ["Project"],
+  portal_change_outside: ["Project"],
   portal_comment_list: ["Project"],
   portal_connector_list: ["Organization"],
   portal_datasource_webhook: ["Project"],
@@ -1212,6 +1216,8 @@ export interface Actions {
   portal_app_rebuild: { name: string };
   portal_app_rename_shapes: Record<string, never>;
   portal_app_restore: { name: string; body?: unknown };
+  portal_change_restore: { id: string };
+  portal_change_undo: { id: string };
   portal_comment_add: { space: string; body?: unknown };
   portal_comment_remove: { space: string; id: string };
   portal_connector_revoke: { connector: string };
@@ -1244,6 +1250,8 @@ export interface Actions {
   portal_opendata_page_set: { page: string; lang: string; body?: unknown };
   portal_organization_change_approve: { id: string; body?: unknown };
   portal_organization_change_reject: { id: string; body?: unknown };
+  portal_organization_change_restore: { id: string };
+  portal_organization_change_undo: { id: string };
   portal_people_name_by_id: { dryRun?: boolean };
   portal_people_remove: { body?: unknown };
   portal_person_consent_revoke: { person: string; client: string };
@@ -1337,6 +1345,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_app_rebuild: ["Project"],
   portal_app_rename_shapes: ["Project"],
   portal_app_restore: ["Project"],
+  portal_change_restore: ["Project"],
+  portal_change_undo: ["Project"],
   portal_comment_add: ["Project"],
   portal_comment_remove: ["Project"],
   portal_connector_revoke: ["Organization"],
@@ -1369,6 +1379,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_opendata_page_set: ["Organization"],
   portal_organization_change_approve: ["Organization"],
   portal_organization_change_reject: ["Organization"],
+  portal_organization_change_restore: ["Organization"],
+  portal_organization_change_undo: ["Organization"],
   portal_people_name_by_id: ["Organization"],
   portal_people_remove: ["Organization"],
   portal_person_consent_revoke: ["Organization"],

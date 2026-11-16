@@ -1,6 +1,6 @@
 {
-  "restPaths": 105,
-  "restCalls": 174,
+  "restPaths": 101,
+  "restCalls": 167,
   "fetchFiles": [
     "api/access.ts",
     "api/client.ts",

@@ -75,6 +75,7 @@ struct Hosts {
     apps: Option<String>,
     #[serde(default)]
     portals: Vec<String>,
+    idm: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -248,7 +249,10 @@ fn origins(layout: &Layout, org: &Org) -> (Vec<Origin>, Vec<String>) {
                 .map(|p| o("further Portal", p.clone(), true)),
         );
     }
-    out.push(o("sign-in", layout.login.clone(), false));
+    match org.hosts.as_ref().and_then(|h| h.idm.as_ref()) {
+        Some(idm) => out.push(o("sign-in", idm.clone(), true)),
+        None => out.push(o("sign-in", layout.login.clone(), false)),
+    }
     match org.hosts.as_ref().and_then(|h| h.apps.as_ref()) {
         Some(apps) => out.push(o("Apps", format!("*.{apps}"), true)),
         None => {
@@ -294,7 +298,7 @@ fn report(file: &DomainsFile, edge: &[IpAddr], zone: Option<&str>, world: &dyn W
         login: file
             .login_host
             .clone()
-            .unwrap_or_else(|| format!("login.{base}")),
+            .unwrap_or_else(|| format!("idm.{base}")),
         explicit_login: file.login_host.is_some(),
         base: base.clone(),
     };

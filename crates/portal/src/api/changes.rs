@@ -1315,6 +1315,73 @@ pub async fn list_changes(
     ))
 }
 
+/// The open merge requests of a project repository that are not Changes, and why (T-3433).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OutsideList {
+    pub items: Vec<OutsideMergeRequest>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project}/changes/outside",
+    summary = "List Merge Requests That Are Not Changes",
+    description = "The open merge requests of the project repository that nobody can approve \
+                   here, a fork's or a non-writer's, each with why. An organization \
+                   administrator reads them; anyone else who reads the project an empty list.",
+    tag = "changes",
+    params(("project" = String, Path, description = "Project name")),
+    responses(
+        (status = 200, description = "The merge requests outside the Changes", body = OutsideList),
+        (status = 401, description = "Unauthorized", body = ProblemDetails),
+        (status = 404, description = "Project not found", body = ProblemDetails),
+        (status = 503, description = "Git forge unavailable", body = ProblemDetails),
+    )
+)]
+pub async fn list_outside(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+) -> Result<Json<OutsideList>, ApiError> {
+    Ok(Json(
+        outside_readable(&state, &user.0.identity, &project).await?,
+    ))
+}
+
+/// The merge requests of [`list_outside`]: only [`standing`] per merge request, none of the
+/// manifest reads a Change's row costs, so the Change list's OData set and this read stay apart
+/// (T-7126).
+pub async fn outside_readable(
+    state: &AppState,
+    identity: &crate::auth::session::Identity,
+    project: &str,
+) -> Result<OutsideList, ApiError> {
+    if !crate::permissions::for_request(state, identity, project).may_read_project() {
+        return Err(ApiError::NotFound(format!("project '{project}' not found")));
+    }
+    if !crate::permissions::for_request(state, identity, crate::permissions::ORG_NAMESPACE)
+        .administers_organization()
+    {
+        return Ok(OutsideList { items: Vec::new() });
+    }
+    let shako = state
+        .forge_for(project)
+        .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
+    let shako: &crate::forge::ShakoClient = &shako;
+    let mut items = Vec::new();
+    for pr in shako.list_pull_requests("open").await? {
+        if let Standing::Outside(reason) = standing(state, shako, project, &pr).await? {
+            items.push(OutsideMergeRequest {
+                number: pr.number,
+                url: pr.url.clone(),
+                author: pr.author_login.clone(),
+                reason,
+            });
+        }
+    }
+    Ok(OutsideList { items })
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/projects/{project}/changes/history",
@@ -3338,10 +3405,14 @@ pub fn router() -> Router<AppState> {
             "/projects/{project}/changes",
             axum::routing::get(list_changes),
         )
-        // A static segment outranks `{id}`, and `history` is no change id (`chg-…`).
+        // A static segment outranks `{id}`, and `history` and `outside` are no change id (`chg-…`).
         .route(
             "/projects/{project}/changes/history",
             axum::routing::get(list_change_history),
+        )
+        .route(
+            "/projects/{project}/changes/outside",
+            axum::routing::get(list_outside),
         )
         .route(
             "/projects/{project}/changes/{id}",

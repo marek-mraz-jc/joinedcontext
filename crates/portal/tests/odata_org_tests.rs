@@ -1771,6 +1771,73 @@ async fn a_changes_detail_answers_as_the_rest_door() {
     assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
 }
 
+/// T-7126: the open Changes listed with `$select` of what the REST list's items hold answer member
+/// for member as that list, from the list items themselves: no Change is read from the forge again.
+#[tokio::test]
+async fn the_change_list_answers_its_detail_from_the_list() {
+    let (shako, state) = one_change(false).await;
+    let mode = Mode::Host("hel");
+    let rest = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects/helsinki/changes",
+    )
+    .await;
+    assert_eq!(rest.status, StatusCode::OK, "{}", rest.text);
+    let item = rest.json()["items"][0].clone();
+    let members: Vec<&str> = item
+        .as_object()
+        .expect("a Change")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert!(
+        members.contains(&"summary") && members.contains(&"fileCount"),
+        "{item}"
+    );
+    // What the list itself reads of the forge, without the detail.
+    let before = shako.received_requests().await.expect("recorded").len();
+    let thin = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects('helsinki')/changes",
+    )
+    .await;
+    assert_eq!(thin.status, StatusCode::OK, "{}", thin.text);
+    let thin = forge_paths(&shako, before).await;
+    let before = shako.received_requests().await.expect("recorded").len();
+    let listed = get(
+        &state,
+        mode,
+        "hel-only",
+        &format!(
+            "/api/v1/projects('helsinki')/changes?$select=name,{}",
+            members.join(",")
+        ),
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+    let row = &listed.json()["value"][0];
+    for member in &members {
+        assert_eq!(row[*member], item[*member], "{member}");
+    }
+    assert_eq!(
+        forge_paths(&shako, before).await,
+        thin,
+        "a list row read its Change again"
+    );
+}
+
+/// The forge paths asked since the `before`th request.
+async fn forge_paths(shako: &MockServer, before: usize) -> Vec<String> {
+    shako.received_requests().await.expect("recorded")[before..]
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect()
+}
+
 /// T-7122: a page follows its Change through the decision (the Apps pages' publication, an
 /// Endpoint's new Change): a merged Change, which the open list no longer holds, still answers
 /// by its key as the REST door answers it.

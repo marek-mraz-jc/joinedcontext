@@ -761,15 +761,23 @@ async fn kind_rows(
     state: &AppState,
     project: &str,
 ) -> Result<Vec<Value>, Refused> {
-    let rows = rows_of(set, caller, state, project).await?;
+    Ok(keyed_rows(
+        set,
+        state,
+        project,
+        rows_of(set, caller, state, project).await?,
+    ))
+}
+
+/// `rows` of `set` in `project`, keyed `(project,name)` with their `ETag`: [`kind_rows`]'s.
+fn keyed_rows(set: &ListSet, state: &AppState, project: &str, rows: Vec<Value>) -> Vec<Value> {
     // A kind that lives in the project or the Organization (Role): the registry answers both
     // homes inside a project (PF-68), but a row keyed (project,name) is the project's own copy,
     // as the REST list answers it; the Organization's are no row of any project (T-6817).
     let own_only = !set.endpoint_list
         && crate::resource::by_kind(&set.type_name)
             .is_some_and(|info| matches!(info.scope, jc_core::Scope::OrganizationOrProject));
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .filter_map(|row| {
             let Value::Object(mut row) = row else {
                 return None;
@@ -787,7 +795,7 @@ async fn kind_rows(
             row.insert(ETAG.into(), Value::String(tag));
             Some(Value::Object(row))
         })
-        .collect())
+        .collect()
 }
 
 /// The member every entity carries its `ETag` in (API/13 §2a).
@@ -827,7 +835,11 @@ const WORKSPACE_DETAIL: [&str; 2] = ["scope", "changes"];
 /// The workspace detail member only `jc_workspace_get` answers.
 const WORKSPACE_CHANGES: &str = "changes";
 
-/// The most Changes one page answers with their detail: each is a read of the forge.
+/// The members of [`CHANGE_DETAIL`] the list's items leave out, as the REST list does: the
+/// plan's fields, every file and the head commit's CI (T-0861, T-7126).
+const CHANGE_GET_ONLY: [&str; 3] = ["planFields", "files", "ci"];
+
+/// The most Changes one page answers with a [`CHANGE_GET_ONLY`] member: each is a read of the forge.
 // ponytail: one jc_change_get per row; a batch read in the change store when a page wants more.
 const CHANGE_DETAIL_MAX: usize = 50;
 
@@ -1070,7 +1082,10 @@ impl Read<'_> {
             let changes = asked.contains(&WORKSPACE_CHANGES);
             return self.fill_workspaces(changes, answer).await;
         }
-        if change && answer.rows.len() > CHANGE_DETAIL_MAX {
+        // A list item holds every member but these, which only `jc_change_get` reads: a page
+        // that names one reads each Change again, at most CHANGE_DETAIL_MAX of them.
+        let get_only = change && asked.iter().any(|member| CHANGE_GET_ONLY.contains(member));
+        if get_only && answer.rows.len() > CHANGE_DETAIL_MAX {
             return Err(no(bad(format!(
                 "a page with a Change's {} holds at most {CHANGE_DETAIL_MAX} Changes; ask with \
                  $top={CHANGE_DETAIL_MAX} or fewer",
@@ -1088,7 +1103,9 @@ impl Read<'_> {
             };
             let held = change
                 .then(|| self.changes.lock().ok()?.remove(key))
-                .flatten();
+                .flatten()
+                // A list item lacks what `get_only` asks; a key read held the Change itself.
+                .filter(|held| !get_only || held.get("files").is_some());
             let whole = if let Some(whole) = held {
                 whole
             } else if change {
@@ -1192,10 +1209,29 @@ impl Read<'_> {
         Ok(Value::Object(row))
     }
 
+    /// The rows of `set` in `project`, [`kind_rows`]'s; each open Change's list item is held
+    /// whole, the REST list's ChangeProposal, so a page's `$select` of the detail the list holds
+    /// reads no Change again (T-7126).
+    async fn set_rows(&self, set: &ListSet, project: &str) -> Result<Vec<Value>, Refused> {
+        if set.set != CHANGES {
+            return kind_rows(set, &self.caller, self.state, project).await;
+        }
+        let items = crate::api::odata::items_of(set, &self.caller, self.state, project).await?;
+        if let Ok(mut held) = self.changes.lock() {
+            for item in &items {
+                if let Some(name) = item.pointer("/metadata/name").and_then(Value::as_str) {
+                    held.insert(format!("{project}/{name}"), item.clone());
+                }
+            }
+        }
+        let rows = items.into_iter().map(crate::api::odata::flat).collect();
+        Ok(keyed_rows(set, self.state, project, rows))
+    }
+
     async fn rows(&self, set: &ListSet, projects: &[String]) -> Result<Vec<Value>, Refused> {
         let mut all = Vec::new();
         for project in projects {
-            match kind_rows(set, &self.caller, self.state, project).await {
+            match self.set_rows(set, project).await {
                 Ok(rows) => all.extend(rows),
                 // A kind the caller may not list in a project they read is no rows of theirs.
                 Err(r) if matches!(r.status(), StatusCode::FORBIDDEN | StatusCode::NOT_FOUND) => {}
@@ -1614,7 +1650,7 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
             if !readable(read.state, read.user, &read.org, &project) {
                 return refused(not_found(format!("no project {project} you may read")));
             }
-            let rows = match kind_rows(set, &read.caller, read.state, &project).await {
+            let rows = match read.set_rows(set, &project).await {
                 Ok(rows) => rows,
                 Err(r) => return *r,
             };
@@ -1688,7 +1724,7 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                             .change_row(set, &project, id)
                             .await
                             .map(|row| vec![row]),
-                        _ => kind_rows(set, &read.caller, read.state, &project).await,
+                        _ => read.set_rows(set, &project).await,
                     };
                     let rows = match rows {
                         Ok(rows) => rows,
