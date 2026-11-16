@@ -1,5 +1,5 @@
 import type { Page, Request, Route } from "@playwright/test";
-import { asOData, doorAsRest, manifestAnswer, manifestAsRest } from "../tests/odata";
+import { asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "../tests/odata";
 
 // T-7103: the pages read a kind's manifests through the Organization's OData service ($select of
 // spec, status, metadata: api/odata.ts listManifests, readManifest). The server proves each answers
@@ -53,6 +53,48 @@ const portalDoor: Translate = async (request) => {
   };
 };
 
+/** The request as the fetch API holds it, for the translations in tests/odata.ts. */
+async function sent(request: Request): Promise<globalThis.Request> {
+  return new globalThis.Request(request.url(), {
+    method: request.method(),
+    headers: await request.allHeaders(),
+    body: request.method() === "POST" ? (request.postData() ?? undefined) : undefined,
+  });
+}
+
+/**
+ * T-7073: a `propose_*` action as the REST write it stands for (POST, PUT, PATCH or DELETE with
+ * dryRun and confirm as the door's query); a success goes back as the door's body, a refusal as the
+ * service's error.
+ */
+const proposal: Translate = async (request) => {
+  if (!request.url().includes("/JoinedContext.Portal.propose_")) return undefined;
+  const rest = await proposalAsRest(await sent(request));
+  if (!rest) return undefined;
+  const text = rest.body ? await rest.text() : null;
+  return {
+    url: rest.url,
+    method: rest.method,
+    body: text,
+    fulfil: async (route, options) => {
+      const status = options?.status ?? 200;
+      const body = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
+      const answer = status >= 300 ? await asOData(new Response(body, { status })) : new Response(body, { status });
+      await route.fulfill({ status: answer.status, contentType: "application/json", headers: options?.headers, body: await answer.text() });
+    },
+  };
+};
+
+/** T-7073: a registry operation bound to a project (jc_syncsource_*, jc_ckan_status, ...) as its REST door. */
+const operation: Translate = async (request) => {
+  const asked = await sent(request);
+  return callsOperation(asked) ? portalDoor(request) : undefined;
+};
+
+/** A manifest read, a proposal or a registry operation, whichever the request is. */
+const manifestCall: Translate = async (request) =>
+  (await manifestRead(request)) ?? (await proposal(request)) ?? (await operation(request));
+
 function wrap(handler: Handler, translate: Translate): Handler {
   return async (route, request) => {
     const read = await translate(request);
@@ -79,11 +121,12 @@ function wrap(handler: Handler, translate: Translate): Handler {
 }
 
 /**
- * Each `page.route` handler registered after this call meets a manifest read as its REST read;
+ * Each `page.route` handler registered after this call meets a manifest read as its REST read, and
+ * a proposal or a registry operation as its REST write or door (T-7073);
  * `page.unroute` with the handler a spec registered takes its wrapper away.
  */
 export function manifestReadsAsRest(page: Page): void {
-  asRest(page, manifestRead);
+  asRest(page, manifestCall);
 }
 
 /**

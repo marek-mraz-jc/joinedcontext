@@ -3,6 +3,10 @@ import { attributeTable } from "./attributeAccess";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { smallTouchTargets } from "./touch";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The space grid shaped like Baserow (T-4883): one toolbar row, row numbers with checkboxes, one
 // line a row with the name frozen, a filter panel whose AND/OR conditions reach the endpoint as

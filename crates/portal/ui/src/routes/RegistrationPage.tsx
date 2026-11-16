@@ -1,8 +1,9 @@
+import { readManifest } from "../api/odata";
 import type { JSX, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, whilePending } from "../api/client";
+import { queryKeys, whilePending } from "../api/client";
 import { localized } from "../api/manifest";
 import type { Manifest } from "../api/manifest";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
@@ -54,11 +55,7 @@ export function RegistrationPage({ project, name }: { project: string; name: str
     retry: false,
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "csrs", name } },
-        }),
-      ),
+      (await readManifest(project, "csrs", name)),
   });
   const back = (
     <Link to="/projects/$project/$plural" params={{ project, plural: "csrs" }} className={LINK}>

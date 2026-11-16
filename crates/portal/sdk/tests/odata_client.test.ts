@@ -51,6 +51,9 @@ describe("the OData client", () => {
     expect(literal({ a: 1 })).toBe('{"a":1}');
     expect(keyPredicate("air")).toBe("('air')");
     expect(keyPredicate({ project: "air", name: "pm10" })).toBe("(project='air',name='pm10')");
+    // A name never moves the address (T-7075): `/`, `?` and `#` stay inside the key.
+    expect(keyPredicate("a/../x")).toBe("('a%2F..%2Fx')");
+    expect(keyPredicate({ project: "air", name: "b?c#d" })).toBe("(project='air',name='b%3Fc%23d')");
   });
 
   it("pages on nextLink of its own service and refuses one elsewhere", async () => {

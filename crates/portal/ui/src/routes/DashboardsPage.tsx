@@ -1,10 +1,11 @@
+import { listManifests } from "../api/odata";
 import { lazy, Suspense, useCallback, useId, useMemo, useState } from "react";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
 import type { JSX } from "react";
 import { keepPreviousData, useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { Feature, FeatureCollection } from "geojson";
-import { api, ApiError, queryKeys, unwrap, whilePending } from "../api/client";
+import { ApiError, queryKeys, whilePending } from "../api/client";
 import { getDraft } from "../api/drafts";
 import { asManifests, localized } from "../api/manifest";
 import type { Change, Manifest } from "../api/manifest";
@@ -17,30 +18,10 @@ import { DashboardWidgets } from "../components/dashboards/DashboardWidgets";
 import type { WidgetSpec } from "../components/dashboards/DashboardWidgets";
 import type { Bbox, MapLayer } from "../components/dashboards/MapLibreView";
 import type { DenseLayer } from "../components/dashboards/DeckGlOverlay";
-import {
-  DashboardEditor,
-  dashboardFromManifest,
-  LayerEditor,
-  layerFromManifest,
-} from "../pages/dashboards/editors";
+import { DashboardEditor, dashboardFromManifest, LayerEditor, layerFromManifest } from "../pages/dashboards/editors";
 import type { DashboardForm, LayerForm } from "../pages/dashboards/editors";
 import { Link } from "@tanstack/react-router";
-import {
-  Alert,
-  Badge,
-  Button,
-  buttonClass,
-  Card,
-  Checkbox,
-  EmptyState,
-  Icon,
-  PageFailed,
-  PageHeader,
-  Select,
-  Skeleton,
-  Tabs,
-  tabPanelProps,
-} from "../components/ui";
+import { Alert, Badge, Button, buttonClass, Card, Checkbox, EmptyState, Icon, PageFailed, PageHeader, Select, Skeleton, Tabs, tabPanelProps } from "../components/ui";
 
 // MapLibre is about half of the bundle; nobody downloads it before opening a dashboard.
 const MapLibreView = lazy(() =>
@@ -149,11 +130,7 @@ function useResourceList(project: string, plural: string) {
     // A change on its way polls until it lands (T-1392).
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural } },
-        }),
-      ),
+      (await listManifests(project, plural)),
   });
 }
 

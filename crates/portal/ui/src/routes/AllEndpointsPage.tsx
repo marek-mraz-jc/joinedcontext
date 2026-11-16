@@ -1,3 +1,4 @@
+import { listManifests } from "../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
@@ -245,11 +246,7 @@ function CkanInstancesList(): JSX.Element {
     queries: (projects.data ?? []).map((project) => ({
       queryKey: queryKeys.list(project, "ckaninstances"),
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: "ckaninstances" } },
-          }),
-        ),
+        (await listManifests(project, "ckaninstances")),
     })),
   });
   const [open, setOpen] = useState<Set<string>>(() => new Set());

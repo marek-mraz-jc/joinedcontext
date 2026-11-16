@@ -3,12 +3,14 @@
 // client.ts shrink page group by page group under tests/odata_ratchet.test.ts.
 import {
   odata,
+  ODATA_ENTITY_KEYS,
   ODataError,
   originTransport,
   type ODataModel,
 } from "@joinedcontext/sdk";
-import { api, ApiError, loginRedirectUrl, unwrap, type WireProblem } from "./client";
+import { api, ApiError, hiddenList, loginRedirectUrl, unwrap, type WireProblem } from "./client";
 import { ORG_NAMESPACE } from "./manifest";
+import { activeWorkspace } from "../components/layout/WorkspaceContext";
 import type { components, operations } from "./schema";
 import { announceSessionEnded } from "./sessionEnded";
 import { announceStepUp, stepUpUrl } from "./stepUp";
@@ -70,6 +72,9 @@ const closingClient = odata(ODATA_ROOT, {
  */
 export function toApiError(error: unknown): unknown {
   if (!(error instanceof ODataError)) return error;
+  // A bare failure (the edge's 502, a body that is no error object) says nothing to show: the
+  // page says its own sentence for the status, as for a REST door's.
+  if (!error.described) return new ApiError(error.status, error.message, undefined, error.requestId);
   const problem: WireProblem = {
     type: error.type,
     title: error.title,
@@ -86,7 +91,8 @@ export function toApiError(error: unknown): unknown {
       : {}),
     ...(error.hint ? { hint: error.hint } : {}),
   };
-  return new ApiError(error.status, error.message, problem, error.requestId);
+  const hidden = hiddenList(error.status, problem);
+  return new ApiError(error.status, hidden?.detail ?? error.message, hidden ?? problem, error.requestId, hidden !== undefined);
 }
 
 async function refusedAs<T>(answer: Promise<T>): Promise<T> {
@@ -114,6 +120,15 @@ interface Answers {
   jc_change_history: Answer<"list_change_history">;
   jc_endpoint_preview: Answer<"preview_endpoint">;
   jc_serviceaccount_access: Answer<"account_access">;
+  jc_syncsource_status: Answer<"status">;
+  jc_ckan_status: Answer<"get_status">;
+}
+
+/** Each action the UI calls whose answer is its REST door's, and that answer's shape. */
+interface ActionAnswers {
+  jc_syncsource_sync: RestAnswer<"sync_now">;
+  jc_syncsource_pause: RestAnswer<"pause">;
+  jc_datasource_discover: RestAnswer<"discover_datasource">;
 }
 
 /**
@@ -169,13 +184,32 @@ export function act<A extends keyof Actions & string>(
   bound: string,
   params: Actions[A],
   ifMatch?: string,
-): Promise<unknown> {
-  return refusedAs(client.act(name, bound, params, ifMatch));
+): Promise<A extends keyof ActionAnswers ? ActionAnswers[A] : unknown> {
+  return refusedAs(client.act(name, bound, params, ifMatch)) as Promise<
+    A extends keyof ActionAnswers ? ActionAnswers[A] : unknown
+  >;
+}
+
+/**
+ * The `@odata.etag` of project `project`'s row: the `If-Match` of a Change-proposing action bound
+ * to it (API/13 §2b), e.g. `jc_syncsource_detach`.
+ */
+export async function projectEtag(project: string): Promise<string | undefined> {
+  const row = (await refusedAs(client.get("projects", project))) as { "@odata.etag"?: string };
+  return row["@odata.etag"];
+}
+
+/**
+ * An OData text literal in an address: quoted, a quote doubled, percent-encoded so a `/`, `?` or
+ * `#` in a name stays in its key (the SDK's keyPredicate does the same).
+ */
+function quoted(text: string): string {
+  return encodeURIComponent(`'${text.replaceAll("'", "''")}'`);
 }
 
 /** The address an action of project `project` is bound to. */
 export function projectBound(project: string): string {
-  return `projects('${project.replaceAll("'", "''")}')`;
+  return `projects(${quoted(project)})`;
 }
 
 /** The `Organization` singleton the people's operations and the Organization's Portal doors are bound to. */
@@ -245,13 +279,9 @@ export async function doorAction<A extends Door<keyof Actions & string>>(
 
 type EntitySets = ODataModel.EntitySets;
 
-/**
- * The sets whose rows are manifests every one of `joinedcontext.com/v1alpha1` (jc-core
- * conversions: only a Pipeline may also be `v1alpha2`, so `pipelines` is no such set here).
- */
+/** The sets whose rows are manifests. */
 export type ManifestSet = Exclude<
   keyof EntitySets & string,
-  | "pipelines"
   | "changes"
   | "endpointList"
   | "entities"
@@ -260,6 +290,74 @@ export type ManifestSet = Exclude<
   | "revisions"
   | "runs"
 >;
+
+/**
+ * Inside a workspace, a manifest is read and written in its branch (API/01 §22) through the REST
+ * doors with `?workspace=` (client.ts workspaceMiddleware): the service reads and binds only what
+ * the project holds, and a manifest drafted in the copy is not there.
+ * ponytail: the service has no binding of a workspace's copy yet; T-7073's split adds one.
+ */
+const inCopy = {
+  list: async (project: string, plural: string) =>
+    unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural } } })),
+  read: async (project: string, plural: string, name: string) =>
+    unwrap(await api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path: { project, plural, name } } })),
+  write: async (
+    project: string,
+    plural: string,
+    body: { metadata: { name: string } },
+    { create, dryRun, ifMatch, name }: { create: boolean; dryRun: boolean; ifMatch?: string; name: string },
+  ): Promise<unknown> => {
+    const query = dryRun ? { dryRun: "All" } : undefined;
+    const manifest = body as components["schemas"]["ResourceProposal"];
+    return unwrap(
+      create
+        ? await api.POST("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural }, query }, body: manifest })
+        : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
+            params: { path: { project, plural, name }, query, header: ifMatch ? { "If-Match": ifMatch } : undefined },
+            body: manifest,
+          }),
+    );
+  },
+  remove: async (
+    project: string,
+    plural: string,
+    name: string,
+    { dryRun, ifMatch, confirm }: { dryRun: boolean; ifMatch?: string; confirm?: string },
+  ): Promise<unknown> =>
+    unwrap(
+      await api.DELETE("/api/v1/projects/{project}/{plural}/{name}", {
+        params: {
+          path: { project, plural, name },
+          query: { ...(dryRun ? { dryRun: "All" } : {}), ...(confirm ? { confirm } : {}) },
+          header: ifMatch ? { "If-Match": ifMatch } : undefined,
+        },
+      }),
+    ),
+};
+
+/** The sets of {@link ManifestSet}'s complement: their rows are no manifests. */
+const NOT_MANIFESTS: readonly string[] = [
+  "changes",
+  "endpointList",
+  "entities",
+  "members",
+  "repositories",
+  "revisions",
+  "runs",
+];
+
+/** Whether `plural` names a set whose rows are manifests, e.g. a kind page's plural. */
+export function isManifestSet(plural: string): plural is ManifestSet {
+  return Object.hasOwn(ODATA_ENTITY_KEYS, plural) && !NOT_MANIFESTS.includes(plural);
+}
+
+/** `plural` as the set of its manifests; a plural the service has no such set of is not found. */
+function manifestSet(plural: string): ManifestSet {
+  if (isManifestSet(plural)) return plural;
+  const detail = `The service has no set of manifests called ${plural}.`;
+  throw new ApiError(404, detail, { type: "about:blank", title: "Not Found", status: 404, detail });
+}
 
 type Manifest = components["schemas"]["ResourceEnvelope"];
 
@@ -270,6 +368,8 @@ const MANIFEST_MEMBERS = [
   "metadata",
   "spec",
   "status",
+  // A Pipeline is `v1alpha1` or `v1alpha2` (jc-core conversions): a write sends back what it read.
+  "apiVersion",
 ] as const;
 
 const API_VERSION = "joinedcontext.com/v1alpha1";
@@ -283,6 +383,7 @@ export function manifestEtag(manifest: object): string | undefined {
 }
 
 interface ManifestRow {
+  apiVersion?: unknown;
   kind?: unknown;
   metadata?: unknown;
   spec?: unknown;
@@ -298,12 +399,14 @@ const KIND_OF: Partial<Record<ManifestSet, string>> = { projects: "Project" };
 
 /** The members `$select` names on `plural`'s rows. */
 function membersOf(plural: ManifestSet): readonly string[] {
-  return KIND_OF[plural] ? MANIFEST_MEMBERS.filter((m) => m !== "kind") : MANIFEST_MEMBERS;
+  return KIND_OF[plural]
+    ? MANIFEST_MEMBERS.filter((m) => m !== "kind" && m !== "apiVersion")
+    : MANIFEST_MEMBERS;
 }
 
 function asManifest(row: ManifestRow, kind?: string): Manifest {
   const manifest = {
-    apiVersion: API_VERSION,
+    apiVersion: typeof row.apiVersion === "string" ? row.apiVersion : API_VERSION,
     kind: kind ?? row.kind,
     metadata: row.metadata,
     spec: row.spec ?? undefined,
@@ -325,8 +428,10 @@ function orgSet(plural: ManifestSet): ManifestSet {
  */
 export async function listManifests(
   project: string,
-  plural: ManifestSet,
+  of: string,
 ): Promise<{ items: Manifest[] }> {
+  if (activeWorkspace()) return inCopy.list(project, of);
+  const plural = manifestSet(of);
   // `$select` names manifest members (metadata, spec) the generated row types of a set leave out.
   const query: { select(...members: string[]): { all(): AsyncIterable<unknown> } } =
     project === ORG_NAMESPACE
@@ -359,9 +464,11 @@ function notFound(name: string): ApiError {
  */
 export async function readManifest(
   project: string,
-  plural: ManifestSet,
+  of: string,
   name: string,
 ): Promise<Manifest> {
+  if (activeWorkspace()) return inCopy.read(project, of, name);
+  const plural = manifestSet(of);
   const members = membersOf(plural);
   const row = (await refusedAs(
     project === ORG_NAMESPACE
@@ -398,4 +505,70 @@ export async function listOrganizations(several = false): Promise<{ items: Manif
     throw toApiError(error);
   }
   return { items: row.metadata == null ? [] : [asManifest(row, ORGANIZATION)] };
+}
+
+
+
+/** The address of manifest `name` of `plural` in `project`, the entity its write actions are bound to. */
+export function manifestBound(project: string, plural: ManifestSet, name: string): string {
+  return project === ORG_NAMESPACE
+    ? `${orgSet(plural)}(${quoted(name)})`
+    : `${plural}(project=${quoted(project)},name=${quoted(name)})`;
+}
+
+/**
+ * The `If-Match` of a write: the ETag the page read the manifest with, else `*`, which writes as
+ * the REST door's PUT and DELETE without If-Match did (API/13 section 3).
+ */
+function matching(ifMatch: string | undefined): string {
+  return ifMatch ?? "*";
+}
+
+/**
+ * Proposes `manifest` of `plural` in `project` as a Change, or checks it with `dryRun` (PF-57):
+ * `propose_create` on the project, `propose_update` on the manifest with `If-Match` (API/13 §2a).
+ * The answer is the REST door's: a Change, or with `dryRun` the check's verdict.
+ */
+export async function proposeManifest(
+  project: string,
+  of: string,
+  manifest: { metadata: { name: string } },
+  {
+    create,
+    dryRun = false,
+    ifMatch,
+    name = manifest.metadata.name,
+  }: {
+    create: boolean;
+    dryRun?: boolean;
+    ifMatch?: string;
+    /** The manifest an update replaces, when the page addresses it by another name than the body's. */
+    name?: string;
+  },
+): Promise<unknown> {
+  if (activeWorkspace()) return inCopy.write(project, of, manifest, { create, dryRun, ifMatch, name });
+  const plural = manifestSet(of);
+  if (create) {
+    return refusedAs(client.act("propose_create", projectBound(project), { manifest, dryRun }));
+  }
+  const bound = manifestBound(project, plural, name);
+  return refusedAs(client.act("propose_update", bound, { manifest, dryRun }, matching(ifMatch)));
+}
+
+/**
+ * Proposes deleting manifest `name` as a Change, or checks it with `dryRun` (`propose_delete`);
+ * `confirm` is the name typed back, with which an administrator's own red-lane removal is
+ * approved as it is proposed (PF-58, CC-39).
+ */
+export async function proposeDelete(
+  project: string,
+  of: string,
+  name: string,
+  { dryRun = false, ifMatch, confirm }: { dryRun?: boolean; ifMatch?: string; confirm?: string } = {},
+): Promise<unknown> {
+  if (activeWorkspace()) return inCopy.remove(project, of, name, { dryRun, ifMatch, confirm });
+  const bound = manifestBound(project, manifestSet(of), name);
+  return refusedAs(
+    client.act("propose_delete", bound, { dryRun, ...(confirm ? { confirm } : {}) }, matching(ifMatch)),
+  );
 }

@@ -1,9 +1,10 @@
+import { listManifests } from "../../../api/odata";
 import { useContext } from "react";
 import type { JSX } from "react";
 import type { FieldProps } from "@rjsf/utils";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, reasonOf } from "../../../api/client";
+import { queryKeys, reasonOf } from "../../../api/client";
 import { projectsQuery } from "../../../api/projects";
 import { asManifests, localized } from "../../../api/manifest";
 import { Badge, Checkbox } from "../../ui";
@@ -50,7 +51,7 @@ export function KnowledgeSourcesField(props: FieldProps): JSX.Element {
     queries: names.map((project) => ({
       queryKey: queryKeys.list(project, "knowledgesources"),
       queryFn: async () =>
-        unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "knowledgesources" } } })),
+        (await listManifests(project, "knowledgesources")),
     })),
   });
 

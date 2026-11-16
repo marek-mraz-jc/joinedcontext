@@ -1,6 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5392: the Access panel asks the Endpoint every action it shows in one AuthZEN
 // `access/v1/evaluations` request and shows each decision; a failed batch says so instead of

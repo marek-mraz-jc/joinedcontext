@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { attributeTable } from "./attributeAccess";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The row's Correct values tab (T-5326): a person who may write an attribute edits the current
 // value, adds an old one, corrects a measurement, reverts it and imports a CSV, each landing in

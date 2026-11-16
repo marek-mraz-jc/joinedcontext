@@ -1,3 +1,4 @@
+import { listManifests, proposeManifest } from "../../api/odata";
 /**
  * A dashboard written as JSON (T-6791): the manifest on the left, completed and checked against the
  * Dashboard kind's schema, its widgets drawn on the right as the dashboards page draws them. A
@@ -42,7 +43,7 @@ function useList(project: string, plural: string) {
   return useQuery({
     queryKey: queryKeys.list(project, plural),
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural } } })),
+      (await listManifests(project, plural)),
   });
 }
 
@@ -132,18 +133,8 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
   const proposal = useProposal(project, "dashboards", setChange);
   const check = useMutation({
     mutationFn: async (manifest: ResourceProposal) => {
-      const create = !existing;
-      const query = { dryRun: "All" };
-      const answer = create
-        ? await api.POST("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: "dashboards" }, query },
-            body: manifest,
-          })
-        : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
-            params: { path: { project, plural: "dashboards", name: manifest.metadata.name }, query },
-            body: manifest,
-          });
-      return (await unwrap(answer)) as { valid?: boolean; verdict?: { ok?: boolean; findings?: Finding[] } };
+      const answer = await proposeManifest(project, "dashboards", manifest, { create: !existing, dryRun: true });
+      return answer as { valid?: boolean; verdict?: { ok?: boolean; findings?: Finding[] } };
     },
   });
   const refusals: Finding[] = check.error

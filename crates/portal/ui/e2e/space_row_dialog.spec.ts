@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // A space row as a dialog (T-4828): `?row=<urn>` opens it, Fields, History with every version and
 // who changed it, Comments as tabs; "Add row" opens the type's form. `vite preview` has no Portal

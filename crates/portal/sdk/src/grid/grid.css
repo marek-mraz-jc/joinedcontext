@@ -2337,6 +2337,33 @@ a.jc-cell--link:focus-visible {
   font: inherit;
   cursor: pointer;
 }
+@media (max-width: 639.98px) {
+  .jc-grid-arrange-toggle {
+    min-width: 44px;
+    justify-content: center;
+  }
+  /* A host's tools take the row, the toggle sits at its end, a hidden-fields line goes under both. */
+  .jc-grid-toolbar:has(> .jc-data-grid-tools) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+  .jc-grid-toolbar:has(> .jc-data-grid-tools) > .jc-grid-arrange {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .jc-grid-toolbar:has(> .jc-data-grid-tools) > :not(.jc-data-grid-tools, .jc-grid-arrange) {
+    grid-column: 1 / -1;
+  }
+  .jc-grid-arrange-toggle .jc-grid-arrange-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
 .jc-grid-arrange-btn:focus-visible,
 .jc-grid-arrange-panel :is(button, input, select):focus-visible {
   outline: 2px solid var(--jc-color-accent, #0066cc);

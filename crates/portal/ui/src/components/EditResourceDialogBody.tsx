@@ -1,3 +1,4 @@
+import { readManifest } from "../api/odata";
 /** The edit dialog itself, loaded when it opens (T-3316): see EditResourceDialog.tsx. */
 import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 import type { JSX, ReactNode } from "react";
@@ -103,11 +104,7 @@ export function EditResourceDialogBody({
     queryKey: [...queryKeys.list(home, plural), name],
     enabled: open,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project: home, plural, name } },
-        }),
-      ),
+      (await readManifest(home, plural, name)),
   });
   const source = text ?? (current.data ? writable(current.data as Record<string, unknown>) : "");
   // The kind's schema, for what a field is for on hover (T-5052); the view works without it.

@@ -1,3 +1,4 @@
+import { listManifests, proposeManifest } from "../api/odata";
 import { AlertDialog } from "../components/AlertDialog";
 import { FlowMapView } from "../pages/pipelines/FlowMapView";
 import { Tabs, tabPanelProps } from "../components/ui/Tabs";
@@ -7,7 +8,7 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
+import { problemOf, queryKeys, whilePending } from "../api/client";
 import { asManifests, isChange, localized } from "../api/manifest";
 import type { Change, Manifest } from "../api/manifest";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
@@ -20,14 +21,7 @@ import { KpiEditorDialog } from "../pages/pipelines/KpiEditor";
 import { PipelineRejectedDialog } from "../pages/pipelines/PipelineRejected";
 import { PipelineRunsDialog } from "../pages/pipelines/PipelineRuns";
 import { PipelineHealthView } from "../pages/pipelines/PipelineHealth";
-import {
-  LastRunCell,
-  dataSourceOf,
-  proposeEnabled,
-  executionClass,
-  useLatestRuns,
-  useStreamCounters,
-} from "../pages/pipelines/PipelineOverview";
+import { LastRunCell, dataSourceOf, proposeEnabled, executionClass, useLatestRuns, useStreamCounters } from "../pages/pipelines/PipelineOverview";
 import type { PipelineSpec } from "../pages/pipelines/PipelineOverview";
 import type { PipelineForm, toEnvelope } from "../pages/pipelines/PipelineEditor";
 import { takeEditRequest, takePrefill } from "../assistant/state";
@@ -36,16 +30,7 @@ import { DeniedNote, PermissionGuard } from "../components/ui/PermissionGuard";
 import { EditResourceDialog } from "../components/EditResourceDialog";
 import { usePermissions } from "../api/permissions";
 import { proposeChecked } from "../api/proposal";
-import {
-  Alert,
-  Badge,
-  Button,
-  EmptyState,
-  Icon,
-  PageHeader,
-  Input,
-  Select,
-} from "../components/ui";
+import { Alert, Badge, Button, EmptyState, Icon, PageHeader, Input, Select } from "../components/ui";
 
 /**
  * Why a Live stream lands nothing, from its `StreamWriting` condition, or `null` when it writes
@@ -238,11 +223,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
     // A change on its way polls until it lands (T-1392).
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "pipelines" } },
-        }),
-      ),
+      (await listManifests(project, "pipelines")),
   });
   const latestRuns = useLatestRuns(project);
 
@@ -288,17 +269,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
       setFormError(null);
       const body = files ? { ...envelope, files } : draft ? { ...envelope, draft } : envelope;
       if (unchecked) return proposeChecked(project, "pipelines", body, true);
-      return unwrap(
-        name === null
-          ? await api.POST("/api/v1/projects/{project}/{plural}", {
-              params: { path: { project, plural: "pipelines" } },
-              body,
-            })
-          : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
-              params: { path: { project, plural: "pipelines", name } },
-              body,
-            }),
-      );
+      return proposeManifest(project, "pipelines", body, { create: name === null, name: name ?? undefined });
     },
     onSuccess: (result) => {
       if (isChange(result)) {
@@ -403,6 +374,52 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
   const residentFull =
     resident?.limit !== undefined && (resident.used ?? 0) >= resident.limit;
 
+  // Find, status and execution: handed to the grid so they share its toolbar row.
+  const filters = (
+    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-end">
+      <Input
+        type="search"
+        aria-label={t("pipelines.filter.find")}
+        placeholder={t("pipelines.filter.find")}
+        value={needle}
+        onChange={(event) => setNeedle(event.target.value)}
+        className="sm:w-64"
+      />
+      {/* Two filters share a row on a phone, so the list starts on the first screen. */}
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:items-end">
+        <Select
+          aria-label={t("pipelines.filter.status")}
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+          className="sm:w-auto"
+        >
+          {(["all", "running", "paused", "notWriting"] as const).map((value) => (
+            <option key={value} value={value}>
+              {t(`pipelines.filter.statusOption.${value}`)}
+            </option>
+          ))}
+        </Select>
+        <Select
+          aria-label={t("pipelines.filter.class")}
+          value={classFilter}
+          onChange={(event) => setClassFilter(event.target.value as ClassFilter)}
+          className="sm:w-auto"
+        >
+          {(["all", "resident", "scheduled"] as const).map((value) => (
+            <option key={value} value={value}>
+              {t(`pipelines.filter.classOption.${value}`)}
+            </option>
+          ))}
+        </Select>
+      </div>
+      {shown.length !== pipelines.length ? (
+        <p role="status" className="text-caption text-fg-subtle sm:self-center">
+          {t("pipelines.filter.shown", { shown: shown.length, total: pipelines.length })}
+        </p>
+      ) : null}
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-section">
       <PageHeader
@@ -425,29 +442,32 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
       {/* A reader's New, Pause and Resume are refused: the page says why once, in words. */}
       <DeniedNote project={project} kind="Pipeline" verb="propose" />
 
-      <Tabs
-        id="pipeline-views"
-        label={t("pipelines.map.views")}
-        tabs={[
-          { value: "list", label: t("pipelines.map.view.list") },
-          { value: "map", label: t("pipelines.map.view.map") },
-          // Each source's health (T-5048) is for stewards: the server refuses anyone else.
-          ...(steward
-            ? [{ value: "health" as const, label: t("pipelines.map.view.health") }]
-            : []),
-        ]}
-        value={view}
-        onChange={(next) => {
-          setView(next);
-          rememberView(next);
-        }}
-      />
+      {/* The map and the health view draw the same pipelines: a list that cannot be read offers neither. */}
+      {list.isError ? null : (
+        <Tabs
+          id="pipeline-views"
+          label={t("pipelines.map.views")}
+          tabs={[
+            { value: "list", label: t("pipelines.map.view.list") },
+            { value: "map", label: t("pipelines.map.view.map") },
+            // Each source's health (T-5048) is for stewards: the server refuses anyone else.
+            ...(steward
+              ? [{ value: "health" as const, label: t("pipelines.map.view.health") }]
+              : []),
+          ]}
+          value={view}
+          onChange={(next) => {
+            setView(next);
+            rememberView(next);
+          }}
+        />
+      )}
 
-      {view === "health" && steward ? (
+      {view === "health" && steward && !list.isError ? (
         <div {...tabPanelProps("pipeline-views", "health")}>
           <PipelineHealthView project={project} onOpenRuns={setRunsOf} />
         </div>
-      ) : view === "map" ? (
+      ) : view === "map" && !list.isError ? (
         <div {...tabPanelProps("pipeline-views", "map")}>
           <FlowMapView
             project={project}
@@ -462,7 +482,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
           />
         </div>
       ) : (
-      <div {...tabPanelProps("pipeline-views", "list")} className="flex flex-col gap-section">
+      <div {...(list.isError ? {} : tabPanelProps("pipeline-views", "list"))} className="flex flex-col gap-section">
       {residentFull ? (
         <Alert role="status" tone="warning">
           {t("quota.dimensionExceeded", {
@@ -484,52 +504,13 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
         </Alert>
       ) : null}
 
-      {pipelines.length > 0 ? (
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-          <Input
-            type="search"
-            aria-label={t("pipelines.filter.find")}
-            placeholder={t("pipelines.filter.find")}
-            value={needle}
-            onChange={(event) => setNeedle(event.target.value)}
-            className="sm:max-w-sm"
-          />
-          <Select
-            aria-label={t("pipelines.filter.status")}
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-            className="sm:w-auto"
-          >
-            {(["all", "running", "paused", "notWriting"] as const).map((value) => (
-              <option key={value} value={value}>
-                {t(`pipelines.filter.statusOption.${value}`)}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label={t("pipelines.filter.class")}
-            value={classFilter}
-            onChange={(event) => setClassFilter(event.target.value as ClassFilter)}
-            className="sm:w-auto"
-          >
-            {(["all", "resident", "scheduled"] as const).map((value) => (
-              <option key={value} value={value}>
-                {t(`pipelines.filter.classOption.${value}`)}
-              </option>
-            ))}
-          </Select>
-          {shown.length !== pipelines.length ? (
-            <p role="status" className="text-caption text-fg-subtle sm:self-center">
-              {t("pipelines.filter.shown", { shown: shown.length, total: pipelines.length })}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
 
       {/* An empty list is where a person decides what to do next, so it says what the
           two ways in are rather than only that there is nothing here (UI-01). */}
       <ManifestGrid<Manifest>
         caption={t("pipelines.title")}
+        // The page's filters sit in the grid's own toolbar, beside Arrange columns: one row, not two.
+        tools={pipelines.length > 0 ? filters : undefined}
         storageKey="pipelines"
         searchLabel={t("grid.searchIn", { list: t("pipelines.title") })}
         search={needle}

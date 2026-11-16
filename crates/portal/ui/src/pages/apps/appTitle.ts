@@ -1,7 +1,8 @@
+import { listManifests } from "../../api/odata";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 import { asManifests, localized } from "../../api/manifest";
 
 /**
@@ -40,11 +41,7 @@ export function useEndpointTitles(project: string): Map<string, string> {
   const query = useQuery({
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   });
   return useMemo(() => {
     const titles = new Map<string, string>();

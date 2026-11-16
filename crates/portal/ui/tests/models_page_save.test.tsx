@@ -190,8 +190,9 @@ describe("ModelsPage save and source loading (DM-56)", () => {
     await waitFor(() => {
       expect(screen.getAllByText("AirQualityObserved").length).toBeGreaterThan(0);
     });
+    // Every page reads the list as listManifests answers it (T-7073): the space is still there.
     expect(queryClient.getQueryData(queryKeys.list("ovzdusie", "spaces"))).toMatchObject({
-      kind: "List",
+      items: [{ metadata: { name: space.metadata.name } }],
     });
   });
 

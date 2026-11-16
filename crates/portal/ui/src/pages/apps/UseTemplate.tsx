@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -32,7 +33,7 @@ export function UseTemplate({ project, template }: { project: string; template: 
   const endpoints = useQuery({
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "endpoints" } } })),
+      (await listManifests(project, "endpoints")),
   });
   const choices = asManifests(endpoints.data?.items ?? []);
   const create = useMutation({

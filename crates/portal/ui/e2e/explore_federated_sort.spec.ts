@@ -2,6 +2,10 @@ import { mkdirSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5618: a space that also reads other brokers refuses `orderBy` (CIM 009 5.7.2.4, 4.23.1). A sort
 // on Explore then shows the loaded rows sorted with a line saying so, not the broker's sentence, and

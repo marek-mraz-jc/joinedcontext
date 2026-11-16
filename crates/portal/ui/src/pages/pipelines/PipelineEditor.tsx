@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { RecipeGallery } from "./RecipeGallery";
 import { SaveAsTemplate, TemplateList } from "./PipelineTemplates";
 import { useMemo, useState } from "react";
@@ -5,7 +6,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ListFailed } from "../../components/forms/widgets/ListFailed";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { ApiError, queryKeys, reasonOf } from "../../api/client";
 import { asManifests, knownSecretNames, overlay, plainTitle, prune, refName } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { allowsIn, usePermissions } from "../../api/permissions";
@@ -595,20 +596,12 @@ export function PipelineEditorDialog({
   const dataSources = useQuery({
     queryKey: queryKeys.list(project, "datasources"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "datasources" } },
-        }),
-      ),
+      (await listManifests(project, "datasources")),
   });
   const endpoints = useQuery({
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   });
 
   const dataSourceList = useMemo(

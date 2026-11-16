@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-0497: a pipeline created from the form, clicking real controls (PL-04, PL-39, UI-01, AP-13).
 // Same shape as the managers journey: `vite preview` has no portal API behind it, so the API

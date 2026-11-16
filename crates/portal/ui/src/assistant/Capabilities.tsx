@@ -1,8 +1,9 @@
+import { listManifests } from "../api/odata";
 import { useEffect, useId, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../api/client";
+import { queryKeys } from "../api/client";
 import { asManifests } from "../api/manifest";
 import type { components } from "../api/schema";
 import { useAccess } from "../components/entities/AccessPanel";
@@ -165,11 +166,7 @@ export function CapabilitiesControl({
     queryKey: queryKeys.list(project, "endpoints"),
     enabled: open && endpoints.length > 0,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   });
   const slugOf = (name: string) => {
     const slug = asManifests(listed.data?.items ?? []).find((item) => item.metadata.name === name)?.spec.slug;

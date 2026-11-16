@@ -1,8 +1,9 @@
+import { readManifest } from "../../api/odata";
 import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { isChange, ORG_NAMESPACE, storedMetadata } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { useProjectOrganization } from "../../api/projects";
@@ -53,21 +54,13 @@ export function AppServices({ project, name }: { project: string; name: string }
   const app = useQuery({
     queryKey: queryKeys.resource(project, "apps", name),
     queryFn: async () =>
-      unwrap<unknown>(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "apps", name } },
-        }),
-      ),
+      (await readManifest(project, "apps", name)),
     retry: false,
   });
   const projectManifest = useQuery({
     queryKey: [...queryKeys.list(ORG_NAMESPACE, "projects"), project],
     queryFn: async () =>
-      unwrap<unknown>(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "projects", name: project } },
-        }),
-      ),
+      (await readManifest(ORG_NAMESPACE, "projects", project)),
     retry: false,
   });
   // The project's own Organization, whose locks bind this App (ADR-N-058, F-UI1-012).
