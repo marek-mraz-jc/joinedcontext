@@ -65,6 +65,8 @@ function ProjectSelector({ active }: { active: string }) {
     search: withoutCopy({}),
     href: project === active ? undefined : lastAddress(project),
   });
+  const title = titleOf(active);
+  const titled = title !== active;
   return (
     <Menu>
       <MenuTrigger asChild>
@@ -72,49 +74,72 @@ function ProjectSelector({ active }: { active: string }) {
           variant="secondary"
           size="lg"
           aria-label={t("nav.projects")}
-          className="w-full justify-start gap-2.5 px-2.5 text-left"
+          // The trigger is the sidebar's width, so a long name is cut there; the full name is
+          // in the hint and in the menu, which wraps it (T-7148).
+          title={titled ? `${title} (${active})` : active}
+          // `h-auto!`: the control's fixed height held one line; the title takes two (T-7148).
+          className="h-auto! min-h-control-lg w-full justify-start gap-2.5 px-2.5 py-1.5 text-left"
         >
-          <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-caption font-bold uppercase text-primary-fg">
-            {active.slice(0, 2)}
+          <span
+            aria-hidden="true"
+            data-testid="project-initials"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-caption font-bold tracking-tight text-primary-fg"
+          >
+            {initials(title)}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-body font-semibold text-fg">{titleOf(active)}</span>
-            {/* The slug under the title, the name every path and manifest uses (T-4243). */}
-            <span aria-hidden={titleOf(active) === active || undefined} className="block truncate font-mono text-caption text-fg-muted">
-              {titleOf(active) !== active ? active : "\u00a0"}
+            {/* A title wraps at its words to two lines; a slug is one word, cut on one line. */}
+            <span className={clsx("text-body font-semibold leading-snug text-fg", titled ? "line-clamp-2" : "block truncate")}>
+              {title}
             </span>
+            {/* The slug under the title, the name every path and manifest uses (T-4243); a
+                project without a title is its slug, said once on one line (T-7148). */}
+            {titled ? <span className="block truncate font-mono text-caption text-fg-muted">{active}</span> : null}
           </span>
-          <Icon name="chevronDown" className="size-4 text-fg-subtle" />
+          <Icon name="chevronDown" className="size-4 shrink-0 text-fg-subtle" />
         </Button>
       </MenuTrigger>
-      {/* The trigger's own width, which Radix measures and publishes: a computed size, not one
-          the spacing scale could name. */}
-      <MenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+      {/* At least the trigger's width (Radix publishes it), else 28rem or the screen less its
+          gutter: the sidebar-wide menu cut the one name it listed (T-7148). */}
+      <MenuContent align="start" className="w-[max(var(--radix-dropdown-menu-trigger-width),min(28rem,calc(100vw-2rem)))]">
         <MenuLabel>{t("nav.projects")}</MenuLabel>
-        {projects.map((project) => (
-          <MenuItem key={project} asChild>
-            <Link
-              {...switchTo(project)}
-              aria-current={project === active ? "true" : undefined}
-            >
-              {project === active ? <Icon name="check" className="size-4 shrink-0" /> : <span className="size-4 shrink-0" />}
-              {/* Every row the same two lines: the title, then the slug every path uses (owner 2026-10-30). */}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{titleOf(project)}</span>
-                {/* Without a title the slug is the first line, and the second keeps the row's height. */}
-                <span
-                  aria-hidden={titleOf(project) === project || undefined}
-                  className="block truncate font-mono text-caption text-fg-muted"
-                >
-                  {titleOf(project) !== project ? project : "\u00a0"}
+        {projects.map((project) => {
+          const current = project === active;
+          const name = titleOf(project);
+          return (
+            <MenuItem key={project} asChild>
+              <Link
+                {...switchTo(project)}
+                title={name !== project ? `${name} (${project})` : project}
+                aria-current={current ? "true" : undefined}
+                // Marked by its colour and weight too, not by the check alone (T-7148).
+                className="py-2! [&[aria-current]]:bg-primary-soft [&[aria-current]]:font-semibold [&[aria-current]]:text-primary-soft-fg"
+              >
+                {current ? <Icon name="check" className="size-4 shrink-0" /> : <span className="size-4 shrink-0" />}
+                {/* A long name wraps instead of being cut; the slug follows only when a title differs. */}
+                <span className="min-w-0 flex-1 wrap-anywhere">
+                  <span className="block">{name}</span>
+                  {name !== project ? (
+                    <span className="block font-mono text-caption text-fg-muted">{project}</span>
+                  ) : null}
                 </span>
-              </span>
-            </Link>
-          </MenuItem>
-        ))}
+              </Link>
+            </MenuItem>
+          );
+        })}
       </MenuContent>
     </Menu>
   );
+}
+
+/** Up to two initials of a project's name ("Banská Bystrica city data" → "BB"), its badge (T-7148). */
+function initials(name: string): string {
+  return name
+    .split(/[\s\-_.]+/u)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0]?.toLocaleUpperCase() ?? "")
+    .join("");
 }
 
 /**
@@ -830,6 +855,8 @@ function ProjectFrame({
           aria-label={t("nav.main")}
           className={clsx(
             "z-40 w-sidebar shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-surface p-3",
+            // The phone drawer takes the room a phone has, so a project's name is not cut (T-7148).
+            "max-lg:w-sidebar-drawer",
             // The viewport minus the `h-14` header (the below-header token).
             // From lg only: at 768 px the open sidebar left a table 460 px and cut its actions,
             // so a tablet opens it from the menu button like a phone (T-4265, photo audit T-4160 #41).
@@ -838,14 +865,16 @@ function ProjectFrame({
           )}
         >
           {sidebar ? sidebar(closeNav) : (<>
-          <div className="flex flex-col gap-2">
+          {/* The Organization, the project and New project read as one block, set off from the
+              sections under it (T-7148). */}
+          <div className="flex flex-col gap-1.5 border-b border-border pb-3">
             <span className="contents sm:hidden">
               <OrganizationSwitcher active={project} inSidebar />
             </span>
             <ProjectSelector active={project} />
             {/* Opening a project is a setting of the organization, so the control is always
                 here, disabled with the reason when this caller may not (UI-44, PF-65). */}
-            <NewProjectButton project={project} />
+            <NewProjectButton project={project} inSidebar />
           </div>
           <ul className="flex flex-col gap-0.5">
             {NAV_SECTIONS.filter((section) => !isHiddenSection(section.plural, hiddenSections)).map((section) => {
