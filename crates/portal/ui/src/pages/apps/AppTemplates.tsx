@@ -63,6 +63,10 @@ export function AppTemplates({ project, mayBuild }: { project: string; mayBuild:
               src={`/api/v1/app-templates/${encodeURIComponent(template.name)}/screenshot/1440`}
               alt={t("apps.templates.screenshot", { title: template.title })}
               loading="lazy"
+              // A template whose demo was never shot answers 404: no empty frame with its alt text.
+              onError={(event) => {
+                event.currentTarget.hidden = true;
+              }}
               className="aspect-[16/10] w-full rounded-sm border border-border object-cover object-top"
             />
             <h3 className="text-body font-semibold text-fg">{template.title}</h3>

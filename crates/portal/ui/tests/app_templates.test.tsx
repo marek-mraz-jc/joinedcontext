@@ -4,7 +4,7 @@
  * and the data it needs, and "create from this", which opens the builder with the template's
  * purpose written and named, so only the endpoint to read is left to choose.
  */
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -76,6 +76,16 @@ describe("the App templates (T-3263)", () => {
     await userEvent.click(within(card).getByRole("button", { name: en.apps.templates.create }));
     const dialog = await screen.findByRole("dialog", { name: "Create from KPI dashboard" });
     expect(within(dialog).getByLabelText(new RegExp(en.apps.generate.prompt))).toHaveValue(templatePrompt(KPI));
+  });
+
+  it("drops a template's picture its server cannot answer, so no empty frame shows its alt text", async () => {
+    show(true);
+    await userEvent.click(await screen.findByText(en.apps.templates.title));
+    const card = screen.getByRole("heading", { name: "KPI dashboard" }).closest("li") as HTMLElement;
+    const picture = within(card).getByRole("img", { name: "KPI dashboard as its demo shows it" });
+    fireEvent.error(picture);
+    expect(picture).not.toBeVisible();
+    expect(within(card).getByRole("heading", { name: "KPI dashboard" })).toBeVisible();
   });
 
   it("offers no build to a person who may not propose an app, and nothing when there is no template", async () => {
