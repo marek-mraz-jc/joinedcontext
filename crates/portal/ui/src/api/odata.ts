@@ -596,6 +596,48 @@ const CHANGE_MEMBERS = [
   "decision",
 ] as const;
 
+type ChangeList = components["schemas"]["ChangeList"];
+
+/** What only one Change's read holds: its list item leaves these out, as the REST list does. */
+const CHANGE_READ_ONLY: readonly string[] = ["ci", "files", "planFields"];
+
+/**
+ * The open Changes of `project`, newest first, as the REST door's `GET …/changes` lists them: the
+ * `changes` set with `$select` of its items' members, which the service answers from the list
+ * itself (T-7126); the `org` namespace's own Changes, which the set leaves out, through their
+ * Portal door. The merge requests outside the Changes are {@link listOutside}'s.
+ */
+export async function listChanges(project: string): Promise<ChangeList> {
+  if (project === ORG_NAMESPACE) return listChangesOfOrg();
+  const query: { select(...members: string[]): { all(): AsyncIterable<unknown> } } = client.under(
+    project,
+    "changes",
+  );
+  const items: ChangeProposal[] = [];
+  const rows = query.select(...CHANGE_MEMBERS.filter((member) => !CHANGE_READ_ONLY.includes(member))).all();
+  await refusedAs(
+    (async () => {
+      for await (const row of rows) items.push(row as ChangeProposal);
+    })(),
+  );
+  items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return { apiVersion: API_VERSION, kind: "ChangeList", items };
+}
+
+/**
+ * The merge requests of `project`'s repository nobody can approve here, a fork's or a
+ * non-writer's, each with why: listed to an organization administrator, to anyone else none.
+ */
+export async function listOutside(project: string): Promise<ChangeList["outside"]> {
+  if (project === ORG_NAMESPACE) return (await listChangesOfOrg()).outside;
+  return ((await door("portal_change_outside", {}, project)) as { items: NonNullable<ChangeList["outside"]> }).items;
+}
+
+/** The `org` namespace's own Changes with their merge requests outside, in one read. */
+async function listChangesOfOrg(): Promise<ChangeList> {
+  return (await door("portal_organization_change_list", {})) as ChangeList;
+}
+
 /**
  * Change `id` of `project`, open or decided, as the REST door's `GET …/changes/{id}` answers it:
  * the `changes` row by its key with `$select` of its detail (T-7122); the `org` namespace's own
@@ -634,6 +676,29 @@ export async function rejectChange(
   return (await (project === ORG_NAMESPACE
     ? doorAction("portal_organization_change_reject", { id, body: { reason } })
     : act("reject", changeBound(project, id), { reason }, "*"))) as RestAnswer<"reject_change">;
+}
+
+type ResourceList = components["schemas"]["ResourceList"];
+
+/** The manifests merged Change `id` of `project` wrote, through its Portal door (T-3975, T-7126). */
+export async function changeManifests(project: string, id: string): Promise<ResourceList> {
+  return (await (project === ORG_NAMESPACE
+    ? door("portal_organization_change_manifests", { id })
+    : door("portal_change_manifests", { id }, project))) as ResourceList;
+}
+
+/**
+ * Proposes again what merged Change `id` of `project` removed (`restore`, T-3247) or altered
+ * (`undo`, T-3274), through its Portal door: the new Change waits for an approver.
+ */
+export async function decidedChange(
+  verb: "restore" | "undo",
+  project: string,
+  id: string,
+): Promise<RestAnswer<"restore_change">> {
+  return (await (project === ORG_NAMESPACE
+    ? doorAction(`portal_organization_change_${verb}`, { id })
+    : doorAction(`portal_change_${verb}`, { id }, project))) as RestAnswer<"restore_change">;
 }
 
 /** The address of Change `id` of `project`, the entity `approve` and `reject` are bound to. */

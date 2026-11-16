@@ -1,4 +1,4 @@
-import { listManifests } from "../../api/odata";
+import { listChanges, listManifests } from "../../api/odata";
 /**
  * A project's home page (T-3233, T-3235): the first-run checklist while the person has not put it
  * away, and the cards of what their role can do next. Every step and every card reads the
@@ -86,7 +86,7 @@ export function HomePage({
     enabled: role === "steward",
     retry: false,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/changes", { params: { path: { project } } })) as unknown as Listed,
+      (await listChanges(project)) as unknown as Listed,
   });
   const drafts = useQuery({
     queryKey: ["projects", project, "drafts"],

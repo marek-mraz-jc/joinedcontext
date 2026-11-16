@@ -4,7 +4,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../api/client";
-import { call } from "../api/odata";
+import { call, decidedChange } from "../api/odata";
 import { ownRights, usePermissions } from "../api/permissions";
 import { ChangeNotice } from "../components/ChangeNotice";
 import { changeSentence, landed } from "./changeWords";
@@ -75,12 +75,7 @@ export function ApprovalsHistory({
   const queryClient = useQueryClient();
   // A merged removal can be proposed again (T-3247): the new change waits for an approver.
   const restore = useMutation({
-    mutationFn: async (id: string) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/changes/{id}/restore", {
-          params: { path: { project, id } },
-        }),
-      ),
+    mutationFn: (id: string) => decidedChange("restore", project, id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.changes(project) });
     },
@@ -88,12 +83,7 @@ export function ApprovalsHistory({
 
   // A merged update can be undone while nothing changed it since (T-3274).
   const undo = useMutation({
-    mutationFn: async (id: string) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/changes/{id}/undo", {
-          params: { path: { project, id } },
-        }),
-      ),
+    mutationFn: (id: string) => decidedChange("undo", project, id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.changes(project) });
     },

@@ -111,7 +111,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 151] = [
+pub static DOORS: [Door; 157] = [
     door(
         "portal_people_remove",
         Org,
@@ -330,6 +330,59 @@ pub static DOORS: [Door; 151] = [
         Method::POST,
         "/projects/org/changes/{id}/reject",
         &[CHANGE, BODY],
+        Who::Person,
+    ),
+    // The forge's merge requests nobody can approve here (T-3433), apart from the `changes`
+    // set: a Change's row costs its manifest reads, these only who opened them (T-7126). The
+    // handler lists them to an organization administrator, anyone else none.
+    door(
+        "portal_change_outside",
+        Project,
+        Method::GET,
+        "/projects/{project}/changes/outside",
+        &[],
+        Who::ProjectReader,
+    ),
+    // The Approvals history's restore and undo (T-3247, T-3274) and a resource's history reading
+    // a merged Change's manifests (T-7126): what a person does from a decided Change, no tool's.
+    door(
+        "portal_change_manifests",
+        Project,
+        Method::GET,
+        "/projects/{project}/changes/{id}/manifests",
+        &[CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_change_restore",
+        Project,
+        Method::POST,
+        "/projects/{project}/changes/{id}/restore",
+        &[CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_change_undo",
+        Project,
+        Method::POST,
+        "/projects/{project}/changes/{id}/undo",
+        &[CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_organization_change_restore",
+        Org,
+        Method::POST,
+        "/projects/org/changes/{id}/restore",
+        &[CHANGE],
+        Who::Person,
+    ),
+    door(
+        "portal_organization_change_undo",
+        Org,
+        Method::POST,
+        "/projects/org/changes/{id}/undo",
+        &[CHANGE],
         Who::Person,
     ),
     door(

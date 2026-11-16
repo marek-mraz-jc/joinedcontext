@@ -457,6 +457,12 @@ const DOORS: Record<string, Door> = {
     "/organization/opendata/pages/{page}/{lang}",
   ],
   portal_organization_change_list: ["GET", "/projects/org/changes"],
+  portal_change_outside: ["GET", "/projects/{project}/changes/outside"],
+  portal_change_manifests: ["GET", "/projects/{project}/changes/{id}/manifests"],
+  portal_change_restore: ["POST", "/projects/{project}/changes/{id}/restore"],
+  portal_change_undo: ["POST", "/projects/{project}/changes/{id}/undo"],
+  portal_organization_change_restore: ["POST", "/projects/org/changes/{id}/restore"],
+  portal_organization_change_undo: ["POST", "/projects/org/changes/{id}/undo"],
   portal_organization_change_history: ["GET", "/projects/org/changes/history"],
   portal_organization_change_get: ["GET", "/projects/org/changes/{id}"],
   // The `org` namespace's own Changes decided (T-7122): `body` is the REST door's whole body.
@@ -534,6 +540,7 @@ export function actsOnEntity(url: string): boolean {
   return url.includes("JoinedContext.Portal.propose_") || DECIDE.test(decodeURIComponent(new URL(url, "http://localhost").pathname));
 }
 
+const CHANGES = /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/changes$/;
 const UNDER = /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/(\w+)$/;
 const ORG_SET = /^\/api\/v1\/(\w+)$/;
 const WORKSPACES =
@@ -562,6 +569,11 @@ export function manifestAsRest(
     const [project, id] = [change[1], change[2]].map((text) => encodeURIComponent(unquote(text)));
     return { rest: new URL(`/api/v1/projects/${project}/changes/${id}`, at.origin), one: true, row: true };
   }
+  // A project's open Changes (api/odata.ts listChanges): the rows with `$select` of the list's
+  // members are the REST list's items (odata_org_tests `the_change_list_answers_its_detail_from_the_list`).
+  const listed = CHANGES.exec(path);
+  if (listed)
+    return { rest: new URL(`/api/v1/projects/${encodeURIComponent(unquote(listed[1]))}/changes`, at.origin), one: false, row: true };
   const copies = WORKSPACES.exec(path);
   if (copies) {
     const project = encodeURIComponent(unquote(copies[1] ?? copies[2]));

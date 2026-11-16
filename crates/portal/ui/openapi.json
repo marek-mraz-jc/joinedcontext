@@ -10106,6 +10106,69 @@
         }
       }
     },
+    "/api/v1/projects/{project}/changes/outside": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "List Merge Requests That Are Not Changes",
+        "description": "The open merge requests of the project repository that nobody can approve here, a fork's or a non-writer's, each with why. An organization administrator reads them; anyone else who reads the project an empty list.",
+        "operationId": "list_outside",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The merge requests outside the Changes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutsideList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Git forge unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/changes/{id}": {
       "get": {
         "tags": [
@@ -57069,6 +57132,21 @@
           "refused",
           "unchecked"
         ]
+      },
+      "OutsideList": {
+        "type": "object",
+        "description": "The open merge requests of a project repository that are not Changes, and why (T-3433).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutsideMergeRequest"
+            }
+          }
+        }
       },
       "OutsideMergeRequest": {
         "type": "object",

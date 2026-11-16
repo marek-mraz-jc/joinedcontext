@@ -64,7 +64,9 @@ const CHANGES = {
 function renderApprovals(body: unknown = CHANGES) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const payload = url.includes("/auth/me") ? IDENTITY : body;
+    // The merge requests outside the Changes are their own read (T-7126).
+    const outside = { items: (body as { outside?: unknown[] }).outside ?? [] };
+    const payload = url.includes("/auth/me") ? IDENTITY : url.includes("/changes/outside") ? outside : body;
     return Promise.resolve(
       new Response(JSON.stringify(payload), {
         status: 200,
