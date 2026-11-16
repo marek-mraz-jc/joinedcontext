@@ -671,6 +671,65 @@ async fn a_deleted_bundle_keeps_its_versions_and_restores_with_no_change() {
 }
 
 #[tokio::test]
+async fn a_bundle_item_naming_another_organizations_namespace_is_not_planned() {
+    let world = world("alfa", "Enabled").await;
+    saved_and_run(&world, "ada").await;
+    let mut files = unzip(&latest(&world.bucket, "jc/alfa/configuration/bundle.zip"));
+    // An item in alfa's own project folder that names bravo's Endpoint by namespace.
+    let planted = "projects/alfa-city/spaces/transit/endpoints/bravo-bus.yaml";
+    files.insert(planted.into(), BRAVO_ENDPOINT.into());
+    let mut index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
+    index["items"].as_array_mut().expect("items").push(json!({
+        "kind": "Endpoint", "id": "bravo-bus", "path": planted, "revision": HEAD
+    }));
+    files.insert(
+        "index.yaml".into(),
+        serde_norway::to_string(&index).expect("yaml"),
+    );
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (path, text) in &files {
+        writer
+            .start_file(path.as_str(), zip::write::SimpleFileOptions::default())
+            .expect("entry");
+        std::io::Write::write_all(&mut writer, text.as_bytes()).expect("write");
+    }
+    let crafted = writer.finish().expect("zip").into_inner();
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .objects
+        .get_mut("jc/alfa/configuration/bundle.zip")
+        .expect("alfa's bundle")
+        .push((
+            "crafted".into(),
+            Some(crafted),
+            "2026-11-16T11:00:00.000Z".into(),
+        ));
+
+    let refused = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/versions/crafted/restore"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(refused.text.contains("version: "), "{}", refused.text);
+    assert!(
+        !refused.text.contains("bravo-town") && !refused.text.contains("unchanged"),
+        "{}",
+        refused.text
+    );
+}
+
+#[tokio::test]
 async fn a_bundle_of_another_organization_is_not_restored() {
     let alfa = world("alfa", "Enabled").await;
     saved_and_run(&alfa, "ada").await;

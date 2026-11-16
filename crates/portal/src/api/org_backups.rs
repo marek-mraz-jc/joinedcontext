@@ -672,14 +672,28 @@ async fn plan(
                 errors: vec![format!("version: project '{project}' is not this Organization's")],
             });
         }
-        let namespace = envelope
+        // The import writes into the folder's project, so the plan reads that project's mirror
+        // only: a namespace naming another project would read across Organizations (T-7154).
+        if envelope
             .metadata
             .namespace
-            .clone()
-            .unwrap_or_else(|| project.to_owned());
+            .as_deref()
+            .is_some_and(|namespace| namespace != project)
+        {
+            return Err(ApiError::Unprocessable {
+                detail: format!(
+                    "{} sits in project '{project}' of the bundle but names another namespace; the bundle is not restored",
+                    item.path
+                ),
+                errors: vec![format!(
+                    "version: {} names a namespace other than '{project}'",
+                    item.path
+                )],
+            });
+        }
         let group = groups.entry(project.to_owned()).or_default();
         group.name = project.to_owned();
-        compare(state, &envelope, &namespace, group);
+        compare(state, &envelope, project, group);
     }
     if let Some(group) = groups.get_mut("organization") {
         if !group.created.is_empty() || !group.changed.is_empty() {
