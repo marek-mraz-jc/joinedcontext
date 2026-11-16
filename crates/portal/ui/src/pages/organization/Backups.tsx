@@ -531,6 +531,7 @@ function DataRestore({ version, onClose }: { version: string; onClose: () => voi
   return (
     <Dialog
       open
+      size="lg"
       onOpenChange={(open) => (open ? undefined : onClose())}
       title={t("backups.restore.title")}
       closeLabel={t("backups.restore.close")}

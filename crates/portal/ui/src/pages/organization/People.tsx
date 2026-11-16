@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { ApiError, queryKeys, reasonOf } from "../../api/client";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
 import { mayRead, usePermissions } from "../../api/permissions";
@@ -37,7 +37,7 @@ import {
 } from "../../components/ui/PermissionGuard";
 import { asUser } from "../apps/members";
 import { proposeChecked } from "../../api/proposal";
-import { act, doorAction, ORGANIZATION, type RestAnswer } from "../../api/odata";
+import { act, door, doorAction, ORGANIZATION, type RestAnswer } from "../../api/odata";
 import type { ResourceProposal } from "../../api/manifest";
 import { useProjects } from "../../api/projects";
 import { RadioGroup } from "../../components/ui/RadioGroup";
@@ -274,17 +274,15 @@ function NewPersonForm({
     // The answer may carry the temporary password: it is not kept in the mutation cache.
     gcTime: 0,
     mutationFn: async (person: PersonForm): Promise<Invitation> => {
-      const created = await unwrap(
-        await api.POST("/api/v1/organization/people", {
-          body: {
-            email: person.email.trim(),
-            firstName: person.firstName.trim(),
-            lastName: person.lastName.trim(),
-            ...(person.locale ? { locale: person.locale } : {}),
-            ...(project ? { project } : {}),
-          },
-        }),
-      );
+      const created = (await doorAction("portal_person_create", {
+        body: {
+          email: person.email.trim(),
+          firstName: person.firstName.trim(),
+          lastName: person.lastName.trim(),
+          ...(person.locale ? { locale: person.locale } : {}),
+          ...(project ? { project } : {}),
+        },
+      })) as RestAnswer<"create_person">;
       if (!project) return { created };
       try {
         const change = (await proposeChecked(
@@ -445,13 +443,11 @@ export function People(): JSX.Element {
     queryKey: queryKeys.peoplePage(search, first),
     enabled: reads === true,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/organization/people", {
-          params: {
-            query: { ...(search ? { search } : {}), first, max: PAGE },
-          },
-        }),
-      ),
+      (await door("portal_people_list", {
+        ...(search ? { search } : {}),
+        first,
+        max: PAGE,
+      })) as RestAnswer<"list_people">,
   });
 
   const items = people.data?.items ?? [];
@@ -1294,11 +1290,7 @@ export function PersonPage({
     queryKey: queryKeys.person(id),
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/organization/people/{id}", {
-          params: { path: { id } },
-        }),
-      ),
+      (await door("portal_person_get", { person: id })) as RestAnswer<"get_person">,
   });
 
   const act = useMutation({
@@ -1721,12 +1713,7 @@ function EditPersonDialog({
   const edit = useMutation({
     mutationFn: async (next: PersonForm) => {
       const body = changedFields(person, next);
-      return unwrap(
-        await api.PATCH("/api/v1/organization/people/{id}", {
-          params: { path: { id: person.id } },
-          body,
-        }),
-      );
+      return (await doorAction("portal_person_edit", { person: person.id, body })) as RestAnswer<"edit_person">;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.people() });

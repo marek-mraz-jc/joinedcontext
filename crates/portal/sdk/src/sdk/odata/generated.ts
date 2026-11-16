@@ -1009,6 +1009,7 @@ export interface Functions {
   portal_grafana_options: { endpoint?: string; type?: string };
   portal_grafana_panel: { uid: string; panel: string; from?: string; to?: string; maxDataPoints?: number; vars?: unknown };
   portal_grafana_variable: { uid: string; name: string };
+  portal_health_check_list: Record<string, never>;
   portal_knowledge_conversation_get: { conversation: string };
   portal_knowledge_conversation_list: { deployment?: string; from?: string; to?: string; status?: string; feedback?: string; slow?: boolean; minCostUsd?: number; q?: string; sort?: string; cursor?: string };
   portal_knowledge_conversation_same: { conversation: string; turn: string };
@@ -1037,6 +1038,9 @@ export interface Functions {
   portal_organization_change_history: { page?: number; kind?: string; name?: string };
   portal_organization_change_list: Record<string, never>;
   portal_organization_change_manifests: { id: string };
+  portal_organization_model_list: { search?: string };
+  portal_people_list: { search?: string; first?: number; max?: number };
+  portal_person_get: { person: string };
   portal_person_names: { ids?: string };
   portal_pipeline_access_request_endpoints: { pipeline: string };
   portal_pipeline_access_request_list: { pipeline: string };
@@ -1053,8 +1057,11 @@ export interface Functions {
   portal_pipeline_stats: { pipeline: string };
   portal_pipeline_template_list: Record<string, never>;
   portal_portal_datasets: { name: string; offset?: number; limit?: number };
+  portal_portal_host_list: Record<string, never>;
   portal_portal_source_runs: { name: string; source: string };
   portal_preferences_get: Record<string, never>;
+  portal_project_get: Record<string, never>;
+  portal_project_registry: Record<string, never>;
   portal_secret_list: Record<string, never>;
   portal_space_quality: { space: string };
   portal_space_quality_checks: { space: string };
@@ -1064,6 +1071,7 @@ export interface Functions {
   portal_trash_list: { space: string };
   portal_type_attributes: { space: string; type: string };
   portal_visualization_template: { template: string; x?: string; y?: string; color?: string; facet?: string };
+  portal_widget_list: Record<string, never>;
 }
 
 /** The entity types each function is bound to. */
@@ -1152,6 +1160,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_grafana_options: ["Project"],
   portal_grafana_panel: ["Project"],
   portal_grafana_variable: ["Project"],
+  portal_health_check_list: ["Project"],
   portal_knowledge_conversation_get: ["Project"],
   portal_knowledge_conversation_list: ["Project"],
   portal_knowledge_conversation_same: ["Project"],
@@ -1180,6 +1189,9 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_organization_change_history: ["Organization"],
   portal_organization_change_list: ["Organization"],
   portal_organization_change_manifests: ["Organization"],
+  portal_organization_model_list: ["Organization"],
+  portal_people_list: ["Organization"],
+  portal_person_get: ["Organization"],
   portal_person_names: ["Organization"],
   portal_pipeline_access_request_endpoints: ["Project"],
   portal_pipeline_access_request_list: ["Project"],
@@ -1196,8 +1208,11 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_pipeline_stats: ["Project"],
   portal_pipeline_template_list: ["Project"],
   portal_portal_datasets: ["Organization"],
+  portal_portal_host_list: ["Organization"],
   portal_portal_source_runs: ["Organization"],
   portal_preferences_get: ["Organization"],
+  portal_project_get: ["Project"],
+  portal_project_registry: ["Project"],
   portal_secret_list: ["Project"],
   portal_space_quality: ["Project"],
   portal_space_quality_checks: ["Project"],
@@ -1207,6 +1222,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_trash_list: ["Project"],
   portal_type_attributes: ["Project"],
   portal_visualization_template: ["Organization"],
+  portal_widget_list: ["Organization"],
 };
 
 /** Each bound action and its parameters. */
@@ -1322,7 +1338,9 @@ export interface Actions {
   portal_people_name_by_id: { dryRun?: boolean };
   portal_people_remove: { body?: unknown };
   portal_person_consent_revoke: { person: string; client: string };
+  portal_person_create: { body?: unknown };
   portal_person_delete: { person: string };
+  portal_person_edit: { person: string; body?: unknown };
   portal_person_remove_second_factor: { person: string };
   portal_person_resend_invitation: { person: string };
   portal_person_reset_password: { person: string };
@@ -1337,6 +1355,8 @@ export interface Actions {
   portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
   portal_preferences_set: { body?: unknown };
+  portal_project_delete: Record<string, never>;
+  portal_project_repoint: { body?: unknown };
   portal_run_answer: { id: string; body?: unknown };
   portal_run_message: { id: string; body?: unknown };
   portal_secret_set: { body?: unknown };
@@ -1465,7 +1485,9 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_people_name_by_id: ["Organization"],
   portal_people_remove: ["Organization"],
   portal_person_consent_revoke: ["Organization"],
+  portal_person_create: ["Organization"],
   portal_person_delete: ["Organization"],
+  portal_person_edit: ["Organization"],
   portal_person_remove_second_factor: ["Organization"],
   portal_person_resend_invitation: ["Organization"],
   portal_person_reset_password: ["Organization"],
@@ -1480,6 +1502,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],
   portal_preferences_set: ["Organization"],
+  portal_project_delete: ["Project"],
+  portal_project_repoint: ["Project"],
   portal_run_answer: ["Project"],
   portal_run_message: ["Project"],
   portal_secret_set: ["Project"],

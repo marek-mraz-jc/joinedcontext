@@ -1,20 +1,20 @@
 import { useMemo } from "react";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { api, queryKeys, unwrap } from "./client";
-import { listOrganizations } from "./odata";
+import { door, listOrganizations, type RestAnswer } from "./odata";
 import { asManifests, localized, ORG_NAMESPACE } from "./manifest";
 import type { Manifest } from "./manifest";
 import { useTranslation } from "react-i18next";
 import { offeredLocales, useBranding } from "../branding";
 
-/** The one `GET /api/v1/projects` query every project picker reads, each through its own `select`. */
+/** The one projects list query every project picker reads, each through its own `select`. */
 export const projectsQuery = queryOptions({
   queryKey: queryKeys.projects(),
   queryFn: async () => unwrap(await api.GET("/api/v1/projects")),
 });
 
 /**
- * The one `GET /api/v1/projects/{project}` query (its usage, its repository): the quota card, the
+ * The one `portal_project_get` query (its usage, its repository): the quota card, the
  * delete dialog and the export each `select` from it rather than read it under keys of their own.
  * A caller who may not read the project is answered 404, which is not asked again.
  */
@@ -22,10 +22,10 @@ export const projectDetailQuery = (project: string) =>
   queryOptions({
     queryKey: [...queryKeys.projects(), project, "detail"],
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}", { params: { path: { project } } })),
+    queryFn: async () => (await door("portal_project_get", {}, project)) as RestAnswer<"get_project">,
   });
 
-/** The projects the configuration repository holds, as `GET /api/v1/projects` lists them (PF-05). */
+/** The projects the configuration repository holds, as the projects list query reads them (PF-05). */
 export function useProjects() {
   return useQuery({
     ...projectsQuery,

@@ -157,6 +157,7 @@ export function call<F extends keyof Functions & string>(
 interface Readings {
   setup: Answer<"get_setup">;
   health: Answer<"get_health">;
+  healthChecks: Answer<"list_all">;
   limits: Answer<"get_limits">;
   brokers: Answer<"list_brokers">;
   agents: Answer<"list_agents">;

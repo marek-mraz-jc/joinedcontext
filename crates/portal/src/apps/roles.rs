@@ -57,9 +57,7 @@ pub async fn verified(
     app: &str,
 ) -> Result<(Identity, Vec<String>), ApiError> {
     let token = presented(state, headers).ok_or(ApiError::Unauthorized)?;
-    let verifier = state.bearer.as_ref().ok_or(ApiError::Unauthorized)?;
-    let client = crate::reconciler::app_clients::client_id(app);
-    let (session, roles) = verifier.verify_app_token(token, &client).await?;
+    let (session, roles) = crate::auth::realms::verify_app_token(state, app, token).await?;
     if state.is_revoked(&session) {
         return Err(ApiError::Unauthorized);
     }
