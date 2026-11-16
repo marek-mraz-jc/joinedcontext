@@ -737,9 +737,9 @@ spec:
 /// The open-data Endpoint as `main` holds it, and as the move writes it: the same slug, the
 /// Policy named under `{orgDomain}` as the forge files write it (CC-74).
 const FILES_ENDPOINT_ON_MAIN: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: banskabystrica\nspec:\n  contextSpaceRef: ovzdusie\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n";
-const FILES_ENDPOINT: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: banskabystrica\nspec:\n  contextSpaceRef: ovzdusie\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: public\n  policyRefs:\n    - urn:ngsi-ld:Policy:{orgDomain}:ovzdusie:public-air-read\n  enabledRepresentations: [ngsi-ld]\n";
+const FILES_ENDPOINT: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: banskabystrica\nspec:\n  contextSpaceRef: ovzdusie\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: public\n  policyRefs:\n    - urn:ngsi-ld:Policy:{orgDomain}:banskabystrica-ovzdusie:public-air-read\n  enabledRepresentations: [ngsi-ld]\n";
 const FILES_ENDPOINT_PATH: &str = "spaces/ovzdusie/endpoints/public-air.yaml";
-const FILES_PIPELINE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: aq\n  namespace: banskabystrica\nspec:\n  class: resident\n  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:ovzdusie:air\n";
+const FILES_PIPELINE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: aq\n  namespace: banskabystrica\nspec:\n  class: resident\n  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:banskabystrica-ovzdusie:air\n";
 const FILES_PIPELINE_PATH: &str = "pipelines/aq/pipeline.yaml";
 
 /// The forge of [`forge`], whose `main` holds the open-data Endpoint, and the space, its read
@@ -802,11 +802,15 @@ async fn a_repository_files_land_as_one_change_as_they_were_written() {
         report["replaced"],
         json!([format!("projects/{PROJECT}/{FILES_ENDPOINT_PATH}")])
     );
-    assert!(written(&server).await.is_empty(), "a dry run writes nothing");
+    assert!(
+        written(&server).await.is_empty(),
+        "a dry run writes nothing"
+    );
 
     let (status, change) = send(state, &cookie, &content_type, body, &uri).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{change}");
-    let committed = common::committed_files(&server, "/odata/Repositories(Owner='bb',Name='org')").await;
+    let committed =
+        common::committed_files(&server, "/odata/Repositories(Owner='bb',Name='org')").await;
     let paths: Vec<&str> = committed.iter().map(|(path, _)| path.as_str()).collect();
     assert_eq!(
         paths,
@@ -823,7 +827,8 @@ async fn a_repository_files_land_as_one_change_as_they_were_written() {
             .unwrap_or_default()
     };
     assert!(
-        text(FILES_PIPELINE_PATH).contains("urn:ngsi-ld:Endpoint:{orgDomain}:ovzdusie:air"),
+        text(FILES_PIPELINE_PATH)
+            .contains("urn:ngsi-ld:Endpoint:{orgDomain}:banskabystrica-ovzdusie:air"),
         "{committed:?}"
     );
     assert!(
@@ -839,7 +844,10 @@ async fn a_files_import_of_a_kind_the_person_may_not_propose_writes_nothing() {
     let (server, state, cookie) = files_world(
         &[],
         vec![
-            role("endpoint-steward", json!([{ "kinds": ["Endpoint"], "verbs": ["propose", "read"] }])),
+            role(
+                "endpoint-steward",
+                json!([{ "kinds": ["Endpoint"], "verbs": ["propose", "read"] }]),
+            ),
             binding("endpoint-steward"),
         ],
     )
@@ -850,7 +858,10 @@ async fn a_files_import_of_a_kind_the_person_may_not_propose_writes_nothing() {
 
     assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
     assert!(problem.to_string().contains("Pipeline"), "{problem}");
-    assert!(forge_calls(&server).await.iter().all(|call| !call.contains("CommitFiles")));
+    assert!(forge_calls(&server)
+        .await
+        .iter()
+        .all(|call| !call.contains("CommitFiles")));
 }
 
 /// PF-57: the import needs the dry run of exactly these bytes.

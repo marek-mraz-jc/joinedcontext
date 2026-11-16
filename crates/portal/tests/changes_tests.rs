@@ -2176,9 +2176,22 @@ async fn a_file_that_writes_the_domain_placeholder_is_judged_as_the_loader_rende
         .replace("bb.sk", "{orgDomain}");
     let (server, state) = bundle_of(
         json!([{ "kinds": ["Pipeline"], "verbs": ["approve"] }]),
-        &[("projects/ovzdusie/pipelines/aq-door/pipeline.yaml", &pipeline)],
+        &[(
+            "projects/ovzdusie/pipelines/aq-door/pipeline.yaml",
+            &pipeline,
+        )],
     )
     .await;
+    // The installation's domain, which the loader renders `{orgDomain}` with (PF-121).
+    state.mirror.upsert(
+        serde_json::from_value(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Organization",
+            "metadata": { "name": "bb", "namespace": "org" },
+            "spec": { "displayName": { "en": "Banska Bystrica" }, "domain": "bb.sk" },
+        }))
+        .expect("organization"),
+    );
     let (status, body) = approve_bundle(state, Some("aq")).await;
 
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");

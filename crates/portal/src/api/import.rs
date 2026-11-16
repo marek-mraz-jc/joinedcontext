@@ -384,10 +384,10 @@ impl ImportReport {
 }
 
 /// One manifest or native file on its way into the repository.
-struct Incoming {
-    path: Option<String>,
-    envelope: Option<ResourceEnvelope>,
-    content: String,
+pub(crate) struct Incoming {
+    pub(crate) path: Option<String>,
+    pub(crate) envelope: Option<ResourceEnvelope>,
+    pub(crate) content: String,
 }
 
 // --- parsing what was uploaded ---------------------------------------------------------
@@ -416,6 +416,30 @@ fn parse(bytes: &[u8]) -> Result<Vec<Incoming>, ApiError> {
 }
 
 fn parse_archive(bytes: &[u8]) -> Result<Vec<Incoming>, ApiError> {
+    let mut incoming = Vec::new();
+    for (name, raw) in archive_entries(bytes)? {
+        // A complete export's README and schemas explain the bundle; they are not the project's
+        // files, so they are never written into one (MF-41).
+        if name == crate::api::export::README_PATH
+            || name.starts_with(crate::api::export::SCHEMAS_DIR)
+        {
+            continue;
+        }
+        // A blob whose stream does not read back: an export counts these as omitted, and an
+        // import has nothing to write for them either. A binary blob committed beside the
+        // manifests, likewise.
+        let Some(Ok(content)) = raw.map(String::from_utf8) else {
+            continue;
+        };
+        incoming.extend(parse_text(&content, Some(&name))?);
+    }
+    Ok(incoming)
+}
+
+/// Every file entry of a zip archive by its enclosed path, with its bytes, or `None` for a
+/// stream that does not read back; directories are left out. The entry count, an escaping
+/// path, a symbolic link and the unpacked size are refused here, for every archive import.
+pub(crate) fn archive_entries(bytes: &[u8]) -> Result<Vec<(String, Option<Vec<u8>>)>, ApiError> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
         .map_err(|err| ApiError::BadRequest(format!("the archive did not open: {err}")))?;
     if archive.len() > MAX_ARCHIVE_ENTRIES {
@@ -424,7 +448,7 @@ fn parse_archive(bytes: &[u8]) -> Result<Vec<Incoming>, ApiError> {
             archive.len()
         )));
     }
-    let mut incoming = Vec::new();
+    let mut entries = Vec::new();
     // What is left of the unpacked ceiling. Counted across entries rather than per entry,
     // because a thousand files of a megabyte each is the same bomb spread thin (CC-08).
     let mut budget = MAX_ARCHIVE_BYTES;
@@ -449,13 +473,6 @@ fn parse_archive(bytes: &[u8]) -> Result<Vec<Incoming>, ApiError> {
                 "the archive entry '{name}' is a symbolic link, and a bundle carries files"
             )));
         }
-        // A complete export's README and schemas explain the bundle; they are not the project's
-        // files, so they are never written into one (MF-41).
-        if name == crate::api::export::README_PATH
-            || name.starts_with(crate::api::export::SCHEMAS_DIR)
-        {
-            continue;
-        }
         // One byte past what is left, so the ceiling is measured on what actually came out of
         // the decompressor and never on the size the archive declares for itself.
         let mut raw = Vec::new();
@@ -465,8 +482,7 @@ fn parse_archive(bytes: &[u8]) -> Result<Vec<Incoming>, ApiError> {
             .read_to_end(&mut raw)
             .is_err()
         {
-            // A blob whose stream does not read back. An export counts these as omitted; an
-            // import has nothing to write for them either.
+            entries.push((name, None));
             continue;
         }
         if raw.len() as u64 > budget {
@@ -475,13 +491,9 @@ fn parse_archive(bytes: &[u8]) -> Result<Vec<Incoming>, ApiError> {
             )));
         }
         budget -= raw.len() as u64;
-        let Ok(content) = String::from_utf8(raw) else {
-            // A binary blob committed beside the manifests, as above.
-            continue;
-        };
-        incoming.extend(parse_text(&content, Some(&name))?);
+        entries.push((name, Some(raw)));
     }
-    Ok(incoming)
+    Ok(entries)
 }
 
 /// A document parsed with the key of a mapping read once and once only (MF-05).
@@ -575,7 +587,7 @@ impl<'de> serde::de::Visitor<'de> for UniqueVisitor {
 }
 
 /// One text file as manifests, or as a native file that travels unread.
-fn parse_text(text: &str, path: Option<&str>) -> Result<Vec<Incoming>, ApiError> {
+pub(crate) fn parse_text(text: &str, path: Option<&str>) -> Result<Vec<Incoming>, ApiError> {
     let manifest_path = path.is_none_or(|p| p.ends_with(".yaml") || p.ends_with(".yml"));
     if !manifest_path {
         return Ok(vec![Incoming {
@@ -1213,7 +1225,7 @@ async fn read_request(
     params(
         ("project" = String, Path, description = "Project the bundle is imported into"),
         ("dryRun" = Option<String>, Query, description = "Set to 'All' to validate and plan without proposing"),
-        ("format" = Option<String>, Query, description = "'git': the archive of a format=git export, landing as the new project of the path (layout 2); 'app': the archive of an App export, landing as a new App of the project (UI-87)"),
+        ("format" = Option<String>, Query, description = "'git': the archive of a format=git export, landing as the new project of the path (layout 2); 'app': the archive of an App export, landing as a new App of the project (UI-87); 'files': a zip of files of the project's repository, written as they are (MF-63)"),
     ),
     request_body(
         content(
@@ -1289,9 +1301,21 @@ pub async fn import(
                 "importing an application",
             )?;
         }
+        Some("files") => {
+            // Each file is still checked on its own kind once the archive is read (PF-50).
+            if !crate::permissions::for_request(&state, &user.0.identity, &project)
+                .may_propose_anything()
+            {
+                return Err(ApiError::Denied(format!(
+                    "Importing into project {project} needs a role with propose on the kinds \
+                     of the files (PF-50)."
+                )));
+            }
+        }
         Some(other) => {
             return Err(ApiError::BadRequest(format!(
-                "format '{other}' is neither git nor app; a bundle or manifests import without one"
+                "format '{other}' is none of git, app and files; a bundle or manifests import \
+                 takes none"
             )))
         }
     }
@@ -1307,7 +1331,22 @@ pub async fn import(
         let (bytes, mut input) = read_git_request(&state, request).await?;
         input.dry_run |=
             query.dry_run.as_deref() == Some("All") || query.validate_only == Some(true);
-        let (status, body) = if query.format.as_deref() == Some("app") {
+        let (status, body) = if query.format.as_deref() == Some("files") {
+            if !input.parameters.is_empty() || input.name.is_some() || input.display_name.is_some()
+            {
+                return Err(ApiError::BadRequest(
+                    "format=files takes the archive as 'file' and dryRun, nothing else".into(),
+                ));
+            }
+            crate::api::import_files::import(
+                &state,
+                &user.0.identity,
+                &project,
+                &bytes,
+                input.dry_run,
+            )
+            .await?
+        } else if query.format.as_deref() == Some("app") {
             crate::api::app_transfer::import(&state, &user.0.identity, &project, &bytes, input)
                 .await?
         } else {
@@ -1983,7 +2022,7 @@ fn plan_import(
 /// Who may propose what the bundle holds (T-0798, PF-50): the caller's bindings in this
 /// project, checked per manifest before anything is planned, so a dry run discloses nothing
 /// either. `mutate::propose_with_identity` asks the same two questions of a single manifest.
-fn authorize(
+pub(crate) fn authorize(
     state: &AppState,
     identity: &crate::auth::session::Identity,
     project: &str,
