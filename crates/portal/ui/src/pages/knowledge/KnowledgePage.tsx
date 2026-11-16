@@ -217,7 +217,7 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
               id: "lastCrawl",
               label: t("knowledge.column.lastCrawl"),
               text: (row) => row.lastCrawl ?? "",
-              cell: (row) => <span className="whitespace-nowrap">{timeText(row.lastCrawl, i18n.language)}</span>,
+              cell: (row) => (row.lastCrawl ? <span className="whitespace-nowrap">{timeText(row.lastCrawl, i18n.language)}</span> : "—"),
             },
             {
               id: "pages",
@@ -264,7 +264,8 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
               id: "languages",
               label: t("knowledge.column.languages"),
               text: (row) => (row.state === "crawled" ? Object.keys(row.languages ?? {}).join(", ") : ""),
-              cell: (row) => (row.state === "crawled" ? <Languages languages={row.languages} /> : "—"),
+              cell: (row) =>
+                row.state === "crawled" && Object.values(row.languages ?? {}).some((n) => n > 0) ? <Languages languages={row.languages} /> : "—",
             },
           ]}
           actions={(row) => (
