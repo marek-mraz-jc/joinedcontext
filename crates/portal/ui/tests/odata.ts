@@ -286,6 +286,7 @@ const OPERATIONS: Record<string, Door> = {
   portal_person_get: ["GET", "/organization/people/{person}"],
   portal_person_edit: ["PATCH", "/organization/people/{person}"],
   portal_portal_host_list: ["GET", "/organization/portal-hosts"],
+  portal_organization_address_list: ["GET", "/organization/addresses"],
   portal_widget_list: ["GET", "/organization/widgets"],
   portal_organization_model_list: ["GET", "/organization/datamodels"],
   portal_health_check_list: ["GET", "/projects/{project}/health-checks"],

@@ -223,9 +223,18 @@ pub static DOORS: &[Door] = &[
         PEOPLE_WRITE,
     ),
     // The Organization reads of any page: the open data portals' hosts, the home page's widgets,
-    // the Organization's data models. Each handler answers only what the person may read, a
-    // person of another Organization included (the home page asks on every visit), so they are
-    // `Own` (T-7130, T-7167).
+    // the Organization's data models and addresses. Each handler answers only what the person
+    // may read, a person of another Organization included (the home page asks on every visit,
+    // an Endpoint page's viewer asks for the open data host), so they are `Own` (T-7130,
+    // T-7167).
+    door(
+        "portal_organization_address_list",
+        Org,
+        Method::GET,
+        "/organization/addresses",
+        &[],
+        Who::Own,
+    ),
     door(
         "portal_portal_host_list",
         Org,

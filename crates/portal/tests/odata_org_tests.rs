@@ -801,8 +801,14 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
         ("portal_app_templates", "()", "/api/v1/app-templates"),
         ("portal_blueprint_list", "()", "/api/v1/blueprints"),
         // The home page's Dashboards, the open data portals' hosts and the data models a person
-        // may read, each answered by the REST handler for the person (T-7167).
+        // may read, each answered by the REST handler for the person (T-7167), and the
+        // Organization's addresses an Endpoint page asks of its viewer (T-7167, viewer smoke 404).
         ("portal_widget_list", "()", "/api/v1/organization/widgets"),
+        (
+            "portal_organization_address_list",
+            "()",
+            "/api/v1/organization/addresses",
+        ),
         (
             "portal_portal_host_list",
             "()",
