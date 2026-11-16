@@ -692,7 +692,7 @@ jobs:
       - run: cd ui && pnpm install --frozen-lockfile
       - run: cd ui && pnpm lint
       # `pnpm build` also writes the open-data explorer, the Portal's grid in one bundle, which jc
-      # embeds from dist-explorer (bins/jc/build.rs): one grid, never a committed copy (T-6739, T-7102).
+      # embeds from dist-explorer (bins/jc/src/modules/viz.rs): one grid, never a committed copy (T-6739, T-7102).
       - run: cd ui && pnpm build && test -s dist/index.html && test -s dist-explorer/explorer.js && test -s dist-explorer/explorer.css
       # The SDK's own suite (the standalone Portal's sdk job, about 70 s): it reads only sdk/.
       - run: cd sdk && pnpm vitest run

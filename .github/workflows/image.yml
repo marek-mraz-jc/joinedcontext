@@ -83,9 +83,9 @@ jobs:
       # The Dockerfile's toolchain (rust:1.99.0), so both ways of building the image use one compiler.
       - uses: ./.github/actions/rust
         with: { key: release, toolchain: "1.99.0" }
-      # jc embeds the explorer bundle from ui/dist-explorer (bins/jc/build.rs): never an image without it.
+      # jc embeds the explorer bundle from ui/dist-explorer (bins/jc/src/modules/viz.rs), cached with the UI.
+      - run: test -s crates/portal/ui/dist-explorer/explorer.js && test -s crates/portal/ui/dist-explorer/explorer.css
       - run: cargo build --release --locked -p jc -p kaisatsu-server
-        env: { JC_REQUIRE_EXPLORER: "1" }
       - id: bin
         run: |
           set -eu
