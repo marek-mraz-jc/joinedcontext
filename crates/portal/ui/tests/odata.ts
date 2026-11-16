@@ -363,6 +363,13 @@ const OPERATIONS: Record<string, Door> = {
   jc_run_publish: ["POST", "/projects/{project}/agent-runs/{id}/publish"],
   portal_run_answer: ["POST", "/projects/{project}/agent-runs/{id}/answers"],
   portal_run_message: ["POST", "/projects/{project}/agent-runs/{id}/messages"],
+  // The Change pages' doors the files stubbing the REST doors reach (T-7126).
+  portal_change_outside: ["GET", "/projects/{project}/changes/outside"],
+  portal_change_manifests: ["GET", "/projects/{project}/changes/{id}/manifests"],
+  portal_change_restore: ["POST", "/projects/{project}/changes/{id}/restore"],
+  portal_change_undo: ["POST", "/projects/{project}/changes/{id}/undo"],
+  portal_organization_change_restore: ["POST", "/projects/org/changes/{id}/restore"],
+  portal_organization_change_undo: ["POST", "/projects/org/changes/{id}/undo"],
 };
 
 /**
@@ -457,12 +464,6 @@ const DOORS: Record<string, Door> = {
     "/organization/opendata/pages/{page}/{lang}",
   ],
   portal_organization_change_list: ["GET", "/projects/org/changes"],
-  portal_change_outside: ["GET", "/projects/{project}/changes/outside"],
-  portal_change_manifests: ["GET", "/projects/{project}/changes/{id}/manifests"],
-  portal_change_restore: ["POST", "/projects/{project}/changes/{id}/restore"],
-  portal_change_undo: ["POST", "/projects/{project}/changes/{id}/undo"],
-  portal_organization_change_restore: ["POST", "/projects/org/changes/{id}/restore"],
-  portal_organization_change_undo: ["POST", "/projects/org/changes/{id}/undo"],
   portal_organization_change_history: ["GET", "/projects/org/changes/history"],
   portal_organization_change_get: ["GET", "/projects/org/changes/{id}"],
   // The `org` namespace's own Changes decided (T-7122): `body` is the REST door's whole body.

@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { ApiError, queryKeys, reasonOf } from "../../api/client";
 import { asManifests, isChange, ORG_NAMESPACE, storedMetadata } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { useProjects } from "../../api/projects";
