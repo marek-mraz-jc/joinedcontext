@@ -114,7 +114,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 164] = [
+pub static DOORS: [Door; 167] = [
     door(
         "portal_people_remove",
         Org,
@@ -971,11 +971,40 @@ pub static DOORS: [Door; 164] = [
         &[NAME, BODY],
         Who::ProjectReader,
     ),
+    // A project's registry entry and its repoint, the Release tab's pinned ref and values: the
+    // handler reads the entry as the person reads the project and checks the `org` namespace's
+    // `Project` propose rule before the red-lane Change (PF-86, CC-88; T-7166).
+    door(
+        "portal_project_registry",
+        Project,
+        Method::GET,
+        "/projects/{project}/registry",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_project_repoint",
+        Project,
+        Method::PUT,
+        "/projects/{project}/registry",
+        &[BODY],
+        Who::ProjectReader,
+    ),
     door(
         "portal_app_templates",
         Org,
         Method::GET,
         "/app-templates",
+        &[],
+        Who::Own,
+    ),
+    // The installation's Blueprints (the `org` namespace) the caller may run, for the flow
+    // gallery and the App generator: every signed-in person read them on REST (T-7143).
+    door(
+        "portal_blueprint_list",
+        Org,
+        Method::GET,
+        "/blueprints",
         &[],
         Who::Own,
     ),

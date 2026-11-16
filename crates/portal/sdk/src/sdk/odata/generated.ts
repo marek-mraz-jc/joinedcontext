@@ -662,7 +662,7 @@ export interface Run {
   kind?: string | null;
   mergeRequest?: unknown | null;
   mirrorUrl?: unknown | null;
-  origin?: unknown | null;
+  origin?: string | null;
   pathPrefix?: unknown | null;
   previewUrl?: string | null;
   profile?: unknown | null;
@@ -981,6 +981,7 @@ export interface Functions {
   portal_app_checks: Record<string, never>;
   portal_app_dashboard: { name: string };
   portal_app_templates: Record<string, never>;
+  portal_blueprint_list: Record<string, never>;
   portal_change_manifests: { id: string };
   portal_change_outside: Record<string, never>;
   portal_comment_list: { space: string; urn?: string };
@@ -1047,6 +1048,7 @@ export interface Functions {
   portal_portal_datasets: { name: string; offset?: number; limit?: number };
   portal_portal_source_runs: { name: string; source: string };
   portal_preferences_get: Record<string, never>;
+  portal_project_registry: Record<string, never>;
   portal_secret_list: Record<string, never>;
   portal_space_quality: { space: string };
   portal_space_quality_checks: { space: string };
@@ -1116,6 +1118,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_app_checks: ["Project"],
   portal_app_dashboard: ["Project"],
   portal_app_templates: ["Organization"],
+  portal_blueprint_list: ["Organization"],
   portal_change_manifests: ["Project"],
   portal_change_outside: ["Project"],
   portal_comment_list: ["Project"],
@@ -1182,6 +1185,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_portal_datasets: ["Organization"],
   portal_portal_source_runs: ["Organization"],
   portal_preferences_get: ["Organization"],
+  portal_project_registry: ["Project"],
   portal_secret_list: ["Project"],
   portal_space_quality: ["Project"],
   portal_space_quality_checks: ["Project"],
@@ -1223,7 +1227,7 @@ export interface Actions {
   jc_pipeline_test: { draft?: unknown; pipeline?: unknown; sample: unknown; steps?: boolean };
   jc_pipeline_try_mapping: { draft?: unknown; messages?: unknown; pipeline?: unknown; sample?: unknown; steps?: boolean };
   jc_project_delete: { name: string };
-  jc_project_import: { bundle: string; conflictPolicy?: string; dryRun?: boolean; orgDomain?: string };
+  jc_project_import: { bundle?: string; conflictPolicy?: string; dryRun?: boolean; manifests?: unknown; orgDomain?: string; spaceMapping?: unknown };
   jc_run_answer: { answers: unknown; id: string; questionId: string };
   jc_run_cancel: { id: string };
   jc_run_create: { appClass: string; appName: string; dataNeeds: unknown; endpointName?: string; endpointNames?: unknown; kind?: string; profile?: string; prompt: string; unattended?: boolean; visibility?: string };
@@ -1310,6 +1314,7 @@ export interface Actions {
   portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
   portal_preferences_set: { body?: unknown };
+  portal_project_repoint: { body?: unknown };
   portal_run_answer: { id: string; body?: unknown };
   portal_run_message: { id: string; body?: unknown };
   portal_secret_set: { body?: unknown };
@@ -1442,6 +1447,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],
   portal_preferences_set: ["Organization"],
+  portal_project_repoint: ["Project"],
   portal_run_answer: ["Project"],
   portal_run_message: ["Project"],
   portal_secret_set: ["Project"],

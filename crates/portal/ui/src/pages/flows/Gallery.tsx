@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { asManifests, localized } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { Button, Card, PageFailed, PageLoading } from "../../components/ui";
@@ -60,7 +61,7 @@ export function BlueprintCards({
 
   const list = useQuery({
     queryKey: queryKeys.blueprints(),
-    queryFn: async () => unwrap(await api.GET("/api/v1/blueprints", {})),
+    queryFn: async () => (await door("portal_blueprint_list", {})) as RestAnswer<"list_blueprints">,
   });
 
   const shown = useMemo(

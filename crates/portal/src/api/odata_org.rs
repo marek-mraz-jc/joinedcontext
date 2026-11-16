@@ -837,7 +837,7 @@ const WORKSPACE_CHANGES: &str = "changes";
 
 /// A run's detail (T-7134): each member of the REST door's `GET …/agent-runs/{id}` the run
 /// list's scalar fields leave out, which the list row holds.
-const RUN_DETAIL: [&str; 29] = [
+const RUN_DETAIL: [&str; 28] = [
     "title",
     "endpointName",
     "endpointSlug",
@@ -862,7 +862,6 @@ const RUN_DETAIL: [&str; 29] = [
     "firstVersionMs",
     "steps",
     "tokensUsed",
-    "origin",
     "startedAt",
     "finishedAt",
     "expiresAt",

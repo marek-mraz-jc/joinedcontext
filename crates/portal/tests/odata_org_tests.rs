@@ -792,13 +792,14 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
     assert_eq!(odata.status, rest.status, "{} / {}", odata.text, rest.text);
     // A person of another Organization (ba) reads their own notifications and preferences on
     // the Organization they reach, as the shell asks on every page (T-6812, viewer smoke 404),
-    // and the installation's App and chart templates every signed-in person reads (T-7130,
-    // viewer smoke 404 on the Apps page).
+    // and the installation's App and chart templates and Blueprints every signed-in person
+    // reads (T-7130, viewer smoke 404 on the Apps page; T-7143).
     let metadata = get(&state, Mode::Shared, "ba-only", "/api/v1/$metadata").await;
     for (name, call, rest_uri) in [
         ("portal_notification_list", "()", "/api/v1/notifications"),
         ("portal_preferences_get", "()", "/api/v1/preferences"),
         ("portal_app_templates", "()", "/api/v1/app-templates"),
+        ("portal_blueprint_list", "()", "/api/v1/blueprints"),
         (
             "portal_visualization_template",
             "(template='bar',x='day',y='pm10')",
@@ -4119,4 +4120,91 @@ async fn keyed_project_reads_are_sets_not_functions() {
             called.text
         );
     }
+}
+
+/// T-7145: the Assistant page's "test runs" switch asked the REST list for `origin=all` (AG-93).
+/// The runs set holds a live journey's test runs beside people's runs, each row says its
+/// `origin`, and a page that wants people's runs only filters on it; a journey's 101st newer run
+/// pushes no person's run out, since each origin keeps its own newest 100.
+#[tokio::test]
+async fn the_runs_set_holds_each_origin_and_filters_on_it() {
+    let state = state();
+    for (id, origin, at) in [
+        ("run-person", "person", "2026-11-12T06:00:00Z"),
+        ("run-journey", "journey", "2026-11-12T07:00:00Z"),
+    ] {
+        let run: joinedcontext_portal::agents::run::AgentRun = serde_json::from_value(json!({
+            "id": id,
+            "project": "helsinki",
+            "appName": "city-bikes",
+            "title": "City bikes",
+            "endpointName": "helsinki-bikes",
+            "endpointSlug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+            "profile": "app-builder",
+            "kind": "application",
+            "unattended": false,
+            "appClass": "ui",
+            "visibility": "project",
+            "prompt": "p",
+            "promptDigest": "d",
+            "dataNeeds": [],
+            "allowsWrite": false,
+            "branch": format!("agent/app-city-bikes/{id}"),
+            "pathPrefix": "",
+            "status": "previewing",
+            "ticketHash": "t",
+            "steps": 0,
+            "tokensUsed": 0,
+            "origin": origin,
+            "createdBy": "root@hel.fi",
+            "createdAt": at,
+            "expiresAt": "2099-11-12T06:00:00Z"
+        }))
+        .expect("a run");
+        state.agents.create_run(&run).await.expect("stored");
+    }
+    let mode = Mode::Host("hel");
+    for (uri, expected) in [
+        (
+            "/api/v1/projects('helsinki')/runs?$select=id,origin&$orderby=createdAt desc",
+            vec!["run-journey", "run-person"],
+        ),
+        (
+            "/api/v1/projects('helsinki')/runs?$filter=origin eq 'person'&$select=id",
+            vec!["run-person"],
+        ),
+        (
+            "/api/v1/runs?$filter=origin eq 'journey'&$select=id,origin",
+            vec!["run-journey"],
+        ),
+    ] {
+        let answer = get(&state, mode, "root", &uri.replace(' ', "%20")).await;
+        assert_eq!(answer.status, StatusCode::OK, "{uri}: {}", answer.text);
+        assert_eq!(
+            names(&answer.json(), "id"),
+            expected,
+            "{uri}: {}",
+            answer.text
+        );
+    }
+    let journey = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/runs(project='helsinki',id='run-journey')?$select=id,origin",
+    )
+    .await;
+    assert_eq!(journey.json()["origin"], "journey", "{}", journey.text);
+    // Another Organization's caller still reads no run of hel's, of either origin.
+    let foreign = get(&state, mode, "ba-only", "/api/v1/runs/$count").await;
+    assert!(
+        foreign.text == "0"
+            || matches!(
+                foreign.status,
+                StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+            ),
+        "{}: {}",
+        foreign.status,
+        foreign.text
+    );
 }
