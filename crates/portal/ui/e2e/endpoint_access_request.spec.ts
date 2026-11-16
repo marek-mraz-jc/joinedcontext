@@ -1,15 +1,19 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
-import { manifestReadsAsRest } from "./manifestReads";
-
-// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
-test.beforeEach(({ page }) => manifestReadsAsRest(page));
+import { doorsAsRest, manifestReadsAsRest } from "./manifestReads";
 
 // PL-115, EP-55, T-5615: a person refused by an Endpoint asks its space's owners for a read on
 // the Endpoint's page; an owner approves it there; the person reads the answer. `vite preview`
 // has no Portal behind it: the API is answered in the browser by one stateful stub, everything
 // above it is the real page.
+
+// The page reads the Endpoint and its access requests through the Organization's OData service
+// (T-6812, T-7103): the stub keeps answering their REST doors.
+test.beforeEach(({ page }) => {
+  manifestReadsAsRest(page);
+  doorsAsRest(page);
+});
 
 const SHOTS = process.env.JC_SHOTS_DIR;
 const PROJECT = "banskabystrica";
@@ -77,6 +81,9 @@ async function stubApi(page: Page, world: World): Promise<void> {
         email: `${world.who}@bb.sk`,
         roles: [],
       });
+    // A project page whose project the list misses is the not-found page (Shell frameFor).
+    if (path === "/api/v1/projects")
+      return json({ kind: "ProjectList", items: [{ name: PROJECT }] });
     if (path.endsWith("/permissions/me"))
       return json({ project: PROJECT, bootstrap: true, grants: [] });
     if (

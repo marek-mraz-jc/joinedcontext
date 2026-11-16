@@ -276,6 +276,11 @@ describe("the data section of an endpoint", () => {
     ]);
   });
 
+  it("reads a Relationship typed as a uri as a relationship, never as a web address (T-7072)", () => {
+    const area = { properties: { refParentArea: { type: "string", format: "uri", "x-ngsi-ld-kind": "Relationship" }, source: { type: "string", format: "uri" } } };
+    expect(fieldsOf(area, ["refParentArea", "source"]).map((field) => field.kind)).toEqual(["relationship", "uri"]);
+  });
+
   it("downloads the rows of the current query and order, only where the endpoint serves CSV", async () => {
     show({ link: { q: "co2>400", sort: "co2;desc" } });
     await waitFor(() => expect(screen.getByRole("grid")).toBeInTheDocument());

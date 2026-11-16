@@ -211,6 +211,22 @@ describe("the header filter's parts", () => {
     expect(calls).toEqual(["open", "close"]);
   });
 
+  it("filters an observedAt column by its dates, never by a list of the attribute's values (T-7072)", async () => {
+    // jc-dev air quality: "PM10 · Observed" listed 7.1705 and 20.588, the PM10 values, to tick as dates.
+    const observed: FilterColumn = { key: "pm10:observedAt", attr: "pm10", meta: "observedAt", kind: "date", datetime: true };
+    let read = 0;
+    const load = async () => {
+      read += 1;
+      return { values: [{ value: "7.1705", count: 1 }], scanned: 1, capped: false };
+    };
+    render(<HeaderFilter column={observed} label="PM10 · Observed" labels={DEFAULT_LABELS} locale="en" filter={undefined} open onOpen={() => {}} onClose={() => {}} load={load} onApply={() => {}} />);
+    const dialog = screen.getByRole("dialog", { name: "Filter: PM10 · Observed" });
+    expect(within(dialog).queryByRole("list", { name: "Values" })).toBeNull();
+    expect(within(dialog).queryByText("7.1705")).toBeNull();
+    expect(within(dialog).getByRole("combobox")).toBeInTheDocument();
+    expect(read).toBe(0);
+  });
+
   it("chips read each filter in the column's own words and remove one or all", () => {
     expect(valueText(status, "open", "en")).toBe("Open");
     expect(valueText({ key: "n", attr: "n", kind: "number" }, "1234.5", "sk")).toBe(new Intl.NumberFormat("sk").format(1234.5));

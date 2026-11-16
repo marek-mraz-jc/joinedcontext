@@ -18,6 +18,8 @@ export function useDecision(project: string, id: string) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  // A 403 stands until the page is read again: pressing the same decision again meets it again.
+  const [refused, setRefused] = useState(false);
 
   const settle = (change: { status: ChangeProposal["status"] }) => {
     queryClient.setQueryData(queryKeys.change(project, id), (prev?: ChangeProposal) =>
@@ -27,6 +29,7 @@ export function useDecision(project: string, id: string) {
     void queryClient.invalidateQueries({ queryKey: queryKeys.changes(project), exact: true });
   };
   const failed = (err: unknown) => {
+    if (err instanceof ApiError && err.status === 403) setRefused(true);
     if (err instanceof ApiError) setError(err.problem?.detail ?? err.message);
     else if (err instanceof Error) setError(err.message);
     else setError(t("app.error.generic"));
@@ -61,7 +64,7 @@ export function useDecision(project: string, id: string) {
     onError: failed,
   });
 
-  return { approve, reject, error, pending: approve.isPending || reject.isPending };
+  return { approve, reject, error, refused, pending: approve.isPending || reject.isPending };
 }
 
 /** The project's change list, read once for every hook below (one query key). */

@@ -309,10 +309,19 @@ function webLink(value: unknown, text: string): JSX.Element | string {
 export function fieldsOf(definition: unknown, attributes: string[]): FieldRow[] {
   const properties = ((definition ?? {}) as { properties?: Record<string, unknown> }).properties ?? {};
   return attributes.map((name) => {
-    const property = (properties[name] ?? {}) as { type?: unknown; format?: unknown; $ref?: unknown; description?: unknown; anyOf?: unknown };
+    const property = (properties[name] ?? {}) as { type?: unknown; format?: unknown; $ref?: unknown; description?: unknown; anyOf?: unknown; "x-ngsi-ld-kind"?: unknown };
     const branch = Array.isArray(property.anyOf) ? ((property.anyOf.find((each) => each && typeof each === "object") ?? {}) as typeof property) : property;
     const ref = typeof branch.$ref === "string" ? branch.$ref.split("/").pop() : undefined;
-    const kind = typeof branch.format === "string" ? branch.format : typeof branch.type === "string" ? branch.type : ref ?? "";
+    // A Relationship holds a URN, which its schema types as a `uri`: the grid names and opens its
+    // target, so it is never printed as an address (T-7072).
+    const kind =
+      property["x-ngsi-ld-kind"] === "Relationship"
+        ? "relationship"
+        : typeof branch.format === "string"
+          ? branch.format
+          : typeof branch.type === "string"
+            ? branch.type
+            : ref ?? "";
     return { name, kind, description: typeof property.description === "string" ? property.description : "" };
   });
 }
@@ -408,7 +417,11 @@ function DataActions({
 }
 
 export interface EndpointDataViewProps {
-  project: string;
+  /**
+   * The project the endpoint belongs to; a catalogue visitor may not know it (T-7072). Without it
+   * the grid keeps its layout under `catalogue` and its map draws no basemap, which is a project's.
+   */
+  project?: string;
   /** The endpoint's slug: the grid reads through it, never through a URL of its own (EP-55). */
   slug: string;
   /** `spec.projection.hiddenAttributes`, including what the open form has ticked but not saved. */
@@ -837,6 +850,12 @@ export function EndpointDataView({
   // The address is read once, as the view opens: the link this view writes back carries the
   // toolbar's query too, and reading it again would hand that query to the grid a second time.
   const [opening] = useState(link);
+  // A link that names a query opens with the query in sight, so whoever opened it reads why the rows
+  // are fewer than the whole set (T-7072).
+  const { onShowQuery } = tools.props;
+  useEffect(() => {
+    if (opening?.q) onShowQuery(true);
+  }, [opening, onShowQuery]);
   const { dropped, setDropped, defaults, preset } = useDefaultView(classView, gridColumns, enums, opening);
   const { opened, sortText } = gridState(view ?? preset, opening, columns);
   // The default filter's inputs open in the Filter panel; from the first default on, the panel is the reader's.
@@ -966,7 +985,10 @@ export function EndpointDataView({
       ) : (
         <PortalEntityGrid
           key={`${slug}-${type.name}`}
-          project={project}
+          project={project ?? "catalogue"}
+          // The basemap is a project's (AP-67): with none known the map draws the points on a plain
+          // ground rather than fail on a style nobody can read (T-7072).
+          {...(project ? {} : { basemap: undefined })}
           config={config}
           // The type is picked in the grid's Type column, like on a space (owner 2026-11-01).
           typeChoice={{
@@ -999,6 +1021,8 @@ export function EndpointDataView({
           rowTone={tools.rowTone}
           rowSize={tools.rowSize}
           query={tools.query}
+          // A search or a filter panel condition that leaves no row says so, not "no entities yet" (T-7072).
+          emptyText={tools.q ? t("entityGrid.filtersMatchNothing") : undefined}
          
           queryBox={tools.showQuery}
           filterRow={!phone}

@@ -316,7 +316,8 @@ describe("the catalogue (EP-81, EP-82)", () => {
     // The entities are the one data grid, read through the Endpoint with the visitor's own session (T-6376).
     expect(screen.getByRole("heading", { level: 2, name: "Data" })).toBeInTheDocument();
     const grid = await screen.findByTestId("endpoint-data");
-    expect(grid).toHaveAttribute("data-project", "catalogue");
+    // The page knows no project: the view keeps its layout under `catalogue` and draws no project's basemap (T-7072).
+    expect(grid).not.toHaveAttribute("data-project");
     expect(grid.getAttribute("data-slug")).toMatch(/^[a-z0-9]{16,64}$/);
     // A signed-in person reads through the Portal host, which carries the session as the bearer.
     expect(grid).toHaveAttribute("data-origin", "portal");

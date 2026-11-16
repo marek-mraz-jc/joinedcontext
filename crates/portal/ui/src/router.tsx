@@ -72,7 +72,7 @@ const EndpointDatasetPage = lazy(() =>
   import("./pages/catalogue/EndpointDatasetPage").then((module) => ({ default: module.EndpointDatasetPage })),
 );
 const DatasetPage = lazy(() => import("./pages/catalogue/DatasetPage").then((module) => ({ default: module.DatasetPage })));
-import { parseCatalogueSearch } from "./pages/catalogue/search";
+import { parseCatalogueSearch, parseDataViewSearch } from "./pages/catalogue/search";
 const EndpointDocs = lazy(() => import("./pages/endpoints/EndpointDocs").then((module) => ({ default: module.EndpointDocs })));
 const PublicViewPage = lazy(() => import("./pages/spaces/PublicView").then((module) => ({ default: module.PublicViewPage })));
 const PublicFormPage = lazy(() => import("./pages/spaces/FormView").then((module) => ({ default: module.PublicFormPage })));
@@ -320,6 +320,7 @@ const catalogueRoute = createRoute({
 const catalogueEndpointRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/catalogue/endpoint/$slug",
+  validateSearch: parseDataViewSearch,
   component: function CatalogueEndpointRoute() {
     const { slug } = catalogueEndpointRoute.useParams();
     return <CatalogueFrame>{() => <EndpointDatasetPage slug={slug} />}</CatalogueFrame>;
@@ -1107,6 +1108,7 @@ const exploreRoute = createRoute({
     entityId?: string;
     type?: string;
     q?: string;
+    sort?: string;
     view?: "map";
     colorBy?: string;
   } => ({
@@ -1115,12 +1117,13 @@ const exploreRoute = createRoute({
     entityId: typeof search.entityId === "string" ? search.entityId : undefined,
     type: typeof search.type === "string" ? search.type : undefined,
     q: typeof search.q === "string" ? search.q : undefined,
+    sort: typeof search.sort === "string" ? search.sort : undefined,
     view: search.view === "map" ? "map" : undefined,
     colorBy: typeof search.colorBy === "string" ? search.colorBy : undefined,
   }),
   component: function ExploreRoute() {
     const { project } = exploreRoute.useParams();
-    const { space, endpoint, entityId, type, q, view, colorBy } = exploreRoute.useSearch();
+    const { space, endpoint, entityId, type, q, sort, view, colorBy } = exploreRoute.useSearch();
     return (
       <Shell project={project}>
         {/*
@@ -1135,6 +1138,7 @@ const exploreRoute = createRoute({
             initialEntityId={entityId}
             initialType={type}
             initialQ={q}
+            initialSort={sort}
             initialView={view}
             colorBy={colorBy}
           />
