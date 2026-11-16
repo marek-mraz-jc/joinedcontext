@@ -75,13 +75,21 @@ pub async fn build(
     // The internal listener opens with a realm (`server::spawn_internal_listener`). It is bound
     // before the state is built: the stream deployer is wired from the config, and its
     // validation stage and run-log sinks post to this listener.
-    let listener = match config.oidc {
-        Some(_) => Some(
+    let listener = match (&config.oidc, ctx.portal_internal) {
+        (None, _) => None,
+        // The listener jc reserved: each attempt takes a handle of it, so a failed attempt
+        // leaves the address the proxy already holds bound.
+        (Some(_), Some(reserved)) => Some(
+            reserved
+                .try_clone()
+                .and_then(tokio::net::TcpListener::from_std)
+                .map_err(|e| err(format!("internal listener: {e}")))?,
+        ),
+        (Some(_), None) => Some(
             tokio::net::TcpListener::bind(config.internal_bind)
                 .await
                 .map_err(|e| err(format!("internal listener: {e}")))?,
         ),
-        None => None,
     };
     if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
         runner_reaches(&mut config, addr);

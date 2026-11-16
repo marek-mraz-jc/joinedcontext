@@ -946,6 +946,33 @@ async fn remote_forwarders(
     Ok(out)
 }
 
+/// The Portal's internal listener on a free loopback port, bound before any module starts: the
+/// assistant's agent proxy is built first and calls the Portal there (T-7149). `None` when the
+/// Portal does not run here or `JC_INTERNAL_BIND` names the address.
+fn reserve_portal_internal(cfg: &Config) -> Result<Option<Arc<std::net::TcpListener>>, StartError> {
+    if !cfg.roles.contains(&Module::Portal)
+        || crate::config::portal_env("JC_INTERNAL_BIND").is_some()
+    {
+        return Ok(None);
+    }
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .map_err(StartError::Serve)?;
+    listener.set_nonblocking(true).map_err(StartError::Serve)?;
+    Ok(Some(Arc::new(listener)))
+}
+
+/// The Portal's internal listener as `JC_INTERNAL_BIND` names it, when it names a port.
+fn explicit_portal_internal(cfg: &Config) -> Option<SocketAddr> {
+    if !cfg.roles.contains(&Module::Portal) {
+        return None;
+    }
+    let addr: SocketAddr = crate::config::portal_env("JC_INTERNAL_BIND")?
+        .trim()
+        .parse()
+        .ok()?;
+    (addr.port() != 0).then_some(addr)
+}
+
 /// The Portal's age identity, from `--portal-age-key-file` or the Portal's own
 /// `JC_PORTAL_SOPS_AGE_KEY_FILE`, read once here so a missing or unusable file refuses the start
 /// instead of failing every project's secrets at the first sync. The error names the file only.
@@ -1175,6 +1202,11 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     if cfg.roles.contains(&Module::Portal) {
         siblings.organization_portals = installation_portals(cfg);
     }
+    let portal_internal = reserve_portal_internal(cfg)?;
+    siblings.portal_internal = match &portal_internal {
+        Some(reserved) => Some(reserved.local_addr().map_err(StartError::Serve)?),
+        None => explicit_portal_internal(cfg),
+    };
     let tasks = TaskTracker::new();
     #[cfg(feature = "model-tools")]
     if cfg.roles.contains(&Module::ModelTools) {
@@ -1215,6 +1247,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         siblings: &siblings,
         secrets: &secrets,
         door: door.as_ref(),
+        portal_internal: portal_internal.as_ref(),
     };
     let built = build_router(cfg, ctx, plans, assistant, &shutdown, &tasks).await?;
     // A Portal setting that cannot parse refuses the start here; only what needs a sibling to
@@ -1292,6 +1325,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
                         siblings: siblings.clone(),
                         secrets: secrets.clone(),
                         door: door.clone(),
+                        portal_internal: portal_internal.clone(),
                     },
                     mount.clone(),
                     shutdown.clone(),
@@ -1310,6 +1344,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
                     siblings,
                     secrets,
                     door,
+                    portal_internal: None,
                 };
                 let built = gateway_attempt(cfg, shared, late.mount, late.hop, internal);
                 match built.await {
@@ -1346,6 +1381,7 @@ struct Shared {
     siblings: Arc<Siblings>,
     secrets: Arc<crate::config::Secrets>,
     door: Option<Arc<crate::door::Door>>,
+    portal_internal: Option<Arc<std::net::TcpListener>>,
 }
 
 impl Shared {
@@ -1355,6 +1391,7 @@ impl Shared {
             siblings: &self.siblings,
             secrets: &self.secrets,
             door: self.door.as_ref(),
+            portal_internal: self.portal_internal.as_ref(),
         }
     }
 }

@@ -693,6 +693,14 @@ jc's dataroom, reading the wave's report.
   `READ_ONLY_TOOLS`). Smoke: `run assistant --viz-origin https://viz.{domain}` checks the config, the frame-src and,
   with the model stub, one `visualization` event.
 - Portal: `siblings::portal_vars` fills `JC_PORTAL_KNOWLEDGE_URL` with the module's loopback listener (G18).
+- Agent runs (T-7149, AG-33): `siblings::portal_vars` fills `JC_AGENT_PROXY_BASE` with jc's own proxy listener and
+  `JC_PORTAL_AGENT_PROXY_CLIENT_ID` with `agent-proxy`, so the Portal's conversations, the app builder and the
+  starters run in process through it. No `JC_AGENTS_NAMESPACE`: jc schedules no cluster workspace, and the Portal
+  attaches no cluster client for runs without one. The proxy calls the Portal's internal listener (run lookups,
+  `/internal/model-key`): jc binds it on a loopback port before the assistant starts (`app::reserve_portal_internal`,
+  `JC_INTERNAL_BIND` wins), and every Portal build attempt serves a handle of that socket. An operator's
+  `JC_ASSISTANT_PROXY_URL` or `JC_AGENT_PROXY_BASE` fills nothing. Split roles: the Portal and the proxy in two
+  containers is the follow-up named in T-7149.
 - dataroom: `BrandingBlock::assistant_widget` (serde-skipped, set only by the host) names the widget page
   `{assistant}/d/{catalogue_deployment}/widget` or `""` (off); the CSP's frame-src gains that origin when it is
   cross-origin. The launcher corner is on every page with a footer (about and resource pages added).
