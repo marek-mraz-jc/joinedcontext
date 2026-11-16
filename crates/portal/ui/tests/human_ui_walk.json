@@ -1729,6 +1729,28 @@
         "evidence/worker-t5126/T-5126/costs-refused-400.png"
       ]
     },
+    "src/pages/organization/OpendataPages.tsx": {
+      "walkedBy": "worker-t7041 (stub walk)",
+      "date": "2026-11-15",
+      "screenshots": [
+        "evidence/worker-t7041/T-7041/opendata-pages-empty-desktop.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-empty-phone.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-filled-desktop.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-filled-phone.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-preview-desktop.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-preview-phone.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-published-desktop.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-published-phone.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-error-desktop.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-error-phone.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-toolong-desktop.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-toolong-phone.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-pending-desktop.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-pending-phone.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-refused-desktop.png",
+        "evidence/worker-t7041/T-7041/opendata-pages-refused-phone.png"
+      ]
+    },
     "src/pages/organization/OrganizationApplications.tsx": {
       "walkedBy": "deployer",
       "date": "2026-10-20",

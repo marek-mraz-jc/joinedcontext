@@ -901,6 +901,11 @@ export interface Functions {
   portal_connector_list: Record<string, never>;
   portal_endpoint_quality: { endpoint: string };
   portal_notification_list: Record<string, never>;
+  portal_opendata_pages: Record<string, never>;
+  portal_organization_change_get: { id: string };
+  portal_organization_change_history: { page?: number; kind?: string; name?: string };
+  portal_organization_change_list: Record<string, never>;
+  portal_organization_change_manifests: { id: string };
   portal_person_names: { ids?: string };
   portal_preferences_get: Record<string, never>;
   portal_secret_list: Record<string, never>;
@@ -959,6 +964,11 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_connector_list: ["Organization"],
   portal_endpoint_quality: ["Project"],
   portal_notification_list: ["Organization"],
+  portal_opendata_pages: ["Organization"],
+  portal_organization_change_get: ["Organization"],
+  portal_organization_change_history: ["Organization"],
+  portal_organization_change_list: ["Organization"],
+  portal_organization_change_manifests: ["Organization"],
   portal_person_names: ["Organization"],
   portal_preferences_get: ["Organization"],
   portal_secret_list: ["Project"],
@@ -1015,6 +1025,9 @@ export interface Actions {
   portal_access_request_file: { endpoint: string; body?: unknown };
   portal_connector_revoke: { connector: string };
   portal_notification_read: { notification: string };
+  portal_opendata_page_preview: { body?: unknown };
+  portal_opendata_page_revert: { page: string; lang: string };
+  portal_opendata_page_set: { page: string; lang: string; body?: unknown };
   portal_people_name_by_id: { dryRun?: boolean };
   portal_people_remove: { body?: unknown };
   portal_person_consent_revoke: { person: string; client: string };
@@ -1083,6 +1096,9 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_access_request_file: ["Project"],
   portal_connector_revoke: ["Organization"],
   portal_notification_read: ["Organization"],
+  portal_opendata_page_preview: ["Organization"],
+  portal_opendata_page_revert: ["Organization"],
+  portal_opendata_page_set: ["Organization"],
   portal_people_name_by_id: ["Organization"],
   portal_people_remove: ["Organization"],
   portal_person_consent_revoke: ["Organization"],

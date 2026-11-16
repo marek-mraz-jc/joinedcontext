@@ -133,6 +133,9 @@ function answer(path: string): Response | undefined {
   // What the signed-in person may read (T-6411): nothing internal, as a new member sees it.
   if (path === "/api/v1/catalogue/readable") return jsonResponse({ datasets: [], unanswered: 0 });
   if (path === "/api/v1/organization/data-access") return jsonResponse({ columns: [{ kind: "organization" }], rows: [], unanswered: 0 });
+  if (path === "/api/v1/organization/opendata/pages") {
+    return jsonResponse({ organization: "bbsk", languages: ["sk", "en"], maxBytes: 16384, pages: [{ page: "connector", lang: "sk", title: "Konektor", builtIn: "# Konektor" }] });
+  }
   if (/^\/api\/v1\/organization\/people\/[^/]+\/readable$/.test(path)) return jsonResponse({ datasets: [], unanswered: 0 });
   if (path === "/api/v1/catalogue") {
     const none = { publisher: [], theme: [], format: [], licence: [], spatial: [], year: [] };

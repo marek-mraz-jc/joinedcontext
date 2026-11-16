@@ -8126,6 +8126,7 @@
     "lead": "Was in jedem Projekt gleich ist: die Einstellungen der Organisation, ihre Mitglieder, Rollen, Gruppen und Dienstkonten und ihre Projekte. Jede Änderung hier wird vorgeschlagen und genehmigt.",
     "tab": {
       "settings": "Einstellungen",
+      "opendata-pages": "Open-Data-Seiten",
       "people": "Personen",
       "members": "Mitglieder",
       "roles": "Rollen",
@@ -13305,6 +13306,61 @@
       "already": "Bereits auf {version}.",
       "moved": "Eine Änderung vorgeschlagen, die {names} auf {version} verschiebt.",
       "onTarget": "Auf der Zielversion"
+    }
+  },
+  "opendataPages": {
+    "title": "Seiten des Open-Data-Portals",
+    "lead": "Die Texte, die das Open-Data-Portal von {organization} auf den Seiten Konnektor, Datenschutz, Nutzungsbedingungen, Support und Barrierefreiheit zeigt, je Sprache. Eine Seite zeigt den eingebauten Text, bis Sie einen eigenen veröffentlichen; Veröffentlichen schlägt eine Änderung vor, die ein Administrator genehmigt.",
+    "noneOwn": "Jede Seite zeigt den eingebauten Text. Wählen Sie Bearbeiten neben Seite und Sprache, um einen eigenen zu schreiben.",
+    "builtIn": "Eingebaut",
+    "own": "Ihr Text",
+    "pending": "Wartet auf Genehmigung",
+    "edit": "Bearbeiten",
+    "editLabel": "{title} ({lang}) bearbeiten",
+    "page": {
+      "connector": "KI-Konnektor",
+      "privacy": "Datenschutz",
+      "terms": "Nutzungsbedingungen",
+      "support": "Hilfe und Kontakt",
+      "accessibility": "Barrierefreiheit",
+      "other": "{page}"
+    },
+    "openChange": "Eine Änderung der Organisation wartet auf Genehmigung. Genehmigen oder ablehnen, bevor Sie einen weiteren Text veröffentlichen:",
+    "editing": "{title} ({lang})",
+    "back": "Zurück zu den Seiten",
+    "pendingHere": "Ein Text dieser Seite wartet in einer offenen Änderung auf Genehmigung.",
+    "toolbar": "Formatierung",
+    "format": {
+      "bold": "Fett",
+      "heading": "Überschrift",
+      "list": "Liste",
+      "link": "Link",
+      "code": "Code"
+    },
+    "markdown": "Seitentext in Markdown",
+    "markdownHint": "Die erste Zeile mit # ist der Seitentitel, z. B. \"# Support\", dann \"Schreiben Sie an **support@stadt.de**\". HTML erscheint als Text, Bilder entfallen; höchstens {max} KiB.",
+    "size": "{bytes} von {max} Bytes",
+    "sizeOver": "{bytes} von {max} Bytes: {over} über der Grenze. Kürzen Sie den Text, um ihn zu veröffentlichen.",
+    "write": "Schreiben",
+    "preview": "Vorschau",
+    "views": "Text oder Vorschau",
+    "previewEmpty": "Schreiben Sie etwas, um die Seite so zu sehen, wie das Portal sie zeigt.",
+    "publish": "Veröffentlichen",
+    "revert": "Eingebauten Text verwenden",
+    "revertTitle": "Wieder den eingebauten Text verwenden?",
+    "revertBody": "Ihr Text von {title} ({lang}) wird mit einer vorgeschlagenen Änderung entfernt; nach der Genehmigung zeigt das Portal den eingebauten Text.",
+    "waits": "Das Portal zeigt den neuen Text, sobald ein Administrator die Änderung genehmigt.",
+    "refused": {
+      "403": "Sie dürfen die Seiten des Open-Data-Portals nicht ändern: {detail}",
+      "409": "Eine Änderung der Organisation wartet auf Genehmigung. Genehmigen oder ablehnen, dann erneut veröffentlichen. {detail}",
+      "list": "Nur die Administratoren der Organisation bearbeiten die Seiten ihres Open-Data-Portals. Bitten Sie einen von ihnen auf der Seite Mitglieder, einen Text zu ändern oder Ihnen diese Rolle zu geben."
+    },
+    "history": "Frühere Bearbeitungen",
+    "historyEmpty": "Noch kein Seitentext wurde geändert.",
+    "historyRow": "{who}, {at}: {phase}",
+    "phase": {
+      "merged": "veröffentlicht",
+      "rejected": "abgelehnt"
     }
   }
 }

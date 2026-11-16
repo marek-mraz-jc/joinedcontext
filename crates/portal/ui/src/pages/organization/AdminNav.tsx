@@ -18,7 +18,7 @@ export const ORGANIZATION_GROUPS = [
     tabs: ["projects", "applications", "endpoints", "mcp-servers", "models", "blueprints", "agentprofiles"],
   },
   { id: "platform", tabs: ["brokers", "environments", "dataspaceparticipants", "health", "costs"] },
-  { id: "settings", tabs: ["settings", "setup"] },
+  { id: "settings", tabs: ["settings", "opendata-pages", "setup"] },
 ] as const;
 
 export type OrganizationTab = (typeof ORGANIZATION_GROUPS)[number]["tabs"][number];
@@ -35,7 +35,7 @@ export const ORGANIZATION_TABS: readonly OrganizationTab[] = ORGANIZATION_GROUPS
  * (ADR-N-058 section 2.4, T-5248): who is bound inside it, the groups those bindings name and its
  * own Organization manifest. The rest is the installation's.
  */
-export const OWN_ORGANIZATION_TABS: readonly OrganizationTab[] = ["members", "groups", "settings"];
+export const OWN_ORGANIZATION_TABS: readonly OrganizationTab[] = ["members", "groups", "settings", "opendata-pages"];
 
 export function isOrganizationTab(value: string): value is OrganizationTab {
   return (ORGANIZATION_TABS as readonly string[]).includes(value);
