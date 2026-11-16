@@ -30921,10 +30921,12 @@
                       "additionalProperties": false,
                       "properties": {
                         "from": {
+                          "description": "Space in the manifests",
                           "maxLength": 253,
                           "type": "string"
                         },
                         "to": {
+                          "description": "Space of this project",
                           "maxLength": 253,
                           "type": "string"
                         }
@@ -35098,6 +35100,7 @@
                     "type": "boolean"
                   },
                   "origin": {
+                    "description": "Whose runs; journey is a live test",
                     "enum": [
                       "person",
                       "journey",

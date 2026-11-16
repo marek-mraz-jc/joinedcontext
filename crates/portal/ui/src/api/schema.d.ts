@@ -35784,7 +35784,9 @@ export interface operations {
                     orgDomain?: string;
                     /** @description Space `from` lands on the project's `to` */
                     spaceMapping?: {
+                        /** @description Space in the manifests */
                         from: string;
+                        /** @description Space of this project */
                         to: string;
                     }[];
                 };
@@ -38033,7 +38035,10 @@ export interface operations {
                     limit?: number;
                     /** @description Only the runs this caller started */
                     mine?: boolean;
-                    /** @enum {unknown} */
+                    /**
+                     * @description Whose runs; journey is a live test
+                     * @enum {unknown}
+                     */
                     origin?: "person" | "journey" | "all";
                     /**
                      * @description Only runs in this state
