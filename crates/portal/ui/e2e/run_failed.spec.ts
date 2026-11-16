@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
 
 // A run that failed (T-6442): the page says what happened in a person's words and what to do
 // next, with the way back to the Assistant; Publish cannot be pressed and Stop is gone. `vite preview` has no API, so it is answered
@@ -26,6 +27,8 @@ const RUN = {
 for (const width of [1440, 400]) {
   test(`a failed run explains itself at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: width === 400 ? 860 : 900 });
+    // The runs are read through the service (api/odata.ts listRuns, readRun, T-7134).
+    manifestReadsAsRest(page);
     await page.route(/\/api\//, async (route) => {
       const path = new URL(route.request().url()).pathname;
       const json = (body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });

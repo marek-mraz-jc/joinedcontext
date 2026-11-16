@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { act, projectBound } from "../../api/odata";
 import { Alert, Button, buttonClass, Card } from "../../components/ui";
 import { endpointFields, PRESETS, slugOf, useAppNeeds } from "./AppGenerator";
 import type { Preset } from "./AppGenerator";
@@ -59,19 +60,14 @@ export function AppBuildCard({
 
   const start = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/agent-runs", {
-          params: { path: { project } },
-          body: {
-            appName: name,
-            appClass: "ui",
-            ...endpointFields(primary, extra),
-            prompt: build.prompt,
-            visibility: build.visibility,
-            dataNeeds: needs,
-          },
-        }),
-      ),
+      act("jc_run_create", projectBound(project), {
+        appName: name,
+        appClass: "ui",
+        ...endpointFields(primary, extra),
+        prompt: build.prompt,
+        visibility: build.visibility,
+        dataNeeds: needs,
+      }),
     onSuccess: (result) => {
       const created = result as unknown as { id?: string; appName?: string };
       const appName = created.appName || name;

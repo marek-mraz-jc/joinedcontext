@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5829 (Antares T-5816): the page a context broker sends the person to when their AI client
 // asks for an MCP write. The person reads the view, the tool and the words the client was shown,

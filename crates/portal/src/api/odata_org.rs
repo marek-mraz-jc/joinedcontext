@@ -835,6 +835,40 @@ const WORKSPACE_DETAIL: [&str; 2] = ["scope", "changes"];
 /// The workspace detail member only `jc_workspace_get` answers.
 const WORKSPACE_CHANGES: &str = "changes";
 
+/// A run's detail (T-7134): each member of the REST door's `GET …/agent-runs/{id}` the run
+/// list's scalar fields leave out, which the list row holds.
+const RUN_DETAIL: [&str; 29] = [
+    "title",
+    "endpointName",
+    "endpointSlug",
+    "endpoints",
+    "profile",
+    "unattended",
+    "continues",
+    "appClass",
+    "visibility",
+    "prompt",
+    "promptDigest",
+    "dataNeeds",
+    "allowsWrite",
+    "branch",
+    "pathPrefix",
+    "workspace",
+    "mergeRequest",
+    "changeId",
+    "sourceUrl",
+    "mirrorUrl",
+    "firstFrameMs",
+    "firstVersionMs",
+    "steps",
+    "tokensUsed",
+    "origin",
+    "startedAt",
+    "finishedAt",
+    "expiresAt",
+    "error",
+];
+
 /// The members of [`CHANGE_DETAIL`] the list's items leave out, as the REST list does: the
 /// plan's fields, every file and the head commit's CI (T-0861, T-7126).
 const CHANGE_GET_ONLY: [&str; 3] = ["planFields", "files", "ci"];
@@ -852,6 +886,7 @@ fn detail(set: &str) -> &'static [&'static str] {
     match kind(set).or_else(|| org_set(set)) {
         Some(list) if list.set == CHANGES => &CHANGE_DETAIL,
         Some(list) if list.set == WORKSPACES => &WORKSPACE_DETAIL,
+        Some(list) if list.set == RUNS => &RUN_DETAIL,
         Some(list) if manifest_kind(list) => &MANIFEST_SET_DETAIL,
         _ => &[],
     }
@@ -1078,6 +1113,9 @@ impl Read<'_> {
             return Ok(());
         }
         let change = list.is_some_and(|list| list.set == CHANGES);
+        if list.is_some_and(|list| list.set == RUNS) {
+            return Ok(());
+        }
         if list.is_some_and(|list| list.set == WORKSPACES) {
             let changes = asked.contains(&WORKSPACE_CHANGES);
             return self.fill_workspaces(changes, answer).await;
@@ -1207,6 +1245,18 @@ impl Read<'_> {
             held.insert(key, whole);
         }
         Ok(Value::Object(row))
+    }
+
+    /// The row of run `id` of `project`, as the REST door `GET …/agent-runs/{id}` answers it:
+    /// the set holds the newest runs only, and a run's page reads an older one too (T-7134).
+    async fn run_row(&self, set: &ListSet, project: &str, id: &str) -> Result<Vec<Value>, Refused> {
+        let Some(op) = crate::ops::find("jc_run_get") else {
+            return Err(no(not_found("jc_run_get is not registered")));
+        };
+        match crate::ops::call(op, &self.caller, self.state, project, json!({ "id": id })).await {
+            Ok(whole) => Ok(keyed_rows(set, self.state, project, vec![whole])),
+            Err(e) => Err(Box::new(as_odata_error(e.into_response()).await)),
+        }
     }
 
     /// The rows of `set` in `project`, [`kind_rows`]'s; each open Change's list item is held
@@ -1719,11 +1769,12 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                     if !readable(read.state, read.user, &read.org, &project) {
                         return refused(not_found(format!("no {s} row you may read")));
                     }
-                    let rows = match (set.set == CHANGES, name.as_str()) {
-                        (true, Some(id)) => read
+                    let rows = match (set.set.as_str(), name.as_str()) {
+                        (CHANGES, Some(id)) => read
                             .change_row(set, &project, id)
                             .await
                             .map(|row| vec![row]),
+                        (RUNS, Some(id)) => read.run_row(set, &project, id).await,
                         _ => read.set_rows(set, &project).await,
                     };
                     let rows = match rows {
@@ -2196,6 +2247,7 @@ fn rights(state: &AppState, user: &CurrentUser, org: &str) -> Rights {
 
 const CHANGES: &str = "changes";
 const WORKSPACES: &str = "workspaces";
+const RUNS: &str = "runs";
 
 /// An action, its binding type and its parameters.
 type BoundAction = (

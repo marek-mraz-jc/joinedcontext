@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
+import { manifestAsRest } from "../tests/odata";
 
 // The shared drafts and a run's turns go through the OData service (T-7119): its doors reach these REST stubs.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
@@ -212,8 +213,9 @@ for (const [label, width, height] of [["desktop-1440", 1440, 1100], ["phone-400"
         }),
     );
     // A conversation, not a build: the dock draws what a search found only outside a build.
+    // The run is read through the service (api/odata.ts readRun, T-7134): a matcher sees its address.
     await page.route(
-      (url) => url.pathname.endsWith(`/agent-runs/${RUN.id}`),
+      (url) => (manifestAsRest(url)?.rest ?? url).pathname.endsWith(`/agent-runs/${RUN.id}`),
       (route) =>
         route.fulfill({
           contentType: "application/json",

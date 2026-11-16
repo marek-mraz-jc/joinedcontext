@@ -387,8 +387,28 @@
         "id"
       ],
       "$Kind": "EntityType",
+      "allowsWrite": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "appClass": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "appName": {
         "$Nullable": true
+      },
+      "branch": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "changeId": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "continues": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       },
       "createdAt": {
         "$Nullable": true,
@@ -398,19 +418,115 @@
       "createdBy": {
         "$Nullable": true
       },
+      "dataNeeds": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "endpointName": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "endpointSlug": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "endpoints": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "error": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "expiresAt": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "finishedAt": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "firstFrameMs": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "firstVersionMs": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "id": {},
       "kind": {
         "$Nullable": true
       },
+      "mergeRequest": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "mirrorUrl": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "origin": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "pathPrefix": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "previewUrl": {
         "$Nullable": true
       },
+      "profile": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "project": {},
+      "prompt": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "promptDigest": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "sourceUrl": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "startedAt": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "status": {
         "$Nullable": true
       },
+      "steps": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "title": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "tokensUsed": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "unattended": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "url": {
         "$Nullable": true
+      },
+      "visibility": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "workspace": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       }
     },
     "Service": {
@@ -3901,6 +4017,110 @@
             "$Name": "body",
             "$Nullable": true,
             "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_mcp_confirmation_decide": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_mcp_confirmation_get": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_mcp_elicitation_decide": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "projectName",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_mcp_elicitation_get": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "projectName",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {

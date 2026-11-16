@@ -1,11 +1,11 @@
-import { listManifests } from "../../api/odata";
+import { listManifests, listRuns } from "../../api/odata";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { asManifests, isChange, localized, refName } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -263,11 +263,7 @@ export function AppsCatalog({ project }: { project: string }): JSX.Element {
   const runs = useQuery({
     queryKey: [...queryKeys.list(project, "apps"), "runs"],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/agent-runs", {
-          params: { path: { project }, query: { limit: 20 } },
-        }),
-      ),
+      listRuns(project, { top: 20 }),
     refetchInterval: runId === null ? 15000 : false,
   });
   const endpointTitles = useEndpointTitles(project);
