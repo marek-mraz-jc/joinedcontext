@@ -1,4 +1,4 @@
-import { listManifests } from "../../api/odata";
+import { listManifests, proposeManifest } from "../../api/odata";
 import { useFormRoute, useOpenFromAddress } from "../../components/forms/FormRoute";
 import { RecordLink } from "../../components/RecordLink";
 import { endpointView } from "../../components/ui/safeHref";
@@ -14,37 +14,18 @@ import { handPrefill, takeEditRequest, takePrefill } from "../../assistant/state
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
 import { EditResourceDialog } from "../../components/EditResourceDialog";
 import { usePermissions, useReadableList } from "../../api/permissions";
-import { api, problemOf, queryKeys, unwrap, whilePending } from "../../api/client";
+import { problemOf, queryKeys, whilePending } from "../../api/client";
 import { asManifests, isChange, knownSecretNames, localized, plainTitle, prune } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import type { Verdict } from "../../api/drafts";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { ResourceRowActions } from "../../components/ResourceRowActions";
-import { RecordView,
-  Button,
-  EmptyState,
-  Field,
-  PageHeader,
-  Select,
-} from "../../components/ui";
+import { RecordView, Button, EmptyState, Field, PageHeader, Select } from "../../components/ui";
 import { PlanDiffViewer } from "../../components/diff/PlanDiffViewer";
 import type { FieldChange } from "../../components/diff/PlanDiffViewer";
 import { ResourceFormDialog } from "../../components/ResourceFormDialog";
 import { stringify as stringifyYaml } from "yaml";
-import {
-  CONNECTION_BLOCK,
-  DATA_SOURCE_TYPES,
-  brokerOptions,
-  dataSourceSchema,
-  dataSourceUiSchema,
-  httpUiSchema,
-  findEnvVars,
-  isTypedDataSource,
-  parseYamlStrings,
-  runnerDataSourceSchema,
-  yamlPathsOf,
-  YamlFieldError,
-} from "../../schemas/kinds";
+import { CONNECTION_BLOCK, DATA_SOURCE_TYPES, brokerOptions, dataSourceSchema, dataSourceUiSchema, httpUiSchema, findEnvVars, isTypedDataSource, parseYamlStrings, runnerDataSourceSchema, yamlPathsOf, YamlFieldError } from "../../schemas/kinds";
 import type { CatalogInput, DataSourceType, TypedDataSourceType } from "../../schemas/kinds";
 import { ConnectionTest } from "./ConnectionTest";
 import { PresetDiscovery } from "./PresetDiscovery";
@@ -382,19 +363,8 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   ) => {
     const envelope = toEnvelope(project, as, form, isTypedDataSource(as) ? undefined : runnerCatalogInput);
     const body = (draftRef ? { ...envelope, draft: draftRef } : envelope);
-    const query = dry ? { dryRun: "All" } : undefined;
     const name = editing?.metadata.name;
-    return unwrap(
-      name === undefined
-        ? await api.POST("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: PLURAL }, query },
-            body,
-          })
-        : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
-            params: { path: { project, plural: PLURAL, name }, query },
-            body,
-          }),
-    );
+    return proposeManifest(project, PLURAL, body, { create: name === undefined, dryRun: dry, name });
   };
 
   const reportError = (err: unknown) => {

@@ -805,6 +805,16 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
     );
     let addressed = get(&state, Mode::Shared, "root", "/api/v1/projects('helsinki')").await;
     assert_eq!(addressed.status, StatusCode::OK, "{}", addressed.text);
+    // A manifest keyed with its project names that project's Organization too (T-7073): the UI
+    // reads one and binds its writes there.
+    let keyed = "/api/v1/spaces(project='helsinki',name='air')?$select=name,spec";
+    let one = get(&state, Mode::Shared, "root", keyed).await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    let foreign = get(&state, Mode::Shared, "ba-only", keyed).await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+    // A key that names no project, or a navigation below one, decides nothing.
+    let unkeyed = get(&state, Mode::Shared, "root", "/api/v1/spaces('air')").await;
+    assert_eq!(unkeyed.status, StatusCode::NOT_FOUND, "{}", unkeyed.text);
 }
 
 /// A write as an action: POST with the session's CSRF token, `If-Match` when given.

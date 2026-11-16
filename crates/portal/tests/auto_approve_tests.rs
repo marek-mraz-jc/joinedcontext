@@ -318,6 +318,40 @@ async fn an_administrators_red_lane_removal_lands_with_the_name_typed_back() {
     assert!(message.contains("Risk: destructive"), "{message}");
 }
 
+/// PF-58, CC-39 over the Organization's OData service (T-7075): `propose_delete` takes the name
+/// typed back as its `confirm`, and the removal lands as the REST door's `?confirm=` lands it.
+#[tokio::test]
+async fn an_administrators_red_lane_removal_through_propose_delete_lands_with_the_name_typed_back() {
+    let (server, state) = forge(admin_of(&["ContextSpace"]), &[(SPACE_PATH, "deleted")]).await;
+    // The service serves the Organization the project belongs to (API/15 §6).
+    state.mirror.upsert(org("Organization", "bb", json!({})));
+    state.mirror.upsert(org(
+        "Project",
+        "ovzdusie",
+        json!({ "organizationRef": { "name": "bb" } }),
+    ));
+    let config = state.config.clone();
+    let response = server::app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/spaces(project='ovzdusie',name='mobility')/JoinedContext.Portal.propose_delete")
+                .header(header::COOKIE, cookies(&config))
+                .header(CSRF_HEADER, CSRF)
+                .header(header::IF_MATCH, "*")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "confirm": "mobility" }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    let change = change_of(response).await;
+    assert_eq!(change.status.phase, ChangePhase::Deploying);
+    let message = merge_message(&server).await.expect("merged at propose");
+    assert!(message.contains("Risk: destructive"), "{message}");
+}
+
 /// CC-39: without the typed name nothing red is merged; the change waits at its approval page,
 /// where the name is typed.
 #[tokio::test]

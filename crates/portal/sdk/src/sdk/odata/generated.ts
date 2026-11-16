@@ -1066,9 +1066,9 @@ export interface Actions {
   portal_secret_set: { body?: unknown };
   portal_serviceaccount_revoke: { account: string; body?: unknown };
   portal_serviceaccount_secret_issue: { account: string };
-  propose_create: { manifest?: unknown; dryRun?: boolean };
-  propose_delete: { dryRun?: boolean };
-  propose_update: { manifest?: unknown; patch?: unknown; dryRun?: boolean };
+  propose_create: { manifest?: unknown; dryRun?: boolean; confirm?: string };
+  propose_delete: { dryRun?: boolean; confirm?: string };
+  propose_update: { manifest?: unknown; patch?: unknown; dryRun?: boolean; confirm?: string };
   reject: { reason?: string };
 }
 

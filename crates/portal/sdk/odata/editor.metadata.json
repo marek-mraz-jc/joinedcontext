@@ -2880,6 +2880,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -2901,6 +2906,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -2920,6 +2930,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -2951,6 +2966,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -2980,6 +3000,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {

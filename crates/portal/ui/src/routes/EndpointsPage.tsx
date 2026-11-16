@@ -1,4 +1,4 @@
-import { listManifests } from "../api/odata";
+import { listManifests, proposeManifest } from "../api/odata";
 import { FormHeading, useFormRoute } from "../components/forms/FormRoute";
 import { CopyUrlButton } from "../components/endpoints/links";
 import { ConnectAssistant } from "../components/endpoints/ConnectAssistant";
@@ -7,7 +7,7 @@ import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
+import { problemOf, queryKeys, whilePending } from "../api/client";
 import { importManifests, proposeChecked } from "../api/proposal";
 import { asManifests, isChange, localized, overlay, plainTitle, refName } from "../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../api/manifest";
@@ -35,27 +35,10 @@ import { SaveAsResourceAction } from "../components/SaveAsDialog";
 import { WorkOnCopyAction } from "../components/WorkOnCopyDialog";
 import { ExportButton } from "../components/export/ExportButton";
 import { SchemaProjectionPanel } from "../pages/endpoints/SchemaProjectionPanel";
-import {
-  endpointUrl,
-  alwaysServed,
-  RepresentationSummary,
-  servedRepresentations,
-} from "../components/endpoints/links";
+import { endpointUrl, alwaysServed, RepresentationSummary, servedRepresentations } from "../components/endpoints/links";
 import { useBranding } from "../branding";
-import {
-  admits,
-  referenceManifest,
-  SharedWithBadge,
-  SPACE_LABEL,
-  spaceOf,
-} from "../components/endpoints/sharing";
-import {
-  ALWAYS_ON_REPRESENTATIONS,
-  endpointSchema,
-  endpointUiSchema,
-  generateSlug,
-  REPRESENTATIONS,
-} from "../schemas/kinds";
+import { admits, referenceManifest, SharedWithBadge, SPACE_LABEL, spaceOf } from "../components/endpoints/sharing";
+import { ALWAYS_ON_REPRESENTATIONS, endpointSchema, endpointUiSchema, generateSlug, REPRESENTATIONS } from "../schemas/kinds";
 import { disabledRepresentations, surfaceFitQuery, surfaceGaps } from "../api/surfaceFit";
 import type { JsonSchema } from "../components/forms/types";
 import { ModelPicker } from "../pages/endpoints/ModelPicker";
@@ -69,18 +52,7 @@ import { isAnyClass, parseModel } from "../pages/models/linkml";
 import type { ModelPickerState } from "../pages/endpoints/ModelPicker";
 import { EndpointDataView } from "../components/entities/EndpointDataView";
 import { EndpointRefused, useEndpointAdmission } from "../components/endpoints/EndpointAdmission";
-import { CodeBlock,
-  buttonClass,
-  Alert,
-  Badge,
-  Button,
-  Dialog,
-  EmptyState,
-  Icon,
-  Input,
-  PageHeader,
-  safeHref,
-} from "../components/ui";
+import { CodeBlock, buttonClass, Alert, Badge, Button, Dialog, EmptyState, Icon, Input, PageHeader, safeHref } from "../components/ui";
 
 interface EndpointForm {
   name: string;
@@ -1070,12 +1042,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
         ...(draftRef ? { draft: draftRef } : {}),
         ...(bundle.length > 0 ? { bundle } : {}),
       };
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" }, query: { dryRun: "All" } },
-          body,
-        }),
-      );
+      return proposeManifest(project, "endpoints", body, { create: true, dryRun: true });
     },
     onSuccess: (result) => {
       const answer = result as { verdict?: Verdict };
@@ -1116,16 +1083,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
       }
       const envelope = endpointOf(form);
       const body = (draftRef ? { ...envelope, draft: draftRef } : envelope);
-      const result = create
-        ? await api.POST("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: "endpoints" } },
-            body,
-          })
-        : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
-            params: { path: { project, plural: "endpoints", name: form.name } },
-            body,
-          });
-      return unwrap(result);
+      return proposeManifest(project, "endpoints", body, { create, name: form.name });
     },
     onSuccess: (result) => {
       if (isChange(result)) {

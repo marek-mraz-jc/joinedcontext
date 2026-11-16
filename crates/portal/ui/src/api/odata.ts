@@ -115,6 +115,15 @@ interface Answers {
   jc_change_history: Answer<"list_change_history">;
   jc_endpoint_preview: Answer<"preview_endpoint">;
   jc_serviceaccount_access: Answer<"account_access">;
+  jc_syncsource_status: Answer<"status">;
+  jc_ckan_status: Answer<"get_status">;
+}
+
+/** Each action the UI calls whose answer is its REST door's, and that answer's shape. */
+interface ActionAnswers {
+  jc_syncsource_sync: RestAnswer<"sync_now">;
+  jc_syncsource_pause: RestAnswer<"pause">;
+  jc_datasource_discover: RestAnswer<"discover_datasource">;
 }
 
 /**
@@ -170,8 +179,19 @@ export function act<A extends keyof Actions & string>(
   bound: string,
   params: Actions[A],
   ifMatch?: string,
-): Promise<unknown> {
-  return refusedAs(client.act(name, bound, params, ifMatch));
+): Promise<A extends keyof ActionAnswers ? ActionAnswers[A] : unknown> {
+  return refusedAs(client.act(name, bound, params, ifMatch)) as Promise<
+    A extends keyof ActionAnswers ? ActionAnswers[A] : unknown
+  >;
+}
+
+/**
+ * The `@odata.etag` of project `project`'s row: the `If-Match` of a Change-proposing action bound
+ * to it (API/13 §2b), e.g. `jc_syncsource_detach`.
+ */
+export async function projectEtag(project: string): Promise<string | undefined> {
+  const row = (await refusedAs(client.get("projects", project))) as { "@odata.etag"?: string };
+  return row["@odata.etag"];
 }
 
 /** The address an action of project `project` is bound to. */
@@ -439,48 +459,57 @@ export function manifestBound(project: string, plural: ManifestSet, name: string
     : `${plural}(project=${quoted(project)},name=${quoted(name)})`;
 }
 
-/** The `If-Match` of a write: the one the page read the manifest with, else the row's current one. */
-async function currentEtag(
-  project: string,
-  plural: ManifestSet,
-  name: string,
-  ifMatch: string | undefined,
-): Promise<string | undefined> {
-  if (ifMatch) return ifMatch;
-  return manifestEtag(await readManifest(project, plural, name));
+/**
+ * The `If-Match` of a write: the ETag the page read the manifest with, else `*`, which writes as
+ * the REST door's PUT and DELETE without If-Match did (API/13 section 3).
+ */
+function matching(ifMatch: string | undefined): string {
+  return ifMatch ?? "*";
 }
 
 /**
  * Proposes `manifest` of `plural` in `project` as a Change, or checks it with `dryRun` (PF-57):
  * `propose_create` on the project, `propose_update` on the manifest with `If-Match` (API/13 §2a).
- * The answer is the REST door's: a Change, or with `dryRun` the check's verdict. An update a page
- * read no ETag for sends the manifest's current one, as the REST door's PUT without If-Match did.
+ * The answer is the REST door's: a Change, or with `dryRun` the check's verdict.
  */
 export async function proposeManifest(
   project: string,
-  plural: ManifestSet,
+  of: string,
   manifest: { metadata: { name: string } },
-  { create, dryRun = false, ifMatch }: { create: boolean; dryRun?: boolean; ifMatch?: string },
+  {
+    create,
+    dryRun = false,
+    ifMatch,
+    name = manifest.metadata.name,
+  }: {
+    create: boolean;
+    dryRun?: boolean;
+    ifMatch?: string;
+    /** The manifest an update replaces, when the page addresses it by another name than the body's. */
+    name?: string;
+  },
 ): Promise<unknown> {
+  const plural = manifestSet(of);
   if (create) {
     return refusedAs(client.act("propose_create", projectBound(project), { manifest, dryRun }));
   }
-  const name = manifest.metadata.name;
-  const tag = await currentEtag(project, plural, name, ifMatch);
-  return refusedAs(
-    client.act("propose_update", manifestBound(project, plural, name), { manifest, dryRun }, tag),
-  );
+  const bound = manifestBound(project, plural, name);
+  return refusedAs(client.act("propose_update", bound, { manifest, dryRun }, matching(ifMatch)));
 }
 
-/** Proposes deleting manifest `name` as a Change, or checks it with `dryRun` (`propose_delete`). */
+/**
+ * Proposes deleting manifest `name` as a Change, or checks it with `dryRun` (`propose_delete`);
+ * `confirm` is the name typed back, with which an administrator's own red-lane removal is
+ * approved as it is proposed (PF-58, CC-39).
+ */
 export async function proposeDelete(
   project: string,
-  plural: ManifestSet,
+  of: string,
   name: string,
-  { dryRun = false, ifMatch }: { dryRun?: boolean; ifMatch?: string } = {},
+  { dryRun = false, ifMatch, confirm }: { dryRun?: boolean; ifMatch?: string; confirm?: string } = {},
 ): Promise<unknown> {
-  const tag = await currentEtag(project, plural, name, ifMatch);
+  const bound = manifestBound(project, manifestSet(of), name);
   return refusedAs(
-    client.act("propose_delete", manifestBound(project, plural, name), { dryRun }, tag),
+    client.act("propose_delete", bound, { dryRun, ...(confirm ? { confirm } : {}) }, matching(ifMatch)),
   );
 }

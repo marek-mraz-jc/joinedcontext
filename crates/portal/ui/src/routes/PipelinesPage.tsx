@@ -1,4 +1,4 @@
-import { listManifests } from "../api/odata";
+import { listManifests, proposeManifest } from "../api/odata";
 import { AlertDialog } from "../components/AlertDialog";
 import { FlowMapView } from "../pages/pipelines/FlowMapView";
 import { Tabs, tabPanelProps } from "../components/ui/Tabs";
@@ -8,7 +8,7 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
+import { problemOf, queryKeys, whilePending } from "../api/client";
 import { asManifests, isChange, localized } from "../api/manifest";
 import type { Change, Manifest } from "../api/manifest";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
@@ -21,14 +21,7 @@ import { KpiEditorDialog } from "../pages/pipelines/KpiEditor";
 import { PipelineRejectedDialog } from "../pages/pipelines/PipelineRejected";
 import { PipelineRunsDialog } from "../pages/pipelines/PipelineRuns";
 import { PipelineHealthView } from "../pages/pipelines/PipelineHealth";
-import {
-  LastRunCell,
-  dataSourceOf,
-  proposeEnabled,
-  executionClass,
-  useLatestRuns,
-  useStreamCounters,
-} from "../pages/pipelines/PipelineOverview";
+import { LastRunCell, dataSourceOf, proposeEnabled, executionClass, useLatestRuns, useStreamCounters } from "../pages/pipelines/PipelineOverview";
 import type { PipelineSpec } from "../pages/pipelines/PipelineOverview";
 import type { PipelineForm, toEnvelope } from "../pages/pipelines/PipelineEditor";
 import { takeEditRequest, takePrefill } from "../assistant/state";
@@ -37,16 +30,7 @@ import { DeniedNote, PermissionGuard } from "../components/ui/PermissionGuard";
 import { EditResourceDialog } from "../components/EditResourceDialog";
 import { usePermissions } from "../api/permissions";
 import { proposeChecked } from "../api/proposal";
-import {
-  Alert,
-  Badge,
-  Button,
-  EmptyState,
-  Icon,
-  PageHeader,
-  Input,
-  Select,
-} from "../components/ui";
+import { Alert, Badge, Button, EmptyState, Icon, PageHeader, Input, Select } from "../components/ui";
 
 /**
  * Why a Live stream lands nothing, from its `StreamWriting` condition, or `null` when it writes
@@ -285,17 +269,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
       setFormError(null);
       const body = files ? { ...envelope, files } : draft ? { ...envelope, draft } : envelope;
       if (unchecked) return proposeChecked(project, "pipelines", body, true);
-      return unwrap(
-        name === null
-          ? await api.POST("/api/v1/projects/{project}/{plural}", {
-              params: { path: { project, plural: "pipelines" } },
-              body,
-            })
-          : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
-              params: { path: { project, plural: "pipelines", name } },
-              body,
-            }),
-      );
+      return proposeManifest(project, "pipelines", body, { create: name === null, name: name ?? undefined });
     },
     onSuccess: (result) => {
       if (isChange(result)) {
