@@ -40,6 +40,7 @@ fn sample_run(allows_write: bool, status: &str) -> RunContext {
         max_response_bytes: 1048576,
         max_egress_bytes_per_run: 0,
         created_by: "demo.steward@hel.fi".to_string(),
+        organization: None,
         model_name: "claude-3-7".to_string(),
         reasoning_effort: None,
     }

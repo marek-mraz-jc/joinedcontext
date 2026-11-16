@@ -798,6 +798,12 @@ pub struct AppClientSync {
     host: String,
     /// Where a run records the `app-*` clients it may not write, for the write doors (AP-114).
     foreign: Option<std::sync::Arc<super::foreign::ForeignNames>>,
+    /// The Organization whose own realm this is (T-7165): only the Apps of its projects get a
+    /// client here. `None`: the installation realm.
+    organization: Option<String>,
+    /// The Organizations with a realm of their own, whose Apps the installation realm leaves to
+    /// it (and removes the clients it held of them).
+    elsewhere: BTreeSet<String>,
 }
 
 impl AppClientSync {
@@ -815,7 +821,30 @@ impl AppClientSync {
             members: None,
             host,
             foreign: None,
+            organization: None,
+            elsewhere: BTreeSet::new(),
         })
+    }
+
+    /// Makes this the sync of `organization`'s own realm (T-7165).
+    pub fn for_organization(mut self, organization: &str) -> Self {
+        self.organization = Some(organization.to_owned());
+        self
+    }
+
+    /// Leaves the Apps of `organizations` to their own realms (T-7165).
+    pub fn without(mut self, organizations: impl IntoIterator<Item = String>) -> Self {
+        self.elsewhere.extend(organizations);
+        self
+    }
+
+    /// Whether the App of `project` has its client in this realm.
+    fn holds(&self, mirror: &Mirror, project: &str) -> bool {
+        let owner = crate::permissions::organization_of(mirror, project);
+        match &self.organization {
+            Some(organization) => owner.as_deref() == Some(organization.as_str()),
+            None => owner.is_none_or(|owner| !self.elsewhere.contains(&owner)),
+        }
     }
 
     /// Looks up the App's groups and users and writes their role mappings as this client, in
@@ -1076,7 +1105,8 @@ impl AppClientSync {
             None => Ok(token.clone()),
         };
 
-        let apps = published(mirror, &self.host);
+        let mut apps = published(mirror, &self.host);
+        apps.retain(|app| self.holds(mirror, &app.project));
         let wanted: BTreeSet<String> = apps.iter().map(|app| client_id(&app.name)).collect();
         let mut index = RealmIndex::default();
         for app in &apps {

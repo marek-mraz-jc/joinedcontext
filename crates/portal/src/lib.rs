@@ -57,6 +57,7 @@ pub use ops::drafts;
 pub use ops::verdict;
 pub mod costs;
 pub mod csp;
+pub mod host_registry;
 pub mod mqtt_allowance;
 pub mod mqtt_capture;
 pub mod mqtt_roles;

@@ -91,11 +91,11 @@ const NAME: (&str, Place) = ("name", Place::Path);
 const RUN: (&str, Place) = ("id", Place::Path);
 const QUESTION: (&str, Place) = ("id", Place::Path);
 const PROJECT_NAME: (&str, Place) = ("projectName", Place::Path);
-const VERSION: (&str, Place) = ("version", Place::Path);
 const SPACE_FILTER: (&str, Place) = ("space", Place::Query("Edm.String"));
 const VIEW: (&str, Place) = ("id", Place::Path);
 const CONNECTOR: (&str, Place) = ("id", Place::Path);
 const DAYS: (&str, Place) = ("days", Place::Query("Edm.Int32"));
+const VERSION: (&str, Place) = ("version", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(

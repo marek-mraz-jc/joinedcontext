@@ -59,6 +59,7 @@ fn run_with(ticket_hash: String) -> RunContext {
         max_response_bytes: 1_048_576,
         max_egress_bytes_per_run: 0,
         created_by: "demo.steward@hel.fi".to_owned(),
+        organization: None,
         model_name: "claude-3-7".to_owned(),
         reasoning_effort: None,
     }
