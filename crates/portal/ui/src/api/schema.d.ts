@@ -3555,7 +3555,7 @@ export interface paths {
         };
         /**
          * List Stored Conversations
-         * @description The project's stored assistant conversations, redacted, newest first or the most expensive first, with the cursor of the next page (API/05 §3.1). Needs `approve` on AssistantDeployment; every call is recorded (API/01 §34, AG-99).
+         * @description The project's stored assistant conversations, redacted, newest first or the most expensive first, with the cursor of the next page (API/05 §3.1). Needs `approve` on AssistantDeployment; every call is recorded (API/01 §34, AG-99). With no knowledge assistant configured: no items and `assistant: no-assistant`.
          */
         get: operations["list_conversations"];
         put?: never;
@@ -3759,7 +3759,7 @@ export interface paths {
         };
         /**
          * List Knowledge Sources
-         * @description Every KnowledgeSource the project declares, with what the assistant holds of it: pages, documents, passages, the last crawl and the last job; `state: not-crawled` before its first crawl (API/01 §34).
+         * @description Every KnowledgeSource the project declares, with what the assistant holds of it: pages, documents, passages, the last crawl and the last job; `state: not-crawled` before its first crawl, `state: no-assistant` on each when this Portal has no knowledge assistant (API/01 §34).
          */
         get: operations["list_sources"];
         put?: never;
