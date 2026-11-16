@@ -108,6 +108,16 @@ pub trait World {
     fn issued_last_week(&self, domain: &str) -> Result<usize, String>;
     /// cert-manager's Certificates; `None` without `--kubeconfig`.
     fn certificates(&self) -> Option<Result<Vec<CertificateState>, String>>;
+    /// The host registry's rows (T-7129 §1); `None` where no Portal database is named.
+    fn registry(&self) -> Option<Result<Vec<RegistryRow>, String>>;
+}
+
+/// One row of the host registry (table `organization_hosts`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryRow {
+    pub host: String,
+    pub organization: String,
+    pub state: String,
 }
 
 /// One origin of an Organization.
@@ -274,6 +284,8 @@ struct Checks {
     hosts: Vec<(String, String)>,
     domains: BTreeSet<String>,
     names: BTreeSet<String>,
+    /// Each Organization host jc.toml names and its Organization.
+    owners: BTreeMap<String, String>,
 }
 
 fn report(file: &DomainsFile, edge: &[IpAddr], zone: Option<&str>, world: &dyn World) -> Report {
@@ -358,13 +370,47 @@ fn report(file: &DomainsFile, edge: &[IpAddr], zone: Option<&str>, world: &dyn W
         ],
         domains: BTreeSet::from([registrable(&base)]),
         names: BTreeSet::from([base.clone(), layout.login.clone()]),
+        owners: BTreeMap::new(),
     };
     for org in &file.organizations {
         organization(&mut r, &layout, org, zone, &sign_in_hosts, &mut acc);
     }
+    registry(&mut r, world, &acc.owners);
     resolution(&mut r, world, &edge, &edge_list, &acc);
     certificates(&mut r, world, &acc.names);
     r
+}
+
+/// Where a Portal database is named: each jc.toml host against its registry row. A removed row
+/// is a tombstone the seed respects, so the jc.toml entry is stale and goes in the next
+/// deployment change; a row of another Organization means jc.toml and the registry disagree.
+fn registry(r: &mut Report, world: &dyn World, owners: &BTreeMap<String, String>) {
+    let rows = match world.registry() {
+        None => return,
+        Some(Err(e)) => {
+            r.say(Level::Error, format!("host registry unreadable: {e}"));
+            return;
+        }
+        Some(Ok(rows)) => rows,
+    };
+    for (host, org) in owners {
+        match rows.iter().find(|row| &row.host == host) {
+            Some(row) if row.state == "removed" => r.say(
+                Level::Error,
+                format!(
+                    "{host}: removed in the host registry, still in jc.toml for {org}: jc does not serve it again; delete it from jc.toml"
+                ),
+            ),
+            Some(row) if &row.organization != org => r.say(
+                Level::Error,
+                format!(
+                    "{host}: the host registry gives it to {}, jc.toml to {org}; jc keeps the registry's",
+                    row.organization
+                ),
+            ),
+            _ => {}
+        }
+    }
 }
 
 /// One Organization: its origins, what the merged ones lose, its records and the refusals.
@@ -424,6 +470,7 @@ fn organization(
             {
                 r.say(Level::Error, format!("  {host}: the label '{label}' is reserved for the platform; choose another host"));
             }
+            acc.owners.insert(host.to_owned(), org.name.clone());
             if !acc.names.insert(host.to_owned()) {
                 r.say(
                     Level::Error,
@@ -464,6 +511,7 @@ fn organization(
             }
         }
         let working = bare(&origins[0].host).to_owned();
+        acc.owners.insert(working.clone(), org.name.clone());
         if sign_in_hosts.contains(&working) {
             r.say(Level::Warn, format!(
                 "  sign-in is still on the working host {working}: passwords and second factors are typed there; it moves to {} when the operator moves its issuer (API/15 §6)",
@@ -808,6 +856,39 @@ impl World for Net {
         let kubeconfig = self.kubeconfig.as_ref()?;
         Some(kubectl_certificates(kubeconfig))
     }
+
+    /// Read with the Portal's own `JC_PORTAL_DATABASE_URL` where it is set (in jc's pod); the
+    /// address is never printed, a refused connection says only that.
+    fn registry(&self) -> Option<Result<Vec<RegistryRow>, String>> {
+        let url = std::env::var("JC_PORTAL_DATABASE_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty())?;
+        Some(self.rt.block_on(async {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(TIMEOUT)
+                .connect(&url)
+                .await
+                .map_err(|_| {
+                    "the Portal's database (JC_PORTAL_DATABASE_URL) refused the connection"
+                        .to_owned()
+                })?;
+            let rows: Vec<(String, String, String)> = sqlx::query_as(
+                "SELECT host, organization, state FROM organization_hosts ORDER BY host",
+            )
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(rows
+                .into_iter()
+                .map(|(host, organization, state)| RegistryRow {
+                    host,
+                    organization,
+                    state,
+                })
+                .collect())
+        }))
+    }
 }
 
 /// `YYYY-MM-DDTHH:MM:SS` seven days ago (UTC), comparable as text with crt.sh's `not_before`.
@@ -924,6 +1005,7 @@ mod tests {
         caa: HashMap<String, Vec<String>>,
         ct: HashMap<String, usize>,
         certs: Option<Vec<CertificateState>>,
+        registry: Option<Vec<RegistryRow>>,
     }
 
     impl Stub {
@@ -955,6 +1037,9 @@ mod tests {
         }
         fn certificates(&self) -> Option<Result<Vec<CertificateState>, String>> {
             self.certs.clone().map(Ok)
+        }
+        fn registry(&self) -> Option<Result<Vec<RegistryRow>, String>> {
+            self.registry.clone().map(Ok)
         }
     }
 
@@ -1033,6 +1118,30 @@ hosts = { portal = "smartcity.nitra.sk" }
             !out.contains("never printed") && !out.contains("/secrets/"),
             "{out}"
         );
+    }
+
+    /// T-7135 (T-7129 §1): a host removed in the registry and still in jc.toml is named, so the
+    /// stale entry leaves jc.toml; a host the registry gives another Organization too.
+    #[test]
+    fn a_host_removed_in_the_registry_is_named_as_stale() {
+        let row = |host: &str, organization: &str, state: &str| RegistryRow {
+            host: host.into(),
+            organization: organization.into(),
+            state: state.into(),
+        };
+        let mut world = Stub::pointed(ALL);
+        world.registry = Some(vec![
+            row("smartcity.bbsk.sk", "bbsk", "served"),
+            row("opendata.bbsk.sk", "bbsk", "removed"),
+            row("api.bbsk.sk", "hel", "served"),
+        ]);
+        let r = report_for(FIVE, &[], Some("acme.example.net"), &world);
+        let errors = errors(&r);
+        assert!(errors.iter().any(|e| e.contains("opendata.bbsk.sk: removed in the host registry, still in jc.toml for bbsk")), "{errors:?}");
+        assert!(errors.iter().any(|e| e.contains("api.bbsk.sk: the host registry gives it to hel, jc.toml to bbsk")), "{errors:?}");
+        assert!(!errors.iter().any(|e| e.contains("smartcity.bbsk.sk")), "{errors:?}");
+        world.registry = Some(vec![row("smartcity.bbsk.sk", "bbsk", "served")]);
+        assert!(!report_for(FIVE, &[], Some("acme.example.net"), &world).failed());
     }
 
     #[test]
