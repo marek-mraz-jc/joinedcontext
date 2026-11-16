@@ -315,12 +315,20 @@ export function AppsCatalog({ project }: { project: string }): JSX.Element {
   if (list.isError) {
     return (
       <div className="space-y-4">
-        {/* A role that may not add an app is told so here too, where the generator is left out. */}
+        {/* A role that may not add an app meets the generator closed with its reason, as on every
+            list; one that may is shown it again once the catalogue it builds into has loaded. */}
         <PageHeader
           compact
           title={t("apps.title")}
           description={t("apps.subtitle")}
           note={<DeniedNote project={project} kind="App" verb="propose" />}
+          actions={
+            mayBuild ? undefined : (
+              <PermissionGuard project={project} kind="App" verb="propose">
+                <Button>{t("apps.newAction")}</Button>
+              </PermissionGuard>
+            )
+          }
         />
         <PageFailed
           error={list.error}

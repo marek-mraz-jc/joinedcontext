@@ -243,6 +243,7 @@ for (const width of [1440, 400]) {
       const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
       await expect(page.getByText(/Your role in helsinki cannot add or change applications\./).first()).toBeVisible();
+      await expect(page.getByRole("button", { name: "Generate your own app" }).first()).toBeDisabled();
       await shoot(page, "apps-refused", width, refused);
       await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { [APPS]: failure });

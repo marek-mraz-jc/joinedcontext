@@ -284,7 +284,7 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
     ) : null;
   const own = <GridToolbar caption={caption} rows={rows} all={all} columns={columns} filters={filters} setFilters={setFilters} />;
   const tools = props.tools ? (
-    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+    <div className="flex flex-wrap items-center gap-2">
       {props.tools}
       {own}
     </div>
