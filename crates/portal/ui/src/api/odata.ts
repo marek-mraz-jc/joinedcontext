@@ -53,6 +53,12 @@ async function portalFetch(
 }
 
 const client = odata(ODATA_ROOT, { transport: originTransport(portalFetch) });
+/** The same service for a report sent as the tab closes: `keepalive` lets it finish (T-7101). */
+const closingClient = odata(ODATA_ROOT, {
+  transport: originTransport((input, init) =>
+    portalFetch(input, { ...init, keepalive: true }),
+  ),
+});
 
 /**
  * A refusal of the service as every page reads one: an ApiError whose problem holds the OData
@@ -128,6 +134,7 @@ interface Readings {
   limits: Answer<"get_limits">;
   brokers: Answer<"list_brokers">;
   agents: Answer<"list_agents">;
+  agentActivity: Answer<"list_agent_activity">;
   costs: Answer<"get_costs">;
   addresses: Answer<"list_addresses">;
   dataAccess: Answer<"get_data_access">;
@@ -208,14 +215,18 @@ export function door<F extends Door<keyof Functions & string>>(
   );
 }
 
-/** A Portal door's action, e.g. `doorAction("portal_person_reset_password", { person: id })`. */
+/**
+ * A Portal door's action, e.g. `doorAction("portal_person_reset_password", { person: id })`;
+ * `closing` sends it with `keepalive`, for a report the tab makes as it is hidden or closed.
+ */
 export async function doorAction<A extends Door<keyof Actions & string>>(
   name: A,
   params: Actions[A],
   project?: string,
+  closing = false,
 ): Promise<unknown> {
   const value = await refusedAs(
-    client.act(
+    (closing ? closingClient : client).act(
       name,
       project === undefined ? ORGANIZATION : projectBound(project),
       params,

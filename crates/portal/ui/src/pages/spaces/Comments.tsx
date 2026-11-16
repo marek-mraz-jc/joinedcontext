@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { api, unwrap } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { Alert, Button, Icon, Textarea } from "../../components/ui";
 import { sameOriginPath } from "../../components/ui/safeHref";
@@ -208,11 +209,11 @@ export function NotificationsMenu({ project, waiting = 0 }: { project: string; w
     retry: false,
     // A mention is not urgent: a minute is soon enough, and the menu reads again when opened.
     refetchInterval: 60_000,
-    queryFn: async () => (await unwrap(await api.GET("/api/v1/notifications", {}))) as Notifications,
+    queryFn: async () => (await door("portal_notification_list", {})) as Notifications,
   });
   const read = useMutation({
     mutationFn: async (id: number) => {
-      await unwrap(await api.POST("/api/v1/notifications/{id}/read", { params: { path: { id } } }));
+      await doorAction("portal_notification_read", { notification: String(id) });
     },
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY });

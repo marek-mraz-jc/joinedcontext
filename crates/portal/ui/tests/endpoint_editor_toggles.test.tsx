@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { doorsAsRest } from "./odata";
 import i18n from "../src/i18n";
 import { expectOpen } from "./checks";
 import en from "../src/locales/en.json";
@@ -108,6 +109,7 @@ function renderEndpoints(endpoints: typeof ENDPOINTS = ENDPOINTS) {
     return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] });
   });
   vi.stubGlobal("fetch", fetchMock);
+  doorsAsRest();
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(

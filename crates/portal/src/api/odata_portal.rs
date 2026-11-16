@@ -90,7 +90,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 22] = [
+pub static DOORS: [Door; 23] = [
     door(
         "portal_people_remove",
         Org,
@@ -138,6 +138,14 @@ pub static DOORS: [Door; 22] = [
         "/organization/people/{person}/remove-second-factor",
         &[PERSON],
         PEOPLE_WRITE,
+    ),
+    door(
+        "portal_person_delete",
+        Org,
+        Method::DELETE,
+        "/organization/people/{person}",
+        &[PERSON],
+        Who::People(jc_core::kinds::Verb::Delete),
     ),
     door(
         "portal_person_consent_revoke",

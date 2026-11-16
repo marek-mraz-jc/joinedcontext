@@ -1400,6 +1400,11 @@
             "$Type": "Edm.String"
           },
           {
+            "$Name": "inProject",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
             "$Name": "limit",
             "$Nullable": true,
             "$Type": "Edm.Int64"
@@ -1416,6 +1421,36 @@
           },
           {
             "$Name": "person",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "profile",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "run",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "since",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "until",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "verdict",
             "$Nullable": true,
             "$Type": "Edm.String"
           }

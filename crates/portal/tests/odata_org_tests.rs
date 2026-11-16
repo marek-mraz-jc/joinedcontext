@@ -1625,7 +1625,7 @@ fn timeless(value: Value) -> Value {
 async fn the_organizations_readings_answer_as_their_rest_doors() {
     let state = state();
     let mode = Mode::Host("hel");
-    let cases: [(Value, &str); 13] = [
+    let cases: [(Value, &str); 15] = [
         (json!({ "aspect": "projects" }), "/api/v1/projects"),
         (json!({ "aspect": "setup" }), "/api/v1/organization/setup"),
         (json!({ "aspect": "health" }), "/api/v1/organization/health"),
@@ -1642,6 +1642,19 @@ async fn the_organizations_readings_answer_as_their_rest_doors() {
         (
             json!({ "aspect": "agentActivity", "limit": 5 }),
             "/api/v1/organization/agents/activity?limit=5",
+        ),
+        // T-7101: the Agent activity page's filters, and a malformed one refused alike.
+        (
+            json!({ "aspect": "agentActivity", "inProject": "helsinki", "profile": "steward",
+                    "run": "r1", "person": "sub-ada", "space": "air", "verdict": "refused",
+                    "since": "2026-11-01T00:00:00Z", "until": "2026-11-02T00:00:00Z" }),
+            "/api/v1/organization/agents/activity?project=helsinki&profile=steward&run=r1\
+             &person=sub-ada&space=air&verdict=refused&since=2026-11-01T00:00:00Z\
+             &until=2026-11-02T00:00:00Z",
+        ),
+        (
+            json!({ "aspect": "agentActivity", "since": "yesterday" }),
+            "/api/v1/organization/agents/activity?since=yesterday",
         ),
         (
             json!({ "aspect": "costs", "month": "2026-09" }),
