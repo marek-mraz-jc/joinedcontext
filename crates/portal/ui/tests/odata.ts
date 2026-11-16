@@ -277,6 +277,9 @@ const OPERATIONS: Record<string, Door> = {
   portal_app_checks: ["GET", "/projects/{project}/app-checks"],
   portal_app_rename_shapes: ["POST", "/projects/{project}/apps/rename-shapes"],
   portal_app_from_template: ["POST", "/projects/{project}/app-templates/{name}/apps"],
+  // The Release tab's registry entry and its repoint (T-7166).
+  portal_project_registry: ["GET", "/projects/{project}/registry"],
+  portal_project_repoint: ["PUT", "/projects/{project}/registry"],
   portal_app_templates: ["GET", "/app-templates"],
   portal_blueprint_list: ["GET", "/blueprints"],
   portal_access_request_approve: ["POST", "/projects/{project}/access-requests/{id}/approve"],

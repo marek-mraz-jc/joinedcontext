@@ -1048,6 +1048,7 @@ export interface Functions {
   portal_portal_datasets: { name: string; offset?: number; limit?: number };
   portal_portal_source_runs: { name: string; source: string };
   portal_preferences_get: Record<string, never>;
+  portal_project_registry: Record<string, never>;
   portal_secret_list: Record<string, never>;
   portal_space_quality: { space: string };
   portal_space_quality_checks: { space: string };
@@ -1184,6 +1185,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_portal_datasets: ["Organization"],
   portal_portal_source_runs: ["Organization"],
   portal_preferences_get: ["Organization"],
+  portal_project_registry: ["Project"],
   portal_secret_list: ["Project"],
   portal_space_quality: ["Project"],
   portal_space_quality_checks: ["Project"],
@@ -1312,6 +1314,7 @@ export interface Actions {
   portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
   portal_preferences_set: { body?: unknown };
+  portal_project_repoint: { body?: unknown };
   portal_run_answer: { id: string; body?: unknown };
   portal_run_message: { id: string; body?: unknown };
   portal_secret_set: { body?: unknown };
@@ -1444,6 +1447,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],
   portal_preferences_set: ["Organization"],
+  portal_project_repoint: ["Project"],
   portal_run_answer: ["Project"],
   portal_run_message: ["Project"],
   portal_secret_set: ["Project"],

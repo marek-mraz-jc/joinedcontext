@@ -20,11 +20,89 @@ function sources(): [string, string][] {
     .map((entry) => [entry.split("\\").join("/"), readFileSync(join(SRC, entry), "utf8")]);
 }
 
-/** Every REST path the UI's source writes, once per place; the per-project OData alias is no REST door. */
-export function restCalls(files: [string, string][]): string[] {
+/** A path with each `{name}` and `${expression}` segment written `{}`, and no query. */
+export function shape(path: string): string {
+  return path
+    .replace(/\$\{[^}]*\}?/g, "{}")
+    .replace(/\{[^}]*\}/g, "{}")
+    .replace(/\?.*$/, "");
+}
+
+/**
+ * The REST addresses the UI keeps (API/13 §2b): no OData operation can carry them, so they are not
+ * counted. Each entry names the class and its shapes; a shape no source writes any more fails the
+ * last test, so the list only ever names what is in use.
+ */
+export const STAY_REST: { why: string; shapes: string[] }[] = [
+  {
+    why: "OIDC sign-in, sign-out, the session probe and the Apps' single sign-on check",
+    shapes: [
+      "/api/v1/auth/login",
+      "/api/v1/auth/logout",
+      "/api/v1/auth/me",
+      "/api/v1/auth/sso-check",
+      "/api/v1/auth/sso-check/done",
+    ],
+  },
+  {
+    why: "branding, read before sign-in; the logo and favicon are images loaded by their address",
+    shapes: ["/api/v1/branding", "/api/v1/branding/logo", "/api/v1/branding/favicon"],
+  },
+  {
+    why: "the public catalogue, read by a visitor with no session, which the service does not serve",
+    shapes: [
+      "/api/v1/catalogue",
+      "/api/v1/catalogue/readable",
+      "/api/v1/catalogue/datasets/{}",
+      "/api/v1/catalogue/datasets/{}/map",
+      "/api/v1/catalogue/endpoints/{}/standards",
+    ],
+  },
+  {
+    why: "an image or a map style the browser or MapLibre loads by its address",
+    shapes: ["/api/v1/app-templates/{}/screenshot/1440", "/api/v1/projects/{}/basemap/default/style.json"],
+  },
+  {
+    why: "server-sent event streams: a run's, the drafts', the activity feed's, a paired tab's, a space's live view, an assistant's answer",
+    shapes: [
+      "/api/v1/projects/{}/agent-runs/{}/events",
+      "/api/v1/projects/{}/drafts/events",
+      "/api/v1/projects/{}/activity/stream{}",
+      "/api/v1/connectors/{}/tab/{}/events",
+      "/api/v1/projects/{}/spaces/{}/live",
+      "/api/v1/projects/{}/knowledge/deployments/{}/chat",
+    ],
+  },
+  {
+    why: "file downloads: CSV exports and archives saved as files",
+    shapes: [
+      "/api/v1/projects/{}/changes/history/export",
+      "/api/v1/projects/{}/pipelines/{}/rejected/export",
+      "/api/v1/projects/{}/export",
+      "/api/v1/projects/{}/apps/{}/export",
+      "/api/v1/projects/{}/usage/endpoints/export",
+      "/api/v1/projects/{}/knowledge/conversations/export",
+      "/api/v1/organization/costs/export",
+    ],
+  },
+  {
+    why: "uploads that send a file's bytes: a bundle or archive import, a knowledge source's file",
+    shapes: ["/api/v1/projects/{}/import", "/api/v1/projects/{}/knowledge/sources/{}/files"],
+  },
+];
+
+const KEPT = new Set(STAY_REST.flatMap(({ shapes }) => shapes));
+
+/** Every REST address the UI writes, once per place, kept ones included; the per-project OData alias is no REST door. */
+export function writtenPaths(files: [string, string][]): string[] {
   return files.flatMap(([, text]) =>
     [...text.matchAll(/\/api\/v1\/[^'"` ]+/g)].map(([path]) => path).filter((path) => !path.includes("/odata")),
   );
+}
+
+/** Every REST path the UI's source writes, once per place, but the kept ones of `STAY_REST`. */
+export function restCalls(files: [string, string][]): string[] {
+  return writtenPaths(files).filter((path) => !KEPT.has(shape(path)));
 }
 
 /** Every distinct REST path the UI's source names. */
@@ -69,6 +147,18 @@ describe("the OData ratchet of the Portal UI", () => {
         ? "a new /api/v1 REST call in ui/src: read through the OData service (ui/src/api/odata.ts) instead"
         : `the UI writes ${count} REST calls now: lower restCalls in tests/odata-ratchet.json to ${count}`,
     ).toBe(ratchet.restCalls);
+  });
+
+  it("keeps only the REST addresses API/13 §2b names, and each kept shape is still written", () => {
+    expect(shape("/api/v1/projects/${encodeURIComponent(project)}/spaces/${encodeURIComponent(space)}/live?type=x")).toBe(
+      "/api/v1/projects/{}/spaces/{}/live",
+    );
+    expect(restCalls([["a.ts", 'api.GET("/api/v1/auth/me"); api.GET("/api/v1/auth/people");']])).toEqual([
+      "/api/v1/auth/people",
+    ]);
+    const written = new Set(writtenPaths(files).map(shape));
+    const unused = [...KEPT].filter((kept) => !written.has(kept));
+    expect(unused, "no source writes these kept addresses any more: remove them from STAY_REST").toEqual([]);
   });
 
   it("sends a request with fetch only from the files the ratchet still lists", () => {

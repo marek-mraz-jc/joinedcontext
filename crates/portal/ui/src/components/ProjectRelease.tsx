@@ -2,9 +2,10 @@ import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../api/client";
+import { ApiError } from "../api/client";
 import type { Change } from "../api/manifest";
 import { ORG_NAMESPACE } from "../api/manifest";
+import { door, doorAction } from "../api/odata";
 import { usePermissions } from "../api/permissions";
 import { ChangeNotice } from "./ChangeNotice";
 import { numberProblems, ParameterFields, parameterValues } from "./ImportProjectDialog";
@@ -32,7 +33,7 @@ function failureOf(error: unknown, fallback: string): string | null {
 /**
  * Pinning a release (PF-86, CC-88, T-3432): the ref to run, offered from the repository's tags,
  * and this deployment's values, drawn from the declarations; then one
- * `PUT /api/v1/projects/{project}/registry`, which proposes the registry entry as a red-lane
+ * `portal_project_repoint` (the REST `PUT …/registry`), which proposes the registry entry as a red-lane
  * organization change.
  */
 function PinReleaseDialog({
@@ -62,12 +63,11 @@ function PinReleaseDialog({
       if (wrong.length > 0) {
         throw new Error(t("projectImport.notNumber", { names: wrong.join(", ") }));
       }
-      return unwrap(
-        await api.PUT("/api/v1/projects/{project}/registry", {
-          params: { path: { project } },
-          body: { ref, parameters: parameterValues(entry.declarations, typed) },
-        }),
-      );
+      return (await doorAction(
+        "portal_project_repoint",
+        { body: { ref, parameters: parameterValues(entry.declarations, typed) } },
+        project,
+      )) as Change;
     },
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: registryKey(project) });
@@ -157,11 +157,7 @@ export function ProjectRelease({ project }: { project: string }): JSX.Element {
   const entry = useQuery({
     queryKey: registryKey(project),
     queryFn: async (): Promise<Entry> =>
-      (await unwrap(
-        await api.GET("/api/v1/projects/{project}/registry", {
-          params: { path: { project } },
-        }),
-      )) as Entry,
+      (await door("portal_project_registry", {}, project)) as Entry,
   });
   const values = Object.entries(entry.data?.parameters ?? {});
   const external = entry.data !== undefined && entry.data.repository.name === undefined;
