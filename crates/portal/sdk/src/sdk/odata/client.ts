@@ -208,10 +208,22 @@ export class ODataClient {
    * JSON object passes: `call("jc_schema_get", "air", { kind: "Endpoint" })`.
    */
   async call<F extends keyof Functions & string>(name: F, project: string, params: Functions[F]): Promise<unknown> {
+    return this.invoke(`projects${keyPredicate(project)}`, name, params);
+  }
+
+  /**
+   * A function bound to the `Organization` singleton, the people's:
+   * `organizationCall("jc_person_list", { search: "ana" })`.
+   */
+  async organizationCall<F extends keyof Functions & string>(name: F, params: Functions[F]): Promise<unknown> {
+    return this.invoke("Organization", name, params);
+  }
+
+  private async invoke(bound: string, name: string, params: unknown): Promise<unknown> {
     const entries = Object.entries(params as Record<string, unknown>).filter(([, v]) => v !== undefined);
     const args = entries.map(([n]) => `${n}=@${n}`).join(",");
     const aliases = entries.map(([n, v]) => `@${n}=${encodeURIComponent(literal(v))}`).join("&");
-    const address = `projects${keyPredicate(project)}/${NAMESPACE}.${name}(${args})${aliases ? `?${aliases}` : ""}`;
+    const address = `${bound}/${NAMESPACE}.${name}(${args})${aliases ? `?${aliases}` : ""}`;
     const { body } = await this.send("GET", address);
     return (body as { value?: unknown })?.value;
   }

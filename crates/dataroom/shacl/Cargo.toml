@@ -13,3 +13,7 @@ dataroom-rdf = { path = "../rdf" }
 regex = "1.11.1"
 serde_json = "1.0.140"
 uuid = { version = "1.11.0", features = ["v4", "v7", "serde"] }
+
+[dev-dependencies]
+# The parity of linkml-model's check with its own SHACL rendering (G-20, tests/linkml_parity.rs).
+linkml-model = { path = "../../antares/crates/linkml-model" }

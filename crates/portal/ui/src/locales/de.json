@@ -2523,7 +2523,8 @@
         "url": "Geben Sie eine vollständige Adresse an, die mit https:// oder http:// beginnt.",
         "ckanDataset": "Das ist die Datensatzseite, keine Datei. Öffnen Sie dort die CSV- oder JSON-Ressource und kopieren Sie ihre Download-Adresse.",
         "layer": "Nennen Sie den zu lesenden Layer oder geben Sie die Adresse einer GeoJSON-Datei an.",
-        "records": "Geben Sie den Pfad als durch Punkte verbundene Namen an, zum Beispiel data.stations."
+        "records": "Geben Sie den Pfad als durch Punkte verbundene Namen an, zum Beispiel data.stations.",
+        "secretKey": "Geben Sie den Eintrag im Secret an, der die Zugangsdaten hält."
       }
     },
     "test": {
@@ -2616,6 +2617,64 @@
         "thing": "Thing"
       },
       "refused": "Bitten Sie eine Projektverwaltung um eine Rolle, die Datenquellen vorschlägt."
+    },
+    "wizard": {
+      "step": "{n}. {label}",
+      "kind": "Was Sie anbinden",
+      "address": "Adresse und Zugangsdaten",
+      "discover": "Aus dem Dienst wählen",
+      "pagingTitle": "Seiten",
+      "format": "Format",
+      "check": "Name und erste Zeilen",
+      "groups": {
+        "api": "Open-Data-API, Seite für Seite gelesen",
+        "file": "Eine Datei oder ein Feed unter einer Adresse",
+        "other": "Etwas anderes: ein Stream, ein Dateiserver, eine Queue, eine Datenbank oder ein Webhook"
+      },
+      "otherHelp": "Öffnet unten das vollständige Formular dieser Verbindung: MQTT, SFTP, Kafka, eine Datenbank und die anderen.",
+      "otherNone": "Verbindung wählen…",
+      "api": {
+        "ckan": "Alle Datensätze einer Organisation in einem CKAN-Portal.",
+        "arcgisFeature": "Die Objekte einer Ebene eines ArcGIS Feature Service.",
+        "odata": "Die Zeilen einer Entitätsmenge eines OData-v4-Dienstes.",
+        "wfs": "Alle Objekte eines WFS-2.0-Objekttyps als GeoJSON.",
+        "ogcFeatures": "Die Einträge einer OGC-API-Features-Sammlung.",
+        "sensorThings": "Die Things oder Datastreams eines SensorThings-Dienstes."
+      },
+      "apiUrl": "Adresse des Dienstes",
+      "apiUrlHelp": {
+        "ckan": "Die Adresse des Portals, zum Beispiel https://opendata-ajuntament.barcelona.cat/data.",
+        "arcgisFeature": "Die FeatureServer-Adresse, zum Beispiel https://services.example/arcgis/rest/services/Trees/FeatureServer.",
+        "odata": "Die Dienstwurzel mit .svc am Ende, zum Beispiel https://services.odata.org/V4/Northwind/Northwind.svc.",
+        "wfs": "Die WFS-Adresse vor dem Fragezeichen, zum Beispiel https://kartta.hel.fi/ws/geoserver/avoindata/wfs.",
+        "ogcFeatures": "Die Adresse der API, zum Beispiel https://demo.pygeoapi.io/master.",
+        "sensorThings": "Die Adresse mit Version, zum Beispiel https://iot.hamburg.de/v1.1."
+      },
+      "secret": "Zugangsdaten",
+      "secretPublic": "Keine: eine öffentliche Quelle",
+      "secretHelp": "Wählen Sie das Secret mit dem Schlüssel oder Token; ein Passwort wird hier nie eingegeben.",
+      "secretNone": "Die Datenquellen dieses Projekts nutzen noch kein Secret; eine öffentliche Quelle braucht keines. Eine Quelle mit Schlüssel bekommt ihr Secret im Formular unten.",
+      "secretKeyHelp": "Der Eintrag im Secret, der die Zugangsdaten hält, zum Beispiel token.",
+      "secretProbe": "Eine Quelle mit Zugangsdaten liest die Prüfung nicht; nach dem Speichern liest sie Verbindung testen.",
+      "pagingHint": "Liest die erste Antwort einmal auf dem Runner des Projekts und sagt, wie viele Seiten ein Lauf liest.",
+      "pagingButton": "Seitenaufteilung ermitteln",
+      "pagingRunning": "Lese die erste Antwort…",
+      "paging": {
+        "pages": "Liest {pages} Seiten zu {onPage} ({total} Datensätze).",
+        "more": "Liest Seiten zu {onPage}, bis der Dienst meldet, dass keine weiteren folgen.",
+        "walk": "Folgt der nächsten Seite, die der Dienst nennt, {onPage} Datensätze auf der ersten.",
+        "totalOnly": "Die erste Antwort nennt {total} Datensätze insgesamt, {onPage} auf dieser Seite, aber keine nächste Seite; legen Sie die Seitenaufteilung im Formular unten fest.",
+        "once": "Eine Antwort enthält alles: die Adresse wird pro Lauf einmal gelesen.",
+        "skipped": "Nicht zu ermitteln: {reason}. Versuchen Sie es erneut oder legen Sie die Seitenaufteilung im Formular unten fest."
+      },
+      "allPages": "Alle Seiten lesen",
+      "allPagesHint": "Schreibt die Seitenaufteilung ins Formular; ohne Haken wird nur die erste Seite gelesen.",
+      "presetPages": "Die API-Art teilt die Quelle selbst in Seiten, mit der Seitengröße, die der Dienst erlaubt, wenn Sie im Formular unten keine festlegen.",
+      "oneRead": "Eine Datei oder ein Feed wird bei jedem Lauf ganz gelesen: es gibt keine Seiten.",
+      "rows": "Ein Datensatz pro Zeile",
+      "rowsHint": "Jede CSV-Zeile erreicht die Pipeline als ein Datensatz mit den Spaltennamen der Kopfzeile.",
+      "handoff": "Pipeline auf {name} starten",
+      "picked": "Gewählt: {value}. Formular ausfüllen und prüfen schreibt es ins Formular unten."
     }
   },
   "pipelines": {
@@ -2976,7 +3035,23 @@
       "maskedKept": "{count, plural, one {# Datensatz bleibt in der Liste: ein Wert wurde als Geheimnis maskiert, und eine Wiederholung würde die Maske schreiben. Das nächste Lesen der Quelle bringt ihn erneut.} other {# Datensätze bleiben in der Liste: ein Wert wurde jeweils als Geheimnis maskiert, und eine Wiederholung würde die Maske schreiben. Das nächste Lesen der Quelle bringt sie erneut.}}",
       "newest": "Neueste",
       "older": "Ältere Datensätze",
-      "openRun": "Seinen Lauf öffnen"
+      "openRun": "Seinen Lauf öffnen",
+      "groups": {
+        "title": "Nach Regel",
+        "lead": "Alle aufbewahrten Datensätze nach verletzter Regel und Attribut, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe.",
+        "export": "CSV exportieren",
+        "exporting": "Wird exportiert…",
+        "exportHint": "Alle aufbewahrten Datensätze mit Regel und Grund, Geheimnisse maskiert und personenbezogene Attribute ausgelassen. Die Datei: {file}.",
+        "count": "{count, plural, one {# Datensatz} other {# Datensätze}}",
+        "allowed": "Das Modell erlaubt:",
+        "fix": {
+          "model": "Im Datenmodell beheben: Es lehnt dieses Attribut oder diesen Wert ab. Ist die Quelle richtig, erweitern Sie den Slot oder deklarieren Sie das Attribut.",
+          "mapping": "Im Mapping beheben: Es schreibt einen Wert falscher Form. Wandeln Sie ihn um oder bilden Sie ihn auf das ab, was der Slot annimmt.",
+          "step": "Den Schritt beheben: Ein Schritt der Pipeline ist an diesen Datensätzen gescheitert. Den Fehler zeigt der Lauf des Datensatzes.",
+          "runner": "Der Runner hat diese Datensätze ohne Modellregel abgelehnt. Seine Worte zeigt der Lauf des Datensatzes."
+        },
+        "example": "Beispiel"
+      }
     },
     "runs": {
       "open": "Läufe und Protokoll",
@@ -3174,6 +3249,24 @@
         "title": "Lebensdauer",
         "hint": "Wann die Entitäten oder einige ihrer Felder den Raum verlassen. Gespeichert als Lebensdauer der Pipeline, nie als Mapping-Code.",
         "pickType": "Wählen Sie zuerst das Ziel und den Typ, den das Mapping schreibt: Die Lebensdauer gilt je Typ."
+      },
+      "sourceCheck": {
+        "title": "Ganze Quelle prüfen",
+        "hint": "Führt die gespeicherte Pipeline über jede Seite ihrer Quelle aus und zählt, was ein echter Lauf annehmen und ablehnen würde, nach Regel. Nichts wird geschrieben. Sie endet nach 60 s oder 50 000 Datensätzen. Beispiel: eine CKAN-Quelle mit 12 Seiten, 2 300 Datensätze.",
+        "run": "Ganze Quelle prüfen",
+        "again": "Erneut prüfen",
+        "running": "Jede Seite der Quelle wird gelesen; das dauert bis zu 60 s.",
+        "unsaved": "Die Prüfung liest die gespeicherte Pipeline: schlagen Sie diese vor und prüfen Sie sie, sobald ihre Änderung zusammengeführt ist.",
+        "failed": "Die Prüfung lief nicht",
+        "counts": "{count, plural, one {# Datensatz} other {# Datensätze}}: {accepted, number} angenommen, {rejected, number} abgelehnt",
+        "complete": "Jede Seite der Quelle wurde gelesen; ein echter Lauf würde dieselben Datensätze auf die Liste der abgelehnten setzen.",
+        "partial": "Die Prüfung hat nicht die ganze Quelle gelesen, die Zahlen decken nur den gelesenen Teil. Der Grund steht unten.",
+        "rows": "{count, plural, one {# abgelehnter Datensatz} other {Die ersten # abgelehnten Datensätze}}",
+        "place": "Datensatz {place}",
+        "more": "{count, plural, one {# weiterer Datensatz ist} other {# weitere Datensätze sind}} in den Gruppen oben gezählt.",
+        "groupsLead": "Jeder Datensatz, den die Prüfung abgelehnt hat, nach verletzter Regel und Attribut gezählt, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe.",
+        "completeClean": "Jede Seite der Quelle wurde gelesen und kein Datensatz verletzt eine Regel: ein echter Lauf würde alle schreiben.",
+        "retry": "Führen Sie sie erneut aus, sobald der Grund oben behoben ist."
       },
       "schedule": {
         "title": "Wann sie läuft",
@@ -3718,7 +3811,7 @@
       "grants": "Berechtigungen",
       "byPolicy": "Erlaubt durch Policy {policy}",
       "fix": "Behebung: {fix}",
-      "counts": "{sent} gesendet, {rejected} abgelehnt, {failed} fehlgeschlagen",
+      "counts": "{sent} gesendet, {rejected, number} abgelehnt, {failed} fehlgeschlagen",
       "perMinute": "{rate} Datensätze pro Minute",
       "openPipeline": "Pipeline öffnen",
       "openRuns": "Läufe",

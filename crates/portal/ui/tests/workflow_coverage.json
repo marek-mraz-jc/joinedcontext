@@ -653,7 +653,8 @@
         },
         "assistant": "jc_datasource_check",
         "routes": [
-          "POST /api/v1/projects/{project}/datasources/{name}/test"
+          "POST /api/v1/projects/{project}/datasources/{name}/test",
+          "POST /api/v1/projects/{project}/datasource-paging"
         ]
       },
       "discover": {
@@ -755,6 +756,7 @@
         "assistant": "jc_pipeline_test",
         "routes": [
           "POST /api/v1/projects/{project}/pipelines/test",
+          "POST /api/v1/projects/{project}/pipelines/{name}/source-check",
           "POST /api/v1/projects/{project}/kpis/check"
         ]
       },

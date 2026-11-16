@@ -1310,7 +1310,7 @@
     },
     "src/pages/datasources/DataSourcesPage.tsx": {
       "controls": {
-        "Button": 1
+        "Button": 2
       },
       "tests": [
         "admin_grid_brokers.test.tsx",
@@ -1331,7 +1331,8 @@
     },
     "src/pages/datasources/TemplateGallery.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 3,
+        "Checkbox": 2
       },
       "tests": [
         "datasource_templates.test.tsx"
@@ -2045,11 +2046,19 @@
     },
     "src/pages/pipelines/PipelineRejected.tsx": {
       "controls": {
-        "Button": 4,
+        "Button": 5,
         "Checkbox": 2
       },
       "tests": [
         "pipeline_rejected.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/SourceCheck.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "pipeline_source_check.test.tsx"
       ]
     },
     "src/pages/pipelines/PipelineHealth.tsx": {

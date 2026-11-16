@@ -25,7 +25,7 @@ step that runs beside or after it (the doc tests).
 root by binary (built and run per partition): before the build, `--binaries` splits the targets
 `cargo metadata` lists (every member's lib, bins and examples as one block, cargo's `--lib
 --bins --examples` being workspace-wide; each integration test name, `--test x`, with the tests
-of the serial groups whose filters name it kept in one partition) by recorded build and run
+of the serial groups whose filters name it kept in one partition; a bench `cargo test` skips, skipped) by recorded build and run
 time, and prints this partition's cargo target arguments. A target whose tests alone would load
 a partition past SPLIT of its share is built in two or more partitions and its tests are split
 among them by name after the build (`--pieces`, which prints the filterset of the built tests:
@@ -271,6 +271,9 @@ def root_targets(meta):
             elif kind == {"example"}:
                 # `cargo test` builds an example to check it compiles; --examples builds it as a test
                 block.append(f"{p['name']}::example/{t['name']}")
+            elif kind == {"bench"} and not t["test"]:
+                # `cargo test` builds a bench only with test = true; clippy --all-targets compiles it
+                continue
             elif kind == {"test"} and t["test"]:
                 tests.append((p["name"], t["name"]))
             else:
@@ -496,11 +499,11 @@ def selftest():
     # root by binary: every target in exactly one partition but the split one, whose pieces
     # cover its tests once; the block once; names sharing a serial group together
     pkg = lambda name, targets: {"id": name, "name": name, "targets": [
-        {"name": t, "kind": [k], "test": k != "example"} for k, t in targets]}
+        {"name": t, "kind": [k], "test": k not in ("example", "bench")} for k, t in targets]}
     meta = {"workspace_members": ["a-pg", "srv", "other", "big"], "packages": [
         pkg("a-pg", [("lib", "a_pg"), ("test", "store")]),
         pkg("srv", [("lib", "srv"), ("bin", "srv"), ("test", "cli"), ("test", "r"), ("test", "web")]),
-        pkg("other", [("lib", "other"), ("test", "cli"), ("example", "demo")]),
+        pkg("other", [("lib", "other"), ("test", "cli"), ("example", "demo"), ("bench", "speed")]),
         pkg("big", [("lib", "big"), ("test", "chat")] + [("test", f"t{i}") for i in range(9)])]}
     rec = {"tests": {f"big::chat c{i}": 10.0 for i in range(20)},
            "binaries": {"srv::web": 0.5},

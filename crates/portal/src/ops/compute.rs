@@ -774,7 +774,7 @@ async fn infer_from_url(
 /// value.
 /// Unlike [`crate::secret_scan::secret_text`], a named parameter is refused even empty or as a
 /// `${VAR}`: nothing resolves a variable in an address sampled once.
-fn credential_in_address(url: &url::Url) -> bool {
+pub(crate) fn credential_in_address(url: &url::Url) -> bool {
     !url.username().is_empty()
         || url.password().is_some()
         || url.query_pairs().any(|(name, value)| {

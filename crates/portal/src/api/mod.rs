@@ -92,6 +92,7 @@ pub mod organization_widgets;
 pub mod people;
 pub mod people_ids;
 pub mod permissions;
+pub mod pipeline_source_check;
 pub mod pipeline_templates;
 pub mod pipeline_test;
 pub mod pipelines;
@@ -141,6 +142,7 @@ pub fn router() -> Router<AppState> {
         .merge(assistant::router())
         .merge(pipeline_test::router())
         .merge(script_test::router())
+        .merge(pipeline_source_check::router())
         .merge(datasource_test::router())
         .merge(blueprints::router())
         .merge(branding::router())

@@ -95,7 +95,10 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   else its Organization's), the only domains the gateway binds a ref under: `{orgDomain}` is the
   installation's, another Organization's in a multi-org export. A door that would take a public
   read off its open-data Endpoint (a public Policy that also writes; `publicReadsLost`) refuses the
-  import. No entity, Policy or Pipeline is removed. `rehearsal.py doors --export <export>
+  import. No entity, Policy or Pipeline is removed. The Pipelines' imported clients (a project's
+  `<project>-pipelines`, a Pipeline's `<project>-pl-<pipeline>`) keep their mappers; the Portal's
+  workload-client wave adds the door's audience to each, so their tokens bind to the door
+  (`workload_clients.rs` `add_imported_audiences`). `rehearsal.py doors --export <export>
   --out <empty dir> --jcctl-bin <jcctl>` writes the same move for a live environment: under
   `<owner>/<repo>/` only the files it adds or changes (one Portal Change per repository) and
   `doors.json` with the EP-187 findings before and after (exit 1 while any is left or a door lost

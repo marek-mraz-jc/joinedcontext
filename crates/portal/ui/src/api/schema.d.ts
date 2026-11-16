@@ -2798,6 +2798,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/datasource-paging": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Data Source Paging
+         * @description Reads the first answer of an address once on the project's runner and answers how the source pages: the walk for `spec.http.paging` (a Link header, a next link, ArcGIS, WFS or CKAN), where the records sit, the records on the first page, the announced total and the pages a walk reads. Nothing is written.
+         */
+        post: operations["guess_datasource_paging"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/datasources/{name}/test": {
         parameters: {
             query?: never;
@@ -6638,6 +6658,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Rejected Records
+         * @description Every record the pipeline holds rejected (at most 1000), newest first, as CSV: its rule, attribute, step, run, message and the record as JSON, secrets masked as they were kept and the attributes the project's models mark personal withheld (G-21, PL-61, PL-110). Needs read on the pipeline.
+         */
+        get: operations["export_rejected"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Group Rejected Records
+         * @description Every record the pipeline holds rejected, counted by the rule it broke and the attribute it broke it at, the largest group first, each with its newest three records (secrets masked), where the fix belongs and, for an enum, the values the model allows (G-21, PL-61). Needs read on the pipeline.
+         */
+        get: operations["get_rejected_groups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/pipelines/{name}/rejected/retry": {
         parameters: {
             query?: never;
@@ -6716,6 +6776,26 @@ export interface paths {
         get: operations["get_samples"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/pipelines/{name}/source-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Whole Source
+         * @description Runs the saved pipeline over every page of its http DataSource as a dry run on the project's runner and counts what a live run would accept and reject, by rule and attribute, with the first 1000 rejected records (secrets masked). Nothing is written. Ends at 60 s or 50 000 records and holds the project's one pipeline test slot (G-21, G-07). Needs read on the pipeline.
+         */
+        post: operations["check_source"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11859,6 +11939,45 @@ export interface components {
             /** @description The first `# heading`, absent when the Markdown has none (the built-in title shows). */
             title?: string | null;
         };
+        /** @description What the first answer says about the pages after it. */
+        PagingGuess: {
+            /** @description The answer says more pages follow without saying how many (ArcGIS, a next link). */
+            more: boolean;
+            /**
+             * Format: int64
+             * @description The records on the first page.
+             */
+            onPage?: number | null;
+            /**
+             * Format: int64
+             * @description The pages a walk reads: the total over the first page's records, rounded up.
+             */
+            pages?: number | null;
+            /**
+             * @description The walk to write into `spec.http.paging`; absent when the answer names no next page
+             *     the runner can follow.
+             */
+            paging?: Record<string, never> | null;
+            /** @description Where the records sit, for `spec.http.records`: `features`, `value`, `result.results`. */
+            records?: string | null;
+            /** @description Why nothing was guessed: the address did not answer, or answered no JSON. */
+            skipped?: string | null;
+            /**
+             * Format: int64
+             * @description The records in all, as the answer announces them.
+             */
+            total?: number | null;
+        };
+        /**
+         * @description The address whose first answer is read.
+         * @example {
+         *       "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&request=GetFeature&typeNames=avoindata:x&outputFormat=application/json"
+         *     }
+         */
+        PagingRequest: {
+            /** @description The address the source reads, as the person typed it. */
+            url: string;
+        };
         /** @description A Portal tab paired with a connector (T-5967). */
         PairedTab: {
             connector: string;
@@ -12965,6 +13084,39 @@ export interface components {
              */
             step?: number | null;
         };
+        /**
+         * @description One rule broken at one path, how often and its newest records (G-21): what the rejected list
+         *     is grouped by, counted over every record kept, not a page.
+         */
+        RejectedGroup: {
+            /** Format: int64 */
+            count: number;
+            /** @description The group's newest records, at most [`EXAMPLES`]. */
+            examples: components["schemas"]["Rejected"][];
+            path: string;
+            rule: string;
+        };
+        /** @description One group with where its fix belongs. */
+        RejectedGroupView: components["schemas"]["RejectedGroup"] & {
+            /** @description The values the model allows at `path`, for an `sh:in` group. */
+            allowed?: string[];
+            /**
+             * @description Where the fix belongs: `model` (the space's data model refuses the value or the
+             *     attribute), `mapping` (the mapping writes the wrong shape), `step` (a step of the pipeline
+             *     failed) or `runner` (the runner refused it without a model rule).
+             */
+            fix: string;
+        };
+        /** @description The rejected list grouped by rule and path (G-21): what a steward fixes first. */
+        RejectedGroups: {
+            /** @description The largest group first, at most 50. */
+            groups: components["schemas"]["RejectedGroupView"][];
+            /**
+             * Format: int64
+             * @description How many records the pipeline holds, at most 1000 (PL-61).
+             */
+            total: number;
+        };
         /** @description One page of a pipeline's rejected records. */
         RejectedPage: {
             items: components["schemas"]["Rejected"][];
@@ -13436,6 +13588,38 @@ export interface components {
         SortKey: {
             attr: string;
             desc?: boolean;
+        };
+        /** @description What the whole-source check found (G-21). */
+        SourceCheck: {
+            /**
+             * Format: int64
+             * @description Records the space's model takes.
+             */
+            accepted: number;
+            /**
+             * @description Whether the whole source was read: `false` when 60 s or 50 000 records ended the check
+             *     first, or the source's read failed, so the counts cover part of it.
+             */
+            complete: boolean;
+            /** @description What stopped the source or the runner, in words a person can act on. */
+            errors: string[];
+            /**
+             * @description The rejected records counted by rule and attribute, the largest first, each with its
+             *     first three records, where the fix belongs and, for an enum, the values the model allows.
+             */
+            groups: components["schemas"]["RejectedGroupView"][];
+            /**
+             * Format: int64
+             * @description Records the steps made, each checked: `accepted` plus `rejected`.
+             */
+            records: number;
+            /**
+             * Format: int64
+             * @description Records a live run would put on the rejected list.
+             */
+            rejected: number;
+            /** @description The first 1000 rejected records, secrets masked; `id` is the record's place in the run. */
+            rows: components["schemas"]["Rejected"][];
         };
         /** @enum {string} */
         SourceChoice: "delete" | "keep";
@@ -22714,6 +22898,87 @@ export interface operations {
             };
             /** @description A test of this project is already running */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    guess_datasource_paging: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PagingRequest"];
+            };
+        };
+        responses: {
+            /** @description The guess, or `skipped` with the reason in plain words */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PagingGuess"];
+                };
+            };
+            /** @description The URL does not parse, carries a credential, or names an address the runner may not reach */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a DataSource in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The address is not on the public internet */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -39917,6 +40182,110 @@ export interface operations {
             };
         };
     };
+    export_rejected: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Pipeline name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/csv, one row per rejected record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Pipeline not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The list or a model could not be read */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    get_rejected_groups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Pipeline name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RejectedGroups"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Pipeline not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The list could not be read */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     retry_rejected: {
         parameters: {
             query?: never;
@@ -40217,6 +40586,76 @@ export interface operations {
             };
             /** @description Pipeline not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    check_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Pipeline name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceCheck"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden: the CSRF token is missing or does not match, or the caller lacks the verb this write needs */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Pipeline not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The pipeline reads no saved http DataSource, or a test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

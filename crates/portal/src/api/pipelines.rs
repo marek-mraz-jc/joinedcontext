@@ -648,6 +648,186 @@ pub async fn get_rejected(
     Ok(Json(RejectedPage { items, total, next }))
 }
 
+/// The rejected list grouped by rule and path (G-21): what a steward fixes first.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectedGroups {
+    /// The largest group first, at most 50.
+    pub groups: Vec<RejectedGroupView>,
+    /// How many records the pipeline holds, at most 1000 (PL-61).
+    pub total: u64,
+}
+
+/// One group with where its fix belongs.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectedGroupView {
+    #[serde(flatten)]
+    pub group: crate::pipeline_outcomes::RejectedGroup,
+    /// Where the fix belongs: `model` (the space's data model refuses the value or the
+    /// attribute), `mapping` (the mapping writes the wrong shape), `step` (a step of the pipeline
+    /// failed) or `runner` (the runner refused it without a model rule).
+    pub fix: &'static str,
+    /// The values the model allows at `path`, for an `sh:in` group.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+}
+
+/// Where the fix of a rule belongs, by the rule `ModelSchema::check` and the rejected route name.
+fn fix_of(rule: &str) -> &'static str {
+    match rule {
+        "type" | "sh:closed" | "sh:minInclusive" | "sh:maxInclusive" | "sh:minLength"
+        | "sh:maxLength" => "model",
+        "step" => "step",
+        "runner" => "runner",
+        _ => "mapping",
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project}/pipelines/{name}/rejected/groups",
+    summary = "Group Rejected Records",
+    description = "Every record the pipeline holds rejected, counted by the rule it broke and the attribute it broke it at, the largest group first, each with its newest three records (secrets masked), where the fix belongs and, for an enum, the values the model allows (G-21, PL-61). Needs read on the pipeline.",
+    tag = "pipelines",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("name" = String, Path, description = "Pipeline name"),
+    ),
+    responses(
+        (status = 200, description = "The groups", body = RejectedGroups),
+        (status = 401, description = "Unauthorized", body = ProblemDetails),
+        (status = 404, description = "Pipeline not found", body = ProblemDetails),
+        (status = 503, description = "The list could not be read", body = ProblemDetails)
+    )
+)]
+pub async fn get_rejected_groups(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, name)): Path<(String, String)>,
+) -> Result<Json<RejectedGroups>, ApiError> {
+    let pipeline = readable_pipeline(&state, &user, &project, &name)?;
+    let unreadable = |error: sqlx::Error| {
+        tracing::warn!(%project, pipeline = %name, %error, "the rejected list could not be read");
+        ApiError::Unavailable("the rejected list could not be read; try again".into())
+    };
+    let groups = state
+        .rejected
+        .groups(&project, &name)
+        .await
+        .map_err(unreadable)?;
+    let total = state
+        .rejected
+        .count(&project, &name)
+        .await
+        .map_err(unreadable)?;
+    let groups = group_views(&state, &project, &pipeline.spec, groups);
+    Ok(Json(RejectedGroups { groups, total }))
+}
+
+/// Each group with where its fix belongs and, for `sh:in`, the values the model of the space the
+/// pipeline writes into allows at its path.
+pub(crate) fn group_views(
+    state: &AppState,
+    project: &str,
+    spec: &Value,
+    groups: Vec<crate::pipeline_outcomes::RejectedGroup>,
+) -> Vec<RejectedGroupView> {
+    let model = crate::api::internal::pipeline_rejected::target_space(state, project, spec)
+        .and_then(|space| state.model_schemas.get(project, &space));
+    groups
+        .into_iter()
+        .map(|group| {
+            let allowed = (group.rule == "sh:in")
+                .then(|| {
+                    let class = group.examples.first()?.record.get("type")?.as_str()?;
+                    let attributes = model.as_ref()?.attributes(class)?.attributes;
+                    attributes
+                        .into_iter()
+                        .find(|a| a.name == group.path)?
+                        .values
+                })
+                .flatten()
+                .unwrap_or_default();
+            RejectedGroupView {
+                fix: fix_of(&group.rule),
+                allowed,
+                group,
+            }
+        })
+        .collect()
+}
+
+const REJECTED_COLUMNS: &str = "id,at,rule,path,step,run,message,record";
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project}/pipelines/{name}/rejected/export",
+    summary = "Export Rejected Records",
+    description = "Every record the pipeline holds rejected (at most 1000), newest first, as CSV: its rule, attribute, step, run, message and the record as JSON, secrets masked as they were kept and the attributes the project's models mark personal withheld (G-21, PL-61, PL-110). Needs read on the pipeline.",
+    tag = "pipelines",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("name" = String, Path, description = "Pipeline name"),
+    ),
+    responses(
+        (status = 200, description = "text/csv, one row per rejected record", content_type = "text/csv", body = String),
+        (status = 401, description = "Unauthorized", body = ProblemDetails),
+        (status = 404, description = "Pipeline not found", body = ProblemDetails),
+        (status = 503, description = "The list or a model could not be read", body = ProblemDetails)
+    )
+)]
+pub async fn export_rejected(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, name)): Path<(String, String)>,
+) -> Result<axum::response::Response, ApiError> {
+    use crate::api::change_export::cell;
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    readable_pipeline(&state, &user, &project, &name)?;
+    let items = state
+        .rejected
+        .list(&project, &name, crate::pipeline_outcomes::KEPT, None)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%project, pipeline = %name, %error, "the rejected list could not be read");
+            ApiError::Unavailable("the rejected list could not be read; try again".into())
+        })?;
+    let marks = crate::personal_data::of_project(&state, &project)
+        .await
+        .map_err(ApiError::Unavailable)?;
+    let mut csv = format!("{REJECTED_COLUMNS}\r\n");
+    for mut item in items {
+        crate::personal_data::withhold(&mut item.record, &marks);
+        let row = [
+            item.id.to_string(),
+            item.at,
+            item.rule,
+            item.path,
+            item.step.map(|s| (s + 1).to_string()).unwrap_or_default(),
+            item.run.unwrap_or_default(),
+            item.message,
+            item.record.to_string(),
+        ];
+        let cells: Vec<String> = row.iter().map(|value| cell(value)).collect();
+        csv.push_str(&cells.join(","));
+        csv.push_str("\r\n");
+    }
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_owned()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{project}-{name}-rejected.csv\""),
+            ),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        csv,
+    )
+        .into_response())
+}
+
 /// Read on the pipeline, and a caller without it is told the pipeline is not there (PF-59):
 /// the pipeline when the caller may read it.
 pub(crate) fn readable_pipeline(
@@ -1169,7 +1349,8 @@ pub async fn retry_rejected(
         internal.trim_end_matches('/')
     );
     let mut config = replay_stream(&records, &project, &slug, replay_mode(&pipeline.spec));
-    crate::pipeline_validation::insert_stage(&mut config, &schema, &sink);
+    let linkml = state.model_schemas.stage_linkml(&project, &space);
+    crate::pipeline_validation::insert_stage(&mut config, &schema, linkml.as_deref(), &sink);
     // What the replay writes is a line of the pipeline's log like any run's (PL-62).
     if let Some(output) = config.get_mut("output") {
         let outcomes = format!(
@@ -1575,6 +1756,14 @@ pub fn router() -> Router<AppState> {
         .route(
             "/projects/{project}/pipelines/{name}/rejected",
             get(get_rejected),
+        )
+        .route(
+            "/projects/{project}/pipelines/{name}/rejected/groups",
+            get(get_rejected_groups),
+        )
+        .route(
+            "/projects/{project}/pipelines/{name}/rejected/export",
+            get(export_rejected),
         )
         .route("/projects/{project}/pipelines/{name}/stats", get(get_stats))
         .route("/projects/{project}/pipeline-runs", get(get_latest_runs))
