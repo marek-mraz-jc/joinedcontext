@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { generate, SNAPSHOT, TARGET } from "../scripts/odata-gen.mjs";
 import { keyPredicate, literal, ODataError, odata } from "../src/sdk/odata/client";
-import type { JcRequest, JcResponse, Transport } from "../src/sdk/transport";
+import { originTransport, type JcRequest, type JcResponse, type Transport } from "../src/sdk/transport";
 
 /** A transport answering `answers` in turn and keeping each request. */
 function scripted(...answers: JcResponse[]): { transport: Transport; sent: JcRequest[] } {
@@ -90,6 +90,25 @@ describe("the OData client", () => {
       "/api/v1/projects('air')/JoinedContext.Portal.jc_schema_get(kind=@kind,path=@path)" +
         "?@kind='Endpoint'&@path='%2Fspec%2Fa%20b'",
     );
+  });
+
+  it("hands a call its signal and reads the answer's ETag beside its value (T-7177)", async () => {
+    const { transport, sent } = scripted({ status: 200, body: { value: { kind: "Space" } }, headers: { etag: '"3f2a"' } });
+    const signal = new AbortController().signal;
+    const answer = await odata("/api/v1/", { transport }).callWithEtag("jc_schema_get", "air", { kind: "Space" }, { signal });
+    expect(answer).toEqual({ value: { kind: "Space" }, etag: '"3f2a"' });
+    expect(sent[0].signal).toBe(signal);
+  });
+
+  it("rejects a cancelled call with its reason, never as an answer (T-7177)", async () => {
+    const call = new AbortController();
+    const reason = new DOMException("the count did not come", "TimeoutError");
+    call.abort(reason);
+    const transport = originTransport(async (_input, init) => {
+      init?.signal?.throwIfAborted();
+      return new Response("{}");
+    });
+    await expect(transport({ method: "GET", path: "/api/v1/x", signal: call.signal })).rejects.toBe(reason);
   });
 
   it("calls a people function on the Organization singleton (T-7097)", async () => {

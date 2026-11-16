@@ -8,7 +8,7 @@ import {
   originTransport,
   type ODataModel,
 } from "@joinedcontext/sdk";
-import { api, ApiError, hiddenList, loginRedirectUrl, unwrap, type WireProblem } from "./client";
+import { ApiError, hiddenList, loginRedirectUrl, type WireProblem } from "./client";
 import { ORG_NAMESPACE } from "./manifest";
 import { activeWorkspace } from "../components/layout/WorkspaceContext";
 import type { components, operations } from "./schema";
@@ -253,11 +253,12 @@ export function door<F extends Door<keyof Functions & string>>(
   name: F,
   params: Functions[F],
   project?: string,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   return refusedAs(
     project === undefined
-      ? client.organizationCall(name, params)
-      : client.call(name, project, params),
+      ? client.organizationCall(name, params, { signal })
+      : client.call(name, project, params, { signal }),
   );
 }
 
@@ -301,54 +302,80 @@ export type ManifestSet = Exclude<
   | "workspaces"
 >;
 
+/** `dryRun` as the REST manifest doors read it: `All` checks, nothing writes. */
+const checkOnly = (dryRun: boolean) => (dryRun ? "All" : undefined);
+
+/** The workspace a page is drafting in, as a manifest door's `workspace`. */
+const copyName = () => activeWorkspace() ?? undefined;
+
 /**
- * Inside a workspace, a manifest is read and written in its branch (API/01 §22) through the REST
- * doors with `?workspace=` (client.ts workspaceMiddleware): the service reads and binds only what
- * the project holds, and a manifest drafted in the copy is not there.
- * ponytail: the service has no binding of a workspace's copy yet; T-7073's split adds one.
+ * A manifest write through the Portal's manifest doors (T-7177): inside a workspace in its copy
+ * (API/01 §22), in the `org` namespace (a create, or a kind the Organization has no set of) on
+ * the Organization, else in the project for a kind the service has no set of. Each runs the REST
+ * door's handler and its check; `dryRun` checks without proposing.
+ */
+export function writeManifestDoor(
+  project: string,
+  plural: string,
+  body: { metadata: { name: string } },
+  { create, dryRun, ifMatch, name = body.metadata.name }: { create: boolean; dryRun: boolean; ifMatch?: string; name?: string },
+): Promise<unknown> {
+  const check = checkOnly(dryRun);
+  if (project === ORG_NAMESPACE) {
+    return create
+      ? doorAction("portal_org_manifest_create", { plural, dryRun: check, body })
+      : doorAction("portal_org_manifest_replace", { plural, name, dryRun: check, ifMatch, body });
+  }
+  const workspace = copyName();
+  return create
+    ? doorAction("portal_manifest_create", { plural, workspace, dryRun: check, body }, project)
+    : doorAction("portal_manifest_replace", { plural, name, workspace, dryRun: check, ifMatch, body }, project);
+}
+
+/**
+ * One page of a kind's list as the REST door searches and pages it (`q`, `count`, `cursor`), in
+ * the workspace's copy when a page drafts in one: the grid's list (routes/kindPages.ts).
+ */
+export async function pageManifests(
+  project: string,
+  plural: string,
+  { limit, q, cursor }: { limit: number; q?: string; cursor?: string },
+): Promise<RestAnswer<"list">> {
+  return (await door(
+    "portal_manifest_list",
+    { plural, workspace: copyName(), limit, count: true, q: q || undefined, cursor },
+    project,
+  )) as RestAnswer<"list">;
+}
+
+/**
+ * Inside a workspace, a manifest is read and written in its branch (API/01 §22): the service's
+ * sets read and bind only what the project holds, and a manifest drafted in the copy is not
+ * there, so the manifest doors carry the copy's name.
  */
 const inCopy = {
   list: async (project: string, plural: string) =>
-    unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural } } })),
+    (await door("portal_manifest_list", { plural, workspace: copyName() }, project)) as { items: Manifest[] },
   read: async (project: string, plural: string, name: string) => {
-    const read = await api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path: { project, plural, name } } });
-    const manifest = await unwrap(read);
+    const { value, etag } = await refusedAs(
+      client.callWithEtag("portal_manifest_get", project, { plural, name, workspace: copyName() }),
+    );
+    const manifest = value as Manifest;
     // The REST door's ETag, as a service row's `@odata.etag`, for the write's If-Match.
-    const etag = read.response.headers.get("ETag");
-    if (etag) etags.set(manifest, etag);
+    if (etag && typeof manifest === "object" && manifest !== null) etags.set(manifest, etag);
     return manifest;
   },
-  write: async (
-    project: string,
-    plural: string,
-    body: { metadata: { name: string } },
-    { create, dryRun, ifMatch, name }: { create: boolean; dryRun: boolean; ifMatch?: string; name: string },
-  ): Promise<unknown> => {
-    const query = dryRun ? { dryRun: "All" } : undefined;
-    const manifest = body as components["schemas"]["ResourceProposal"];
-    return unwrap(
-      create
-        ? await api.POST("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural }, query }, body: manifest })
-        : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
-            params: { path: { project, plural, name }, query, header: ifMatch ? { "If-Match": ifMatch } : undefined },
-            body: manifest,
-          }),
-    );
-  },
+  write: writeManifestDoor,
   remove: async (
     project: string,
     plural: string,
     name: string,
     { dryRun, ifMatch, confirm }: { dryRun: boolean; ifMatch?: string; confirm?: string },
   ): Promise<unknown> =>
-    unwrap(
-      await api.DELETE("/api/v1/projects/{project}/{plural}/{name}", {
-        params: {
-          path: { project, plural, name },
-          query: { ...(dryRun ? { dryRun: "All" } : {}), ...(confirm ? { confirm } : {}) },
-          header: ifMatch ? { "If-Match": ifMatch } : undefined,
-        },
-      }),
+    doorAction(
+      "portal_manifest_delete",
+      { plural, name, workspace: copyName(), dryRun: checkOnly(dryRun), confirm, ifMatch },
+      project,
     ),
 };
 
@@ -514,18 +541,14 @@ export async function readManifest(
  * REST list (T-7104).
  */
 export async function listOrganizations(): Promise<{ items: Manifest[] }> {
-  const rest = async () =>
-    unwrap(
-      await api.GET("/api/v1/projects/{project}/{plural}", {
-        params: { path: { project: ORG_NAMESPACE, plural: "organizations" } },
-      }),
-    );
+  const rest = async () => (await door("portal_organization_list", {})) as { items: Manifest[] };
   let row: ManifestRow;
   try {
     row = (await client.singleton(ORGANIZATION, ["name", "spec", "status", "metadata"])) as ManifestRow;
   } catch (error) {
     // An address of several Organizations serves no one's service: the installation's own
-    // pages read its REST list and pick the installation's Organization from it.
+    // pages read the Organizations the person may (a door of their own, which needs no one
+    // Organization) and pick the installation's from them.
     if (error instanceof ODataError && error.code === SEVERAL_ORGANIZATIONS) return rest();
     throw toApiError(error);
   }
@@ -641,6 +664,18 @@ export interface RunFilter {
  * of each origin, the REST list's own ceiling, and a run's `origin` keeps the journeys' test
  * runs out unless `filter.origin` asks for them (T-7145).
  */
+/** One revision of a project's history: the sha an export reads from (MF-16). */
+export type Revision = ODataModel.EntitySets["revisions"] & { message: string; author: string; date?: string | null };
+
+/**
+ * A project's newest `top` revisions, newest first, as the export dialog lists them (the
+ * `revisions` set, T-7177); throws the ApiError of a refusal (503 while the forge is away).
+ */
+export async function listRevisions(project: string, top: number): Promise<{ items: Revision[] }> {
+  const page = await refusedAs(client.under(project, "revisions").top(top).page());
+  return { items: page.value as Revision[] };
+}
+
 export async function listRuns<R = unknown>(project: string, filter: RunFilter = {}): Promise<{ items: R[] }> {
   const where = (
     [

@@ -37394,6 +37394,8 @@ export interface operations {
                     "application/json": {
                         items: {
                             author?: string;
+                            /** @description When it was committed, e.g. 2026-11-16T09:30:00Z */
+                            date?: string;
                             message?: string;
                             sha: string;
                         }[];

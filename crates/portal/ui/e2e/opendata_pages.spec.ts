@@ -6,7 +6,7 @@ import { asOData, doorAsRest } from "../tests/odata";
 import { doorsAsRest } from "./manifestReads";
 
 // T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
-test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me"]));
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_project_list"]));
 
 // Administration → Open data pages (T-7041): every page per language, the editor with its toolbar
 // beside the preview at 1440 and as a tab at 400, publish as a Change, and the empty, error (422),

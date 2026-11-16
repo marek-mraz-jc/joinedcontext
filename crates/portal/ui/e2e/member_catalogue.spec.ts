@@ -10,6 +10,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { doorsAsRest } from "./manifestReads";
+
+// The projects list is a Portal door (portal_project_list, T-7177): the stub answers its REST address.
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_project_list"]));
 
 const SLUG = "inc2dents4h7m2qz4tv6xh3n5jb";
 const IDENTITY = { subject: "de300000-0000-4000-8000-000000000010", username: "demo.analyst", name: "Traffic Analyst", email: "demo.analyst@hel.fi", roles: [], front: "portal" };

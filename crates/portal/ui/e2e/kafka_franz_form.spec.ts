@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { axeViolations } from "./axe";
+import { doorsAsRest } from "./manifestReads";
+
+// The projects list is a Portal door (portal_project_list, T-7177): the stub answers its REST address.
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_project_list"]));
 
 // T-7093: the runner builds kafka_franz, so a steward picks it on a new data source and fills the
 // brokers, the topics and the group, each field with its example. `vite preview` has no Portal API
