@@ -2,7 +2,8 @@ import type { JSX } from "react";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import { startJob } from "../../jobs";
 import type { components } from "../../api/schema";
 import { Alert, Badge, Button, Card, ExternalLink } from "../../components/ui";
@@ -27,11 +28,7 @@ export function useAppBuild(project: string, name: string) {
   return useQuery({
     queryKey: buildKey(project, name),
     queryFn: async (): Promise<AppBuild> =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/apps/{name}/build", {
-          params: { path: { project, name } },
-        }),
-      ),
+      (await door("portal_app_build", { name }, project)) as AppBuild,
     retry: false,
   });
 }
@@ -40,12 +37,7 @@ export function useAppBuild(project: string, name: string) {
 export function useRebuild(project: string, name: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/apps/{name}/rebuild", {
-          params: { path: { project, name } },
-        }),
-      ),
+    mutationFn: () => doorAction("portal_app_rebuild", { name }, project),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: buildKey(project, name) });
     },
@@ -193,21 +185,12 @@ function AppBuildHistory({ project, name }: { project: string; name: string }): 
   const builds = useQuery({
     queryKey: [...buildKey(project, name), "history"],
     queryFn: async (): Promise<AppBuilds> =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/apps/{name}/builds", {
-          params: { path: { project, name } },
-        }),
-      ),
+      (await door("portal_app_builds", { name }, project)) as AppBuilds,
     retry: false,
   });
   const restore = useMutation({
     mutationFn: async (commit: string): Promise<Restored> =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/apps/{name}/restore", {
-          params: { path: { project, name } },
-          body: { commit },
-        }),
-      ),
+      (await doorAction("portal_app_restore", { name, body: { commit } }, project)) as Restored,
   });
   const earlier = builds.data?.builds.filter((build) => !build.current) ?? [];
   if (!builds.data || earlier.length === 0) return null;

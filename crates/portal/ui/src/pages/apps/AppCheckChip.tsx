@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { Badge } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui/Badge";
@@ -19,7 +19,7 @@ export function useAppChecks(project: string): Map<string, AppCheck> {
   const checks = useQuery({
     queryKey: ["projects", project, "app-checks"],
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/app-checks", { params: { path: { project } } })),
+      (await door("portal_app_checks", {}, project)) as RestAnswer<"list_app_checks">,
     refetchInterval: 60_000,
   });
   return new Map((checks.data?.checks ?? []).map((check) => [check.name, check]));

@@ -1,7 +1,8 @@
 import type { JSX } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { doorAction } from "../../api/odata";
 import { isChange } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { Alert, Button, InlineError } from "../../components/ui";
@@ -40,12 +41,7 @@ export function RenameShapesNotice({
   const { t } = useTranslation();
   const old = oldShapeApps(apps);
   const rename = useMutation({
-    mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/apps/rename-shapes", {
-          params: { path: { project } },
-        }),
-      ),
+    mutationFn: () => doorAction("portal_app_rename_shapes", {}, project),
     onSuccess: (result) => {
       if (isChange(result)) {
         onProposed(result);

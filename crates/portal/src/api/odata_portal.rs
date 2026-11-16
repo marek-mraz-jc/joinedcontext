@@ -111,7 +111,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 138] = [
+pub static DOORS: [Door; 149] = [
     door(
         "portal_people_remove",
         Org,
@@ -779,6 +779,95 @@ pub static DOORS: [Door; 138] = [
         "/projects/{project}/spaces/{space}/types/{type}/attributes",
         &[SPACE, ("type", Place::Path)],
         Who::ProjectReader,
+    ),
+    // The Apps pages' build links, builds, audience, dashboard editor, checks and templates (T-7121).
+    door(
+        "portal_app_build",
+        Project,
+        Method::GET,
+        "/projects/{project}/apps/{name}/build",
+        &[NAME],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_rebuild",
+        Project,
+        Method::POST,
+        "/projects/{project}/apps/{name}/rebuild",
+        &[NAME],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_builds",
+        Project,
+        Method::GET,
+        "/projects/{project}/apps/{name}/builds",
+        &[NAME],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_restore",
+        Project,
+        Method::POST,
+        "/projects/{project}/apps/{name}/restore",
+        &[NAME, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_audience",
+        Project,
+        Method::GET,
+        "/projects/{project}/apps/{name}/audience",
+        &[NAME],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_dashboard",
+        Project,
+        Method::GET,
+        "/projects/{project}/apps/{name}/dashboard",
+        &[NAME],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_dashboard_propose",
+        Project,
+        Method::POST,
+        "/projects/{project}/apps/{name}/dashboard",
+        &[NAME, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_checks",
+        Project,
+        Method::GET,
+        "/projects/{project}/app-checks",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_rename_shapes",
+        Project,
+        Method::POST,
+        "/projects/{project}/apps/rename-shapes",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_from_template",
+        Project,
+        Method::POST,
+        "/projects/{project}/app-templates/{name}/apps",
+        &[NAME, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_app_templates",
+        Org,
+        Method::GET,
+        "/app-templates",
+        &[],
+        Who::Person,
     ),
     door(
         "portal_access_request_incoming",
