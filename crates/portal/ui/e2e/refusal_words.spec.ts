@@ -35,6 +35,8 @@ for (const { plural, button, sentence } of PAGES) {
       const add = page.getByRole("button", { name: button }).first();
       await expect(add).toHaveAttribute("aria-disabled", "true");
       await expect(add).toHaveAccessibleDescription(sentence);
+      // Said once on the page too: a phone has no tooltip to show the description.
+      await expect(page.getByText(sentence, { exact: true }).last()).toBeVisible();
       await expect(page.locator("body")).not.toContainText(/'propose'|'SyncSource'|'Pipeline'/);
 
       const dir = join("test-results", "T-7106");
