@@ -50,6 +50,7 @@ pub mod live;
 pub mod mcp;
 pub mod openapi;
 pub mod ops;
+pub mod org_backup;
 pub mod personal_connectors;
 pub use ops::drafts;
 pub use ops::verdict;

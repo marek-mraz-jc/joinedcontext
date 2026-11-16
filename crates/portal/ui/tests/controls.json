@@ -1889,6 +1889,15 @@
         "organization_agents.test.tsx"
       ]
     },
+    "src/pages/organization/Backups.tsx": {
+      "controls": {
+        "Button": 7,
+        "Switch": 1
+      },
+      "tests": [
+        "organization_backups.test.tsx"
+      ]
+    },
     "src/pages/organization/Costs.tsx": {
       "controls": {
         "Button": 1
