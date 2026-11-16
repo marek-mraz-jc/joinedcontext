@@ -582,6 +582,10 @@ pub struct OrganizationHosts {
     /// route of each stay deployment configuration.
     #[serde(default)]
     pub portals: Vec<String>,
+    /// The Organization's own sign-in host (`idm.bbsk.sk`, T-7001): its realm, named like the
+    /// Organization, answers there and nowhere else. Absent, it signs in on `login_host`.
+    #[serde(default)]
+    pub idm: Option<String>,
     /// `host = "auto"`: the open data and API hosts are the installation's, shared, with the
     /// Organization's name as the first path segment.
     #[serde(skip)]
@@ -689,6 +693,9 @@ impl OrganizationHosts {
                 .iter()
                 .map(|h| at(Module::Dataroom, h, None, None, true)),
         );
+        if let Some(h) = &self.idm {
+            all.push(at(Module::Kaisatsu, h, None, Some(HostRole::SignIn), true));
+        }
         all
     }
 
@@ -866,7 +873,13 @@ fn check_organizations(
             None => {}
         }
         let h = &mut org.hosts;
-        let optional = [&mut h.opendata, &mut h.api, &mut h.mcp, &mut h.apps];
+        let optional = [
+            &mut h.opendata,
+            &mut h.api,
+            &mut h.mcp,
+            &mut h.apps,
+            &mut h.idm,
+        ];
         let fixed = std::iter::once(&mut h.portal).chain(optional.into_iter().flatten());
         for host in fixed.chain(h.portals.iter_mut()) {
             *host = host.trim().to_ascii_lowercase();
@@ -1431,7 +1444,7 @@ impl Config {
         };
         let login_host = match file.login_host {
             Some(h) => h.trim().to_ascii_lowercase(),
-            None => format!("login.{base_host}"),
+            None => format!("{}.{base_host}", Module::Kaisatsu.host_label()),
         };
         if !valid_host(&login_host) {
             return Err(ConfigError::Organization(format!(
@@ -1440,6 +1453,16 @@ impl Config {
         }
         let mut organizations = file.organizations;
         check_organizations(&mut organizations, &base_host, &login_host)?;
+        if let Some(org) = organizations
+            .iter()
+            .find(|o| o.hosts.idm.is_some() && o.name == realm.as_str())
+        {
+            return Err(ConfigError::Organization(format!(
+                "{}: hosts.idm gives the Organization a realm named like it, and '{}' is the \
+                 installation's realm ([identity] realm): rename one",
+                org.name, org.name
+            )));
+        }
         let mut hosts = file.hosts;
         check_hosts(&mut hosts, &organizations, &login_host)?;
         let remote_modules = match &file.remote {
@@ -2682,7 +2705,7 @@ path_prefix = "/api/endpoint"
             ),
             (
                 "mcp.beta.test",
-                "login.localhost",
+                "idm.localhost",
                 "also a host of login_host",
             ),
             ("api.beta.test", "*.beta.test", "not a plain host name"),
@@ -2740,6 +2763,62 @@ path_prefix = "/api/endpoint"
         );
     }
 
+    /// T-7001: `hosts.idm` is the Organization's own sign-in host, a whole-host kaisatsu with the
+    /// sign-in role, and as unique as every other host of the installation.
+    #[test]
+    fn an_organizations_sign_in_host_is_its_own_and_unique() {
+        let with = |alpha: &str, beta: &str| {
+            TWO_ORGS
+                .replacen(
+                    "mcp = \"mcp.alpha.test\"",
+                    &format!("mcp = \"mcp.alpha.test\"{alpha}"),
+                    1,
+                )
+                .replacen(
+                    "mcp = \"mcp.beta.test\"",
+                    &format!("mcp = \"mcp.beta.test\"{beta}"),
+                    1,
+                )
+        };
+        let cfg = orgs(&with(", idm = \"IDM.alpha.test\"", "")).unwrap();
+        assert_eq!(
+            cfg.organizations[0].hosts.idm.as_deref(),
+            Some("idm.alpha.test")
+        );
+        assert!(cfg.organizations[0].hosts.by_module().contains(&OrgMount {
+            module: Module::Kaisatsu,
+            host: "idm.alpha.test",
+            prefix: None,
+            role: Some(jc_router::HostRole::SignIn),
+            bound: true,
+        }));
+        assert!(cfg.organizations[0].hosts.own().contains(&"idm.alpha.test"));
+        assert_eq!(cfg.organizations[1].hosts.idm, None);
+        for (alpha, beta, refused) in [
+            (
+                ", idm = \"idm.x.test\"",
+                ", idm = \"idm.x.test\"",
+                "also a host of alpha",
+            ),
+            (", idm = \"portal.beta.test\"", "", "also a host of"),
+            (", idm = \"idm.localhost\"", "", "also a host of login_host"),
+            (
+                ", idm = \"https://idm.alpha.test\"",
+                "",
+                "is not a plain host name",
+            ),
+        ] {
+            let err = orgs(&with(alpha, beta)).unwrap_err().to_string();
+            assert!(err.contains(refused), "{alpha} {beta}: {err}");
+        }
+        let named_like_the_realm = format!(
+            "[identity]\nrealm = \"alpha\"\n{}",
+            with(", idm = \"idm.alpha.test\"", "")
+        );
+        let err = orgs(&named_like_the_realm).unwrap_err().to_string();
+        assert!(err.contains("installation's realm"), "{err}");
+    }
+
     /// `host = "auto"` (T-6991 §2): five origins from `base_host`, none of the customer's.
     #[test]
     fn auto_derives_the_five_origins_and_refuses_overlaps() {
@@ -2756,7 +2835,7 @@ path_prefix = "/api/endpoint"
         assert_eq!(z.hosts.portal, "zilina.city.example");
         assert_eq!(z.opendata_base(), "opendata.city.example/zilina");
         assert_eq!(z.api_base(), "api.city.example/zilina");
-        assert_eq!(cfg.login_host, "login.city.example");
+        assert_eq!(cfg.login_host, "idm.city.example");
         assert_eq!(z.hosts.own(), ["zilina.city.example"]);
         let roles: Vec<_> = z
             .hosts
@@ -2776,7 +2855,7 @@ path_prefix = "/api/endpoint"
         let own = "[[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000c3\"\n";
         for (host, says) in [
             ("api.city.example", "shared host of host = \"auto\""),
-            ("login.city.example", "also a host of login_host"),
+            ("idm.city.example", "also a host of login_host"),
             ("zilina.city.example", "also a host of zilina"),
         ] {
             let text = format!("{}{own}hosts = {{ portal = \"{host}\" }}\n", auto(""));

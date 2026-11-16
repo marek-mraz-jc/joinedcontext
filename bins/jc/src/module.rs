@@ -121,7 +121,11 @@ impl Module {
     /// Default host label in host-per-module mode (`https://<label>.city.example/...`).
     #[must_use]
     pub fn host_label(self) -> &'static str {
-        self.slug()
+        match self {
+            // The sign-in host is `idm.` (owner 2026-11-16, T-7001); `/login/` stays the slug.
+            Module::Kaisatsu => "idm",
+            _ => self.slug(),
+        }
     }
 
     /// Whether this build of `jc` carries the module (each module is a Cargo feature).
@@ -207,10 +211,13 @@ mod tests {
         for m in Module::ALL {
             assert_eq!(m.name().parse::<Module>().unwrap(), m);
             assert_eq!(m.to_string(), m.name());
-            assert_eq!(m.host_label(), m.slug());
+            if m != Module::Kaisatsu {
+                assert_eq!(m.host_label(), m.slug());
+            }
             assert!(!m.slug().is_empty());
         }
         assert_eq!(" Kaisatsu ".parse::<Module>().unwrap(), Module::Kaisatsu);
+        assert_eq!(Module::Kaisatsu.host_label(), "idm");
     }
 
     #[test]

@@ -558,6 +558,22 @@ pub fn portal_realm_files(
     ])
 }
 
+/// An Organization's own realm (T-7001): the shipped clients, their redirect URIs and web
+/// origins on `bases` alone (its working host and its further Portals), so a code of this realm
+/// never reaches another Organization's host. No first administrator: its people move in
+/// (T-7128); the installation's operators sign in on `login_host`.
+pub fn organization_realm_files(
+    bases: &[String],
+    realm: &Realm,
+) -> Result<Vec<(String, Value)>, serde_json::Error> {
+    let (first, rest) = bases
+        .split_first()
+        .map_or(("", &[][..]), |(f, r)| (f.as_str(), r));
+    let mut files = portal_realm_files(first, rest, realm)?;
+    files.retain(|(name, _)| name != FIRST_ADMIN_FILE);
+    Ok(files)
+}
+
 /// The gateway's client (`context-gateway`): client_credentials only, its tokens for the Portal's
 /// internal listener (audience `portal-internal`, where it reads revocations, connectors and
 /// usage), no realm role and no person's scope.

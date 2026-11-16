@@ -573,11 +573,7 @@ pub(crate) mod tests {
         let reached: BTreeSet<&str> = v["JC_PORTAL_REACH_HOSTS"].split(',').collect();
         assert_eq!(
             reached,
-            BTreeSet::from([
-                "api.smartcity.test",
-                "login.smartcity.test",
-                "smartcity.test"
-            ])
+            BTreeSet::from(["api.smartcity.test", "idm.smartcity.test", "smartcity.test"])
         );
         for (key, module) in [
             ("JC_KEYCLOAK_ADMIN_URL", Module::Kaisatsu),
@@ -592,12 +588,12 @@ pub(crate) mod tests {
         }
         assert_eq!(v["JC_PORTAL_GRAFANA_URL"], "http://smartcity.test/grafana");
         assert_eq!(v["JC_PORTAL_GATEWAY_URL"], "http://api.smartcity.test");
-        assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://login.smartcity.test");
+        assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://idm.smartcity.test");
         // The issuer stays the public name: a token names it, and kaisatsu names it the same
         // for a request on the listener under its host.
         assert_eq!(
             v["JC_OIDC_ISSUER"],
-            "https://login.smartcity.test/realms/jc"
+            "https://idm.smartcity.test/realms/jc"
         );
         // An operator's own sibling URL keeps its address and is not reached.
         let own = |k: &str| (k == "JC_PORTAL_GATEWAY_URL").then(|| "http://g.svc:8080".to_owned());
