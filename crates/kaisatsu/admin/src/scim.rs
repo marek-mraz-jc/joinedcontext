@@ -1372,6 +1372,10 @@ async fn scim_put_group(
             "a group with this displayName exists: choose another name",
         ));
     }
+    if !payload.members.is_empty() {
+        crate::operations::ensure_may_join_group(&ctx, state.oidc.store.as_ref(), &realm, &grp)
+            .await?;
+    }
     let grp = state.oidc.store.upsert_group(grp).await?;
     record_admin_write(
         &state,
@@ -1383,9 +1387,6 @@ async fn scim_put_group(
     )
     .await?;
 
-    if !payload.members.is_empty() {
-        crate::operations::ensure_may_join_group(&ctx, &grp)?;
-    }
     for old in &cur_members {
         state
             .oidc
@@ -1612,6 +1613,13 @@ async fn scim_patch_group(
         }
     }
 
+    if member_ids
+        .iter()
+        .any(|uid| !cur_members.iter().any(|u| &u.id == uid))
+    {
+        crate::operations::ensure_may_join_group(&ctx, state.oidc.store.as_ref(), &realm, &grp)
+            .await?;
+    }
     if group_path_taken(&state, &realm, &grp.path, Some(&grp.id)).await? {
         return Ok(scim_error_response(
             StatusCode::CONFLICT,
@@ -1637,12 +1645,6 @@ async fn scim_patch_group(
                 .remove_user_from_group(&realm, &old.id, &grp.id)
                 .await?;
         }
-    }
-    if member_ids
-        .iter()
-        .any(|uid| !cur_members.iter().any(|u| &u.id == uid))
-    {
-        crate::operations::ensure_may_join_group(&ctx, &grp)?;
     }
     for uid in &member_ids {
         if !cur_members.iter().any(|u| &u.id == uid) {

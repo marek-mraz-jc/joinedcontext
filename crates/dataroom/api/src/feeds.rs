@@ -11,6 +11,7 @@ use dataroom_core::{
     text_in_lang, Catalogue, DataroomError, Dataset, Publisher, RecordState, RequestCtx, Result,
     Visibility,
 };
+use dataroom_rdf::rdfxml::xml_escape as escape_xml;
 use dataroom_rdf::{
     negotiate_profile, negotiate_rdf_format, serialize_catalogue, DcatProfileKind, HydraPageInfo,
     RdfFormat,
@@ -603,20 +604,22 @@ fn render_atom_xml(
         .into_response()
 }
 
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{paging_first, FeedConformance};
+    use super::{escape_xml, paging_first, FeedConformance};
     use dataroom_core::Catalogue;
     use dataroom_rdf::{DcatProfileKind, RdfLimits};
     use std::hash::BuildHasher;
+
+    /// A dataset title or description lands in the Atom feed as XML 1.0 text: a character
+    /// XML cannot carry becomes U+FFFD, so one record never makes the whole feed unreadable.
+    #[test]
+    fn feed_text_carries_only_xml_characters() {
+        assert_eq!(
+            escape_xml("a\u{1}b\u{FFFE}<c>"),
+            "a\u{FFFD}b\u{FFFD}&lt;c&gt;"
+        );
+    }
 
     #[test]
     fn a_kept_verdict_follows_the_graph_it_was_given_for() {

@@ -72,11 +72,13 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// 85,863 once jc-core catalogued `Portal` (T-6873, 9 bytes): the kind enum of the resource tools
 /// names it, so an Organization admin's agent can propose its open data portals; 85,912 once
 /// `jc_person_edit` says an e-mail change needs a Portal session (T-6966, 49 bytes): an agent's
-/// token gets 403 there, and the model reads why before it tries. 85,921 once jc-core catalogued
-/// `Script` (T-7083, 8 bytes in the resource tools' kind enum); 86,830 with `jc_script_test`
-/// (T-7084, 909 bytes): a Script version's tests on the runner before an agent proposes it, the
+/// token gets 403 there, and the model reads why before it tries; 86,509 with
+/// `jc_datasource_discover` (T-7076, 597 bytes): the preset's organizations, layers or feature
+/// types an agent otherwise guesses before its DataSource check goes red; 87,427 once jc-core
+/// catalogued `Script` (T-7083, 8 bytes in the resource tools' kind enum) and with `jc_script_test`
+/// (T-7084, 910 bytes): a Script version's tests on the runner before an agent proposes it, the
 /// only door to that route, its schema the route's bounds.
-const RATCHET: usize = 86_831;
+const RATCHET: usize = 87_428;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

@@ -1,0 +1,80 @@
+{
+ "currentVersion": 11.5,
+ "serviceDescription": "",
+ "maxRecordCount": 2000,
+ "layers": [
+  {
+   "id": 1,
+   "name": "Adresní místa",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPoint"
+  },
+  {
+   "id": 2,
+   "name": "Budovy s číslem domovním",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPoint"
+  },
+  {
+   "id": 3,
+   "name": "Budovy s číslem domovním a vchody",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPoint"
+  },
+  {
+   "id": 4,
+   "name": "Ulice a ostatní veřejná prostranství",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPolyline"
+  },
+  {
+   "id": 6,
+   "name": "Části obce",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPolygon"
+  },
+  {
+   "id": 7,
+   "name": "Části obce díly",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPolygon"
+  },
+  {
+   "id": 8,
+   "name": "Základní sídelní jednotky díly",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPolygon"
+  },
+  {
+   "id": 10,
+   "name": "Stát - NUTS 0",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPolygon"
+  },
+  {
+   "id": 11,
+   "name": "Území - NUTS 1",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPolygon"
+  },
+  {
+   "id": 12,
+   "name": "Regiony soudržnosti - NUTS 2",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPolygon"
+  },
+  {
+   "id": 13,
+   "name": "Kraje - NUTS 3",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPolygon"
+  },
+  {
+   "id": 14,
+   "name": "Okresy - LAU 1",
+   "type": "Feature Layer",
+   "geometryType": "esriGeometryPolygon"
+  }
+ ],
+ "tables": []
+}

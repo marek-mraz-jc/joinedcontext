@@ -656,6 +656,16 @@
           "POST /api/v1/projects/{project}/datasources/{name}/test"
         ]
       },
+      "discover": {
+        "live": {
+          "spec": "datasource-discover.spec.ts",
+          "test": "a steward finds the feature types of a public WFS and writes one into the preset"
+        },
+        "assistant": "jc_datasource_discover",
+        "routes": [
+          "POST /api/v1/projects/{project}/datasource-discovery"
+        ]
+      },
       "read": {
         "live": {
           "spec": "walk.spec.ts",

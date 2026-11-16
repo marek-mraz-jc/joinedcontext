@@ -41,9 +41,13 @@ fn now() -> DateTime<Utc> {
 }
 
 fn tempdir() -> std::path::PathBuf {
+    // Tests run on parallel threads of one process, where two clock readings can be equal: the
+    // counter keeps each test's repository its own.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "jc-subject-{}-{:?}",
+        "jc-subject-{}-{}-{:?}",
         std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("a clock after 1970")

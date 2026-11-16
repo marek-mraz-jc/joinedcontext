@@ -14,6 +14,7 @@ import { RecordLink } from "../../components/RecordLink";
 import { TypePicker } from "../../components/pickers/TypePicker";
 import { CodeBlock, Alert, Badge, Button, Field, Input, Select } from "../../components/ui";
 import type { Expiry, Lifetime, LifetimeMode } from "./lifetime";
+import { FieldPick, SourceEditor } from "./MapperSources";
 import { autoMatch, generate, idFieldOf, migrated, preview, problemsOf, readBack } from "./outputMapper";
 import type { Attribute, MapperProblem, MapperState, Source } from "./outputMapper";
 
@@ -54,13 +55,17 @@ export function withEntityEnd(lifetime: Lifetime[] | undefined, type: string, en
   return next.length > 0 ? next : undefined;
 }
 
-type Choice = "" | "expression" | "value" | "point" | `field:${string}`;
+type Choice = "" | "expression" | "value" | "point" | "ref" | "languages" | "geojson" | "wkt" | "concat" | `field:${string}`;
 
 const choiceOf = (source: Source | undefined): Choice => {
   if (!source) return "";
   if ("field" in source) return `field:${source.field}`;
   if ("expression" in source) return "expression";
   if ("value" in source) return "value";
+  if ("ref" in source) return "ref";
+  if ("languages" in source) return "languages";
+  if ("geometry" in source) return source.format;
+  if ("concat" in source) return "concat";
   return "point";
 };
 
@@ -149,6 +154,8 @@ export function OutputMapper({ project, space, orgDomain, records, bloblang, onB
         return t("pipelines.mapper.problem.noId");
       case "notTime":
         return t("pipelines.mapper.problem.notTime", { field: problem.field, value: problem.value });
+      case "notShaped":
+        return t("pipelines.mapper.problem.notShaped", { field: problem.field, value: problem.value, name });
     }
   };
 
@@ -165,7 +172,16 @@ export function OutputMapper({ project, space, orgDomain, records, bloblang, onB
     else if (choice === "expression") setSource(attribute.name, { expression: "this" });
     else if (choice === "value") setSource(attribute.name, { value: attribute.values?.[0] ?? "" });
     else if (choice === "point") setSource(attribute.name, { longitude: fields[0] ?? "", latitude: fields[1] ?? fields[0] ?? "" });
-    else setSource(attribute.name, { field: choice.slice(6) });
+    else if (choice === "ref") setSource(attribute.name, { ref: { type: attribute.relationship?.target ?? "", field: fields[0] ?? "" } });
+    else if (choice === "languages") setSource(attribute.name, { languages: { en: fields[0] ?? "" } });
+    else if (choice === "geojson" || choice === "wkt") setSource(attribute.name, { geometry: fields[0] ?? "", format: choice });
+    else if (choice === "concat") setSource(attribute.name, { concat: fields.slice(0, 2), separator: " " });
+    else {
+      // Another field keeps the transforms picked for the one before.
+      const before = current?.attributes[attribute.name];
+      const transforms = before && "field" in before ? before.transforms : undefined;
+      setSource(attribute.name, transforms ? { field: choice.slice(6), transforms } : { field: choice.slice(6) });
+    }
   };
 
   const noId = problems.find((problem) => problem.kind === "noId");
@@ -283,7 +299,20 @@ export function OutputMapper({ project, space, orgDomain, records, bloblang, onB
                       ) : null}
                       <option value="expression">{t("pipelines.mapper.expression")}</option>
                       <option value="value">{t("pipelines.mapper.fixedValue")}</option>
-                      {attribute.kind === "GeoProperty" ? <option value="point">{t("pipelines.mapper.point")}</option> : null}
+                      {attribute.kind === "GeoProperty" ? (
+                        <>
+                          <option value="point">{t("pipelines.mapper.point")}</option>
+                          <option value="geojson">{t("pipelines.mapper.geojson")}</option>
+                          <option value="wkt">{t("pipelines.mapper.wkt")}</option>
+                        </>
+                      ) : null}
+                      {attribute.kind === "Relationship" && attribute.relationship ? (
+                        <option value="ref">{t("pipelines.mapper.ref", { target: attribute.relationship.target })}</option>
+                      ) : null}
+                      {attribute.kind === "LanguageProperty" ? <option value="languages">{t("pipelines.mapper.languagesChoice")}</option> : null}
+                      {attribute.kind === "Property" && !attribute.values && (attribute.valueType ?? "string") === "string" ? (
+                        <option value="concat">{t("pipelines.mapper.concatChoice")}</option>
+                      ) : null}
                     </Select>
                   </Field>
                   {source && "expression" in source ? (
@@ -339,6 +368,25 @@ export function OutputMapper({ project, space, orgDomain, records, bloblang, onB
                         </Field>
                       ))}
                     </div>
+                  ) : null}
+                  {source ? (
+                    <SourceEditor id={id} attribute={attribute} source={source} fields={fields} records={records} onChange={(next) => setSource(attribute.name, next)} />
+                  ) : null}
+                  {source && attribute.kind === "Property" && !("value" in source) ? (
+                    <FieldPick
+                      id={`${id}-observed`}
+                      label={t("pipelines.mapper.observedAt", { name: attribute.name })}
+                      hint={t("pipelines.mapper.hint.observedAt")}
+                      value={current.observedAt?.[attribute.name] ?? ""}
+                      fields={fields}
+                      optional
+                      onChange={(field) => {
+                        const observedAt = { ...current.observedAt };
+                        if (field) observedAt[attribute.name] = field;
+                        else delete observedAt[attribute.name];
+                        write({ ...current, observedAt: Object.keys(observedAt).length > 0 ? observedAt : undefined });
+                      }}
+                    />
                   ) : null}
                 </li>
               );

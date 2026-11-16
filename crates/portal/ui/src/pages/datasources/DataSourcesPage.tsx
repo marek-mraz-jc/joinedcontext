@@ -36,6 +36,7 @@ import {
   brokerOptions,
   dataSourceSchema,
   dataSourceUiSchema,
+  httpUiSchema,
   findEnvVars,
   isTypedDataSource,
   parseYamlStrings,
@@ -45,6 +46,7 @@ import {
 } from "../../schemas/kinds";
 import type { CatalogInput, DataSourceType, TypedDataSourceType } from "../../schemas/kinds";
 import { ConnectionTest } from "./ConnectionTest";
+import { PresetDiscovery } from "./PresetDiscovery";
 import { useBentoInputs } from "./RunnerInputForm";
 import { TemplateGallery } from "./TemplateGallery";
 import { BlueprintCards } from "../flows/Gallery";
@@ -756,9 +758,11 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
           }
           uiSchema={
             isTypedDataSource(type)
-              ? editing
-                ? { ...dataSourceUiSchema, name: { "ui:readonly": true } }
-                : dataSourceUiSchema
+              ? {
+                  ...dataSourceUiSchema,
+                  ...(type === "http" ? httpUiSchema(draft?.http as Record<string, unknown> | undefined) : {}),
+                  ...(editing ? { name: { "ui:readonly": true } } : {}),
+                }
               : runnerCatalogInput
                 ? editing
                   ? { ...runnerDataSourceSchema(t, runnerCatalogInput).uiSchema, name: { "ui:readonly": true } }
@@ -771,7 +775,23 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
           submitLabel={t("datasources.propose")}
           submitting={propose.isPending}
           // Under the fields, where the credentials are typed, not above the first one (T-6163).
-          afterFields={<p className="text-caption text-fg-muted">{t("datasources.secretHint")}</p>}
+          afterFields={
+            <>
+              <p className="text-caption text-fg-muted">{t("datasources.secretHint")}</p>
+              {type === "http" ? (
+                <PresetDiscovery
+                  project={project}
+                  http={draft?.http as Record<string, unknown> | undefined}
+                  onUse={(http) => {
+                    setDraft((held) => ({ ...(held ?? {}), http }));
+                    setPlan(null);
+                    setProbe(null);
+                    setVerdict(null);
+                  }}
+                />
+              ) : null}
+            </>
+          }
           error={formError}
           onChange={(data) => {
             setDraft(data);

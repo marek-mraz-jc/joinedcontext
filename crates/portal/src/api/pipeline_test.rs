@@ -889,6 +889,7 @@ pub(crate) fn answer_of(trace: TestTrace) -> Probe {
         None if trace.input.events > 0 => Probe {
             records: Some(trace.input.events),
             bytes: Some(trace.input.bytes),
+            pages: None,
             sample: trace.input.sample,
             skipped: None,
         },
