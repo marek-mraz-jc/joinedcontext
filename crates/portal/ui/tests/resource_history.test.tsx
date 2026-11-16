@@ -8,6 +8,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { ResourceFormDialogBody as ResourceFormDialog } from "../src/components/ResourceFormDialogBody";
 import { ResourceHistory } from "../src/components/ResourceHistory";
+import { odataCall, odataValue } from "./odata";
 import type { JsonSchema } from "../src/components/forms/types";
 
 // T-3975: an existing resource's editor has a History view of the changes that touched it; a
@@ -74,8 +75,8 @@ function stubApi(phase = "Merged") {
       const url = new URL(request.url);
       requests.push(`${request.method} ${url.pathname}${url.search}`);
       const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-      if (url.pathname.endsWith("/changes/history")) {
-        return json({
+      if (odataCall(url)?.name === "jc_change_history") {
+        return odataValue({
           apiVersion: "joinedcontext.com/v1alpha1",
           kind: "ChangeList",
           items: [
@@ -151,7 +152,11 @@ describe("a resource's own history in its editor", () => {
     await userEvent.click(screen.getByRole("tab", { name: en.form.view.history }));
     const rows = await screen.findAllByTestId("resource-history-item");
     expect(rows).toHaveLength(2);
-    expect(requests).toContain("GET /api/v1/projects/helsinki/changes/history?page=1&kind=Pipeline&name=air");
+    expect(requests.map((line) => odataCall(line.slice(4)))).toContainEqual({
+      project: "helsinki",
+      name: "jc_change_history",
+      params: { page: 1, kind: "Pipeline", name: "air" },
+    });
     expect(rows[0]).toHaveTextContent("chg-00000009");
     // A rejected change never was a version: nothing to restore on it.
     expect(within(rows[1]).queryByTestId("resource-history-restore")).not.toBeInTheDocument();
@@ -213,7 +218,7 @@ describe("a resource's own history in its editor", () => {
   it("says when no change touched it, and that a change wrote no such version", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ChangeList", items: [] }), { status: 200 })),
+      vi.fn(async () => odataValue({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ChangeList", items: [] })),
     );
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -231,10 +236,10 @@ describe("a resource's own history in its editor", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL((input as Request).url);
-        const body = url.pathname.endsWith("/manifests")
-          ? { apiVersion: "joinedcontext.com/v1alpha1", kind: "List", metadata: {}, items: [] }
-          : { apiVersion: "joinedcontext.com/v1alpha1", kind: "ChangeList", items: [change("chg-00000009", "Merged", "air", "2026-10-11T10:00:00Z")] };
-        return new Response(JSON.stringify(body), { status: 200 });
+        if (url.pathname.endsWith("/manifests")) {
+          return new Response(JSON.stringify({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", metadata: {}, items: [] }), { status: 200 });
+        }
+        return odataValue({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ChangeList", items: [change("chg-00000009", "Merged", "air", "2026-10-11T10:00:00Z")] });
       }),
     );
     render(

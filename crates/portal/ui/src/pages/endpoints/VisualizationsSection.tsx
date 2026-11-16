@@ -1,12 +1,27 @@
 import { useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { useProposal } from "../../api/proposal";
+import { door } from "../../api/odata";
 import { ChangeNotice } from "../../components/ChangeNotice";
-import { Alert, Badge, Button, Field, Input, Select, Textarea } from "../../components/ui";
-import { TEMPLATES, complete, defaultData, visualizationsOf, withVisualizations } from "./visualizations";
+import {
+  Alert,
+  Badge,
+  Button,
+  Field,
+  Input,
+  Select,
+  Textarea,
+} from "../../components/ui";
+import {
+  TEMPLATES,
+  complete,
+  defaultData,
+  visualizationsOf,
+  withVisualizations,
+} from "./visualizations";
 import type { Role, TemplateName, Visualization } from "./visualizations";
 
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -55,14 +70,17 @@ export function VisualizationsSection({
   const fill = async () => {
     setFailed(null);
     try {
-      const spec = await unwrap(
-        await api.GET("/api/v1/visualization-templates/{name}", {
-          params: { path: { name: template }, query: columns },
-        }),
-      );
+      const spec = await door("portal_visualization_template", {
+        template,
+        ...columns,
+      });
       setSpecText(JSON.stringify(spec, null, 2));
     } catch (error) {
-      setFailed(error instanceof ApiError ? (error.problem?.detail ?? error.message) : String(error));
+      setFailed(
+        error instanceof ApiError
+          ? (error.problem?.detail ?? error.message)
+          : String(error),
+      );
     }
   };
 
@@ -82,22 +100,40 @@ export function VisualizationsSection({
     }
     propose([
       ...list,
-      { name, title: { [language]: title }, description: { [language]: description }, data, spec },
+      {
+        name,
+        title: { [language]: title },
+        description: { [language]: description },
+        data,
+        spec,
+      },
     ]);
   };
 
-  const roles = [...TEMPLATES[template].required, ...TEMPLATES[template].optional] as Role[];
+  const roles = [
+    ...TEMPLATES[template].required,
+    ...TEMPLATES[template].optional,
+  ] as Role[];
   const nameOk = DNS_LABEL.test(name) && !list.some((one) => one.name === name);
-  const ready = nameOk && title.trim() !== "" && description.trim() !== "" && specText.trim() !== "";
+  const ready =
+    nameOk &&
+    title.trim() !== "" &&
+    description.trim() !== "" &&
+    specText.trim() !== "";
 
   return (
     <div className="space-y-3" data-testid="visualizations">
       {list.length === 0 ? (
-        <p className="text-body text-fg-muted">{t("endpoints.page.visualizations.none")}</p>
+        <p className="text-body text-fg-muted">
+          {t("endpoints.page.visualizations.none")}
+        </p>
       ) : (
         <ul className="space-y-2">
           {list.map((one) => (
-            <li key={one.name} className="flex flex-wrap items-center gap-2 rounded-md border border-border p-3">
+            <li
+              key={one.name}
+              className="flex flex-wrap items-center gap-2 rounded-md border border-border p-3"
+            >
               <span className="text-sm font-medium text-fg">
                 {one.title[language] ?? Object.values(one.title)[0] ?? one.name}
               </span>
@@ -110,7 +146,9 @@ export function VisualizationsSection({
                   className="ml-auto"
                   disabled={proposal.mutation.isPending}
                   disabledReason={t("app.busyReason")}
-                  onClick={() => propose(list.filter((other) => other.name !== one.name))}
+                  onClick={() =>
+                    propose(list.filter((other) => other.name !== one.name))
+                  }
                 >
                   {t("endpoints.page.visualizations.remove")}
                 </Button>
@@ -130,17 +168,43 @@ export function VisualizationsSection({
               id="viz-name"
               label={t("endpoints.page.visualizations.name")}
               help={t("endpoints.page.visualizations.nameHint")}
-              errors={name === "" || nameOk ? undefined : [t("endpoints.page.visualizations.nameHint")]}
+              errors={
+                name === "" || nameOk
+                  ? undefined
+                  : [t("endpoints.page.visualizations.nameHint")]
+              }
             >
-              <Input id="viz-name" value={name} onChange={(event) => setName(event.target.value)} />
+              <Input
+                id="viz-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
             </Field>
-            <Field id="viz-title" label={t("endpoints.page.visualizations.chartTitle")}>
-              <Input id="viz-title" value={title} onChange={(event) => setTitle(event.target.value)} />
+            <Field
+              id="viz-title"
+              label={t("endpoints.page.visualizations.chartTitle")}
+            >
+              <Input
+                id="viz-title"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+              />
             </Field>
-            <Field id="viz-description" label={t("endpoints.page.visualizations.description")} className="sm:col-span-2">
-              <Input id="viz-description" value={description} onChange={(event) => setDescription(event.target.value)} />
+            <Field
+              id="viz-description"
+              label={t("endpoints.page.visualizations.description")}
+              className="sm:col-span-2"
+            >
+              <Input
+                id="viz-description"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+              />
             </Field>
-            <Field id="viz-template" label={t("endpoints.page.visualizations.template")}>
+            <Field
+              id="viz-template"
+              label={t("endpoints.page.visualizations.template")}
+            >
               <Select
                 id="viz-template"
                 value={template}
@@ -173,13 +237,21 @@ export function VisualizationsSection({
               </Select>
             </Field>
             {roles.map((role) => (
-              <Field key={role} id={`viz-${role}`} label={t(`endpoints.page.visualizations.roles.${role}`)}>
+              <Field
+                key={role}
+                id={`viz-${role}`}
+                label={t(`endpoints.page.visualizations.roles.${role}`)}
+              >
                 <Select
                   id={`viz-${role}`}
                   value={columns[role] ?? ""}
-                  onChange={(event) => setColumns({ ...columns, [role]: event.target.value })}
+                  onChange={(event) =>
+                    setColumns({ ...columns, [role]: event.target.value })
+                  }
                 >
-                  <option value="">{t("endpoints.page.visualizations.noColumn")}</option>
+                  <option value="">
+                    {t("endpoints.page.visualizations.noColumn")}
+                  </option>
                   {columnsOf(type).map((column) => (
                     <option key={column} value={column}>
                       {column}

@@ -902,6 +902,126 @@ async fn a_function_answers_as_mcp_tools_call_and_takes_aliases() {
 /// service that moves it fails here until the snapshot is written again
 /// (`JC_WRITE_SNAPSHOT=1 cargo test --test odata_org_tests sdk_metadata`) and the client
 /// regenerated (`node sdk/scripts/odata-gen.mjs`), which CI checks has no diff.
+/// An OData alias of `value` as the UI's SDK client sends it: the literal, percent-encoded.
+fn alias(value: &Value) -> String {
+    let literal = match value {
+        Value::String(text) => format!("'{}'", text.replace('\'', "''")),
+        other => other.to_string(),
+    };
+    literal
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// T-6812: each function the Portal UI moved onto the service, called as its SDK client calls it
+/// (every argument an alias, a JSON object as one), answers what that operation's REST door
+/// answered the page before: the same status, and the REST body as the function's `value`.
+#[tokio::test]
+async fn the_functions_the_ui_calls_answer_as_their_rest_doors() {
+    let state = state();
+    state.mirror.upsert(envelope(
+        "ServiceAccount",
+        "etl",
+        "helsinki",
+        json!({ "owner": { "user": "jana@hel.fi" }, "purpose": "nightly import",
+                "roles": [{ "role": "space-writer", "scope": { "contextSpace": "air" } }], "credentials": [] }),
+    ));
+    let hel = Mode::Host("hel");
+    let subject = json!({ "kind": "role", "name": "reader" });
+    let simulated =
+        json!({ "subject": { "kind": "group", "name": "stewards" }, "action": "retrieveEntity" });
+    // This state has no forge and no Endpoint: the history and the simulation are refusals.
+    let cases: [(&str, Value, Answer, u16); 4] = [
+        (
+            "jc_access_explore",
+            json!({ "subject": subject }),
+            act(
+                &state,
+                "root",
+                "/api/v1/projects/helsinki/access/explore",
+                None,
+                json!({ "subject": subject }),
+            )
+            .await,
+            200,
+        ),
+        (
+            "jc_serviceaccount_access",
+            json!({ "name": "etl" }),
+            get(
+                &state,
+                hel,
+                "root",
+                "/api/v1/projects/helsinki/serviceaccounts/etl/access",
+            )
+            .await,
+            200,
+        ),
+        (
+            "jc_change_history",
+            json!({ "page": 1, "kind": "Policy", "name": "air" }),
+            get(
+                &state,
+                hel,
+                "root",
+                "/api/v1/projects/helsinki/changes/history?page=1&kind=Policy&name=air",
+            )
+            .await,
+            503,
+        ),
+        (
+            "jc_access_simulate",
+            json!({ "endpoint": "air", "subject": simulated["subject"], "action": "retrieveEntity" }),
+            act(
+                &state,
+                "root",
+                "/api/v1/projects/helsinki/endpoints/air/access/simulate",
+                None,
+                simulated.clone(),
+            )
+            .await,
+            404,
+        ),
+    ];
+    for (name, params, rest, expected) in cases {
+        let params = params.as_object().expect("object");
+        let names: Vec<String> = params.keys().map(|k| format!("{k}=@{k}")).collect();
+        let aliases: Vec<String> = params
+            .iter()
+            .map(|(k, v)| format!("@{k}={}", alias(v)))
+            .collect();
+        let uri = format!(
+            "/api/v1/projects('helsinki')/JoinedContext.Portal.{name}({})?{}",
+            names.join(","),
+            aliases.join("&")
+        );
+        let odata = get(&state, hel, "root", &uri).await;
+        assert_eq!(
+            odata.status, rest.status,
+            "{name}: OData {} REST {}",
+            odata.text, rest.text
+        );
+        assert_eq!(rest.status.as_u16(), expected, "{name}: {}", rest.text);
+        if rest.status.is_success() {
+            assert_eq!(odata.json()["value"], rest.json(), "{name}");
+        } else {
+            // A refusal says the same sentence through either door.
+            assert_eq!(
+                odata.json()["error"]["message"],
+                rest.json()["detail"],
+                "{name}: {}",
+                odata.text
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn sdk_metadata_snapshot_is_the_org_admins_metadata() {
     // One snapshot per role (T-6821): the SDK client is generated from the org-admin's.
@@ -1484,6 +1604,145 @@ async fn a_refusals_fields_and_hint_carry_into_the_odata_error() {
     assert_eq!(error["hint"], problem["hint"], "{}", odata.text);
 }
 
+/// `value` with each RFC 3339 instant as one token: two reads of a live reading differ in when.
+fn timeless(value: Value) -> Value {
+    match value {
+        Value::String(text) if chrono::DateTime::parse_from_rfc3339(&text).is_ok() => {
+            json!("<instant>")
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(timeless).collect()),
+        Value::Object(map) => {
+            Value::Object(map.into_iter().map(|(k, v)| (k, timeless(v))).collect())
+        }
+        other => other,
+    }
+}
+
+/// T-7098: the Administration pages' readings are the Organization's: `jc_organization_read`,
+/// bound to the `Organization` singleton, answers each aspect with its REST door's status, its
+/// body or its refusal's sentence, for an administrator and for a viewer, and no project binds it.
+#[tokio::test]
+async fn the_organizations_readings_answer_as_their_rest_doors() {
+    let state = state();
+    let mode = Mode::Host("hel");
+    let cases: [(Value, &str); 13] = [
+        (json!({ "aspect": "projects" }), "/api/v1/projects"),
+        (json!({ "aspect": "setup" }), "/api/v1/organization/setup"),
+        (json!({ "aspect": "health" }), "/api/v1/organization/health"),
+        (
+            json!({ "aspect": "healthChecks" }),
+            "/api/v1/organization/health-checks",
+        ),
+        (json!({ "aspect": "limits" }), "/api/v1/organization/limits"),
+        (
+            json!({ "aspect": "brokers" }),
+            "/api/v1/organization/brokers",
+        ),
+        (json!({ "aspect": "agents" }), "/api/v1/organization/agents"),
+        (
+            json!({ "aspect": "agentActivity", "limit": 5 }),
+            "/api/v1/organization/agents/activity?limit=5",
+        ),
+        (
+            json!({ "aspect": "costs", "month": "2026-09" }),
+            "/api/v1/organization/costs?month=2026-09",
+        ),
+        (
+            json!({ "aspect": "addresses" }),
+            "/api/v1/organization/addresses",
+        ),
+        (
+            json!({ "aspect": "dataAccess" }),
+            "/api/v1/organization/data-access",
+        ),
+        (
+            json!({ "aspect": "widgetOptions", "organization": "hel" }),
+            "/api/v1/organization/widgets/options?organization=hel",
+        ),
+        (
+            json!({ "aspect": "personReadable", "person": "sub-ada" }),
+            "/api/v1/organization/people/sub-ada/readable",
+        ),
+    ];
+    let mut answered = std::collections::BTreeSet::new();
+    for (params, rest_uri) in cases {
+        let params = params.as_object().expect("object");
+        let names: Vec<String> = params.keys().map(|k| format!("{k}=@{k}")).collect();
+        let aliases: Vec<String> = params
+            .iter()
+            .map(|(k, v)| format!("@{k}={}", alias(v)))
+            .collect();
+        let uri = format!(
+            "/api/v1/Organization/JoinedContext.Portal.jc_organization_read({})?{}",
+            names.join(","),
+            aliases.join("&")
+        );
+        for who in ["root", "hel-only"] {
+            let odata = get(&state, mode, who, &uri).await;
+            let rest = get(&state, mode, who, rest_uri).await;
+            assert_eq!(
+                odata.status, rest.status,
+                "{who} {rest_uri}: OData {} REST {}",
+                odata.text, rest.text
+            );
+            answered.insert((who, rest.status.as_u16()));
+            if rest.status.is_success() {
+                assert_eq!(
+                    timeless(odata.json()["value"].clone()),
+                    timeless(rest.json()),
+                    "{who} {rest_uri}"
+                );
+            } else {
+                assert_eq!(
+                    odata.json()["error"]["message"],
+                    rest.json()["detail"],
+                    "{who} {rest_uri}: {}",
+                    odata.text
+                );
+            }
+        }
+    }
+    // Both an answer and a refusal ran through the parity above.
+    assert!(answered.contains(&("root", 200)), "{answered:?}");
+    assert!(answered.contains(&("hel-only", 403)), "{answered:?}");
+
+    let bound = |text: &str, ty: &str| {
+        text.contains(&format!(
+            r#"Name="jc_organization_read" IsBound="true"><Parameter Name="bindingParameter" Type="JoinedContext.Portal.{ty}""#
+        ))
+    };
+    let metadata = get(&state, mode, "root", "/api/v1/$metadata").await;
+    assert!(bound(&metadata.text, "Organization"), "{}", metadata.text);
+    assert!(!bound(&metadata.text, "Project"), "{}", metadata.text);
+    let on_project = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_organization_read(aspect='setup')",
+    )
+    .await;
+    assert_eq!(
+        on_project.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        on_project.text
+    );
+    // A member given to another aspect is refused at its path, as the REST op door refuses it.
+    let misplaced = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/Organization/JoinedContext.Portal.jc_organization_read(aspect='setup',person='x')",
+    )
+    .await;
+    assert_eq!(
+        misplaced.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        misplaced.text
+    );
+}
+
 /// T-7097: the people's operations are bound to the `Organization` singleton of the installation's
 /// Organization and answer as their REST doors; no project binds them, and another
 /// Organization's singleton answers as an unknown operation does.
@@ -1619,6 +1878,235 @@ async fn people_operations_are_the_organizations_and_answer_as_their_rest_doors(
     assert_eq!(without_trace(&foreign), without_trace(&unknown));
     let ba_model = get(&state, Mode::Host("ba"), "root", "/api/v1/$metadata").await;
     assert!(!ba_model.text.contains("jc_person_"), "{}", ba_model.text);
+}
+
+/// One request of `cookie` through the whole router, `body` as JSON.
+async fn raw(
+    state: &AppState,
+    method: &str,
+    uri: &str,
+    cookie: &str,
+    body: Option<&Value>,
+) -> Answer {
+    let token = cookie
+        .split("; ")
+        .find_map(|c| c.strip_prefix(&format!("{CSRF_COOKIE}=")))
+        .unwrap_or_default()
+        .to_owned();
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::HOST, HEL)
+        .header(header::COOKIE, cookie)
+        .header(csrf::CSRF_HEADER, &token);
+    if body.is_some() {
+        request = request.header(header::CONTENT_TYPE, "application/json");
+    }
+    let request = request
+        .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+        .expect("request");
+    let response = server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("response");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    Answer {
+        status,
+        headers,
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+    }
+}
+
+/// A sample value of a Portal door's parameter `member`.
+fn door_sample(member: &str) -> Value {
+    match member {
+        "body" => json!({}),
+        "dryRun" => json!(true),
+        "person" | "ids" => json!("sub-ada"),
+        "endpoint" => json!("air"),
+        "notification" => json!("1"),
+        "template" => json!("bar"),
+        other => json!(format!("{other}-1")),
+    }
+}
+
+/// T-7100 (API/13 §2b): each Portal door, the REST doors no tool may answer, answers a person's
+/// session as its REST door does (status, body under `value`, refusal sentence), and the REST
+/// path's members are its parameters.
+#[tokio::test]
+async fn the_portal_doors_answer_as_their_rest_doors() {
+    use joinedcontext_portal::api::odata_portal::{self, Bound};
+    let state = state();
+    let mut differ = Vec::new();
+    for who in ["root", "hel-only"] {
+        let cookie = cookies(&state.config, person(who, groups_of(who)), "hel").await;
+        for door in &odata_portal::DOORS {
+            let params: serde_json::Map<String, Value> = door
+                .parameters
+                .iter()
+                .map(|(member, _)| ((*member).to_owned(), door_sample(member)))
+                .collect();
+            let project = (door.bound == Bound::Project).then_some("helsinki");
+            let rest = odata_portal::rest(door, project, &params).expect("rest");
+            let bound = match door.bound {
+                Bound::Organization => "Organization".to_owned(),
+                Bound::Project => "projects('helsinki')".to_owned(),
+            };
+            let odata = if door.is_function() {
+                let args: Vec<String> = params.keys().map(|m| format!("{m}=@{m}")).collect();
+                let aliases: Vec<String> = params
+                    .iter()
+                    .map(|(m, v)| format!("@{m}={}", alias(v)))
+                    .collect();
+                let uri = format!(
+                    "/api/v1/{bound}/JoinedContext.Portal.{}({})?{}",
+                    door.name,
+                    args.join(","),
+                    aliases.join("&")
+                );
+                raw(&state, "GET", &uri, &cookie, None).await
+            } else {
+                let uri = format!("/api/v1/{bound}/JoinedContext.Portal.{}", door.name);
+                raw(
+                    &state,
+                    "POST",
+                    &uri,
+                    &cookie,
+                    Some(&Value::Object(params.clone())),
+                )
+                .await
+            };
+            let rest_body: Option<Value> = rest
+                .body
+                .as_deref()
+                .map(|b| serde_json::from_slice(b).expect("JSON"));
+            let rest_uri = format!("/api/v1{}", rest.path_and_query);
+            let answer = raw(
+                &state,
+                door.method.as_str(),
+                &rest_uri,
+                &cookie,
+                rest_body.as_ref(),
+            )
+            .await;
+            let rest_status = if answer.status == StatusCode::NO_CONTENT {
+                StatusCode::OK
+            } else {
+                answer.status
+            };
+            let rest_json = answer.json();
+            let same = if odata.status != rest_status {
+                false
+            } else if rest_status.is_success() {
+                odata.json()["value"] == rest_json
+            } else {
+                let detail = rest_json
+                    .get("detail")
+                    .or_else(|| rest_json.get("title"))
+                    .cloned();
+                detail.is_none() || odata.json()["error"]["message"] == detail.unwrap_or_default()
+            };
+            if !same {
+                differ.push(format!(
+                    "{who} {}: OData {} {} / REST {} {rest_uri} {} {}",
+                    door.name, odata.status, odata.text, door.method, answer.status, answer.text
+                ));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// T-7100: a Portal door answers no bearer token (odata_portal's unit test proves a service
+/// account's or agent's identity is refused before the handler runs), and a person's session
+/// finds it in `$metadata` as their rights list it; another Organization's singleton offers none.
+#[tokio::test]
+async fn a_portal_door_answers_a_persons_session_only() {
+    let state = state();
+    let mode = Mode::Host("hel");
+    let bearer = send(
+        &state,
+        mode,
+        "",
+        "/api/v1/Organization/JoinedContext.Portal.portal_notification_list()",
+        &[("authorization", "Bearer not-a-person")],
+    )
+    .await;
+    assert!(
+        matches!(
+            bearer.status,
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ),
+        "{}",
+        bearer.text
+    );
+
+    let bound = |text: &str, name: &str, ty: &str| {
+        text.contains(&format!(
+            r#"Name="{name}" IsBound="true"><Parameter Name="bindingParameter" Type="JoinedContext.Portal.{ty}""#
+        ))
+    };
+    let root = get(&state, mode, "root", "/api/v1/$metadata").await.text;
+    for (name, ty) in [
+        ("portal_person_reset_password", "Organization"),
+        ("portal_connector_list", "Organization"),
+        ("portal_notification_list", "Organization"),
+        ("portal_secret_set", "Project"),
+    ] {
+        assert!(bound(&root, name, ty), "root lacks {name}: {root}");
+    }
+    let viewer = get(&state, mode, "hel-only", "/api/v1/$metadata")
+        .await
+        .text;
+    assert!(
+        bound(&viewer, "portal_notification_list", "Organization"),
+        "{viewer}"
+    );
+    assert!(
+        bound(&viewer, "portal_endpoint_quality", "Project"),
+        "{viewer}"
+    );
+    for name in [
+        "portal_person_reset_password",
+        "portal_people_remove",
+        "portal_connector_list",
+    ] {
+        assert!(!viewer.contains(name), "a viewer is offered {name}");
+    }
+    let json = get(&state, mode, "root", "/api/v1/$metadata?$format=json")
+        .await
+        .json();
+    let reset = &json["JoinedContext.Portal"]["portal_person_reset_password"][0];
+    assert_eq!(reset["$Kind"], "Action", "{reset}");
+    assert_eq!(reset["$Parameter"][1]["$Name"], "person", "{reset}");
+    // A door bound to the Organization is no project's, and the other way round.
+    let on_project = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.portal_notification_list()",
+    )
+    .await;
+    assert_eq!(
+        on_project.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        on_project.text
+    );
+    let ba = get(&state, Mode::Host("ba"), "root", "/api/v1/$metadata")
+        .await
+        .text;
+    assert!(
+        !bound(&ba, "portal_person_reset_password", "Organization"),
+        "{ba}"
+    );
 }
 
 /// PF-56 parity of the bound actions (T-6817): each role's dry-run `propose_delete` and

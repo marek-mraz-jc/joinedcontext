@@ -30,6 +30,7 @@ import type { ReactElement } from "react";
 import i18n from "../src/i18n";
 import { BrandingProvider } from "../src/branding";
 import { resetDocumentTitle } from "../src/documentTitle";
+import { asOData, doorAsRest, readingAsRest } from "./odata";
 
 /** The four languages the Portal ships; a string must exist in all of them (UI-11). */
 export const LOCALES = ["en", "sk", "cs", "de"] as const;
@@ -59,7 +60,8 @@ export const json: Json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: {
-      "Content-Type": status >= 400 ? "application/problem+json" : "application/json",
+      "Content-Type":
+        status >= 400 ? "application/problem+json" : "application/json",
     },
   });
 
@@ -69,16 +71,29 @@ export function list(items: unknown[]): unknown {
 }
 
 /** RFC 9457, as the Portal's API sends a refusal: the reason a person can act on. */
-export function problem(status: number, detail: string, requestId = "req-7f3a91c4"): Response {
+export function problem(
+  status: number,
+  detail: string,
+  requestId = "req-7f3a91c4",
+): Response {
   return json(
-    { type: "about:blank", title: "Error", status, detail, instance: `/req/${requestId}` },
+    {
+      type: "about:blank",
+      title: "Error",
+      status,
+      detail,
+      instance: `/req/${requestId}`,
+    },
     status,
   );
 }
 
 export interface PageHarness {
   /** How the page's own requests are answered; the path is what the test switches on. */
-  answer: (url: URL, request: Request) => Response | undefined | Promise<Response | undefined>;
+  answer: (
+    url: URL,
+    request: Request,
+  ) => Response | undefined | Promise<Response | undefined>;
   /** The address the page is mounted at, so `PageHeader` reads the project out of it. */
   path?: string;
   /** The installation's branding; `OTHER_BRAND` proves the page paints through tokens. */
@@ -92,22 +107,44 @@ export interface PageHarness {
  * are used: the signed-in person, the installation's branding, and an empty list for anything
  * else — so a page test writes only the requests its own page cares about.
  */
-export function renderPage(element: ReactElement, harness: PageHarness): RenderResult {
-  const { answer, path = "/projects/helsinki", branding = OTHER_BRAND } = harness;
+export function renderPage(
+  element: ReactElement,
+  harness: PageHarness,
+): RenderResult {
+  const {
+    answer,
+    path = "/projects/helsinki",
+    branding = OTHER_BRAND,
+  } = harness;
 
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request =
-        input instanceof Request ? input : new Request(new URL(String(input), window.location.origin), init);
-      const url = new URL(request.url, window.location.origin);
-      const own = await answer(url, request);
-      if (own) return own;
-      if (url.pathname.endsWith("/auth/me")) {
-        return json({ subject: "b7c1e0f4", username: "jana.kovacova", name: "Jana Kováčová", roles: ["portal-editor"] });
-      }
-      if (url.pathname.endsWith("/branding")) return json(branding);
-      return json(list([]));
+        input instanceof Request
+          ? input
+          : new Request(new URL(String(input), window.location.origin), init);
+      const asked = new URL(request.url, window.location.origin);
+      // An Administration reading or a Portal door over OData is answered by its REST door's stub
+      // (T-7098, T-7100).
+      const door = await doorAsRest(request);
+      const rest = door ? new URL(door.url) : readingAsRest(asked);
+      const url = rest ?? asked;
+      const answered = async (): Promise<Response> => {
+        const own = await answer(url, door ?? request);
+        if (own) return own;
+        if (url.pathname.endsWith("/auth/me")) {
+          return json({
+            subject: "b7c1e0f4",
+            username: "jana.kovacova",
+            name: "Jana Kováčová",
+            roles: ["portal-editor"],
+          });
+        }
+        if (url.pathname.endsWith("/branding")) return json(branding);
+        return json(list([]));
+      };
+      return rest ? asOData(await answered()) : answered();
     }),
   );
 
@@ -151,14 +188,17 @@ export async function expectNoAxeViolations(
    */
   exclude: string[] = [],
 ): Promise<void> {
-  const results = await axe.run(exclude.length > 0 ? { include: [container], exclude } : container, {
-    rules: {
-      "html-has-lang": { enabled: false },
-      "landmark-one-main": { enabled: false },
-      region: { enabled: false },
-      "page-has-heading-one": { enabled: false },
+  const results = await axe.run(
+    exclude.length > 0 ? { include: [container], exclude } : container,
+    {
+      rules: {
+        "html-has-lang": { enabled: false },
+        "landmark-one-main": { enabled: false },
+        region: { enabled: false },
+        "page-has-heading-one": { enabled: false },
+      },
     },
-  });
+  );
   const summary = results.violations
     .map((v) => `${v.id}: ${v.nodes.map((n) => n.html).join(" | ")}`)
     .join("\n");
@@ -170,13 +210,18 @@ export async function expectNoAxeViolations(
  * One H1, and no level skipped on the way down (UI-16).
  */
 export function expectHeadingOutline(container: HTMLElement): void {
-  const levels = [...container.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6")].map((h) =>
-    Number(h.tagName.slice(1)),
-  );
-  expect(levels.filter((level) => level === 1), "exactly one H1 on the page").toHaveLength(1);
+  const levels = [
+    ...container.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6"),
+  ].map((h) => Number(h.tagName.slice(1)));
+  expect(
+    levels.filter((level) => level === 1),
+    "exactly one H1 on the page",
+  ).toHaveLength(1);
   expect(levels[0], "the H1 comes before every other heading").toBe(1);
   const skipped = levels.flatMap((level, index) =>
-    index > 0 && level > levels[index - 1] + 1 ? [`h${levels[index - 1]} → h${level}`] : [],
+    index > 0 && level > levels[index - 1] + 1
+      ? [`h${levels[index - 1]} → h${level}`]
+      : [],
   );
   expect(skipped, "no heading level is skipped").toEqual([]);
 }
@@ -185,7 +230,10 @@ export function expectHeadingOutline(container: HTMLElement): void {
  * Tab from the top of the page and collect what takes focus, in the order the keyboard reaches
  * it. Every control a mouse can use has to appear here (UI-16).
  */
-export async function tabOrder(container: HTMLElement, steps = 40): Promise<HTMLElement[]> {
+export async function tabOrder(
+  container: HTMLElement,
+  steps = 40,
+): Promise<HTMLElement[]> {
   const user = userEvent.setup();
   const seen: HTMLElement[] = [];
   (container.ownerDocument.body as HTMLElement).focus();
@@ -200,7 +248,9 @@ export async function tabOrder(container: HTMLElement, steps = 40): Promise<HTML
 }
 
 /** Run `check` once per language, restoring English afterwards (UI-11). */
-export async function inEveryLocale(check: (locale: string) => Promise<void> | void): Promise<void> {
+export async function inEveryLocale(
+  check: (locale: string) => Promise<void> | void,
+): Promise<void> {
   try {
     for (const locale of LOCALES) {
       await i18n.changeLanguage(locale);

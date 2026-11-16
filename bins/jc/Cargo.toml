@@ -142,11 +142,12 @@ shako-server = { path = "../../crates/shako/server", optional = true }
 shako-core = { path = "../../crates/shako/core", optional = true }
 shako-store-memory = { path = "../../crates/shako/store-memory", optional = true }
 shako-store-pg = { path = "../../crates/shako/store-pg", optional = true }
+# The Portal trait hands a pipeline credential back wiped on drop (T-7088).
+zeroize = "1"
 
 [dev-dependencies]
 sha2 = "0.10"
 jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", features = ["outbound"] }
 http-body-util = "0.1"
 tempfile = "3"
-zeroize = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

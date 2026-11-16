@@ -2838,6 +2838,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/datasources/{name}/test-event": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Webhook Test Event
+         * @description Posts the body to one reading pipeline's webhook through the runner's ingest handler, signed with the source's credential, and answers the status a sender would see. The event runs through the pipeline like a real one.
+         */
+        post: operations["test_event"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/datasources/{name}/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Webhook Addresses
+         * @description The URL each reading pipeline is posted to, the header a sender sets and the body cap. Never the credential.
+         */
+        get: operations["webhook_info"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/drafts": {
         parameters: {
             query?: never;
@@ -13926,6 +13966,29 @@ export interface components {
             entities: number;
             sha256: string;
         };
+        /**
+         * @description A test event: the body posted to one reading pipeline's address.
+         * @example {
+         *       "body": "{\"temperature\": 21.5}",
+         *       "pipeline": "ttn-uplinks"
+         *     }
+         */
+        TestEvent: {
+            /** @description The body, as the provider would send it, such as `{"temperature": 21.5}`. */
+            body: string;
+            /** @description A pipeline that reads this source, such as `ttn-uplinks`. */
+            pipeline: string;
+        };
+        /** @description What the runner answered a test event. */
+        TestEventAnswer: {
+            /** @description The first 2048 bytes of the answer's body. */
+            answer: string;
+            /**
+             * Format: int32
+             * @description The HTTP status the sender would have seen: 200 once the pipeline took the event.
+             */
+            status: number;
+        };
         /** @description One message a ServiceAccount would publish (API/01 §44a). */
         TestPublish: {
             /** @description A ServiceAccount the broker's roles name, e.g. `cam-west`. */
@@ -14149,6 +14212,29 @@ export interface components {
             /** @description Newest first; empty when `refusalsRead` is false. */
             refusals: components["schemas"]["Refusal"][];
             refusalsRead: boolean;
+        };
+        /** @description Where one pipeline reading the source is posted to. */
+        WebhookAddress: {
+            /** @description The reading pipeline. */
+            pipeline: string;
+            /** @description The URL a sender posts to, or `None` when this installation publishes no ingest listener. */
+            url?: string | null;
+        };
+        /** @description What a sender needs to post to a webhook DataSource. */
+        WebhookInfo: {
+            /** @description One address per reading pipeline, by pipeline name; empty when no pipeline reads it. */
+            addresses: components["schemas"]["WebhookAddress"][];
+            /** @description `hmac` or `bearer`. */
+            auth: string;
+            /** @description The header the sender sets: the signature header, or `Authorization`. */
+            header: string;
+            /**
+             * Format: int64
+             * @description The largest body accepted, in bytes.
+             */
+            maxBodyBytes: number;
+            /** @description Whether this installation publishes the ingest listener at all. */
+            published: boolean;
         };
         /**
          * @description Who is tried: one person, a member of a group or of a realm role with no person of their own,
@@ -22977,6 +23063,141 @@ export interface operations {
             };
             /** @description No pipeline runner is configured, or it did not answer */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+                /** @description DataSource name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestEvent"];
+            };
+        };
+        responses: {
+            /** @description What the runner answered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestEventAnswer"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a DataSource in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such DataSource in this project */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The source is no webhook, `pipeline` reads no such source, or `body` is empty or over the cap */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The runner does not run in this process, or holds no credential for the source yet */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    webhook_info: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+                /** @description DataSource name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The addresses */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookInfo"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant reads this DataSource */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such DataSource in this project */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The DataSource is not of type webhook */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -33109,14 +33330,24 @@ export interface operations {
                  */
                 "application/json": {
                     /**
-                     * @description projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did
+                     * @description projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did; costs: a month's costs per project; addresses: the Organization's addresses; dataAccess: who reads which Endpoint; widgetOptions: home page Dashboards to pick; personReadable: what one person reads
                      * @enum {string}
                      */
-                    aspect: "projects" | "setup" | "health" | "healthChecks" | "limits" | "brokers" | "agents" | "agentActivity";
+                    aspect: "projects" | "setup" | "health" | "healthChecks" | "limits" | "brokers" | "agents" | "agentActivity" | "costs" | "addresses" | "dataAccess" | "widgetOptions" | "personReadable";
                     /** @description agentActivity: nextCursor of the previous page */
                     cursor?: string;
+                    /** @description dataAccess: one Endpoint's row, by slug */
+                    endpoint?: string;
+                    /** @description dataAccess: one group's column */
+                    group?: string;
                     /** @description agentActivity: page size, default 20 */
                     limit?: number;
+                    /** @description costs: e.g. 2026-09, default last month */
+                    month?: string;
+                    /** @description widgetOptions: the Organization, by name */
+                    organization?: string;
+                    /** @description personReadable: the Keycloak user id */
+                    person?: string;
                 };
             };
         };
