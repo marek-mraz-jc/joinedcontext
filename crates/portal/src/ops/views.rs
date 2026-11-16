@@ -213,7 +213,7 @@ fn run_list_input_schema() -> Value {
                 ]
             },
             "mine": { "type": "boolean", "description": "Only the runs this caller started" },
-            "origin": { "enum": ["person", "journey", "all"] }
+            "origin": { "enum": ["person", "journey", "all"], "description": "Whose runs; journey is a live test" }
         },
         "additionalProperties": false
     })
