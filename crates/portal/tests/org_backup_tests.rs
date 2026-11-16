@@ -1179,6 +1179,20 @@ async fn a_restore_request_holds_its_target_and_bytes_and_writes_tables_without_
         .expect("a version")
         .to_owned();
     let original = swap(&world.bucket, &newer, &version);
+    let checked = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(
+        checked.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a check reads only the bytes the run uploaded: {}",
+        checked.text
+    );
     let swapped = send(
         &world.state,
         person("cid"),
