@@ -114,6 +114,10 @@ describe("the checks on write of a space (DM-94)", () => {
     expect(within(failing).getByText("60")).toBeInTheDocument();
     expect(within(failing).getByText(/2026/)).toBeInTheDocument();
     expect(within(failing).getByText("pm10")).toBeInTheDocument();
+    // T-7107 UI judge: below 640 px each row reads as a card, every value beside its column's name.
+    expect(table.closest("table")).toHaveClass("table-stack");
+    for (const r of within(table).getAllByRole("row").slice(1))
+      for (const c of within(r).getAllByRole("cell").slice(1)) expect(c).toHaveAttribute("data-label");
   });
 
   it("names one start when both windows began together, after a restart", async () => {

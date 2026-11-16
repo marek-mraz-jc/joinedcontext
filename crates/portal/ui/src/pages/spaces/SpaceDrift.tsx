@@ -104,7 +104,7 @@ export function SpaceDrift({ project, space }: { project: string; space: string 
       </p>
       <p className="text-caption text-fg-muted">{t("drift.section.observed", { when })}</p>
       {items.length > 0 ? (
-        <Table caption={t("drift.section.caption", { space })}>
+        <Table stack caption={t("drift.section.caption", { space })}>
           <TableHead>
             <TableHeaderCell>{t("drift.section.entity")}</TableHeaderCell>
             <TableHeaderCell>{t("drift.section.kind")}</TableHeaderCell>
@@ -117,17 +117,17 @@ export function SpaceDrift({ project, space }: { project: string; space: string 
                 <TableCell primary className="font-mono text-caption [overflow-wrap:anywhere]">
                   {entity.id}
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("drift.section.kind")}>
                   <Badge tone={entity.drift === "MISSING" ? "warning" : "info"}>
                     {t(`drift.kind.${entity.drift === "MISSING" ? "missing" : "modified"}`)}
                   </Badge>
                 </TableCell>
-                <TableCell className="font-mono text-caption">
+                <TableCell data-label={t("drift.section.attributes")} className="font-mono text-caption [overflow-wrap:anywhere]">
                   {entity.diff.length > 0
                     ? entity.diff.map((one) => one.path).join(", ")
                     : t("drift.section.wholeEntity")}
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("drift.section.resolution")}>
                   {mayResolve ? (
                     <Button
                       size="sm"

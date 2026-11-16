@@ -388,11 +388,11 @@ export function SpaceRetention({
   return (
     <div className="space-y-3">
       <p className="text-body text-fg-muted">{t("spaces.retention.lead")}</p>
-      <p className="text-body text-fg-muted">
+      <p className="max-w-prose text-body text-fg-muted">
         {t("spaces.retention.entityWins")} <RetentionGuide section="which-one-wins" />
       </p>
       {!typed && <p className="text-body text-fg-muted">{t("spaces.retention.noTypes")}</p>}
-      <Table caption={t("spaces.retention.caption")}>
+      <Table stack caption={t("spaces.retention.caption")}>
         <TableHead>
           <TableHeaderCell>{t("spaces.retention.type")}</TableHeaderCell>
           <TableHeaderCell>{t("spaces.retention.current")}</TableHeaderCell>
@@ -404,11 +404,11 @@ export function SpaceRetention({
         <TableBody>
           {rows.map((types) => [types[0], types] as const).map(([type, types]) => (
             <TableRow key={type}>
-              <TableCell>{typesCell(types)}</TableCell>
-              <TableCell>{editor(type, "current") ?? plain(type, "current")}</TableCell>
-              <TableCell>{editor(type, "history") ?? plain(type, "history")}</TableCell>
-              <TableCell>{recordEditor(type) ?? recordShown(type)}</TableCell>
-              <TableCell>{deleted.isError ? t("spaces.retention.deletedUnknown") : removed(...types)}</TableCell>
+              <TableCell primary>{typesCell(types)}</TableCell>
+              <TableCell data-label={t("spaces.retention.current")}>{editor(type, "current") ?? plain(type, "current")}</TableCell>
+              <TableCell data-label={t("spaces.retention.history")}>{editor(type, "history") ?? plain(type, "history")}</TableCell>
+              <TableCell data-label={t("spaces.retention.record.column")}>{recordEditor(type) ?? recordShown(type)}</TableCell>
+              <TableCell data-label={t("spaces.retention.deleted")}>{deleted.isError ? t("spaces.retention.deletedUnknown") : removed(...types)}</TableCell>
             </TableRow>
           ))}
         </TableBody>

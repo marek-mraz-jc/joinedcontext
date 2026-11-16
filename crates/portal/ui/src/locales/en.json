@@ -1350,7 +1350,6 @@
       "lead": "Each attribute a pipeline writes into this space, how the space records it and where the time of each row comes from. A verdict other than OK names what to change.",
       "summary": "Rows per verdict",
       "count": "{verdict}: {n}",
-      "failed": "The audit could not be read: {detail}. Reload the page to try again.",
       "empty": "No pipeline you can read writes this space",
       "emptyHint": "A pipeline whose target Endpoint belongs to this space appears here with each attribute it maps.",
       "unread": "The mapping of {pipelines} could not be read from the repository, so its rows are missing. Reload the page to try again.",

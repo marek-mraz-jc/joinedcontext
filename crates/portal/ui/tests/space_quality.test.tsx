@@ -64,6 +64,14 @@ describe("the Data quality section (DM-74)", () => {
     expect(within(weather).getByText(en.spaces.quality.paused)).toBeInTheDocument();
     expect(within(weather).getByText("26 h")).toBeInTheDocument();
     expect(within(freshness).getByText("10 min")).toBeInTheDocument();
+    // T-7107 UI judge: below 640 px each row reads as a card, every value beside its column's name.
+    expect(rules.closest("table")).toHaveClass("table-stack");
+    for (const r of within(rules).getAllByRole("row").slice(1))
+      for (const c of within(r).getAllByRole("cell").slice(1)) expect(c).toHaveAttribute("data-label");
+    // T-7107 UI judge: below 640 px each row reads as a card, every value beside its column's name.
+    expect(freshness.closest("table")).toHaveClass("table-stack");
+    for (const r of within(freshness).getAllByRole("row").slice(1))
+      for (const c of within(r).getAllByRole("cell").slice(1)) expect(c).toHaveAttribute("data-label");
     await expectNoAxeViolations(container);
   });
 
