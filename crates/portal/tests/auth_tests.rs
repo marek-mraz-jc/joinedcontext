@@ -2218,7 +2218,7 @@ async fn a_cookie_planted_before_a_login_is_never_a_session() {
 // a login that completes, which is what `complete_login` below is.
 // -------------------------------------------------------------------------------------------
 
-/// The flow the Portal parked, read back out of its own encrypted cookie.
+/// The flows the Portal parked, newest first, read back out of its own encrypted cookie.
 fn parked_flow(set_cookies: &[String]) -> (serde_json::Value, String) {
     use axum_extra::extract::cookie::{Key, PrivateCookieJar};
 
@@ -2260,7 +2260,8 @@ async fn complete_login(
         .await
         .unwrap();
     assert_eq!(started.status(), StatusCode::SEE_OTHER);
-    let (flow, flow_cookie) = parked_flow(&set_cookie_values(&started));
+    let (flows, flow_cookie) = parked_flow(&set_cookie_values(&started));
+    let flow = &flows[0];
     let csrf_state = flow["csrf_state"].as_str().expect("a state").to_owned();
     let nonce = flow["nonce"].as_str().expect("a nonce").to_owned();
 
@@ -2483,6 +2484,140 @@ async fn an_authorization_code_replayed_after_it_bought_a_session_buys_nothing()
     // The session the honest login won is untouched by the three refusals.
     let (status, _) = me_with(app, &[("cookie", session_cookie)]).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+/// Starts a login in the browser that holds `cookie` (the flow cookie of its earlier starts) and
+/// returns the flows it then has in flight, newest first, and its new flow cookie.
+async fn start_in(
+    app: &axum::Router,
+    cookie: Option<&str>,
+    redirect_to: &str,
+) -> (Vec<serde_json::Value>, String) {
+    let mut request =
+        Request::builder().uri(format!("/api/v1/auth/login?redirect_to={redirect_to}"));
+    if let Some(cookie) = cookie {
+        request = request.header(header::COOKIE, cookie);
+    }
+    let started = app
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(started.status(), StatusCode::SEE_OTHER);
+    let (flows, cookie) = parked_flow(&set_cookie_values(&started));
+    (flows.as_array().expect("a list of flows").clone(), cookie)
+}
+
+/// The callback of the login `flow`, with the realm answering `code` with an ID token that carries
+/// the flow's nonce.
+async fn finish_in(
+    realm: &MockServer,
+    app: &axum::Router,
+    cookie: &str,
+    flow: &serde_json::Value,
+    code: &str,
+) -> axum::response::Response {
+    let nonce = flow["nonce"].as_str().expect("a nonce");
+    Mock::given(method("POST"))
+        .and(path(format!("{REALM_PATH}/protocol/openid-connect/token")))
+        .and(wiremock::matchers::body_string_contains(format!(
+            "code={code}&"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "opaque-access-token",
+            "token_type": "Bearer",
+            "expires_in": 300,
+            "refresh_token": "opaque-refresh-token",
+            "id_token": keys::id_token(&issuer_of(realm), "demo.steward", nonce),
+        })))
+        .up_to_n_times(1)
+        .mount(realm)
+        .await;
+    let state = flow["csrf_state"].as_str().expect("a state");
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/auth/callback?code={code}&state={state}"))
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+/// T-7147: two tabs of one browser start a sign-in ten seconds apart; the first one to come back
+/// is the tab that started first. Both sign in: the second start parked its flow beside the first
+/// one instead of over it, and each callback spends only its own.
+#[tokio::test]
+async fn two_logins_started_in_one_browser_both_finish() {
+    let realm = realm().await;
+    let app = app_with_realm(&realm).await;
+
+    let (_, first_cookie) = start_in(&app, None, "/a").await;
+    let (flows, both) = start_in(&app, Some(&first_cookie), "/b").await;
+    assert_eq!(
+        flows.len(),
+        2,
+        "the second start dropped the first: {flows:?}"
+    );
+    let (second, first) = (flows[0].clone(), flows[1].clone());
+
+    let response = finish_in(&realm, &app, &both, &first, "code-of-the-first-tab").await;
+    assert_eq!(
+        response.status(),
+        StatusCode::SEE_OTHER,
+        "the first tab was refused"
+    );
+    assert_eq!(response.headers()[header::LOCATION], "/a");
+    let (left, rest) = parked_flow(&set_cookie_values(&response));
+    assert_eq!(left.as_array().map(Vec::len), Some(1), "{left}");
+    assert_eq!(left[0]["csrf_state"], second["csrf_state"]);
+
+    // The first tab's flow is spent: its state does not open a login a second time.
+    let replay = finish_in(&realm, &app, &rest, &first, "code-of-the-first-tab").await;
+    assert_eq!(replay.status(), StatusCode::BAD_REQUEST);
+
+    let response = finish_in(&realm, &app, &rest, &second, "code-of-the-second-tab").await;
+    assert_eq!(
+        response.status(),
+        StatusCode::SEE_OTHER,
+        "the second tab was refused"
+    );
+    assert_eq!(response.headers()[header::LOCATION], "/b");
+    assert!(
+        set_cookie_values(&response).iter().any(|cookie| cookie
+            .starts_with("__Host-jc_oidc_flow=")
+            && cookie.contains("Max-Age=0")),
+        "the last login in flight left its cookie behind",
+    );
+}
+
+/// T-7147: a browser keeps at most eight logins in flight. A ninth start pushes the oldest out,
+/// and that login's state is then refused like any state this browser did not start.
+#[tokio::test]
+async fn a_ninth_login_pushes_the_oldest_out_and_its_state_is_refused() {
+    let realm = realm().await;
+    let app = app_with_realm(&realm).await;
+
+    let (flows, mut cookie) = start_in(&app, None, "/0").await;
+    let oldest = flows[0].clone();
+    for n in 1..9 {
+        let (flows, next) = start_in(&app, Some(&cookie), &format!("/{n}")).await;
+        assert_eq!(flows.len(), (n + 1).min(8), "after start {n}");
+        cookie = next;
+    }
+
+    let response = finish_in(&realm, &app, &cookie, &oldest, "code-of-the-oldest-tab").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let problem: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("state does not match")),
+        "{problem}",
+    );
 }
 
 /// T-3034, AP-122: the silent sign-in check asks the realm with `prompt=none` for the public
