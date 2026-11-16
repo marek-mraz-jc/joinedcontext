@@ -6045,7 +6045,7 @@ export interface paths {
         put?: never;
         /**
          * Script Test
-         * @description Runs a Script version's tests on the runner without writing (PL-118)
+         * @description Runs a Script version's tests on the runner
          */
         post: operations["jc_script_test"];
         delete?: never;
@@ -37301,20 +37301,18 @@ export interface operations {
                  *     }
                  */
                 "application/json": {
-                    /** @description The version's JavaScript source */
+                    /** @description JavaScript */
                     code: string;
-                    /** @description Time and memory per message; absent, 50 ms and 32 MiB */
                     limits?: {
                         memoryMb?: number;
                         timeoutMs?: number;
                     };
-                    /** @description The tests, each an input record and the record expected out */
                     tests: {
-                        /** @description The record the script should write */
+                        /** @description Expected out */
                         expected: Record<string, never>;
-                        /** @description The record the script reads */
+                        /** @description In */
                         input: Record<string, never>;
-                        /** @description A DNS label naming the test */
+                        /** @description Test name */
                         name: string;
                     }[];
                 };

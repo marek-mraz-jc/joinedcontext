@@ -499,7 +499,7 @@ pub fn operations() -> Vec<Operation> {
         Operation {
             name: "jc_script_test",
             title: "Script Test",
-            description: "Runs a Script version's tests on the runner without writing (PL-118)",
+            description: "Runs a Script version's tests on the runner",
             input: script_test_input_schema,
             output: script_test_output_schema,
             annotations: OperationAnnotations {
@@ -584,10 +584,9 @@ fn script_test_input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "code": text("The version's JavaScript source", MAX_CODE_BYTES as u64),
+            "code": text("JavaScript", MAX_CODE_BYTES as u64),
             "limits": {
                 "type": "object",
-                "description": "Time and memory per message; absent, 50 ms and 32 MiB",
                 "properties": {
                     "timeoutMs": { "type": "integer", "minimum": 1, "maximum": MAX_TIMEOUT_MS },
                     "memoryMb": { "type": "integer", "minimum": 1, "maximum": MAX_MEMORY_MB }
@@ -596,15 +595,14 @@ fn script_test_input_schema() -> Value {
             },
             "tests": {
                 "type": "array",
-                "description": "The tests, each an input record and the record expected out",
                 "minItems": 1,
                 "maxItems": MAX_TESTS,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "name": text("A DNS label naming the test", 63),
-                        "input": record("The record the script reads"),
-                        "expected": record("The record the script should write")
+                        "name": text("Test name", 63),
+                        "input": record("In"),
+                        "expected": record("Expected out")
                     },
                     "required": ["name", "input", "expected"],
                     "additionalProperties": false

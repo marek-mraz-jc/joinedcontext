@@ -34832,7 +34832,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_script_test": {
       "post": {
-        "description": "Runs a Script version's tests on the runner without writing (PL-118)",
+        "description": "Runs a Script version's tests on the runner",
         "operationId": "jc_script_test",
         "parameters": [
           {
@@ -34862,13 +34862,12 @@
                 "additionalProperties": false,
                 "properties": {
                   "code": {
-                    "description": "The version's JavaScript source",
+                    "description": "JavaScript",
                     "maxLength": 65536,
                     "type": "string"
                   },
                   "limits": {
                     "additionalProperties": false,
-                    "description": "Time and memory per message; absent, 50 ms and 32 MiB",
                     "properties": {
                       "memoryMb": {
                         "maximum": 64,
@@ -34884,22 +34883,21 @@
                     "type": "object"
                   },
                   "tests": {
-                    "description": "The tests, each an input record and the record expected out",
                     "items": {
                       "additionalProperties": false,
                       "properties": {
                         "expected": {
-                          "description": "The record the script should write",
+                          "description": "Expected out",
                           "maxProperties": 512,
                           "type": "object"
                         },
                         "input": {
-                          "description": "The record the script reads",
+                          "description": "In",
                           "maxProperties": 512,
                           "type": "object"
                         },
                         "name": {
-                          "description": "A DNS label naming the test",
+                          "description": "Test name",
                           "maxLength": 63,
                           "type": "string"
                         }

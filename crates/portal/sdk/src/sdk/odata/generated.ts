@@ -518,6 +518,19 @@ export interface ScopeDefinition {
   "@odata.etag"?: string;
 }
 
+export interface Script {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  project: string;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
 export interface ServiceAccount {
   kind?: string | null;
   name: string;
@@ -637,6 +650,7 @@ export interface EntitySets {
   roles: Role;
   runs: Run;
   scopedefinitions: ScopeDefinition;
+  scripts: Script;
   serviceaccounts: ServiceAccount;
   shared: SharedSpaceReference;
   spaces: ContextSpace;
@@ -693,6 +707,7 @@ export const ENTITY_KEYS: { readonly [S in keyof EntitySets]: readonly string[] 
   roles: ["project","name"],
   runs: ["project","id"],
   scopedefinitions: ["project","name"],
+  scripts: ["project","name"],
   serviceaccounts: ["project","name"],
   shared: ["project","name"],
   spaces: ["project","name"],
@@ -837,6 +852,7 @@ export interface Actions {
   jc_run_create: { appClass: string; appName: string; dataNeeds: unknown; endpointName?: string; endpointNames?: unknown; kind?: string; profile?: string; prompt: string; unattended?: boolean; visibility?: string };
   jc_run_message: { endpointNames?: unknown; id: string; text: string };
   jc_run_publish: { id: string };
+  jc_script_test: { code: string; limits?: unknown; tests: unknown };
   jc_space_complete: { description?: string; files?: unknown; propose?: boolean; space?: string; typeName?: string; upload?: boolean; url?: string };
   jc_syncsource_detach: { name: string };
   jc_syncsource_pause: { name: string; paused: boolean };
@@ -888,6 +904,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_run_create: ["Project"],
   jc_run_message: ["Project"],
   jc_run_publish: ["Project"],
+  jc_script_test: ["Project"],
   jc_space_complete: ["Project"],
   jc_syncsource_detach: ["Project"],
   jc_syncsource_pause: ["Project"],
@@ -899,7 +916,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_workspace_propose: ["Project"],
   jc_workspace_update_from_main: ["Project"],
   propose_create: ["Project"],
-  propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
-  propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
+  propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","Script","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
+  propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","Script","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
   reject: ["Change"],
 };

@@ -1143,6 +1143,11 @@
         "$Kind": "NavigationProperty",
         "$Type": "JoinedContext.Portal.ScopeDefinition"
       },
+      "scripts": {
+        "$Collection": true,
+        "$Kind": "NavigationProperty",
+        "$Type": "JoinedContext.Portal.Script"
+      },
       "serviceaccounts": {
         "$Collection": true,
         "$Kind": "NavigationProperty",
@@ -1348,6 +1353,36 @@
         "$Nullable": true
       }
     },
+    "Script": {
+      "$Key": [
+        "project",
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
+      "project": {},
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
     "Service": {
       "$Kind": "EntityContainer",
       "Organization": {
@@ -1513,6 +1548,7 @@
           "roles": "roles",
           "runs": "runs",
           "scopedefinitions": "scopedefinitions",
+          "scripts": "scripts",
           "serviceaccounts": "serviceaccounts",
           "shared": "shared",
           "spaces": "spaces",
@@ -1545,6 +1581,10 @@
       "scopedefinitions": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.ScopeDefinition"
+      },
+      "scripts": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.Script"
       },
       "serviceaccounts": {
         "$Collection": true,
@@ -4101,6 +4141,37 @@
         }
       }
     ],
+    "jc_script_test": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "code",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "limits",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "tests",
+            "$Nullable": false,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "jc_serviceaccount_access": [
       {
         "$IsBound": true,
@@ -5237,6 +5308,25 @@
           {
             "$Name": "bindingParameter",
             "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Script"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
             "$Type": "JoinedContext.Portal.Entity"
           },
           {
@@ -6332,6 +6422,35 @@
             "$Name": "bindingParameter",
             "$Nullable": false,
             "$Type": "JoinedContext.Portal.Layer"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Script"
           },
           {
             "$Name": "manifest",
