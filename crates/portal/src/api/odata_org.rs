@@ -2016,7 +2016,7 @@ async fn member_rows(read: &Read<'_>) -> Result<Vec<Value>, Refused> {
 /// or the subject is an e-mail already (then it is its own e-mail).
 async fn personal_of(state: &AppState, users: Vec<String>) -> Vec<(Value, Value)> {
     use futures_util::StreamExt;
-    let admin = match state.people.as_deref() {
+    let admin = match state.people_here() {
         Some(people) => people.admin().await.ok(),
         None => None,
     };

@@ -145,7 +145,7 @@ pub async fn explore_access(
 
     let mcp_servers = mcp_servers(&state, &project, &reached);
     let consents = match &request.subject {
-        Who::Person { id } => match &state.people {
+        Who::Person { id } => match state.people_here() {
             Some(people) => people.admin().await?.consents(id).await?,
             None => Vec::new(),
         },

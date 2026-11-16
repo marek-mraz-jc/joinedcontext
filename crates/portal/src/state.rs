@@ -200,6 +200,18 @@ impl AppState {
         })
     }
 
+    /// The people of the running request's realm (T-7142): on the host of an Organization with a
+    /// realm of its own, that realm's, managed as its own `portal-reconciler`; everywhere else the
+    /// installation realm's. Never another Organization's.
+    pub fn people_here(&self) -> Option<&crate::people::People> {
+        match crate::organization_host::organization()
+            .and_then(|organization| self.organization_realms.get(&organization))
+        {
+            Some(realm) => realm.people.as_ref(),
+            None => self.people.as_deref(),
+        }
+    }
+
     pub fn new(config: Config, oidc: Option<OidcClient>) -> Self {
         let sdm_mirror = config.sdm_mirror_dir.as_deref().and_then(|dir| {
             crate::tools::sdm_mirror::SdmMirror::open(std::path::Path::new(dir))
@@ -233,6 +245,7 @@ impl AppState {
                                     setting,
                                     installation,
                                     &host.base,
+                                    config.keycloak_admin.as_ref(),
                                 )),
                             ))
                         })

@@ -634,10 +634,9 @@ async fn history(reader: &Reader<'_>, input: &Input, read: &Earlier) -> Result<V
             "history is read with your own access token, which this session does not carry; \
              sign in through the platform's address",
         )?;
-        let oidc = state
-            .oidc
-            .as_ref()
-            .ok_or("this Portal has no Keycloak client to read history with")?;
+        let oidc = crate::auth::realms::exchanger(state, token)
+            .await
+            .map_err(|err| err.to_string())?;
         let exchanged = oidc.exchange_for_endpoint(token, slug).await;
         Some(exchanged.map_err(|err| err.to_string())?)
     };

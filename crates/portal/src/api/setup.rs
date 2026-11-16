@@ -119,7 +119,7 @@ pub fn operator(branding: &Branding, said: &SetupStatements) -> Vec<SetupItem> {
 /// Whether the realm holds a person besides the one asking. Without an admin client, or when the
 /// realm does not answer, it is not done: the page says so rather than failing.
 async fn a_second_person(state: &AppState) -> bool {
-    let Some(people) = state.people.as_deref() else {
+    let Some(people) = state.people_here() else {
         return false;
     };
     let Ok(admin) = people.admin().await else {

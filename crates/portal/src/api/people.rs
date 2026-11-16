@@ -185,7 +185,7 @@ impl std::fmt::Debug for PasswordReset {
 }
 
 pub(super) fn people(state: &AppState) -> Result<&People, ApiError> {
-    state.people.as_deref().ok_or_else(|| {
+    state.people_here().ok_or_else(|| {
         ApiError::Unavailable(
             "no Keycloak admin client is configured, so people cannot be managed here".into(),
         )
@@ -195,8 +195,29 @@ pub(super) fn people(state: &AppState) -> Result<&People, ApiError> {
 /// The caller holds `verb` on `Person` in a binding at organization scope (PF-91).
 /// The verb on Person; administering anyone (every verb but read) is a decision door that
 /// also wants a second factor in the session (T-5567).
+/// On the host of an Organization with a realm of its own the people are that realm's (T-7142):
+/// the verb is held by a binding scoped to that Organization, never one of another Organization.
 pub(crate) fn allow(state: &AppState, identity: &Identity, verb: Verb) -> Result<(), ApiError> {
-    crate::permissions::for_request(state, identity, ORG_NAMESPACE).check(PERSON, verb, None)?;
+    match crate::auth::realms::here(state) {
+        Some(realm) => {
+            if !crate::permissions::holds_at_organization(
+                state,
+                identity,
+                &realm.organization,
+                PERSON,
+                verb,
+                None,
+            ) {
+                return Err(ApiError::Denied(format!(
+                    "{} on the people of {} needs a binding at that Organization",
+                    verb.as_str(),
+                    realm.organization
+                )));
+            }
+        }
+        None => crate::permissions::for_request(state, identity, ORG_NAMESPACE)
+            .check(PERSON, verb, None)?,
+    }
     if verb == Verb::Read {
         return Ok(());
     }

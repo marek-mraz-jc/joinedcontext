@@ -440,16 +440,11 @@ impl FromRequestParts<AppState> for CurrentUser {
             // On an Organization's host with a realm of its own, a token of that realm is checked
             // there (T-7133); any other token, there and everywhere else, against the
             // installation realm, so another Organization's realm is a foreign issuer.
-            let realm = crate::auth::realms::here(state).filter(|realm| {
-                crate::auth::realms::issuer_of(token).as_deref() == Some(realm.issuer())
-            });
-            let (mut session, client) = match &realm {
-                Some(realm) => realm.bearer.verify_with_client(token).await?,
-                None => {
-                    let verifier = state.bearer.as_ref().ok_or(ApiError::Unauthorized)?;
-                    verifier.verify_with_client(token).await?
-                }
-            };
+            let realm = crate::auth::realms::of_token(state, token);
+            let (mut session, client) = crate::auth::realms::verifier(state, realm.as_deref())
+                .ok_or(ApiError::Unauthorized)?
+                .verify_with_client(token)
+                .await?;
             if realm.is_some() {
                 crate::auth::realms::confine(&mut session.identity, &state.config.bootstrap_admins);
             }

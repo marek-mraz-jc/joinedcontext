@@ -109,15 +109,32 @@ pub struct OrganizationRealm {
     redirect_uri: String,
     client: tokio::sync::OnceCell<Arc<OidcClient>>,
     pub bearer: BearerVerifier,
+    /// The realm's people, as its own `portal-reconciler` manages them (T-7142); `None` without
+    /// the admin client (`JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID`).
+    pub people: Option<crate::people::People>,
 }
 
 impl OrganizationRealm {
     /// The realm of `setting`, signing in as the installation's Portal client (T-7001 §3: one
-    /// client secret for every realm) with the redirect URI of the Organization's host `base`.
-    pub fn new(setting: &RealmSetting, installation: &OidcConfig, base: &Url) -> Self {
+    /// client secret for every realm) with the redirect URI of the Organization's host `base`,
+    /// and managing its people as the installation's admin client `admin` of the same name.
+    pub fn new(
+        setting: &RealmSetting,
+        installation: &OidcConfig,
+        base: &Url,
+        admin: Option<&(String, crate::auth::client_auth::ClientAuth)>,
+    ) -> Self {
         let mut origin = setting.jwks_url.clone();
         origin.set_path("/");
+        let backchannel = format!(
+            "{}{}",
+            origin.as_str().trim_end_matches('/'),
+            setting.issuer.path().trim_end_matches('/')
+        );
         Self {
+            people: admin.and_then(|(id, auth)| {
+                crate::people::People::new(&backchannel, id.clone(), auth.clone())
+            }),
             organization: setting.organization.clone(),
             issuer: trimmed(&setting.issuer).to_owned(),
             config: OidcConfig {
@@ -167,6 +184,38 @@ impl OrganizationRealm {
 pub fn here(state: &AppState) -> Option<Arc<OrganizationRealm>> {
     let organization = crate::organization_host::organization()?;
     state.organization_realms.get(&organization).cloned()
+}
+
+/// The Organization realm that checks `token` on the running request: the pinned Organization's,
+/// when the token's `iss` names it. None: the installation realm checks it, so another
+/// Organization's realm is a foreign issuer on every host (T-7133).
+pub fn of_token(state: &AppState, token: &str) -> Option<Arc<OrganizationRealm>> {
+    here(state).filter(|realm| issuer_of(token).as_deref() == Some(realm.issuer()))
+}
+
+/// The verifier of `realm` ([`of_token`]), else the installation's.
+pub fn verifier<'a>(
+    state: &'a AppState,
+    realm: Option<&'a OrganizationRealm>,
+) -> Option<&'a BearerVerifier> {
+    match realm {
+        Some(realm) => Some(&realm.bearer),
+        None => state.bearer.as_deref(),
+    }
+}
+
+/// The client a person's `subject` token is exchanged at (RFC 8693, T-7142): the realm that
+/// issued it ([`of_token`]). A token of an Organization's realm is never sent to the
+/// installation's token endpoint, nor one of the installation to an Organization's.
+pub async fn exchanger(state: &AppState, subject: &str) -> Result<Arc<OidcClient>, ApiError> {
+    match of_token(state, subject) {
+        Some(realm) => realm.client().await,
+        None => state.oidc.clone().ok_or_else(|| {
+            ApiError::Unavailable(
+                "this Portal has no Keycloak client to exchange your token at".into(),
+            )
+        }),
+    }
 }
 
 /// The `iss` a JWT names, unverified: only to pick the realm whose keys then verify it.

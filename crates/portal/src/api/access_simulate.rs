@@ -185,7 +185,7 @@ pub(crate) async fn resolve(
 ) -> Result<Resolved, ApiError> {
     Ok(match who {
         Who::Person { id } => {
-            let people = state.people.as_ref().ok_or_else(|| {
+            let people = state.people_here().ok_or_else(|| {
                 ApiError::Unavailable(
                     "this Portal has no realm admin client to read people with".into(),
                 )
