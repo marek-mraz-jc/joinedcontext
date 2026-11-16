@@ -111,7 +111,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 149] = [
+pub static DOORS: [Door; 151] = [
     door(
         "portal_people_remove",
         Org,
@@ -312,6 +312,24 @@ pub static DOORS: [Door; 149] = [
         Method::GET,
         "/projects/org/changes/{id}/manifests",
         &[CHANGE],
+        Who::Person,
+    ),
+    // The `org` namespace's own Changes decided where a page names them (T-7122): the project's
+    // are the `changes` set's `approve` and `reject` actions. The handler checks the right.
+    door(
+        "portal_organization_change_approve",
+        Org,
+        Method::POST,
+        "/projects/org/changes/{id}/approve",
+        &[CHANGE, BODY],
+        Who::Person,
+    ),
+    door(
+        "portal_organization_change_reject",
+        Org,
+        Method::POST,
+        "/projects/org/changes/{id}/reject",
+        &[CHANGE, BODY],
         Who::Person,
     ),
     door(

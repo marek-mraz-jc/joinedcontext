@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../src/api/client";
 import {
   act,
+  approveChange,
   call,
   door,
   doorAction,
@@ -10,7 +11,9 @@ import {
   manifestEtag,
   projectBound,
   proposeManifest,
+  readChange,
   readManifest,
+  rejectChange,
 } from "../src/api/odata";
 import { announceSessionEnded } from "../src/api/sessionEnded";
 import { announceStepUp, stepUpUrl } from "../src/api/stepUp";
@@ -172,6 +175,45 @@ describe("the Portal's OData client (T-6812)", () => {
     expect(new URL(sent[1].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_app_restore");
     await expect(sent[1].json()).resolves.toEqual({ name: "air-map", body: { commit: "abc1234" } });
     expect(new URL(sent[2].url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_app_templates()");
+  });
+
+  it("reads a Change by its key with every member of the REST door, and decides it with its actions or the org namespace's doors (T-7122)", async () => {
+    const sent: Request[] = [];
+    // Not vi.stubGlobal: tests/setup.ts would answer these from their REST stubs.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      sent.push(request);
+      const change = { metadata: { name: "chg-1" }, status: { phase: "Merged" } };
+      return request.method === "GET" && request.url.includes("changes(")
+        ? new Response(JSON.stringify({ "@odata.etag": 'W/"1"', name: "chg-1", ...change }), {
+            headers: { "Content-Type": "application/json" },
+          })
+        : odataValue(change);
+    });
+    const read = await readChange("air's", "chg/../1");
+    expect(read.status.phase).toBe("Merged");
+    const key = new URL(sent[0].url);
+    // The id stays one quoted key member: a `/` in it never reaches another address.
+    expect(decodeURIComponent(key.pathname)).toBe("/api/v1/changes(project='air''s',name='chg/../1')");
+    expect(key.searchParams.get("$select")?.split(",")).toEqual(
+      expect.arrayContaining(["metadata", "status", "summary", "files", "planFields", "workspace", "ci", "fileCount", "decision"]),
+    );
+    await approveChange("air", "chg-1", "mobility");
+    await rejectChange("air", "chg-1", "too wide");
+    expect(decodeURIComponent(new URL(sent[1].url).pathname)).toBe("/api/v1/changes(project='air',name='chg-1')/JoinedContext.Portal.approve");
+    // As the REST door's approve, which took no If-Match: the handler refuses a decided Change.
+    expect(sent[1].headers.get("If-Match")).toBe("*");
+    await expect(sent[1].json()).resolves.toEqual({ confirm: "mobility" });
+    expect(decodeURIComponent(new URL(sent[2].url).pathname)).toBe("/api/v1/changes(project='air',name='chg-1')/JoinedContext.Portal.reject");
+    await expect(sent[2].json()).resolves.toEqual({ reason: "too wide" });
+    // The org namespace's own Changes are no row of the set: their Portal doors.
+    await readChange("org", "chg-2");
+    await approveChange("org", "chg-2");
+    await rejectChange("org", "chg-2", "no");
+    expect(new URL(sent[3].url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_organization_change_get(id=@id)");
+    expect(new URL(sent[4].url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_organization_change_approve");
+    await expect(sent[4].json()).resolves.toEqual({ id: "chg-2", body: {} });
+    await expect(sent[5].json()).resolves.toEqual({ id: "chg-2", body: { reason: "no" } });
   });
 
   it("reads a kind's manifests through the project's navigation, the org namespace's from its Organization set, page after page", async () => {
@@ -384,7 +426,8 @@ describe("the Portal's OData client (T-6812)", () => {
         "Confirm with your second factor.",
       ),
     );
-    await act("approve", "changes(project='air',name='42')", {}, 'W/"1"').catch(
+    // An action no REST door stands for in tests/setup.ts: a Change's approve reaches a stub as its REST door.
+    await act("jc_change_apply", "projects('air')", { planId: "p1" }).catch(
       () => undefined,
     );
     expect(announceStepUp).toHaveBeenCalledWith(

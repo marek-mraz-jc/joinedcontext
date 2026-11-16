@@ -1,8 +1,8 @@
-import { readManifest } from "../../api/odata";
+import { approveChange, readChange, readManifest } from "../../api/odata";
 import type { JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, forPeople, queryKeys, unwrap } from "../../api/client";
+import { ApiError, forPeople, queryKeys } from "../../api/client";
 import { approvalStanding, changedKind } from "../../api/approval";
 import { usePermissions } from "../../api/permissions";
 import { useIdentity } from "../../auth/AuthProvider";
@@ -192,12 +192,7 @@ export function ChangeFollowCard({
   const { changeId } = followed;
   const change = useQuery({
     queryKey: queryKeys.change(project, changeId),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/{id}", {
-          params: { path: { project, id: changeId } },
-        }),
-      ),
+    queryFn: () => readChange(project, changeId),
     // Somebody else may approve it at any time; a deploy takes seconds.
     refetchInterval: (query) => {
       const phase = query.state.data?.status.phase;
@@ -205,12 +200,7 @@ export function ChangeFollowCard({
     },
   });
   const approve = useMutation({
-    mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/changes/{id}/approve", {
-          params: { path: { project, id: changeId } },
-        }),
-      ),
+    mutationFn: () => approveChange(project, changeId),
     onSuccess: (approved) => {
       queryClient.setQueryData(queryKeys.change(project, changeId), (prev: unknown) =>
         prev && typeof prev === "object" ? { ...prev, status: approved.status } : prev,

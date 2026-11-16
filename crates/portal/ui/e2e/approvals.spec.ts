@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { odataBody, odataCall } from "../tests/odata";
-import { manifestReadsAsRest } from "./manifestReads";
+import { changeAt, manifestReadsAsRest } from "./manifestReads";
 
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
@@ -137,7 +137,7 @@ test.describe("approvals", () => {
       ],
     };
     await stubApi(page);
-    await page.route(`**/changes/${PROPOSAL.metadata.name}`, (route) =>
+    await page.route(changeAt(PROPOSAL.metadata.name), (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(long) }),
     );
 
@@ -164,10 +164,10 @@ test.describe("approvals", () => {
     const withdrawn = { ...APPROVED, status: { lane: "yellow", phase: "Rejected", plan: { update: 1 } } };
     const rejects: string[] = [];
     await stubApi(page);
-    await page.route(`**/changes/${PROPOSAL.metadata.name}`, (route) =>
+    await page.route(changeAt(PROPOSAL.metadata.name), (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(own) }),
     );
-    await page.route(`**/changes/${PROPOSAL.metadata.name}/reject`, (route) => {
+    await page.route(changeAt(PROPOSAL.metadata.name, "reject"), (route) => {
       rejects.push(route.request().postData() ?? "");
       return route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify(withdrawn) });
     });
@@ -195,7 +195,7 @@ test.describe("approvals", () => {
   test("an approver sees a change came through an AI client over MCP, at 400 and 1440 px (T-5609)", async ({ page }) => {
     const viaMcp = { ...PROPOSAL, status: { ...PROPOSAL.status, proposedVia: { channel: "mcp", client: "mcp-mobile" } } };
     await stubApi(page);
-    await page.route(`**/changes/${PROPOSAL.metadata.name}`, (route) =>
+    await page.route(changeAt(PROPOSAL.metadata.name), (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(viaMcp) }),
     );
     for (const width of [400, 1440]) {
@@ -226,7 +226,7 @@ test.describe("approvals", () => {
       },
     };
     await stubApi(page);
-    await page.route(`**/changes/${PROPOSAL.metadata.name}`, (route) =>
+    await page.route(changeAt(PROPOSAL.metadata.name), (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(viaConnector) }),
     );
     for (const width of [400, 1440]) {
@@ -257,7 +257,7 @@ test.describe("approvals", () => {
       ],
     };
     await stubApi(page);
-    await page.route(`**/changes/${PROPOSAL.metadata.name}`, (route) =>
+    await page.route(changeAt(PROPOSAL.metadata.name), (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(create) }),
     );
     await page.goto(`/projects/helsinki/approvals/${PROPOSAL.metadata.name}?lang=en`);

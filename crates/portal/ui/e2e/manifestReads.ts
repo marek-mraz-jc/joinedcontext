@@ -1,5 +1,5 @@
 import type { Page, Request, Route } from "@playwright/test";
-import { answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "../tests/odata";
+import { actsOnEntity, answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "../tests/odata";
 
 // T-7103: the pages read a kind's manifests through the Organization's OData service ($select of
 // spec, status, metadata: api/odata.ts listManifests, readManifest). The server proves each answers
@@ -72,7 +72,7 @@ async function sent(request: Request): Promise<globalThis.Request> {
  * service's error.
  */
 const proposal: Translate = async (request) => {
-  if (!request.url().includes("/JoinedContext.Portal.propose_")) return undefined;
+  if (!actsOnEntity(request.url())) return undefined;
   const rest = await proposalAsRest(await sent(request));
   if (!rest) return undefined;
   const text = rest.body ? await rest.text() : null;
@@ -129,6 +129,19 @@ function wrap(handler: Handler, translate: Translate): Handler {
  * a proposal or a registry operation as its REST write or door (T-7073);
  * `page.unroute` with the handler a spec registered takes its wrapper away.
  */
+/**
+ * The addresses of Change `id`: its REST door `…/changes/{id}[/{action}]` and the service's key
+ * read `changes(project='…',name='{id}')` or its `approve` or `reject` (api/odata.ts readChange,
+ * approveChange, rejectChange, T-7122), for a `page.route` that stubs one Change by its id.
+ */
+export function changeAt(id: string, action?: "approve" | "reject"): (url: URL) => boolean {
+  const rest = `/changes/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
+  const key = `,name='${id.replaceAll("'", "''")}')${action ? `/JoinedContext.Portal.${action}` : ""}`;
+  return (url) =>
+    url.pathname.endsWith(rest) ||
+    (decodeURIComponent(url.pathname).startsWith("/api/v1/changes(project=") && decodeURIComponent(url.pathname).endsWith(key));
+}
+
 export function manifestReadsAsRest(page: Page): void {
   asRest(page, manifestCall);
 }
