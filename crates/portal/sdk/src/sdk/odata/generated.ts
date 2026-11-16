@@ -941,6 +941,12 @@ export interface Functions {
   portal_access_request_list: { endpoint: string };
   portal_alert_list: Record<string, never>;
   portal_alert_notice_list: Record<string, never>;
+  portal_app_audience: { name: string };
+  portal_app_build: { name: string };
+  portal_app_builds: { name: string };
+  portal_app_checks: Record<string, never>;
+  portal_app_dashboard: { name: string };
+  portal_app_templates: Record<string, never>;
   portal_comment_list: { space: string; urn?: string };
   portal_connector_list: Record<string, never>;
   portal_datasource_webhook: { name: string };
@@ -1064,6 +1070,12 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_access_request_list: ["Project"],
   portal_alert_list: ["Organization"],
   portal_alert_notice_list: ["Organization"],
+  portal_app_audience: ["Project"],
+  portal_app_build: ["Project"],
+  portal_app_builds: ["Project"],
+  portal_app_checks: ["Project"],
+  portal_app_dashboard: ["Project"],
+  portal_app_templates: ["Organization"],
   portal_comment_list: ["Project"],
   portal_connector_list: ["Organization"],
   portal_datasource_webhook: ["Project"],
@@ -1190,6 +1202,11 @@ export interface Actions {
   portal_alert_notice_read: { id: string };
   portal_alert_subscribe: { body?: unknown };
   portal_alert_unsubscribe: { id: string };
+  portal_app_dashboard_propose: { name: string; body?: unknown };
+  portal_app_from_template: { name: string; body?: unknown };
+  portal_app_rebuild: { name: string };
+  portal_app_rename_shapes: Record<string, never>;
+  portal_app_restore: { name: string; body?: unknown };
   portal_comment_add: { space: string; body?: unknown };
   portal_comment_remove: { space: string; id: string };
   portal_connector_revoke: { connector: string };
@@ -1308,6 +1325,11 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_alert_notice_read: ["Organization"],
   portal_alert_subscribe: ["Organization"],
   portal_alert_unsubscribe: ["Organization"],
+  portal_app_dashboard_propose: ["Project"],
+  portal_app_from_template: ["Project"],
+  portal_app_rebuild: ["Project"],
+  portal_app_rename_shapes: ["Project"],
+  portal_app_restore: ["Project"],
   portal_comment_add: ["Project"],
   portal_comment_remove: ["Project"],
   portal_connector_revoke: ["Organization"],
