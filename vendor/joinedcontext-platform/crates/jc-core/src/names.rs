@@ -631,7 +631,8 @@ mod tests {
         for org in &ids {
             for segment in &segments {
                 let tenant = TenantName::new(org, segment).expect("valid pair");
-                let parsed = TenantName::parse(tenant.as_str()).expect(tenant.as_str());
+                let parsed = TenantName::parse(tenant.as_str())
+                    .unwrap_or_else(|e| panic!("{}: {e}", tenant.as_str()));
                 assert_eq!(
                     (parsed.organization(), parsed.segment()),
                     (org.as_str(), segment.as_str())

@@ -379,6 +379,8 @@ use crate::tools::model_tools::{
         crate::api::pipeline_test::test_pipeline,
         crate::api::pipeline_source_check::check_source,
         crate::api::datasource_test::test_datasource,
+        crate::api::datasource_webhook::webhook_info,
+        crate::api::datasource_webhook::test_event,
         crate::api::datasource_test::discover_datasource,
         crate::api::datasource_test::guess_datasource_paging,
         crate::api::assistant::propose_endpoint,

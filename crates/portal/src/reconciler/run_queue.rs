@@ -62,7 +62,7 @@ const RESIDENT_INPUTS: &[&str] = &[
 /// a poll, a feed and a read that ends are run and deleted.
 pub fn is_resident(source: &DataSourceType) -> bool {
     match source {
-        DataSourceType::Mqtt | DataSourceType::WebSocket => true,
+        DataSourceType::Mqtt | DataSourceType::WebSocket | DataSourceType::Webhook => true,
         DataSourceType::Http | DataSourceType::GtfsRt => false,
         DataSourceType::Runner(name) => RESIDENT_INPUTS.contains(&name.as_str()),
     }

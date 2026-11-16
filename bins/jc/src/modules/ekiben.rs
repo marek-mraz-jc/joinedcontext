@@ -28,7 +28,7 @@
 
 use crate::app::StartError;
 use crate::config::EkibenSection;
-use crate::module::Module;
+use crate::module::{INGEST_PREFIX, Module};
 use crate::siblings::Siblings;
 use axum::Router;
 use ekiben_core::{EnvAccess, HostTarget, OrgContext, OrgId, ResourceManager};
@@ -160,7 +160,33 @@ async fn build_with(
             ..Default::default()
         },
     );
-    Ok(build_router(state))
+    Ok(with_ingest(
+        build_router(state),
+        ekiben_server::hosted_ingest_router(),
+    ))
+}
+
+/// The API, and ekiben's shared ingest listener (PL-122, ADR-N-071): a `[[mounts.ekiben]]` entry
+/// at [`INGEST_PREFIX`] answers only the ingest router, `/{org}/{stream}/{source}`, never the
+/// token API; every other entry answers the API and, under `/ingest/`, the same ingest router,
+/// so the Portal's test event reaches on the in-pod listener the handler a sender reaches.
+fn with_ingest(api: Router, ingest: Router) -> Router {
+    use tower::ServiceExt;
+    let in_pod = Router::new()
+        .nest(INGEST_PREFIX, ingest.clone())
+        .fallback_service(api);
+    Router::new().fallback_service(tower::service_fn(move |req: axum::extract::Request| {
+        let ingest_entry = req
+            .extensions()
+            .get::<jc_router::Mount>()
+            .is_some_and(|mount| mount.path_prefix == INGEST_PREFIX);
+        let router = if ingest_entry {
+            ingest.clone()
+        } else {
+            in_pod.clone()
+        };
+        router.oneshot(req)
+    }))
 }
 
 /// One entry of `JC_EKIBEN_PRIVATE_HOSTS`: a broker's name (and port) and the one project
@@ -328,6 +354,13 @@ impl joinedcontext_portal::pipeline_secrets::RunnerSecrets for HostRunner {
     fn replace(&self, values: BTreeMap<String, String>) {
         self.org.replace_secrets(self.merged(values));
     }
+
+    fn credential(&self, name: &str) -> Option<zeroize::Zeroizing<String>> {
+        if self.given.contains_key(name) {
+            return None;
+        }
+        self.org.resolve_secret(name).map(zeroize::Zeroizing::new)
+    }
 }
 
 #[cfg(feature = "portal")]
@@ -460,6 +493,53 @@ fn registry() -> std::sync::Arc<ekiben_core::Registry> {
 mod tests {
     use super::*;
 
+    async fn answer(router: &Router, path: &str, prefix: Option<&str>) -> (u16, String) {
+        use tower::ServiceExt;
+        let mut req = axum::http::Request::post(path)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        if let Some(prefix) = prefix {
+            req.extensions_mut().insert(
+                jc_router::Mount::new("ekiben", "https", "portal.city.test", prefix).unwrap(),
+            );
+        }
+        let res = router.clone().oneshot(req).await.unwrap();
+        let status = res.status().as_u16();
+        let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// PL-122: the public `/ingest` entry reaches only the ingest router, never the token API;
+    /// the in-pod entry answers the API and the ingest router under `/ingest/`.
+    #[tokio::test]
+    async fn the_ingest_entry_answers_only_the_ingest_router() {
+        let api =
+            Router::new().fallback(|uri: axum::http::Uri| async move { format!("api {uri}") });
+        let ingest =
+            Router::new().fallback(|uri: axum::http::Uri| async move { format!("ingest {uri}") });
+        let router = with_ingest(api, ingest);
+        assert_eq!(
+            answer(&router, "/streams", Some(INGEST_PREFIX)).await,
+            (200, "ingest /streams".into())
+        );
+        assert_eq!(
+            answer(&router, "/default/hel.ttn/uplinks", Some(INGEST_PREFIX)).await,
+            (200, "ingest /default/hel.ttn/uplinks".into())
+        );
+        assert_eq!(
+            answer(&router, "/streams", Some("/streams")).await,
+            (200, "api /streams".into())
+        );
+        assert_eq!(
+            answer(&router, "/ingest/default/hel.ttn/uplinks", Some("/streams")).await,
+            (200, "ingest /default/hel.ttn/uplinks".into())
+        );
+        assert_eq!(
+            answer(&router, "/ping", None).await,
+            (200, "api /ping".into())
+        );
+    }
+
     #[test]
     fn the_listed_private_hosts_open_to_the_default_organization_on_their_port() {
         let resources = ResourceManager::new();
@@ -530,6 +610,111 @@ mod tests {
         let runner = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await });
         (runner, setup.value(Secret::EkibenToken).unwrap().to_owned())
+    }
+
+    /// PL-122 end to end on jc's ekiben: a webhook stream as the reconciler renders it, its
+    /// bearer read from the runner's variables, answers a sender 200 on the ingest router; a
+    /// missing and a wrong credential get the same 401, a body over the cap 413, an unknown
+    /// stream 404, and once the stream is deleted its route answers 404 too.
+    #[tokio::test]
+    async fn a_webhook_stream_answers_only_its_sender_and_goes_with_its_stream() {
+        use crate::setup::{Secret, Setup};
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &[Module::Ekiben], &Default::default()).unwrap();
+        let cfg = EkibenSection {
+            file_root: Some(dir.path().join("files")),
+            ..Default::default()
+        };
+        let mut secrets = crate::config::Secrets::default();
+        secrets.ekiben_vars.insert(
+            "DS_UPLINKS_TOKEN".into(),
+            jc_secret::Secret::new("tok-1".into()),
+        );
+        let siblings = Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let app = build_with(&cfg, &setup, &secrets, &siblings, false, Vec::new())
+            .await
+            .unwrap();
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let runner = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await });
+        let token = setup.value(Secret::EkibenToken).unwrap().to_owned();
+        let client = reqwest::Client::new();
+        let stream = serde_json::json!({
+            "input": { "http_server": {
+                "path": "/uplinks", "allowed_verbs": ["POST"],
+                "auth": { "bearer": "${DS_UPLINKS_TOKEN}" },
+                "max_body_bytes": 32, "max_in_flight": 4
+            } },
+            "output": { "drop": {} }
+        });
+        let posted = client
+            .post(format!("{runner}/streams/hel.ttn"))
+            .bearer_auth(&token)
+            .json(&stream)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            posted.status().is_success(),
+            "{}",
+            posted.text().await.unwrap()
+        );
+        let hook = format!("{runner}/ingest/default/hel.ttn/uplinks");
+        let send = |bearer: Option<&'static str>, body: &'static str| {
+            let mut req = client.post(&hook).body(body);
+            if let Some(bearer) = bearer {
+                req = req.bearer_auth(bearer);
+            }
+            req.send()
+        };
+        let mut accepted = 0;
+        for _ in 0..50 {
+            accepted = send(Some("tok-1"), "{\"t\":21.5}")
+                .await
+                .unwrap()
+                .status()
+                .as_u16();
+            if accepted != 404 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(accepted, 200);
+        let missing = send(None, "{}").await.unwrap();
+        let wrong = send(Some("tok-2"), "{}").await.unwrap();
+        assert_eq!(
+            (missing.status().as_u16(), wrong.status().as_u16()),
+            (401, 401)
+        );
+        assert_eq!(missing.text().await.unwrap(), wrong.text().await.unwrap());
+        let large = send(Some("tok-1"), "{\"t\":\"0123456789012345678901234567890\"}")
+            .await
+            .unwrap();
+        assert_eq!(large.status().as_u16(), 413);
+        let unknown = client
+            .post(format!("{runner}/ingest/default/hel.other/uplinks"))
+            .bearer_auth("tok-1")
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unknown.status().as_u16(), 404);
+        let deleted = client
+            .delete(format!("{runner}/streams/hel.ttn"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert!(deleted.status().is_success(), "{}", deleted.status());
+        let mut gone = 0;
+        for _ in 0..50 {
+            gone = send(Some("tok-1"), "{}").await.unwrap().status().as_u16();
+            if gone == 404 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(gone, 404);
     }
 
     /// The run-time gap of jc-prod-mqtt's report (section 3): the gateway admits the runner of
