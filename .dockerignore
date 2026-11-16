@@ -6,6 +6,7 @@
 **/node_modules
 **/.pnpm-store
 **/ui/dist
+**/ui/dist-explorer
 **/sdk/dist
 **/.cg
 **/.codegraph
