@@ -12676,7 +12676,7 @@ export interface components {
             change?: unknown;
             changed: string[];
             created: string[];
-            /** @description `organization`, or a project's name. */
+            /** @description `organization`, `organization/people`, or a project's name. */
             name: string;
             /**
              * @description What this group needs done by hand: an Organization-level manifest is restored through

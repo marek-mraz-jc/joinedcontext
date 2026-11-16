@@ -59105,7 +59105,7 @@
           },
           "name": {
             "type": "string",
-            "description": "`organization`, or a project's name."
+            "description": "`organization`, `organization/people`, or a project's name."
           },
           "note": {
             "type": [

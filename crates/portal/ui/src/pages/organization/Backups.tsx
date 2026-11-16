@@ -27,6 +27,8 @@ type RestorePlan = components["schemas"]["RestorePlan"];
 const DOOR = "/api/v1/organization/backups/configuration";
 const OVERVIEW = ["organizationBackup"] as const;
 const VERSIONS = ["organizationBackup", "versions"] as const;
+/** The restore plan group of the bundle's people (T-7164): listed, never created. */
+const PEOPLE = "organization/people";
 
 /** The form's fields, in the server's names: a 422 names one of them and the page marks it. */
 const FIELDS = [
@@ -300,7 +302,7 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
   });
   const shown = apply.data ?? plan.data;
   const projectChanges = (shown?.groups ?? []).filter(
-    (group) => group.name !== "organization" && group.created.length + group.changed.length > 0,
+    (group) => group.name !== "organization" && group.name !== PEOPLE && group.created.length + group.changed.length > 0,
   );
   return (
     <Dialog
@@ -320,7 +322,9 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
             <h3 className="text-body font-semibold">
               {group.name === "organization"
                 ? t("backups.restore.organization")
-                : t("backups.restore.project", { project: group.name })}
+                : group.name === PEOPLE
+                  ? t("backups.restore.people")
+                  : t("backups.restore.project", { project: group.name })}
             </h3>
             <p className="text-caption text-fg-muted">
               {t("backups.restore.counts", {
@@ -336,7 +340,11 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
                 ))}
               </ul>
             ) : null}
-            {group.note ? <p className="text-caption text-fg-muted">{t("backups.restore.organizationNote")}</p> : null}
+            {group.note ? (
+              <p className="text-caption text-fg-muted">
+                {t(group.name === PEOPLE ? "backups.restore.peopleNote" : "backups.restore.organizationNote")}
+              </p>
+            ) : null}
             {group.change ? <Alert tone="success">{t("backups.restore.proposed")}</Alert> : null}
           </section>
         ))}

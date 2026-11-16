@@ -13393,7 +13393,7 @@
   "backups": {
     "loading": "Načítava sa záloha…",
     "unreadable": "Zálohu sa nepodarilo načítať. Skúste to o minútu.",
-    "lead": "Kópia konfigurácie tejto organizácie ako súbory s ich identifikátormi vo vašom vlastnom S3 buckete: jej nastavenia, roly, priradenia a manifesty každého projektu s ich schémami. Bez údajov entít, bez kódu, bez hodnôt tajomstiev. Bucket uchováva každú verziu, takže aj zmazanú zálohu možno obnoviť.",
+    "lead": "Kópia konfigurácie tejto organizácie ako súbory s ich identifikátormi vo vašom vlastnom S3 buckete: jej nastavenia, roly, priradenia, jej ľudia (iba identifikátor, používateľské meno a e-mail) a manifesty každého projektu s ich schémami. Bez údajov entít, bez kódu, bez hodnôt tajomstiev. Bucket uchováva každú verziu, takže aj zmazanú zálohu možno obnoviť.",
     "runs": {
       "title": "Behy",
       "scheduled": "Beží každých {hours} hodín a vždy, keď stlačíte Spustiť teraz.",
@@ -13443,6 +13443,8 @@
       "organization": "Nastavenia organizácie",
       "counts": "{created} vytvoriť, {changed} zmeniť, {unchanged} bez zmeny",
       "organizationNote": "Nastavenia organizácie sa odtiaľto nemenia: stiahnite túto verziu a navrhnite jej súbory organization/ na karte Nastavenia.",
+      "people": "Ľudia",
+      "peopleNote": "Títo ľudia sú v tejto verzii, ale dnes nie sú v organizácii. Obnova nikdy nevytvára ľudí: pozvite ich na stránke Ľudia.",
       "proposed": "Navrhnuté ako zmena. Iný správca ju schváli v Zmenách.",
       "propose": "Navrhnúť obnovu",
       "close": "Zavrieť",

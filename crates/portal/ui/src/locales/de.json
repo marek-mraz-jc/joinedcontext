@@ -13393,7 +13393,7 @@
   "backups": {
     "loading": "Sicherung wird geladen…",
     "unreadable": "Die Sicherung konnte nicht gelesen werden. Versuchen Sie es in einer Minute erneut.",
-    "lead": "Eine Kopie der Konfiguration dieser Organisation als Dateien mit ihren Kennungen in Ihrem eigenen S3-Bucket: ihre Einstellungen, Rollen, Zuweisungen und die Manifeste jedes Projekts mit ihren Schemas. Keine Entitätsdaten, kein Code, keine geheimen Werte. Der Bucket behält jede Version, sodass auch eine gelöschte Sicherung wiederhergestellt werden kann.",
+    "lead": "Eine Kopie der Konfiguration dieser Organisation als Dateien mit ihren Kennungen in Ihrem eigenen S3-Bucket: ihre Einstellungen, Rollen, Zuweisungen, ihre Personen (nur Kennung, Benutzername und E-Mail) und die Manifeste jedes Projekts mit ihren Schemas. Keine Entitätsdaten, kein Code, keine geheimen Werte. Der Bucket behält jede Version, sodass auch eine gelöschte Sicherung wiederhergestellt werden kann.",
     "runs": {
       "title": "Läufe",
       "scheduled": "Läuft alle {hours} Stunden und immer, wenn Sie Jetzt ausführen drücken.",
@@ -13443,6 +13443,8 @@
       "organization": "Einstellungen der Organisation",
       "counts": "{created} anzulegen, {changed} zu ändern, {unchanged} unverändert",
       "organizationNote": "Die Einstellungen der Organisation werden hier nicht geändert: Laden Sie diese Version herunter und schlagen Sie ihre organization/-Dateien im Tab Einstellungen vor.",
+      "people": "Personen",
+      "peopleNote": "Diese Personen sind in dieser Version, aber heute nicht in der Organisation. Eine Wiederherstellung legt keine Personen an: Laden Sie sie auf der Seite Personen ein.",
       "proposed": "Als Änderung vorgeschlagen. Ein anderer Administrator genehmigt sie unter Änderungen.",
       "propose": "Wiederherstellung vorschlagen",
       "close": "Schließen",
