@@ -4,7 +4,8 @@ import { useState } from "react";
 import { EntityGrid, moveTo } from "../src/grid/EntityGrid";
 import { parseGridConfig } from "../src/grid/config";
 import { fixtureSource } from "../src/grid/source";
-import { readableName } from "../src/grid/readableName";
+import { readable, readableName } from "../src/grid/readableName";
+import { menuLeft } from "../src/grid/ColumnMenu";
 import type { ColumnLayout } from "../src/grid/useEntityGrid";
 
 const entities = [
@@ -67,9 +68,23 @@ describe("the column header menu (T-4827)", () => {
     await screen.findByText("Alpha");
     expect(headers()).toEqual(["Name", "Count", "status"]);
     expect(readableName("https://smartdatamodels.org/dataModel.Transportation/vocab#routeColor")).toBe("routeColor");
+    // Where words are wanted (a row's detail, T-7112), an unlabelled name reads in them.
+    expect(readable("https://smartdatamodels.org/dataModel.Transportation/vocab#routeColor")).toBe("Route color");
+    expect(readable("dataProvider")).toBe("Data provider");
+    expect(readable("pm10")).toBe("Pm10");
     expect(screen.getAllByRole("columnheader").slice(0, 2).map((th) => th.textContent)).toEqual(["ID", "Type"]);
     const count = screen.getAllByRole("columnheader")[3];
     expect(within(count).getByRole("img", { name: "Number" })).toBeInTheDocument();
+  });
+
+  it("opens a filter beside its column, so the column's values stay in sight (T-7112)", () => {
+    const cell = { left: 590, right: 740 };
+    // Right of the column where it fits, else left of it, else under it as the column menu.
+    expect(menuLeft(cell, 250, 1440, 224, true)).toBe(740);
+    expect(menuLeft({ left: 1000, right: 1200 }, 250, 1440, 224, true)).toBe(750);
+    expect(menuLeft({ left: 20, right: 380 }, 250, 400, 8, true)).toBe(130);
+    // The column menu itself keeps its place under the cell, right edges aligned.
+    expect(menuLeft(cell, 250, 1440, 224)).toBe(490);
   });
 
   it("sorts in the column's own words: a number by size", async () => {

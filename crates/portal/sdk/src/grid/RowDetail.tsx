@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { targetName } from "./cells";
+import { readable, readableName } from "./readableName";
 import type { RichRow } from "./model";
 import type { VisibleColumn } from "./useEntityGrid";
 import { useRowChanges } from "./EntityChanges";
@@ -37,6 +38,8 @@ export interface RowDetailProps {
   /** How one attribute's value is drawn, the grid's own cell renderer, editors included. */
   renderValue: (row: RichRow, column: VisibleColumn) => React.ReactNode;
   labels: RowDetailLabels;
+  /** A field the columns leave out (a phone's table, T-7112): the grid's label for it, else its name in words. */
+  labelOf?: (attr: string) => string;
   onClose: () => void;
   /** One attribute's history, where the source reads history and the config allows it. */
   history?: (attr: string, label: string) => React.ReactNode;
@@ -91,7 +94,7 @@ export function AttributeView({ label, value, metadata, history }: { label: stri
  * browser's modal dialog keeps focus inside and the page behind inert; the heading takes focus when
  * it opens and Escape outside a text box closes it.
  */
-export function RowDetail({ row, name, columns, renderValue, labels, onClose, history, metadata, changes, tabs = [], children, place, onPlace }: RowDetailProps): React.JSX.Element {
+export function RowDetail({ row, name, columns, renderValue, labels, labelOf = readable, onClose, history, metadata, changes, tabs = [], children, place, onPlace }: RowDetailProps): React.JSX.Element {
   const headingId = useId();
   const tabsId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -117,14 +120,15 @@ export function RowDetail({ row, name, columns, renderValue, labels, onClose, hi
   // the button that opened it.
   // The id is behind the Copy identifier button, never text on screen (T-5599); a model's `id`
   // slot is not a field to read either.
+  // A column the grid names only by its attribute reads in words here, as the fields it left out do (T-7112).
   const shown = columns
     .filter((column) => column.attr !== null && column.attr !== "id" && column.meta === null)
-    .map((column) => ({ ...column, pinned: false }));
+    .map((column) => ({ ...column, label: column.label === readableName(column.attr ?? "") ? labelOf(column.attr ?? "") : column.label, pinned: false }));
   const named = new Set(shown.map((column) => column.attr));
   const rest: VisibleColumn[] = Object.keys(row.cells)
     .filter((attr) => !named.has(attr))
     .sort()
-    .map((attr) => ({ key: attr, attr, meta: null, label: attr, pinned: false }));
+    .map((attr) => ({ key: attr, attr, meta: null, label: labelOf(attr), pinned: false }));
   const all = [...shown, ...rest];
 
   const attrs = all.map((column) => column.attr ?? "");

@@ -1442,7 +1442,7 @@ const sectionRoute = createRoute({
   // `?edit=<name>` opens the kind's own editor on that resource (T-2281): the assistant's hand-off
   // and older links; the endpoint's settings page links the edit address itself.
   // `?draft=<name>` opens the kind's form on that draft (AG-61, AG-73).
-  // `?dataType=`, `?dataQ=` and `?dataSort=` hold what an endpoint's Data section shows (T-5082).
+  // `?dataType=`, `?dataQ=`, `?dataSearch=` and `?dataSort=` hold what an endpoint's Data section shows (T-5082, T-7112).
   validateSearch: (
     search: Record<string, unknown>,
   ): {
@@ -1450,6 +1450,7 @@ const sectionRoute = createRoute({
     draft?: string;
     dataType?: string;
     dataQ?: string;
+    dataSearch?: string;
     dataSort?: string;
     hidden?: "dashboards";
     dashboard?: string;
@@ -1462,6 +1463,8 @@ const sectionRoute = createRoute({
       draft: text(search.draft),
       dataType: text(search.dataType),
       dataQ: text(search.dataQ),
+      // The search box's words: capped as the box's own query is, read as text, never as a query.
+      dataSearch: text(search.dataSearch)?.slice(0, 200),
       dataSort: text(search.dataSort),
       // `?dashboard=<name>` opens that dashboard first: a home page widget's link (T-6779).
       dashboard: text(search.dashboard),

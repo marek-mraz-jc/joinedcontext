@@ -244,7 +244,7 @@ describe("EntityGrid", () => {
     expect(screen.getByRole("heading", { name: "Details: Kamppi" })).toHaveFocus();
     // The grid's columns, then what the entity carries beyond them.
     const terms = Array.from(panel.querySelectorAll("dt")).map((dt) => dt.textContent);
-    expect(terms).toEqual(["Name", "Bikes", "location", "refDevice"]);
+    expect(terms).toEqual(["Name", "Bikes", "Location", "Ref device"]);
 
     const bikes = panel.querySelector<HTMLInputElement>("dd input")!;
     fireEvent.change(bikes, { target: { value: "7" } });

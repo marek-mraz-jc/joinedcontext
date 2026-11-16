@@ -97,18 +97,18 @@ export function EndpointPage({
   const locale = i18n.resolvedLanguage ?? i18n.language ?? "sk";
   const navigate = useNavigate();
   // The data view's type, query and order live in the address, so a link opens what was seen.
-  const search = useSearch({ strict: false }) as { dataType?: string; dataQ?: string; dataSort?: string };
-  const dataLink: DataLink = { type: search.dataType, q: search.dataQ, sort: search.dataSort };
+  const search = useSearch({ strict: false }) as { dataType?: string; dataQ?: string; dataSearch?: string; dataSort?: string };
+  const dataLink: DataLink = { type: search.dataType, q: search.dataQ, search: search.dataSearch, sort: search.dataSort };
   const writeDataLink = useCallback(
     (next: DataLink) => {
-      if (next.type === search.dataType && next.q === search.dataQ && next.sort === search.dataSort) return;
+      if (next.type === search.dataType && next.q === search.dataQ && next.search === search.dataSearch && next.sort === search.dataSort) return;
       void navigate({
         to: ".",
-        search: (previous: Record<string, unknown>) => ({ ...previous, dataType: next.type, dataQ: next.q, dataSort: next.sort }),
+        search: (previous: Record<string, unknown>) => ({ ...previous, dataType: next.type, dataQ: next.q, dataSearch: next.search, dataSort: next.sort }),
         replace: true,
       });
     },
-    [navigate, search.dataType, search.dataQ, search.dataSort],
+    [navigate, search.dataType, search.dataQ, search.dataSearch, search.dataSort],
   );
   const permissions = usePermissions(project);
   // An action a role cannot take stays in the menu with its reason; UI-44 does not stop at a menu's

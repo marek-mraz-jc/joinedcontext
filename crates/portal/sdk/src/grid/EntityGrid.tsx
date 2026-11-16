@@ -170,6 +170,12 @@ export interface EntityGridProps extends UseEntityGridOptions {
   publicView?: boolean;
 }
 
+/** The labels the grid shows its columns by: the reader's own over the config's. */
+function labelsOf(props: EntityGridProps): Record<string, string> {
+  const own = Object.fromEntries(props.config.columns.flatMap((column) => (column.label ? [[column.attr, column.label]] : [])));
+  return { ...own, ...props.layout?.labels };
+}
+
 /** One target opened from a relationship cell: the step of the breadcrumb back (G-R2GRID2-017). */
 interface DrillStep {
   urn: string;
@@ -249,6 +255,10 @@ export function EntityGrid(props: EntityGridProps): React.JSX.Element {
           locale={props.locale}
           termHref={props.termHref}
           config={{ ...props.config, type: top.type, columns: [], mode: "view", filters: {} }}
+          // A target of the grid's own type (an area's parent area) reads under the grid's labels,
+          // never its raw attribute names (T-7112). ponytail: another type's labels are the host's
+          // model's; a host prop naming them per type when one asks.
+          layout={top.type === outerType ? { labels: labelsOf(props) } : undefined}
           query={{ ids: [top.urn] }}
           filterRow={false}
           queryBox={false}

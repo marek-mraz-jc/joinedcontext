@@ -13,7 +13,7 @@ export { ArrangePanel } from "../grid/ArrangePanel";
 export type { ArrangeItem, ArrangeLabels, ArrangePanelProps } from "../grid/ArrangePanel";
 export * from "../grid/parts";
 export type { EntityGridProps } from "../grid/EntityGrid";
-export { DEFAULT_LABELS, readableName, useEntityGrid } from "../grid/useEntityGrid";
+export { DEFAULT_LABELS, readable, readableName, useEntityGrid } from "../grid/useEntityGrid";
 export type { ColumnLayout, GridLabels, GridLabelsInput, GridState, MetaKey, UseEntityGridOptions, VisibleColumn } from "../grid/useEntityGrid";
 export { targetName } from "../grid/cells";
 export type { CellLabels, ColumnKind } from "../grid/cells";
