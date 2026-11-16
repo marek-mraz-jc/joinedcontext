@@ -3072,8 +3072,8 @@ fn action_parameters(body: &[u8]) -> Result<Map<String, Value>, Refused> {
     }
 }
 
-/// The project a door call runs in: none for the installation's `Organization`, else the
-/// project `entity` names, readable in `org`.
+/// The project a door call runs in: none for the installation's `Organization` (any
+/// Organization's for the person's own doors), else the project `entity` names, readable in `org`.
 fn door_target(
     state: &AppState,
     user: &CurrentUser,
@@ -3085,7 +3085,8 @@ fn door_target(
     match door.bound {
         odata_portal::Bound::Organization => {
             let installation = crate::permissions::installation_organization(&state.mirror);
-            if entity == ORGANIZATION && installation.as_deref() == Some(org) {
+            let own = door.who == odata_portal::Who::Own;
+            if entity == ORGANIZATION && (own || installation.as_deref() == Some(org)) {
                 Ok(None)
             } else {
                 Err(no(not_found(format!(
