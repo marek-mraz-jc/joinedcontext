@@ -6068,6 +6068,7 @@
     "intro": "A sync source keeps this project aligned with something outside the repository: another Git repository, a published bundle, or another instance's public API. Every run is an import, and every run that changes something opens one merge request.",
     "empty": "This project syncs from nothing yet.",
     "origin": "Origin",
+    "addFrom": "Add a source from",
     "revision": "Source revision",
     "status": "Status",
     "mergeRequest": "Open merge request",

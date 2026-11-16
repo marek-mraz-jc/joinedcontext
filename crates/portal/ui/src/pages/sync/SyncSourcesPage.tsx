@@ -146,7 +146,7 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
             {/* The shared Field, not a hand-made label: it ties the label to the control and
                 carries whatever a message later needs to hang off (UI-01, UI-04). */}
             {mayAdd ? (
-              <Field id="sync-origin-kind" label={t("syncSources.origin")} className="min-w-0 flex-1 sm:flex-none">
+              <Field id="sync-origin-kind" label={t("syncSources.addFrom")} className="min-w-0 flex-1 sm:flex-none">
                 <Select
                   id="sync-origin-kind"
                   value={origin}

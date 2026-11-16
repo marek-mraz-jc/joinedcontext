@@ -6068,6 +6068,7 @@
     "intro": "Eine Synchronisierungsquelle hält dieses Projekt mit etwas außerhalb des Repositorys im Einklang: einem anderen Git-Repository, einem veröffentlichten Bundle oder der öffentlichen API einer anderen Instanz. Jeder Lauf ist ein Import, und jeder Lauf, der etwas ändert, öffnet einen Merge Request.",
     "empty": "Dieses Projekt synchronisiert noch von nirgendwo.",
     "origin": "Herkunft",
+    "addFrom": "Quelle hinzufügen aus",
     "revision": "Revision der Quelle",
     "status": "Status",
     "mergeRequest": "Offener Merge Request",

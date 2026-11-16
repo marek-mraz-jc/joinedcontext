@@ -6068,6 +6068,7 @@
     "intro": "Zdroj synchronizácie udržiava tento projekt v súlade s niečím mimo repozitára: iným Git repozitárom, publikovaným balíkom alebo verejným API inej inštancie. Každý beh je import a každý beh, ktorý niečo zmení, otvorí jednu žiadosť o zlúčenie.",
     "empty": "Tento projekt zatiaľ nesynchronizuje odnikiaľ.",
     "origin": "Pôvod",
+    "addFrom": "Pridať zdroj z",
     "revision": "Revízia zdroja",
     "status": "Stav",
     "mergeRequest": "Otvorená žiadosť o zlúčenie",

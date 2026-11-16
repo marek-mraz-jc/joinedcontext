@@ -6068,6 +6068,7 @@
     "intro": "Zdroj synchronizace udržuje tento projekt v souladu s něčím mimo repozitář: jiným Git repozitářem, publikovaným balíkem nebo veřejným API jiné instance. Každý běh je import a každý běh, který něco změní, otevře jednu žádost o sloučení.",
     "empty": "Tento projekt zatím odnikud nesynchronizuje.",
     "origin": "Původ",
+    "addFrom": "Přidat zdroj z",
     "revision": "Revize zdroje",
     "status": "Stav",
     "mergeRequest": "Otevřená žádost o sloučení",
