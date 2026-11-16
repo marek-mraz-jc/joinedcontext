@@ -178,6 +178,44 @@ fn names(list: &Value) -> Vec<&str> {
         .unwrap_or_default()
 }
 
+fn organization_names(list: &Value) -> Vec<&str> {
+    list["organizations"]
+        .as_array()
+        .map(|items| items.iter().filter_map(|i| i["name"].as_str()).collect())
+        .unwrap_or_default()
+}
+
+/// No Portal lists Organizations (T-7151): on the deployment's own address a person bound in
+/// both, and the bootstrap group, read their projects and learn no list of Organizations; each
+/// Organization's own Portal names only itself.
+#[tokio::test]
+async fn the_project_list_names_no_organization_but_the_hosts_own() {
+    let state = state();
+    for (who, groups) in [("both", &[][..]), ("root", &[ROOTS][..])] {
+        let plain = signed_in(&state.config, person(who, groups), None).await;
+        let (st, list) = call(&state, "portal.example", &plain, "GET", "/api/v1/projects").await;
+        assert_eq!(st, StatusCode::OK, "{who}: {list}");
+        assert!(
+            names(&list).contains(&"bratislava") && names(&list).contains(&"helsinki"),
+            "{who}: the control, their projects: {list}"
+        );
+        assert!(
+            organization_names(&list).is_empty(),
+            "{who} gets a list of Organizations: {list}"
+        );
+        let on_hel = signed_in(&state.config, person(who, groups), Some("hel")).await;
+        let (_, list) = call(&state, HEL, &on_hel, "GET", "/api/v1/projects").await;
+        assert_eq!(organization_names(&list), vec!["hel"], "{who}: {list}");
+    }
+    let ba_only = signed_in(&state.config, person("ba-only", &[]), Some("ba")).await;
+    let (_, list) = call(&state, BA, &ba_only, "GET", "/api/v1/projects").await;
+    assert_eq!(
+        (names(&list), organization_names(&list)),
+        (vec!["bratislava"], vec!["ba"]),
+        "{list}"
+    );
+}
+
 #[tokio::test]
 async fn each_host_lists_and_opens_only_its_own_organizations_projects() {
     let state = state();
@@ -190,9 +228,10 @@ async fn each_host_lists_and_opens_only_its_own_organizations_projects() {
             !names(&list).contains(&"helsinki"),
             "{who} sees hel on ba's host: {list}"
         );
-        assert!(
-            list["organizations"].as_array().is_none_or(Vec::is_empty),
-            "{who}: one Organization on its host needs no switcher: {list}"
+        assert_eq!(
+            organization_names(&list),
+            vec!["ba"],
+            "{who}: the host's Organization alone, its label: {list}"
         );
         for uri in [
             "/api/v1/projects/helsinki",

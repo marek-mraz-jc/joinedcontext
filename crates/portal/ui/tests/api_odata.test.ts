@@ -472,9 +472,6 @@ describe("the Portal's OData client (T-6812)", () => {
     const { items } = await listOrganizations();
     expect(items.map((o) => o.metadata.name)).toEqual(["zilina", "hel"]);
     expect(sent).toEqual(["/api/v1/Organization", "/api/v1/projects/org/organizations"]);
-    // A person who sees several Organizations reads the list, never the one the service serves.
-    expect((await listOrganizations(true)).items).toHaveLength(2);
-    expect(sent.slice(2)).toEqual(["/api/v1/projects/org/organizations"]);
     vi.restoreAllMocks();
   });
 

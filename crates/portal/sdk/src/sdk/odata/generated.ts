@@ -994,6 +994,8 @@ export interface Functions {
   portal_flow_map: { space?: string };
   portal_grafana_builder: Record<string, never>;
   portal_grafana_builder_get: { uid: string };
+  portal_grafana_builder_version: { uid: string; sha: string };
+  portal_grafana_builder_versions: { uid: string };
   portal_grafana_dashboard: { uid: string };
   portal_grafana_dashboards: Record<string, never>;
   portal_grafana_list: Record<string, never>;
@@ -1128,6 +1130,8 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_flow_map: ["Project"],
   portal_grafana_builder: ["Project"],
   portal_grafana_builder_get: ["Project"],
+  portal_grafana_builder_version: ["Project"],
+  portal_grafana_builder_versions: ["Project"],
   portal_grafana_dashboard: ["Project"],
   portal_grafana_dashboards: ["Project"],
   portal_grafana_list: ["Project"],
@@ -1266,6 +1270,7 @@ export interface Actions {
   portal_erasure_file: { space: string; dryRun?: string; body?: unknown };
   portal_grafana_builder_create: { body?: unknown };
   portal_grafana_builder_preview: { body?: unknown };
+  portal_grafana_builder_restore: { uid: string; sha: string };
   portal_grafana_builder_update: { uid: string; body?: unknown };
   portal_grafana_remove: { id: string };
   portal_grafana_save: { body?: unknown };
@@ -1397,6 +1402,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_erasure_file: ["Project"],
   portal_grafana_builder_create: ["Project"],
   portal_grafana_builder_preview: ["Project"],
+  portal_grafana_builder_restore: ["Project"],
   portal_grafana_builder_update: ["Project"],
   portal_grafana_remove: ["Project"],
   portal_grafana_save: ["Project"],

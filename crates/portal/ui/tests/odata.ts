@@ -334,6 +334,9 @@ const OPERATIONS: Record<string, Door> = {
   portal_grafana_builder_preview: ["POST", "/projects/{project}/grafana/builder/preview"],
   portal_grafana_builder_get: ["GET", "/projects/{project}/grafana/builder/{uid}"],
   portal_grafana_builder_update: ["PUT", "/projects/{project}/grafana/builder/{uid}"],
+  portal_grafana_builder_versions: ["GET", "/projects/{project}/grafana/builder/{uid}/versions"],
+  portal_grafana_builder_version: ["GET", "/projects/{project}/grafana/builder/{uid}/versions/{sha}"],
+  portal_grafana_builder_restore: ["POST", "/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore"],
   portal_kpi_check: ["POST", "/projects/{project}/kpis/check"],
   // The publish flow's draft (T-7117): the registry read whose handler is the REST door's.
   jc_catalogue_draft: ["POST", "/projects/{project}/catalogue/drafts", ["endpoint"]],

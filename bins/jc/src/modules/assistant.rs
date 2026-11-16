@@ -190,13 +190,21 @@ fn proxy_lookup(
     out.insert("JC_OIDC_CLIENT_ID", setup::PROXY_CLIENT.to_owned());
     out.insert("JC_ASSISTANT_CLIENT_ID", setup::ASSISTANT_CLIENT.to_owned());
     out.insert("JC_PORTAL_CLIENT_ID", setup::PORTAL_CLIENT.to_owned());
+    // Every Portal call of the proxy is a route of the Portal's internal listener (run lookups,
+    // the model key's state): that listener when the Portal runs in this jc (T-7149).
+    if let Some(at) = siblings.portal_internal {
+        out.insert(
+            "JC_PORTAL_BASE",
+            format!("http://{}", crate::siblings::reach(at)),
+        );
+    }
     for (key, module) in [
         ("JC_PORTAL_BASE", Module::Portal),
         ("JC_GATEWAY_BASE", Module::Gateway),
         ("JC_FORGE_BASE", Module::Shako),
     ] {
         if let Some(s) = siblings.get(module) {
-            out.insert(key, s.callable().to_owned());
+            out.entry(key).or_insert_with(|| s.callable().to_owned());
         }
     }
     // The listener is loopback only: no mesh in front of it to name a caller.
@@ -363,9 +371,10 @@ pub async fn start(
     tasks: &TaskTracker,
 ) -> Option<Router> {
     match try_start(cfg, setup, siblings, secrets, env, shutdown, tasks).await {
-        Ok((router, internal, proxy)) => {
+        Ok((router, internal, proxy, agent_proxy)) => {
             tracing::info!(%internal, %proxy, "assistant: on");
             siblings.set_internal(Module::Assistant, internal);
+            siblings.agent_proxy = agent_proxy;
             Some(router)
         }
         Err(why) => {
@@ -384,7 +393,7 @@ async fn try_start(
     env: &impl Fn(&str) -> Option<String>,
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
-) -> Result<(Router, SocketAddr, String), String> {
+) -> Result<(Router, SocketAddr, String, Option<SocketAddr>), String> {
     // The proxy: an operator's own (`JC_ASSISTANT_PROXY_URL`), else `jc`'s over the key file.
     let proxy = match (env("JC_ASSISTANT_PROXY_URL"), &secrets.model_key) {
         (Some(_), _) => None,
@@ -488,7 +497,7 @@ async fn try_start(
         }
     });
     let proxy = lookup("JC_ASSISTANT_PROXY_URL").unwrap_or_default();
-    Ok((public(router), internal_at, proxy))
+    Ok((public(router), internal_at, proxy, proxy_at))
 }
 
 /// The dataroom's public origin for the deployment `[assistant] catalogue_deployment` names, so
@@ -843,6 +852,23 @@ mod tests {
         assert!(table.values().all(|v| !v.contains("sk-or-v1")));
     }
 
+    /// T-7149: the proxy's run lookups and model key reports are routes of the Portal's internal
+    /// listener, never of its public mount (which answers them 404).
+    #[test]
+    fn the_proxy_calls_the_portals_internal_listener() {
+        let (_cfg, mut siblings, _setup, _d) = fixture();
+        let none = |_: &str| None;
+        let public = siblings.get(Module::Portal).unwrap().callable().to_owned();
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &none);
+        assert_eq!(
+            table["JC_PORTAL_BASE"], public,
+            "no internal listener known"
+        );
+        siblings.portal_internal = Some("0.0.0.0:40125".parse().unwrap());
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &none);
+        assert_eq!(table["JC_PORTAL_BASE"], "http://127.0.0.1:40125");
+    }
+
     #[tokio::test]
     async fn without_a_model_key_the_module_is_off_and_leaves_the_siblings() {
         let (cfg, mut siblings, setup, _d) = fixture();
@@ -1155,6 +1181,12 @@ mod tests {
             .and_then(|rest| rest.split_whitespace().next())
             .expect("the proxy's address is logged");
         assert!(proxy.starts_with("http://127.0.0.1:"), "{proxy}");
+        // The Portal runs its agent runs through it (AG-33, T-7149).
+        assert_eq!(portal["JC_AGENT_PROXY_BASE"], proxy);
+        assert_eq!(
+            portal["JC_PORTAL_AGENT_PROXY_CLIENT_ID"],
+            setup::PROXY_CLIENT
+        );
         let health = http.get(format!("{proxy}/healthz")).send().await.unwrap();
         assert_eq!(health.status(), StatusCode::OK);
         let refused = http

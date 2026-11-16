@@ -178,7 +178,10 @@ fn import_input_schema() -> Value {
                 "description": "Space `from` lands on the project's `to`",
                 "items": {
                     "type": "object",
-                    "properties": { "from": { "type": "string", "maxLength": NAME }, "to": { "type": "string", "maxLength": NAME } },
+                    "properties": {
+                        "from": text("Space in the manifests", NAME),
+                        "to": text("Space of this project", NAME)
+                    },
                     "required": ["from", "to"],
                     "additionalProperties": false
                 },

@@ -1452,21 +1452,20 @@ fn is_registry_host(value: &str) -> bool {
 
 /// Where a builder run happens and how the credential proxy reaches this Portal (ADR-N-020).
 ///
-/// `JC_AGENTS_NAMESPACE` and `JC_AGENT_PROXY_BASE` are set together or not at all;
-/// `JC_PORTAL_NAMESPACE` (default: the workspaces' own namespace), `JC_AGENT_RUN_TTL` (whole
-/// seconds, default `1200`) and `JC_AGENT_APPROVAL_TTL` (whole seconds a run waits for its
-/// change's approval, default `604800`) tune the rest. None of them is a secret: the proxy presents its own ServiceAccount
-/// token, which is why `JC_AGENT_PROXY_TOKEN` is gone (T-2271).
-///
-/// The namespace and the proxy are needed together: a workspace with no proxy has no way to
-/// reach the model, the data or the forge, and a proxy with no namespace has nothing to serve.
-/// The token is the proxy's own credential on the internal listener, and it is the reason this
-/// block is all-or-nothing rather than three independent variables: two of the three set is a
-/// misconfiguration, not a Portal that runs agent runs unauthenticated.
+/// `JC_AGENT_PROXY_BASE` turns agent runs on. `JC_AGENTS_NAMESPACE` adds the cluster workspaces
+/// a `ui-rust` run is scheduled into; without it every run is driven in this process
+/// (conversations, `ui` and `wasm` Apps) or by its caller, which is how `jc` runs them beside its
+/// own proxy (T-7149). A namespace without the proxy is refused: a workspace with no proxy has no
+/// way to reach the model, the data or the forge. `JC_PORTAL_NAMESPACE` (default: the workspaces'
+/// own namespace), `JC_AGENT_RUN_TTL` (whole seconds, default `1200`) and `JC_AGENT_APPROVAL_TTL`
+/// (whole seconds a run waits for its change's approval, default `604800`) tune the rest. None of
+/// them is a secret: the proxy presents its own ServiceAccount token, which is why
+/// `JC_AGENT_PROXY_TOKEN` is gone (T-2271).
 #[derive(Clone)]
 pub struct AgentSettings {
-    /// Namespace the workspace Jobs, their ServiceAccounts and their NetworkPolicies go into.
-    pub namespace: String,
+    /// Namespace the workspace Jobs, their ServiceAccounts and their NetworkPolicies go into;
+    /// `None` schedules no workspace (no cluster client is attached for runs).
+    pub namespace: Option<String>,
     /// Namespace the Portal itself runs in, which is the only place a workspace's ingress rule
     /// admits from (AG-39). Unset means the Portal shares the workspaces' namespace, the same
     /// assumption the proxy's egress rule already makes.
@@ -1505,16 +1504,14 @@ fn agent_settings(
     // proxy both held, which is the static key between cluster services CLAUDE.md rules out. The
     // proxy presents its own ServiceAccount token now (`JC_PORTAL_AGENT_PROXY_CLIENT_ID` says whose
     // token the callbacks accept), so there is no shared secret left to configure here.
-    let (namespace, proxy_base) = match (namespace, proxy_base) {
-        (None, None) => return Ok(None),
-        (Some(namespace), Some(proxy_base)) => (namespace, proxy_base),
-        _ => {
-            return Err(ConfigError::Invalid {
+    let Some(proxy_base) = proxy_base else {
+        return match namespace {
+            None => Ok(None),
+            Some(_) => Err(ConfigError::Invalid {
                 var: "JC_AGENTS_NAMESPACE",
-                reason: "JC_AGENTS_NAMESPACE and JC_AGENT_PROXY_BASE must be set together"
-                    .to_string(),
-            })
-        }
+                reason: "JC_AGENTS_NAMESPACE needs JC_AGENT_PROXY_BASE".to_string(),
+            }),
+        };
     };
 
     let probe: Url = proxy_base
@@ -1560,7 +1557,8 @@ fn agent_settings(
 
     let portal_namespace = lookup("JC_PORTAL_NAMESPACE")
         .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| namespace.clone());
+        .or_else(|| namespace.clone())
+        .unwrap_or_default();
 
     Ok(Some(AgentSettings {
         namespace,
@@ -2933,6 +2931,33 @@ mod tests {
         for bad in ["0", "-5", "a week"] {
             assert!(with(Some(bad)).is_err(), "{bad}");
         }
+    }
+
+    /// T-7149: the proxy alone turns agent runs on, with no workspace namespace (jc runs them in
+    /// process beside its own proxy); a namespace without the proxy still refuses the start.
+    #[test]
+    fn the_agent_namespace_is_optional_but_never_alone() {
+        let with = |namespace: Option<&'static str>, proxy: Option<&'static str>| {
+            agent_settings(&move |name: &str| match name {
+                "JC_AGENTS_NAMESPACE" => namespace.map(str::to_owned),
+                "JC_AGENT_PROXY_BASE" => proxy.map(str::to_owned),
+                _ => None,
+            })
+        };
+        let alone = with(None, Some("http://127.0.0.1:4100/"))
+            .expect("the proxy alone")
+            .expect("agent runs on");
+        assert_eq!(alone.namespace, None);
+        assert_eq!(alone.proxy_base, "http://127.0.0.1:4100");
+        assert_eq!(alone.portal_namespace, "");
+        let both = with(Some("agents"), Some("http://proxy:8080"))
+            .expect("both")
+            .expect("agent runs on");
+        assert_eq!(both.namespace.as_deref(), Some("agents"));
+        assert_eq!(both.portal_namespace, "agents");
+        assert!(with(None, None).expect("neither").is_none());
+        assert!(with(Some("agents"), None).is_err());
+        assert!(with(None, Some("ftp://proxy")).is_err());
     }
 
     /// T-2716 (PF-97): the operator's bounds file; none keeps the built-in bounds, and a file

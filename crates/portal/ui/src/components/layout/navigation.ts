@@ -21,9 +21,11 @@ export const NAV_SECTIONS = [
   { plural: "pipelines", labelKey: "nav.pipelines", icon: "pipelines" },
   // Stored, reviewed JavaScript the pipelines pin by version (PL-118, T-7084).
   { plural: "scripts", labelKey: "nav.scripts", icon: "pipelines" },
-  { plural: "dashboards", labelKey: "nav.dashboards", icon: "dashboards" },
-  // A person's charts over an Endpoint, saved into the project's Grafana folder (T-6509).
+  // "Dashboards": the builder's folder tree, each dashboard several visualizations with a version
+  // history (T-6509, T-7150, T-7160). The address keeps its old segment; no label names the vendor.
   { plural: "grafana", labelKey: "nav.grafana", icon: "dashboards" },
+  // The Dashboard kind's pages, labelled "Report pages" until its callers move to the builder (T-7160).
+  { plural: "dashboards", labelKey: "nav.dashboards", icon: "dashboards" },
   { plural: "apps", labelKey: "nav.apps", icon: "apps" },
   // Where this project's resources are copied or mirrored from; the page that adds one is the
   // only way into it, so it needs an entry of its own (MF-27, T-0790).
