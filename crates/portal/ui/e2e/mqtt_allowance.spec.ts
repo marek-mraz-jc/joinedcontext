@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read manifests and the MQTT doors through OData; each stub below meets them as REST.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4860: the MQTT allowance end to end in the real build (PF-117…PF-119). An organization
 // administrator turns MQTT on for a project with two brokers, a steward reads what is left and adds

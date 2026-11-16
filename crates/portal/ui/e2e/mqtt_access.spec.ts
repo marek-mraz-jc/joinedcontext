@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read manifests and the MQTT doors through OData; each stub below meets them as REST.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5876: a broker card's "who can do what" panel (the explain route, ADR-N-048 §2.13) in each
 // state, and the ServiceAccount form offering the brokers' roles as grants. `vite preview` has no

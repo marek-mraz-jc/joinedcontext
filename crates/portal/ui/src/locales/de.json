@@ -11114,7 +11114,7 @@
         "account": "Das Konto, mit dem sich das Gerät anmeldet, z. B. cam-west; nur Konten von Rollen, die veröffentlichen dürfen, stehen zur Wahl.",
         "topic": "Das genaue Topic, auf dem das Gerät veröffentlicht, ohne + oder #, z. B. cameras/helsinki-cam-west/frame.",
         "payload": "Die Nachricht, wie das Gerät sie sendet, z. B. ein JSON-Objekt mit einem Messwert.",
-        "watch": "Einschalten und auf dem Gerät die mosquitto_pub-Zeile oben ausführen: eine Minute lang erscheint hier jede Ablehnung der Anmeldung binnen Sekunden."
+        "watch": "Einschalten und vom Gerät eine echte Nachricht senden, z. B. mit der mosquitto_pub-Zeile unter „Gerät verbinden“ auf der Seite des Brokers: eine Minute lang erscheint hier jede Ablehnung der Anmeldung binnen Sekunden."
       },
       "run": "Test ausführen",
       "failed": "Der Test lief nicht; versuchen Sie es in einer Minute erneut.",

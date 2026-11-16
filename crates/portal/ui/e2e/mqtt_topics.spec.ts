@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read manifests and the MQTT doors through OData; each stub below meets them as REST.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5533: a broker card's topics (which topic fills which attribute) and a capture broker's kept
 // messages, for a steward who may approve brokers and for an editor who may not. `vite preview`
@@ -94,7 +98,8 @@ async function shoot(page: Page, state: string): Promise<void> {
   mkdirSync(SHOTS, { recursive: true });
   for (const width of [1440, 400]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.locator('section[aria-labelledby="broker-sensors"]').screenshot({ path: join(SHOTS, `topics-${state}-${width}.png`) });
+    // The broker has its own page (T-6103): the whole page, its topics and captured messages included.
+    await page.screenshot({ path: join(SHOTS, `topics-${state}-${width}.png`), fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
 }

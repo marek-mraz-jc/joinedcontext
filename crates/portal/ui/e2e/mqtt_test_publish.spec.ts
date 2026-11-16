@@ -6,6 +6,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read manifests and the MQTT doors through OData; each stub below meets them as REST.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 const API = "joinedcontext.com/v1alpha1";
 const PROJECT = "helsinki";

@@ -11114,7 +11114,7 @@
         "account": "Účet, ktorým sa zariadenie prihlasuje, napr. cam-west; ponúkajú sa len účty rolí, ktoré smú publikovať.",
         "topic": "Presná téma, na ktorú zariadenie publikuje, bez + a #, napr. cameras/helsinki-cam-west/frame.",
         "payload": "Správa tak, ako ju zariadenie pošle, napr. objekt JSON s jedným meraním.",
-        "watch": "Zapnite a na zariadení spustite riadok mosquitto_pub vyššie: počas jednej minúty sa tu do pár sekúnd ukáže každé odmietnutie prihlásenia."
+        "watch": "Zapnite a pošlite zo zariadenia skutočnú správu, napr. riadkom mosquitto_pub v časti Pripojiť zariadenie na stránke brokera: počas jednej minúty sa tu do pár sekúnd ukáže každé odmietnutie prihlásenia."
       },
       "run": "Spustiť test",
       "failed": "Test sa nespustil; skúste to o minútu.",

@@ -1,10 +1,10 @@
-import { readManifest } from "../../api/odata";
+import { door, readManifest } from "../../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { ApiError, api, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { asManifests, localized } from "../../api/manifest";
 import { usePermissions, useReadableList } from "../../api/permissions";
 import type { Manifest } from "../../api/manifest";
@@ -338,14 +338,7 @@ function useMeasured(project: string, name: string) {
     queryKey: ["mqttBrokerMeasured", project, name],
     refetchInterval: 15_000,
     queryFn: async () =>
-      unwrap(
-        await api.GET(
-          "/api/v1/projects/{project}/mqttbrokers/{name}/measured",
-          {
-            params: { path: { project, name } },
-          },
-        ),
-      ),
+      (await door("portal_mqtt_measured", { broker: name }, project)) as Measured,
   });
 }
 
@@ -357,14 +350,7 @@ function useRefusalsToday(project: string, name: string) {
     queryFn: async () => {
       const midnight = new Date();
       midnight.setHours(0, 0, 0, 0);
-      return unwrap(
-        await api.GET("/api/v1/projects/{project}/mqttbrokers/{name}/watch", {
-          params: {
-            path: { project, name },
-            query: { since: midnight.toISOString() },
-          },
-        }),
-      );
+      return (await door("portal_mqtt_watch", { broker: name, since: midnight.toISOString() }, project)) as Watched;
     },
   });
 }

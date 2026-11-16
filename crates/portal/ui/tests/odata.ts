@@ -284,7 +284,16 @@ const OPERATIONS: Record<string, Door> = {
   portal_knowledge_conversation_same: [
     "GET",
     "/projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same",
-  ],
+  ],  portal_mqtt_allowance: ["GET", "/projects/{project}/mqtt/allowance"],
+  portal_mqtt_broker_access: ["GET", "/projects/{project}/mqttbrokers/{broker}/access"],
+  portal_mqtt_device_options: ["GET", "/projects/{project}/mqttbrokers/{broker}/devices"],
+  portal_mqtt_device_propose: ["POST", "/projects/{project}/mqttbrokers/{broker}/devices"],
+  portal_mqtt_test_publish: ["POST", "/projects/{project}/mqttbrokers/{broker}/test-publish"],
+  portal_mqtt_watch: ["GET", "/projects/{project}/mqttbrokers/{broker}/watch"],
+  portal_mqtt_measured: ["GET", "/projects/{project}/mqttbrokers/{broker}/measured"],
+  portal_mqtt_captured_list: ["GET", "/projects/{project}/mqttbrokers/{broker}/captured"],
+  portal_mqtt_captured_clear: ["DELETE", "/projects/{project}/mqttbrokers/{broker}/captured"],
+  portal_mqtt_binding_list: ["GET", "/projects/{project}/mqttbrokers/{broker}/bindings"],
 };
 
 /** Whether `request` calls one of {@link OPERATIONS}. */

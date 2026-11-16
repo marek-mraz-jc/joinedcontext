@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
+import { manifestAsRest } from "../tests/odata";
 
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
@@ -43,6 +44,9 @@ const LISTS: Record<string, unknown[]> = {
   endpoints: [item("Endpoint", "cams-in", {})],
   serviceaccounts: [item("ServiceAccount", "cam-1", {})],
 };
+
+/** A REST address, or the OData manifest read the page sends in its place (tests/odata.ts manifestAsRest). */
+const rest = (path: string) => (url: URL) => url.pathname === path || manifestAsRest(url)?.rest.pathname === path;
 
 async function stubApi(page: Page): Promise<void> {
   await page.route("**/api/v1/**", async (route) => {
@@ -86,11 +90,11 @@ test.describe("MQTT brokers", () => {
     // cam-2 is named by the role but not declared in the project: that edge is red, with its fix.
     await page.getByRole("link", { name: "MQTT brokers", exact: true }).first().click();
     const connections = page.getByRole("table", { name: "Connections" });
-    const red = connections.locator('tr[data-edge="red"]');
+    const red = connections.locator('tr:has([data-edge="red"])');
     await expect(red).toHaveCount(1);
     await expect(red).toContainText("No service account cam-2 in this project");
     await expect(red.getByRole("link", { name: "Fix it" })).toHaveAttribute("href", `/projects/${PROJECT}/mqttbrokers/cameras`);
-    await expect(connections.locator('tr[data-edge="green"]')).toHaveCount(4);
+    await expect(connections.locator('tr:has([data-edge="green"])')).toHaveCount(4);
     expect(await axeViolations(page)).toEqual([]);
 
     await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Data sources" }).click();
@@ -141,7 +145,7 @@ test.describe("MQTT brokers", () => {
 
   test("a steward reads that a custom hostname waits for DNS and where devices will connect (T-5874)", async ({ page }) => {
     await stubApi(page);
-    await page.route("**/api/v1/projects/helsinki/mqttbrokers", (route) =>
+    await page.route(rest("/api/v1/projects/helsinki/mqttbrokers"), (route) =>
       route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
@@ -165,7 +169,7 @@ test.describe("MQTT brokers", () => {
         }),
       }),
     );
-    await page.route("**/api/v1/projects/helsinki/mqttbrokers/cameras", (route) =>
+    await page.route(rest("/api/v1/projects/helsinki/mqttbrokers/cameras"), (route) =>
       route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
@@ -331,7 +335,7 @@ test.describe("MQTT brokers", () => {
     await page.route("**/api/v1/projects/helsinki/permissions/me", (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ project: PROJECT, bootstrap: true, grants: [] }) }),
     );
-    await page.route("**/api/v1/projects/helsinki/serviceaccounts", (route) =>
+    await page.route(rest("/api/v1/projects/helsinki/serviceaccounts"), (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ apiVersion: API, kind: "List", items: [] }) }),
     );
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -398,10 +402,19 @@ test.describe("one MQTT broker's page (T-6103)", () => {
     await page.route("**/api/v1/projects/helsinki/permissions/me", (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify(permissions) }),
     );
-    await page.route("**/api/v1/projects/helsinki/serviceaccounts", (route) =>
+    await page.route(rest("/api/v1/projects/helsinki/serviceaccounts"), (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ apiVersion: API, kind: "List", items: ACCOUNTS }) }),
     );
-    await page.route("**/api/v1/projects/helsinki/mqttbrokers/cameras**", async (route) => {
+    // The broker page reads its live parts through the MQTT doors (T-7113): match both addresses.
+    const brokerParts = (url: URL) => {
+      const path = decodeURIComponent(url.pathname);
+      return (
+        path.includes("/api/v1/projects/helsinki/mqttbrokers/cameras") ||
+        path.includes("JoinedContext.Portal.portal_mqtt_") ||
+        (manifestAsRest(url)?.rest.pathname ?? "").endsWith("/mqttbrokers/cameras")
+      );
+    };
+    await page.route(brokerParts, async (route) => {
       const path = new URL(route.request().url()).pathname;
       const json = (body: unknown, status = 200) =>
         route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });

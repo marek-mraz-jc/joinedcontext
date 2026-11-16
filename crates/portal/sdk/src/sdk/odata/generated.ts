@@ -959,6 +959,13 @@ export interface Functions {
   portal_knowledge_search: { source: string; q?: string; limit?: number };
   portal_knowledge_source_list: Record<string, never>;
   portal_knowledge_usage: { deployment: string };
+  portal_mqtt_allowance: Record<string, never>;
+  portal_mqtt_binding_list: { broker: string };
+  portal_mqtt_broker_access: { broker: string; account?: string };
+  portal_mqtt_captured_list: { broker: string; topic?: string; limit?: number };
+  portal_mqtt_device_options: { broker: string };
+  portal_mqtt_measured: { broker: string };
+  portal_mqtt_watch: { broker: string; account?: string; since?: string };
   portal_notification_list: Record<string, never>;
   portal_opendata_pages: Record<string, never>;
   portal_organization_change_get: { id: string };
@@ -1060,6 +1067,13 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_knowledge_search: ["Project"],
   portal_knowledge_source_list: ["Project"],
   portal_knowledge_usage: ["Project"],
+  portal_mqtt_allowance: ["Project"],
+  portal_mqtt_binding_list: ["Project"],
+  portal_mqtt_broker_access: ["Project"],
+  portal_mqtt_captured_list: ["Project"],
+  portal_mqtt_device_options: ["Project"],
+  portal_mqtt_measured: ["Project"],
+  portal_mqtt_watch: ["Project"],
   portal_notification_list: ["Organization"],
   portal_opendata_pages: ["Organization"],
   portal_organization_change_get: ["Organization"],
@@ -1159,6 +1173,9 @@ export interface Actions {
   portal_knowledge_file_remove: { source: string; id: string };
   portal_knowledge_inclusion_set: { source: string; body?: unknown };
   portal_knowledge_recrawl: { source: string };
+  portal_mqtt_captured_clear: { broker: string };
+  portal_mqtt_device_propose: { broker: string; body?: unknown };
+  portal_mqtt_test_publish: { broker: string; body?: unknown };
   portal_notification_read: { notification: string };
   portal_opendata_page_preview: { body?: unknown };
   portal_opendata_page_revert: { page: string; lang: string };
@@ -1259,6 +1276,9 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_knowledge_file_remove: ["Project"],
   portal_knowledge_inclusion_set: ["Project"],
   portal_knowledge_recrawl: ["Project"],
+  portal_mqtt_captured_clear: ["Project"],
+  portal_mqtt_device_propose: ["Project"],
+  portal_mqtt_test_publish: ["Project"],
   portal_notification_read: ["Organization"],
   portal_opendata_page_preview: ["Organization"],
   portal_opendata_page_revert: ["Organization"],

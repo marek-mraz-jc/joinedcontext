@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read manifests and the MQTT doors through OData; each stub below meets them as REST.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5524, UI critic 4/6: the MQTT pages walked as steward, editor and viewer, every state shot at
 // 1440 and 400, axe per state, and the time from navigation to the first heading. Dev runs no MQTT
