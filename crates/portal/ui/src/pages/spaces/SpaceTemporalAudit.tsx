@@ -108,14 +108,15 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
         {VERDICTS.map((v) => (
           <li key={v}>
             {/* A chip filters the list by its verdict; pressed again it lists every verdict. */}
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="xs"
               aria-pressed={verdict === v}
               onClick={() => setVerdict(verdict === v ? ALL : v)}
-              className={`focus-ring touch-size inline-flex items-center rounded-full ${verdict === v ? "ring-2 ring-border-focus" : ""}`}
+              className={`rounded-full px-0.5 ${verdict === v ? "ring-2 ring-border-focus" : ""}`}
             >
               <Badge tone={TONE[v]}>{t("spaces.temporal.count", { verdict: t(`spaces.temporal.verdict.${v}`), n: verdicts[v] ?? 0 })}</Badge>
-            </button>
+            </Button>
           </li>
         ))}
       </ul>

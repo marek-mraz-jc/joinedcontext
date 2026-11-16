@@ -2338,6 +2338,14 @@
         "space_retention_panel.test.tsx"
       ]
     },
+    "src/pages/spaces/SpaceTemporalAudit.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "space_temporal_audit.test.tsx"
+      ]
+    },
     "src/pages/spaces/TypeApi.tsx": {
       "controls": {
         "Button": 2
