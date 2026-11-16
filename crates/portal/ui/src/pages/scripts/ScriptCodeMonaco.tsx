@@ -60,6 +60,8 @@ export default function ScriptCodeMonaco({
         tabSize: 2,
         scrollBeyondLastLine: false,
         wordWrap: "on",
+        lineNumbersMinChars: 3,
+        folding: false,
         fixedOverflowWidgets: true,
         automaticLayout: true,
       }}

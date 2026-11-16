@@ -772,7 +772,6 @@ impl StreamDeployer {
                 let stream_spaces = StreamSpaces::of(mirror, &ns, &spec);
                 let spaces = &stream_spaces.spaces;
                 // `unitCode: model` (G-15) is written as the code the space's model declares.
-                let mut spec = spec;
                 if let Some(schemas) = self.model_schemas().filter(|_| !spec.attributes.is_empty())
                 {
                     for space in spaces {

@@ -34830,6 +34830,181 @@
         }
       }
     },
+    "/api/v1/projects/{project}/ops/jc_script_test": {
+      "post": {
+        "description": "Runs a Script version's tests on the runner without writing (PL-118)",
+        "operationId": "jc_script_test",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "code": "example",
+                "tests": [
+                  {
+                    "expected": {},
+                    "input": {},
+                    "name": "example"
+                  }
+                ]
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "description": "The version's JavaScript source",
+                    "maxLength": 65536,
+                    "type": "string"
+                  },
+                  "limits": {
+                    "additionalProperties": false,
+                    "description": "Time and memory per message; absent, 50 ms and 32 MiB",
+                    "properties": {
+                      "memoryMb": {
+                        "maximum": 64,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "timeoutMs": {
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "tests": {
+                    "description": "The tests, each an input record and the record expected out",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expected": {
+                          "description": "The record the script should write",
+                          "maxProperties": 512,
+                          "type": "object"
+                        },
+                        "input": {
+                          "description": "The record the script reads",
+                          "maxProperties": 512,
+                          "type": "object"
+                        },
+                        "name": {
+                          "description": "A DNS label naming the test",
+                          "maxLength": 63,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "input",
+                        "expected"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "code",
+                  "tests"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "results": {
+                      "description": "Per test: name, ok, the output or the error, and millis",
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Script Test",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "registry",
+          "kind": "Script",
+          "verb": "propose"
+        }
+      }
+    },
     "/api/v1/projects/{project}/ops/jc_serviceaccount_access": {
       "post": {
         "description": "What a ServiceAccount may read and write, through which Policy and binding",

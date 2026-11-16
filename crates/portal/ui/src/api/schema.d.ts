@@ -6034,6 +6034,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/ops/jc_script_test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Script Test
+         * @description Runs a Script version's tests on the runner without writing (PL-118)
+         */
+        post: operations["jc_script_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/ops/jc_serviceaccount_access": {
         parameters: {
             query?: never;
@@ -37206,6 +37226,110 @@ export interface operations {
                         path?: string;
                         required?: string[];
                         schema?: Record<string, never>;
+                    };
+                };
+            };
+            /** @description The change the operation opened, waiting for a person's approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden: the caller lacks what x-jc-requires names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The project or an object the input names is not there */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The input does not match the schema; the problem names the path */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    jc_script_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "code": "example",
+                 *       "tests": [
+                 *         {
+                 *           "expected": {},
+                 *           "input": {},
+                 *           "name": "example"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": {
+                    /** @description The version's JavaScript source */
+                    code: string;
+                    /** @description Time and memory per message; absent, 50 ms and 32 MiB */
+                    limits?: {
+                        memoryMb?: number;
+                        timeoutMs?: number;
+                    };
+                    /** @description The tests, each an input record and the record expected out */
+                    tests: {
+                        /** @description The record the script should write */
+                        expected: Record<string, never>;
+                        /** @description The record the script reads */
+                        input: Record<string, never>;
+                        /** @description A DNS label naming the test */
+                        name: string;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description The operation's answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Per test: name, ok, the output or the error, and millis */
+                        results?: unknown[];
                     };
                 };
             };

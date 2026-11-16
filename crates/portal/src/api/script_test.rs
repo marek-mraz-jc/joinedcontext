@@ -249,7 +249,8 @@ pub async fn run(
             records: None,
         };
         let started = Instant::now();
-        let trace = crate::api::pipeline_test::run_harness(state, project, &spec, &sample).await?;
+        let trace =
+            crate::api::pipeline_test::run_harness(state, project, &spec, "", &sample).await?;
         let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         results.push(result_of(test, &trace, millis));
     }

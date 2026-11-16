@@ -8,7 +8,6 @@
 //! by jc-core, so code reaches the runner only through a reviewed version. A Script that a
 //! pipeline writing a public Endpoint pins is reviewed in the red lane ([`lane`]).
 
-use crate::change::Lane;
 use crate::error::ApiError;
 use crate::judge::Ground;
 use crate::resource::ResourceEnvelope;
@@ -199,29 +198,6 @@ pub fn check(
             Ok(())
         }
         _ => Ok(()),
-    }
-}
-
-/// The lane a Script change is reviewed in (PL-121): red when a pipeline that pins it writes
-/// through a public Endpoint, otherwise what the kind alone says.
-pub fn lane(mirror: &Mirror, project: &str, envelope: &ResourceEnvelope, lane: Lane) -> Lane {
-    if envelope.kind != "Script" {
-        return lane;
-    }
-    let public = pipelines_of(mirror, project).into_iter().any(|(_, spec)| {
-        pins(&spec)
-            .iter()
-            .any(|(_, pin)| pin.name == envelope.metadata.name)
-            && spec.outputs().iter().any(|output| {
-                mirror
-                    .get(project, "Endpoint", output.target_endpoint.local_id())
-                    .is_some_and(|e| e.spec["audience"] == "public")
-            })
-    });
-    if public {
-        Lane::Red
-    } else {
-        lane
     }
 }
 
@@ -544,31 +520,5 @@ mod tests {
             ])),
         )
         .expect("a new version beside it");
-    }
-
-    /// PL-121: a Script a pipeline writing a public Endpoint pins is red; otherwise its lane.
-    #[test]
-    fn a_script_feeding_a_public_endpoint_is_red() {
-        let mirror = Mirror::new();
-        mirror.upsert(envelope("Pipeline", "p", pipeline_spec("1.0.0", json!({}))));
-        let proposed = script(json!([version("1.0.0", "published", V1)]));
-        mirror.upsert(envelope(
-            "Endpoint",
-            "intake",
-            json!({ "audience": "organization" }),
-        ));
-        assert_eq!(
-            lane(&mirror, "helsinki", &proposed, Lane::Yellow),
-            Lane::Yellow
-        );
-        mirror.upsert(envelope(
-            "Endpoint",
-            "intake",
-            json!({ "audience": "public" }),
-        ));
-        assert_eq!(
-            lane(&mirror, "helsinki", &proposed, Lane::Yellow),
-            Lane::Red
-        );
     }
 }
