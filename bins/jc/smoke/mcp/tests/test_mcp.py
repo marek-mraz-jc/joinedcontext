@@ -85,9 +85,50 @@ def test_the_persona_fixture_signs_in_at_the_realm_the_state_names(tmp_path, mon
     (tmp_path / "portal-admin-client-secret").write_text("x")
     (tmp_path / "realm-name.txt").write_text("smartcity")
     f = personas.Fixture("http://127.0.0.1:9", tmp_path, "o/r")
+    assert f.site == "http://127.0.0.1:9" and "/login/realms/smartcity/.well-known/openid-configuration" in seen
+    seen.clear()
     with pytest.raises(RuntimeError, match="401"):
         f.admin_token()
     assert seen == ["/login/realms/smartcity/protocol/openid-connect/token"]
+
+
+def test_through_a_forward_a_persona_token_is_minted_at_jcs_public_address(tmp_path, monkeypatch):
+    """jc-dev smoke 2026-11-15T150737Z and 2026-11-16T102331Z: kaisatsu's issuer follows the Host
+    since T-7005, so a token minted through the loopback forward named https://127.0.0.1:18081 and
+    the Portal refused it (401 on every persona row). The Portal's own sign-in redirect names jc's
+    public address, and the token comes from there (T-6969)."""
+    import common
+    import personas
+    fwd, pub, realm = "http://127.0.0.1:18081", "https://jc.smoke.invalid", "dev"
+    auth = f"/login/realms/{realm}/protocol/openid-connect"
+    sent = []
+
+    def call(self, method, path, token=None, headers=None, body=None, form=None):
+        url = path if path.startswith("http") else self.base + path
+        at = urllib.parse.urlsplit(url)
+        sent.append((method, f"{at.scheme}://{at.netloc}", at.path))
+        if url == fwd + "/api/v1/auth/login":
+            back = urllib.parse.quote(pub + "/api/v1/auth/callback", safe="")
+            return 303, {"location": f"{pub}{auth}/auth?client_id=portal-ui&redirect_uri={back}"}, b""
+        if url == f"{fwd}/login/realms/{realm}/.well-known/openid-configuration":
+            return 200, {}, json.dumps({"issuer": f"https://127.0.0.1:18081/login/realms/{realm}"}).encode()
+        if at.netloc == "jc.smoke.invalid" and at.path == f"{auth}/auth":
+            if method == "GET":
+                return 200, {}, b'<input name="csrf_token" value="c"><input name="session_code" value="s">'
+            return 302, {"location": "http://localhost/callback?code=k&state=smoke"}, b""
+        if url == f"{pub}{auth}/token":
+            return 200, {}, json.dumps({"access_token": "minted-on-public"}).encode()
+        return 404, {}, b""
+
+    monkeypatch.setattr(common.Http, "call", call)
+    monkeypatch.setattr(personas.Browser, "call", call)
+    (tmp_path / "realm-name.txt").write_text(realm)
+    f = personas.Fixture(fwd, tmp_path, "o/r")
+    assert f.site == pub
+    p = personas.Person("project", "smoke-mcp-project", "admin", {}, password="pw")
+    assert f.mcp_token(p) == "minted-on-public"
+    assert ("POST", pub, f"{auth}/token") in sent
+    assert not [s for s in sent if s[1] == fwd and s[2].startswith(auth)]
 
 
 class FakeHttp:

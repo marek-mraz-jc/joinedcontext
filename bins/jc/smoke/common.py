@@ -128,15 +128,22 @@ def issuer_of(http: Http, realm: str) -> str | None:
 
 
 def public_origin(http: Http, realm: str) -> str | None:
-    """jc's own public origin, the issuer's, when it is not the smoke base: on jc-dev the suites
-    reach jc through a loopback forward while jc keeps its https address, so its sign-in redirects,
-    cookies and frame-ancestors name that address (jc-dev smoke 2026-11-15, T-6969). None when
-    they agree or the realm names no issuer."""
-    issuer = issuer_of(http, realm)
-    if not issuer:
-        return None
-    u, b = urllib.parse.urlsplit(issuer), urllib.parse.urlsplit(http.base)
-    return None if (u.scheme, u.netloc) == (b.scheme, b.netloc) else f"{u.scheme}://{u.netloc}"
+    """jc's own public origin when it is not the smoke base: on jc-dev the suites reach jc through
+    a loopback forward while jc keeps its https address, so its sign-in redirects, cookies,
+    frame-ancestors and the issuer its Portal accepts name that address (jc-dev smoke 2026-11-15,
+    T-6969). Read first from the Portal's sign-in redirect, whose redirect_uri is jc's configured
+    public URL: since the host registry (T-7005) kaisatsu's issuer follows the request's Host, so
+    through the forward it names https://<forward>, where nothing listens (jc-dev smoke
+    2026-11-15T134027Z). Else the issuer's origin when it names another host than the base. None
+    when they agree."""
+    b = urllib.parse.urlsplit(http.base)
+    _, h, _ = http.call("GET", "/api/v1/auth/login")
+    back = urllib.parse.parse_qs(urllib.parse.urlsplit(h.get("location") or "").query).get("redirect_uri", [""])[0]
+    for addr in (back, issuer_of(http, realm) or ""):
+        u = urllib.parse.urlsplit(addr)
+        if u.scheme in ("https", "http") and u.netloc:
+            return None if u.netloc == b.netloc else f"{u.scheme}://{u.netloc}"
+    return None
 
 
 def as_json(raw: bytes):
