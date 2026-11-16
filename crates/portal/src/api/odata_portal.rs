@@ -111,7 +111,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 132] = [
+pub static DOORS: [Door; 138] = [
     door(
         "portal_people_remove",
         Org,
@@ -729,6 +729,55 @@ pub static DOORS: [Door; 132] = [
         Method::GET,
         "/projects/{project}/pipelines/{pipeline}/access-requests/endpoints",
         &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    // The pipeline workbench's reads and its templates (T-7120).
+    door(
+        "portal_pipeline_bento",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/bento",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_template_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelinetemplates",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_template_create",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelinetemplates",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_template_delete",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/pipelinetemplates/{id}",
+        &[("id", Place::Path)],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_flow_map",
+        Project,
+        Method::GET,
+        "/projects/{project}/flow-map",
+        &[("space", Place::Query("Edm.String"))],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_type_attributes",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/types/{type}/attributes",
+        &[SPACE, ("type", Place::Path)],
         Who::ProjectReader,
     ),
     door(

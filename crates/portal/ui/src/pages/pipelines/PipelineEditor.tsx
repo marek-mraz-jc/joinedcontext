@@ -1,4 +1,4 @@
-import { listManifests } from "../../api/odata";
+import { door, listManifests } from "../../api/odata";
 import { RecipeGallery } from "./RecipeGallery";
 import { SaveAsTemplate, TemplateList } from "./PipelineTemplates";
 import { useMemo, useState } from "react";
@@ -488,18 +488,13 @@ export function workbenchUiSchema(base: UiSchema): UiSchema {
  * pipeline has none. Any other answer throws, so a forge that failed is never an empty mapping.
  */
 export async function loadMappingFile(project: string, name: string): Promise<string | null> {
-  const path = `/api/v1/projects/${encodeURIComponent(project)}/pipelines/${encodeURIComponent(name)}/bento`;
-  // A `Request` on this origin, as the model source is read: the session travels with it.
-  const response = await globalThis.fetch(
-    new Request(`${window.location.origin}${path}`, { headers: { Accept: "text/yaml, text/plain, */*" } }),
-  );
-  if (response.status === 404) {
-    return null;
+  try {
+    // The door carries the file's YAML text as a JSON string (API/13 §2b).
+    return (await door("portal_pipeline_bento", { pipeline: name }, project)) as string;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
   }
-  if (!response.ok) {
-    throw new ApiError(response.status, response.statusText || `HTTP ${response.status}`);
-  }
-  return response.text();
 }
 
 /** The known values plus the one already chosen, so an edit never loses its own reference. */

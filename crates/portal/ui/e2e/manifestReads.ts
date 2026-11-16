@@ -50,7 +50,8 @@ const portalDoor: Translate = async (request) => {
     fulfil: async (route, options) => {
       const status = options?.status ?? 200;
       const sent = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
-      const answer = await asOData(new Response(status === 204 ? null : String(sent), { status }), shape);
+      const headers = options?.contentType ? { "Content-Type": options.contentType } : undefined;
+      const answer = await asOData(new Response(status === 204 ? null : String(sent), { status, headers }), shape);
       await route.fulfill({ status: answer.status, contentType: "application/json", body: await answer.text() });
     },
   };

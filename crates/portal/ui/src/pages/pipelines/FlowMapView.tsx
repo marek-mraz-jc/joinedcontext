@@ -1,11 +1,11 @@
-import { readManifest } from "../../api/odata";
+import { door, readManifest, type RestAnswer } from "../../api/odata";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { isChange } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { handPrefill } from "../../assistant/state";
@@ -31,11 +31,7 @@ function useFlowMap(project: string, space: string) {
   return useQuery({
     queryKey: [...queryKeys.list(project, "pipelines"), "flow-map", space],
     queryFn: async (): Promise<FlowMap> =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/flow-map", {
-          params: { path: { project }, query: space ? { space } : {} },
-        }),
-      ),
+      (await door("portal_flow_map", space ? { space } : {}, project)) as RestAnswer<"get_flow_map">,
   });
 }
 
