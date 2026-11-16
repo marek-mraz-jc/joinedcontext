@@ -1,3 +1,4 @@
+import { listManifests } from "../api/odata";
 import { FormHeading, useFormRoute } from "../components/forms/FormRoute";
 import { CopyUrlButton } from "../components/endpoints/links";
 import { ConnectAssistant } from "../components/endpoints/ConnectAssistant";
@@ -734,11 +735,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     // A change on its way polls until it lands (T-1392).
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   });
 
   // An endpoint the assistant opened by name edits that endpoint: a PUT to its name with its own
@@ -789,21 +786,13 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   const projectionsQuery = useQuery({
     queryKey: queryKeys.list(project, "projections"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "projections" } },
-        }),
-      ),
+      (await listManifests(project, "projections")),
   });
 
   const spacesQuery = useQuery({
     queryKey: queryKeys.list(project, "spaces"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "spaces" } },
-        }),
-      ),
+      (await listManifests(project, "spaces")),
   });
 
   const formRoute = useFormRoute();
@@ -816,11 +805,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   const policiesQuery = useQuery({
     queryKey: queryKeys.list(project, "policies"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "policies" } },
-        }),
-      ),
+      (await listManifests(project, "policies")),
     enabled: formOpen,
   });
   const orgDomain = useOrgDomain(project);
@@ -836,11 +821,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     queryKey: queryKeys.list(project, "pipelines"),
     enabled: formOpen,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "pipelines" } },
-        }),
-      ),
+      (await listManifests(project, "pipelines")),
   });
 
   // The catalogues this project may publish to (EP-62). A project with none leaves the open-data
@@ -849,22 +830,14 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     queryKey: queryKeys.list(project, "ckaninstances"),
     enabled: formOpen,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "ckaninstances" } },
-        }),
-      ),
+      (await listManifests(project, "ckaninstances")),
   });
 
   const modelsQuery = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
     enabled: formOpen,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "datamodels" } },
-        }),
-      ),
+      (await listManifests(project, "datamodels")),
   });
 
   // The other projects of the repository: what the allowed-project picker offers, and whose
@@ -875,21 +848,13 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     queries: others.map((other) => ({
       queryKey: queryKeys.list(other, "endpoints"),
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project: other, plural: "endpoints" } },
-          }),
-        ),
+        (await listManifests(other, "endpoints")),
     })),
   });
   const referencesQuery = useQuery({
     queryKey: queryKeys.list(project, "shared"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "shared" } },
-        }),
-      ),
+      (await listManifests(project, "shared")),
   });
 
   const [verdict, setVerdict] = useState<Verdict | null>(null);

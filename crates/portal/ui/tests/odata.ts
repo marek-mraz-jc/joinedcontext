@@ -333,6 +333,7 @@ function manifestRow(
     "@odata.etag": `W/"${metadata.name ?? ""}"`,
     name: metadata.name,
     kind: manifest.kind,
+    apiVersion: manifest.apiVersion ?? null,
     metadata: manifest.metadata,
     spec: manifest.spec ?? null,
     status: manifest.status ?? null,

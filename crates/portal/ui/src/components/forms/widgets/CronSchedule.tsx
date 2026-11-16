@@ -1,3 +1,4 @@
+import { listManifests } from "../../../api/odata";
 /**
  * A pipeline's schedule in words (T-3259): how often, picked as a person says it, written as the
  * five cron fields the runner reads in UTC, the cron editable for whoever knows it, the next five
@@ -10,23 +11,14 @@ import { ariaDescribedByIds } from "@rjsf/utils";
 import type { WidgetProps } from "@rjsf/utils";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../../api/client";
+import { queryKeys } from "../../../api/client";
 import { asManifests, refName } from "../../../api/manifest";
 import type { Manifest } from "../../../api/manifest";
 import { Alert, InlineError, Input, Select } from "../../ui";
 import { useShownErrors } from "../touched";
 import { FormDataContext } from "./EntitySelectorField";
 import { FormProjectContext } from "./ModelWidgets";
-import {
-  FREQUENCY_SECONDS,
-  HOUR_STEPS,
-  MINUTE_STEPS,
-  choiceOf,
-  cronOf,
-  intervalSeconds,
-  nextRuns,
-  parseCron,
-} from "../../../pages/pipelines/cron";
+import { FREQUENCY_SECONDS, HOUR_STEPS, MINUTE_STEPS, choiceOf, cronOf, intervalSeconds, nextRuns, parseCron } from "../../../pages/pipelines/cron";
 import type { Choice } from "../../../pages/pipelines/cron";
 
 const KINDS: Choice["kind"][] = ["minutes", "hours", "hourly", "daily", "weekly", "custom"];
@@ -69,11 +61,7 @@ function useSourceFrequency(): string | undefined {
     queryKey: queryKeys.list(project ?? "", "endpoints"),
     enabled: Boolean(project && source),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: project ?? "", plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project ?? "", "endpoints")),
   });
   const endpoint = asManifests((endpoints.data as { items?: Manifest[] } | undefined)?.items ?? []).find(
     (one) => one.metadata.name === source,

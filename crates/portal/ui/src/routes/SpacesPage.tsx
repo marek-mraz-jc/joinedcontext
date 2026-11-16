@@ -1,3 +1,4 @@
+import { listManifests } from "../api/odata";
 import { useCreateForm } from "../components/forms/FormRoute";
 import { RecordLink } from "../components/RecordLink";
 import { useState } from "react";
@@ -7,7 +8,7 @@ import { Skeleton } from "../components/ui/Skeleton";
 import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
+import { problemOf, queryKeys, whilePending } from "../api/client";
 import { proposeChecked } from "../api/proposal";
 import { exactBytes, sizeText, spaceUsageQuery, usageRefusal } from "../api/spaceUsage";
 import type { SpaceUsage } from "../api/spaceUsage";
@@ -23,14 +24,7 @@ import { ResourceRowActions } from "../components/ResourceRowActions";
 import { contextSpaceSchema } from "../schemas/kinds";
 import { UsageInfo } from "../components/SpaceUsageInfo";
 import { modelsOfSpace } from "../pages/spaces/spaceFacts";
-import {
-  Alert,
-  Badge,
-  Button,
-  EmptyState,
-  Icon,
-  PageHeader,
-} from "../components/ui";
+import { Alert, Badge, Button, EmptyState, Icon, PageHeader } from "../components/ui";
 
 export interface SpaceForm {
   name: string;
@@ -100,7 +94,6 @@ export function fromEnvelope(manifest: unknown, locale = "en"): SpaceForm {
     ...(title === "" ? {} : { title }),
   } as SpaceForm;
 }
-
 
 /** Context Spaces of one project: what exists, what it costs against the quota, where it lives. */
 /**
@@ -256,21 +249,13 @@ export function SpacesPage({ project }: { project: string }): JSX.Element {
     // A change on its way polls until it lands (T-1392).
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "spaces" } },
-        }),
-      ),
+      (await listManifests(project, "spaces")),
   });
 
   const models = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "datamodels" } },
-        }),
-      ),
+      (await listManifests(project, "datamodels")),
   });
 
   const create = useMutation({

@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 /**
  * The API of one entity type of a space (T-3110, ADR-N-042 §3.6): the calls each Endpoint of the
  * space answers for that type, one tried live with the person's session, how a program gets its
@@ -9,18 +10,12 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 import { putDraft } from "../../api/drafts";
 import { asManifests } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { useBranding } from "../../branding";
-import {
-  CopyUrlButton,
-  endpointUrl,
-  REPRESENTATION_PATHS,
-  representationUrl,
-  servedRepresentations,
-} from "../../components/endpoints/links";
+import { CopyUrlButton, endpointUrl, REPRESENTATION_PATHS, representationUrl, servedRepresentations } from "../../components/endpoints/links";
 import { CodeBlock, Alert, Button, Card, ExternalLink, Field, Select } from "../../components/ui";
 import { endpointView } from "../../components/ui/safeHref";
 
@@ -126,11 +121,7 @@ export function TypeApi({
     queryKey: queryKeys.list(project, "subscriptions"),
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "subscriptions" } },
-        }),
-      ),
+      (await listManifests(project, "subscriptions")),
   });
   const hooks = webhooksOf(asManifests(subscriptions.data?.items ?? []), space, type);
   const served = endpoints.filter((endpoint) => typeof (endpoint.spec as { slug?: unknown }).slug === "string");

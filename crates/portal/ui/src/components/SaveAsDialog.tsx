@@ -1,8 +1,8 @@
+import { listManifests, readManifest } from "../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../api/client";
 import type { Change, Manifest } from "../api/manifest";
 import { asManifests, isChange } from "../api/manifest";
 import { importBody, proposeChecked } from "../api/proposal";
@@ -121,11 +121,7 @@ export function saveAsBundle(input: {
 }
 
 async function list(project: string, plural: string): Promise<Manifest[]> {
-  const page = await unwrap(
-    await api.GET("/api/v1/projects/{project}/{plural}", {
-      params: { path: { project, plural } },
-    }),
-  );
+  const page = await (await listManifests(project, plural));
   return asManifests(page.items ?? []);
 }
 
@@ -160,13 +156,7 @@ export function SaveAsDialog({
     queryKey: ["save-as", source, target.plural, target.name],
     enabled: open,
     queryFn: async () =>
-      (await unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: {
-            path: { project: source, plural: target.plural, name: target.name },
-          },
-        }),
-      )) as unknown as Manifest,
+      (await (await readManifest(source, target.plural, target.name))) as unknown as Manifest,
   });
   const manifest = current.data;
   const isSpace = target.kind === "ContextSpace";
@@ -188,13 +178,7 @@ export function SaveAsDialog({
     if (!manifest) throw new Error(t("app.loading"));
     const space =
       acrossWithSpace && choice === "copy" && from
-        ? ((await unwrap(
-            await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-              params: {
-                path: { project: source, plural: "spaces", name: from },
-              },
-            }),
-          )) as unknown as Manifest)
+        ? ((await (await readManifest(source, "spaces", from))) as unknown as Manifest)
         : undefined;
     const children = isSpace
       ? (

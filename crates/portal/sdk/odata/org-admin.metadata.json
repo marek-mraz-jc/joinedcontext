@@ -7,6 +7,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -48,6 +52,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -90,6 +98,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -131,6 +143,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -171,6 +187,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -275,6 +295,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -316,6 +340,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -357,6 +385,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -399,6 +431,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -441,6 +477,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -483,6 +523,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -525,6 +569,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -567,6 +615,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -609,6 +661,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -650,6 +706,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -690,6 +750,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -731,6 +795,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -819,6 +887,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -860,6 +932,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -900,6 +976,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -941,6 +1021,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -983,6 +1067,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1025,6 +1113,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1067,6 +1159,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1128,6 +1224,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1170,6 +1270,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1233,6 +1337,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1290,6 +1398,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1332,6 +1444,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1373,6 +1489,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1659,6 +1779,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1700,6 +1824,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1773,6 +1901,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1815,6 +1947,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2089,6 +2225,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2131,6 +2271,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2173,6 +2317,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2215,6 +2363,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2256,6 +2408,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },

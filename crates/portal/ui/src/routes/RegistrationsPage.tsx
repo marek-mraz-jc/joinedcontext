@@ -1,10 +1,11 @@
+import { listManifests } from "../api/odata";
 import { useCreateFormFromDraft } from "../components/forms/FormRoute";
 import { RecordLink } from "../components/RecordLink";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
+import { problemOf, queryKeys, whilePending } from "../api/client";
 import { proposeChecked } from "../api/proposal";
 import { asManifests, isChange, localized, storedMetadata } from "../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../api/manifest";
@@ -16,14 +17,7 @@ import type { DataColumn } from "../components/grid/AdminGrid";
 import { ResourceRowActions } from "../components/ResourceRowActions";
 import { REGISTRATION_TARGETS, registrationSchema, registrationUiSchema } from "../schemas/kinds";
 import type { RegistrationTarget } from "../schemas/kinds";
-import {
-  Button,
-  EmptyState,
-  Icon,
-  PageHeader,
-  RadioGroup,
-  Term,
-} from "../components/ui";
+import { Button, EmptyState, Icon, PageHeader, RadioGroup, Term } from "../components/ui";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
 import { SPACE_LABEL } from "../schemas/modelprojection";
 import { endpointView } from "../components/ui/safeHref";
@@ -164,11 +158,7 @@ function useNames(project: string, plural: string): string[] {
   const list = useQuery({
     queryKey: queryKeys.list(project, plural),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural } },
-        }),
-      ),
+      (await listManifests(project, plural)),
   });
   return asManifests(list.data?.items ?? []).map((item) => item.metadata.name);
 }
@@ -197,11 +187,7 @@ export function RegistrationsPage({ project, edit }: { project: string; edit?: s
     queryKey: queryKeys.list(project, PLURAL),
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: PLURAL } },
-        }),
-      ),
+      (await listManifests(project, PLURAL)),
   });
   const spaces = useNames(project, "spaces");
   const endpoints = useNames(project, "endpoints");

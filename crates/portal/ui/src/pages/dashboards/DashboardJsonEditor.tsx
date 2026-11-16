@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 /**
  * A dashboard written as JSON (T-6791): the manifest on the left, completed and checked against the
  * Dashboard kind's schema, its widgets drawn on the right as the dashboards page draws them. A
@@ -42,7 +43,7 @@ function useList(project: string, plural: string) {
   return useQuery({
     queryKey: queryKeys.list(project, plural),
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural } } })),
+      (await listManifests(project, plural)),
   });
 }
 

@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 /**
  * The KPI editor over several sources (PL-105, T-4935): two to five Endpoints of the project, how
  * their rows meet, a formula from plain choices (the typed one only under Advanced), each field
@@ -79,11 +80,7 @@ function useReadableEndpoints(project: string): Manifest[] {
   const endpoints = useQuery({
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   });
   return useMemo(
     () => reachableEndpoints(permissions.data, asManifests(endpoints.data?.items ?? [])),

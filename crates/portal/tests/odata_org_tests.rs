@@ -1359,7 +1359,7 @@ async fn a_manifests_spec_status_and_metadata_answer_as_the_rest_door() {
                 &state,
                 mode,
                 &cookie,
-                &format!("/api/v1/projects('helsinki')/{plural}?$select=name,spec,status,metadata"),
+                &format!("/api/v1/projects('helsinki')/{plural}?$select=name,spec,status,metadata,apiVersion"),
                 &[],
             )
             .await;
@@ -1381,7 +1381,7 @@ async fn a_manifests_spec_status_and_metadata_answer_as_the_rest_door() {
                 )
                 .await;
                 let rest = rest.json();
-                for member in ["spec", "status", "metadata"] {
+                for member in ["spec", "status", "metadata", "apiVersion"] {
                     compared += 1;
                     if row[member] != rest[member] {
                         differ.push(format!(

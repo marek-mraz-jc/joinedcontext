@@ -785,6 +785,10 @@ const ETAG: &str = "@odata.etag";
 /// `GET …/{plural}/{name}` answers it (API/13 §2a, T-7097).
 const MANIFEST_DETAIL: [&str; 3] = ["spec", "status", "metadata"];
 
+/// A manifest kind's [`MANIFEST_DETAIL`] and its `apiVersion`: a Pipeline is `v1alpha1` or
+/// `v1alpha2` (jc-core conversions), and a page writes back the version it read (T-7074).
+const MANIFEST_SET_DETAIL: [&str; 4] = ["spec", "status", "metadata", "apiVersion"];
+
 /// A Change's detail, as `jc_change_get` answers it: what the inbox and an approval read.
 const CHANGE_DETAIL: [&str; 9] = [
     "metadata",
@@ -810,7 +814,7 @@ fn detail(set: &str) -> &'static [&'static str] {
     }
     match kind(set).or_else(|| org_set(set)) {
         Some(list) if list.set == CHANGES => &CHANGE_DETAIL,
-        Some(list) if manifest_kind(list) => &MANIFEST_DETAIL,
+        Some(list) if manifest_kind(list) => &MANIFEST_SET_DETAIL,
         _ => &[],
     }
 }

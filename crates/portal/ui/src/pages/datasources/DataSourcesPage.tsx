@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { useFormRoute, useOpenFromAddress } from "../../components/forms/FormRoute";
 import { RecordLink } from "../../components/RecordLink";
 import { endpointView } from "../../components/ui/safeHref";
@@ -320,11 +321,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
     // A change on its way polls until it lands (T-1392).
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: PLURAL } },
-        }),
-      ),
+      (await listManifests(project, PLURAL)),
   });
 
   const sources = useMemo(() => asManifests(list.data?.items ?? []), [list.data]);

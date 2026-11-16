@@ -1,8 +1,9 @@
+import { listManifests } from "../../api/odata";
 import { useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, whilePending } from "../../api/client";
+import { queryKeys, whilePending } from "../../api/client";
 import { readModelSource, writeModelSource } from "../../api/datamodelSource";
 import type { ProblemDetails } from "../../api/client";
 import { asManifests, localized, refName } from "../../api/manifest";
@@ -10,15 +11,7 @@ import { useOrgDomain, useOrgLocales } from "../../api/projects";
 import type { Change } from "../../api/manifest";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { DeleteResourceAction } from "../../components/DeleteResourceDialog";
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Dialog,
-  Field,
-  InlineError,
-  Input,
-} from "../../components/ui";
+import { Alert, Button, Checkbox, Dialog, Field, InlineError, Input } from "../../components/ui";
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
 import { usePermissions } from "../../api/permissions";
 import { takePrefill } from "../../assistant/state";
@@ -34,14 +27,7 @@ import { SmartDataModelsImport } from "./SmartDataModelsImport";
 import { blankSource, diagnose, edit, parseModel } from "./linkml";
 import { applyOperations } from "./operations";
 import type { Operation } from "./operations";
-import {
-  diffCounts,
-  proposedVersion,
-  classifyChanges,
-  laneOf,
-  refusalToSave,
-  severityOf,
-} from "./breaking_detector";
+import { diffCounts, proposedVersion, classifyChanges, laneOf, refusalToSave, severityOf } from "./breaking_detector";
 import type { Lifecycle } from "./breaking_detector";
 
 /**
@@ -64,7 +50,6 @@ export interface ModelsPageProps {
    */
   baseline?: { source?: string; version: string; lifecycle: Lifecycle; name: string };
 }
-
 
 /** How long a keystroke waits before the draft is kept, as the resource form waits (UI-47). */
 const DRAFT_DEBOUNCE_MS = 600;
@@ -169,11 +154,7 @@ export function ModelsPage({
   // The list keys are shared with every page that lists these kinds, so the cache holds the list
   // as the API answers it and the manifests are read off it here (T-0625).
   const listOf = async (plural: string) =>
-    unwrap(
-      await api.GET("/api/v1/projects/{project}/{plural}", {
-        params: { path: { project, plural } },
-      }),
-    );
+    (await listManifests(project, plural));
   const models = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
     // A change on its way polls until it lands (T-1392).
@@ -203,7 +184,6 @@ export function ModelsPage({
   const targetName = activeModelName ?? manifestName(newName);
   const taken =
     creating && (models.data ?? []).some((manifest) => manifest.metadata.name === targetName);
-
 
   // A published model's source lives in the repository and is read through DM-56's route.
   const loaded = useQuery({

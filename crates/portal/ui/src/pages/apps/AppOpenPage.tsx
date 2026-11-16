@@ -1,24 +1,15 @@
+import { readManifest } from "../../api/odata";
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 import { localized } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { useAuth } from "../../auth/AuthProvider";
 import { useBranding } from "../../branding";
-import {
-  Button,
-  buttonClass,
-  EmptyState,
-  ExternalLink,
-  Icon,
-  InlineError,
-  PageHeader,
-  PageLoading,
-  safeHref,
-} from "../../components/ui";
+import { Button, buttonClass, EmptyState, ExternalLink, Icon, InlineError, PageHeader, PageLoading, safeHref } from "../../components/ui";
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { useAppBuild } from "./AppBuildPanel";
 import { appSpec, openBlockedReason } from "./AppsCatalog";
@@ -201,11 +192,7 @@ export function useApp(project: string, name: string) {
     queryKey: queryKeys.resource(project, "apps", name),
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "apps", name } },
-        }),
-      ) as unknown as Manifest,
+      (await readManifest(project, "apps", name)) as unknown as Manifest,
   });
 }
 

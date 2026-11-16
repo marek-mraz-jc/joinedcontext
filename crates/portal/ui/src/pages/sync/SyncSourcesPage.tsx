@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -115,11 +116,7 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
   const list = useQuery({
     queryKey: queryKeys.list(project, "syncsources"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "syncsources" } },
-        }),
-      ),
+      (await listManifests(project, "syncsources")),
   });
 
   const items = list.data?.items ?? [];

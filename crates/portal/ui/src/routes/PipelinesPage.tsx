@@ -1,3 +1,4 @@
+import { listManifests } from "../api/odata";
 import { AlertDialog } from "../components/AlertDialog";
 import { FlowMapView } from "../pages/pipelines/FlowMapView";
 import { Tabs, tabPanelProps } from "../components/ui/Tabs";
@@ -238,11 +239,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
     // A change on its way polls until it lands (T-1392).
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "pipelines" } },
-        }),
-      ),
+      (await listManifests(project, "pipelines")),
   });
   const latestRuns = useLatestRuns(project);
 

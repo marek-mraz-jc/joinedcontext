@@ -1,9 +1,10 @@
+import { listManifests } from "../../api/odata";
 import { useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { queryKeys, reasonOf } from "../../api/client";
 import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { useProjects } from "../../api/projects";
@@ -31,7 +32,7 @@ export function McpServersPage({ project, embedded = false }: { project: string;
   const servers = useQuery({
     queryKey: queryKeys.list(project, "mcpservers"),
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "mcpservers" } } })),
+      (await listManifests(project, "mcpservers")),
   });
   // The member choices: every Endpoint of every project the person sees, each list already
   // narrowed to what they may read (SP-20), so nobody is offered an Endpoint they could not open.
@@ -40,7 +41,7 @@ export function McpServersPage({ project, embedded = false }: { project: string;
     queries: (projects.data ?? []).map((name) => ({
       queryKey: queryKeys.list(name, "endpoints"),
       queryFn: async () =>
-        unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project: name, plural: "endpoints" } } })),
+        (await listManifests(name, "endpoints")),
     })),
   });
   const choices = useMemo<MemberChoice[]>(

@@ -1,3 +1,4 @@
+import { listManifests } from "../../../api/odata";
 import { useContext } from "react";
 import type { JSX } from "react";
 import type { FieldProps } from "@rjsf/utils";
@@ -58,7 +59,7 @@ export function RepresentationOutputsField(props: FieldProps): JSX.Element {
 
   const models = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "datamodels" } } })),
+    queryFn: async () => (await listManifests(project, "datamodels")),
     enabled: Boolean(project),
   });
   const model = asManifests(models.data?.items ?? []).find(

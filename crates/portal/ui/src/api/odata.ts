@@ -3,6 +3,7 @@
 // client.ts shrink page group by page group under tests/odata_ratchet.test.ts.
 import {
   odata,
+  ODATA_ENTITY_KEYS,
   ODataError,
   originTransport,
   type ODataModel,
@@ -245,13 +246,9 @@ export async function doorAction<A extends Door<keyof Actions & string>>(
 
 type EntitySets = ODataModel.EntitySets;
 
-/**
- * The sets whose rows are manifests every one of `joinedcontext.com/v1alpha1` (jc-core
- * conversions: only a Pipeline may also be `v1alpha2`, so `pipelines` is no such set here).
- */
+/** The sets whose rows are manifests. */
 export type ManifestSet = Exclude<
   keyof EntitySets & string,
-  | "pipelines"
   | "changes"
   | "endpointList"
   | "entities"
@@ -260,6 +257,29 @@ export type ManifestSet = Exclude<
   | "revisions"
   | "runs"
 >;
+
+/** The sets of {@link ManifestSet}'s complement: their rows are no manifests. */
+const NOT_MANIFESTS: readonly string[] = [
+  "changes",
+  "endpointList",
+  "entities",
+  "members",
+  "repositories",
+  "revisions",
+  "runs",
+];
+
+/** Whether `plural` names a set whose rows are manifests, e.g. a kind page's plural. */
+export function isManifestSet(plural: string): plural is ManifestSet {
+  return Object.hasOwn(ODATA_ENTITY_KEYS, plural) && !NOT_MANIFESTS.includes(plural);
+}
+
+/** `plural` as the set of its manifests; a plural the service has no such set of is not found. */
+function manifestSet(plural: string): ManifestSet {
+  if (isManifestSet(plural)) return plural;
+  const detail = `The service has no set of manifests called ${plural}.`;
+  throw new ApiError(404, detail, { type: "about:blank", title: "Not Found", status: 404, detail });
+}
 
 type Manifest = components["schemas"]["ResourceEnvelope"];
 
@@ -270,6 +290,8 @@ const MANIFEST_MEMBERS = [
   "metadata",
   "spec",
   "status",
+  // A Pipeline is `v1alpha1` or `v1alpha2` (jc-core conversions): a write sends back what it read.
+  "apiVersion",
 ] as const;
 
 const API_VERSION = "joinedcontext.com/v1alpha1";
@@ -283,6 +305,7 @@ export function manifestEtag(manifest: object): string | undefined {
 }
 
 interface ManifestRow {
+  apiVersion?: unknown;
   kind?: unknown;
   metadata?: unknown;
   spec?: unknown;
@@ -298,12 +321,14 @@ const KIND_OF: Partial<Record<ManifestSet, string>> = { projects: "Project" };
 
 /** The members `$select` names on `plural`'s rows. */
 function membersOf(plural: ManifestSet): readonly string[] {
-  return KIND_OF[plural] ? MANIFEST_MEMBERS.filter((m) => m !== "kind") : MANIFEST_MEMBERS;
+  return KIND_OF[plural]
+    ? MANIFEST_MEMBERS.filter((m) => m !== "kind" && m !== "apiVersion")
+    : MANIFEST_MEMBERS;
 }
 
 function asManifest(row: ManifestRow, kind?: string): Manifest {
   const manifest = {
-    apiVersion: API_VERSION,
+    apiVersion: typeof row.apiVersion === "string" ? row.apiVersion : API_VERSION,
     kind: kind ?? row.kind,
     metadata: row.metadata,
     spec: row.spec ?? undefined,
@@ -325,8 +350,9 @@ function orgSet(plural: ManifestSet): ManifestSet {
  */
 export async function listManifests(
   project: string,
-  plural: ManifestSet,
+  of: string,
 ): Promise<{ items: Manifest[] }> {
+  const plural = manifestSet(of);
   // `$select` names manifest members (metadata, spec) the generated row types of a set leave out.
   const query: { select(...members: string[]): { all(): AsyncIterable<unknown> } } =
     project === ORG_NAMESPACE
@@ -359,9 +385,10 @@ function notFound(name: string): ApiError {
  */
 export async function readManifest(
   project: string,
-  plural: ManifestSet,
+  of: string,
   name: string,
 ): Promise<Manifest> {
+  const plural = manifestSet(of);
   const members = membersOf(plural);
   const row = (await refusedAs(
     project === ORG_NAMESPACE
@@ -398,4 +425,62 @@ export async function listOrganizations(several = false): Promise<{ items: Manif
     throw toApiError(error);
   }
   return { items: row.metadata == null ? [] : [asManifest(row, ORGANIZATION)] };
+}
+
+/** An OData text literal: quoted, a quote doubled. */
+function quoted(text: string): string {
+  return `'${text.replaceAll("'", "''")}'`;
+}
+
+/** The address of manifest `name` of `plural` in `project`, the entity its write actions are bound to. */
+export function manifestBound(project: string, plural: ManifestSet, name: string): string {
+  return project === ORG_NAMESPACE
+    ? `${orgSet(plural)}(${quoted(name)})`
+    : `${plural}(project=${quoted(project)},name=${quoted(name)})`;
+}
+
+/** The `If-Match` of a write: the one the page read the manifest with, else the row's current one. */
+async function currentEtag(
+  project: string,
+  plural: ManifestSet,
+  name: string,
+  ifMatch: string | undefined,
+): Promise<string | undefined> {
+  if (ifMatch) return ifMatch;
+  return manifestEtag(await readManifest(project, plural, name));
+}
+
+/**
+ * Proposes `manifest` of `plural` in `project` as a Change, or checks it with `dryRun` (PF-57):
+ * `propose_create` on the project, `propose_update` on the manifest with `If-Match` (API/13 §2a).
+ * The answer is the REST door's: a Change, or with `dryRun` the check's verdict. An update a page
+ * read no ETag for sends the manifest's current one, as the REST door's PUT without If-Match did.
+ */
+export async function proposeManifest(
+  project: string,
+  plural: ManifestSet,
+  manifest: { metadata: { name: string } },
+  { create, dryRun = false, ifMatch }: { create: boolean; dryRun?: boolean; ifMatch?: string },
+): Promise<unknown> {
+  if (create) {
+    return refusedAs(client.act("propose_create", projectBound(project), { manifest, dryRun }));
+  }
+  const name = manifest.metadata.name;
+  const tag = await currentEtag(project, plural, name, ifMatch);
+  return refusedAs(
+    client.act("propose_update", manifestBound(project, plural, name), { manifest, dryRun }, tag),
+  );
+}
+
+/** Proposes deleting manifest `name` as a Change, or checks it with `dryRun` (`propose_delete`). */
+export async function proposeDelete(
+  project: string,
+  plural: ManifestSet,
+  name: string,
+  { dryRun = false, ifMatch }: { dryRun?: boolean; ifMatch?: string } = {},
+): Promise<unknown> {
+  const tag = await currentEtag(project, plural, name, ifMatch);
+  return refusedAs(
+    client.act("propose_delete", manifestBound(project, plural, name), { dryRun }, tag),
+  );
 }
