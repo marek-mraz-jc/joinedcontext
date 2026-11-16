@@ -1173,11 +1173,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         tracing::info!(%at, modules = ?hosted, "in-pod listener on loopback");
     }
     if cfg.roles.contains(&Module::Portal) {
-        siblings.organization_portals = cfg
-            .organizations
-            .iter()
-            .map(|org| format!("{}://{}", cfg.scheme, org.hosts.portal))
-            .collect();
+        siblings.organization_portals = installation_portals(&cfg);
     }
     let tasks = TaskTracker::new();
     #[cfg(feature = "model-tools")]
@@ -1388,6 +1384,7 @@ async fn portal_attempt(
             Box::pin(modules::portal::build(
                 ctx,
                 cfg.portal_siblings,
+                &cfg.organizations,
                 modules::portal::organization_vars(&cfg, shared.siblings.listener)
                     .into_iter()
                     .chain(modules::portal::apps_vars(&cfg))
@@ -1465,6 +1462,17 @@ pub async fn run_until(cfg: Config, stop: impl Future<Output = ()>) -> Result<()
     running.stop().await
 }
 
+/// The Organizations' Portal bases the installation realm's Portal clients redirect to. An
+/// Organization with its own sign-in host signs in through its own realm alone (T-7133), so its
+/// host is not among them: a code of the installation realm never lands there (T-6991 §12 row 10).
+fn installation_portals(cfg: &Config) -> Vec<String> {
+    cfg.organizations
+        .iter()
+        .filter(|org| org.hosts.idm.is_none())
+        .map(|org| format!("{}://{}", cfg.scheme, org.hosts.portal))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1487,6 +1495,38 @@ mod tests {
 
     /// A Portal whose shako runs in another container holds the forge webhook secret beside the
     /// shako token: without it the Portal got no `JC_SHAKO_*` group and never started (T-7014).
+    /// T-7133: the installation realm's Portal clients name the Portal host of an Organization
+    /// without a sign-in host of its own, never one with: its people sign in through its realm,
+    /// so a code of the installation realm sent to its host is refused at the realm.
+    #[test]
+    fn the_installation_realm_stops_naming_an_organization_with_its_own_sign_in_host() {
+        let text = "base_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            hosts = { portal = \"smartcity.bbsk.sk\", idm = \"idm.bbsk.sk\" }\n\
+            [[organizations]]\nname = \"zilina\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a2\"\n\
+            hosts = { portal = \"smartcity.zilina.sk\" }\n";
+        let file = Config::parse_file(std::path::Path::new("jc.toml"), text).unwrap();
+        let cfg = Config::merge(crate::config::Cli::default(), file).unwrap();
+        let portals = installation_portals(&cfg);
+        assert_eq!(portals, [format!("{}://smartcity.zilina.sk", cfg.scheme)]);
+        let files = crate::setup::portal_realm_files(
+            "https://city.example/",
+            &portals,
+            &crate::setup::Realm::default(),
+        )
+        .unwrap();
+        let realm = &files[0].1;
+        let portal = realm["clients"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["clientId"] == crate::setup::PORTAL_CLIENT)
+            .unwrap();
+        let uris = portal["redirectUris"].to_string();
+        assert!(uris.contains("smartcity.zilina.sk"), "{uris}");
+        assert!(!uris.contains("bbsk"), "{uris}");
+    }
+
     #[test]
     fn a_portal_with_a_remote_shako_holds_the_forge_webhook_secret() {
         use crate::setup::Secret;

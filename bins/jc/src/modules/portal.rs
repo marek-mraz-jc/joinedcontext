@@ -54,6 +54,7 @@ pub(crate) fn config(
 pub async fn build(
     ctx: BuildCtx<'_>,
     wire_siblings: bool,
+    orgs: &[crate::config::OrganizationSection],
     organizations: BTreeMap<String, String>,
     mount: Mount,
     shutdown: &CancellationToken,
@@ -65,6 +66,7 @@ pub async fn build(
         BTreeMap::new()
     };
     siblings.extend(organizations);
+    organization_realm_vars(orgs, ctx.siblings, &mount.scheme, &mut siblings, env);
     tracing::info!(
         keys = ?siblings.keys().collect::<Vec<_>>(),
         "portal: settings filled from sibling modules"
@@ -103,6 +105,62 @@ pub async fn build(
         .await
         .map_err(|e| err(format!("build listener: {e}")))?;
     Ok((server::app(state), internal))
+}
+
+/// The realm of each `[[organizations]]` row with a sign-in host of its own (`hosts.idm`,
+/// T-7001), where the Portal signs that Organization's people in on its host
+/// (`JC_PORTAL_ORGANIZATION_REALMS`, T-7133): issuer `{scheme}://{idm}/realms/{name}` as kaisatsu
+/// names it there, keys and tokens at `http://{idm}` dialed at jc's listener (`JC_PORTAL_REACH`),
+/// where kaisatsu answers the realm's back channel. Only beside the installation realm jc filled
+/// into `vars`, and never over an environment that names the realms or its own reach.
+fn organization_realm_vars(
+    orgs: &[crate::config::OrganizationSection],
+    siblings: &crate::siblings::Siblings,
+    scheme: &str,
+    vars: &mut BTreeMap<String, String>,
+    env: impl Fn(&str) -> Option<String>,
+) {
+    let idm: Vec<(&str, &str)> = orgs
+        .iter()
+        .filter_map(|org| Some((org.name.as_str(), org.hosts.idm.as_deref()?)))
+        .collect();
+    if idm.is_empty()
+        || siblings.get(Module::Kaisatsu).is_none()
+        || !vars.contains_key("JC_OIDC_ISSUER")
+        || env("JC_PORTAL_ORGANIZATION_REALMS").is_some()
+    {
+        return;
+    }
+    if env("JC_PORTAL_REACH").is_some() || env("JC_PORTAL_REACH_HOSTS").is_some() {
+        tracing::warn!(
+            "portal: JC_PORTAL_REACH is set, so no Organization signs in through its own realm; \
+             set JC_PORTAL_ORGANIZATION_REALMS beside it"
+        );
+        return;
+    }
+    let realms: Vec<serde_json::Value> = idm
+        .iter()
+        .map(|(name, host)| {
+            serde_json::json!({
+                "organization": name,
+                "issuer": format!("{scheme}://{host}/realms/{name}"),
+                "jwks_url": format!("http://{host}/realms/{name}/protocol/openid-connect/certs"),
+            })
+        })
+        .collect();
+    vars.insert(
+        "JC_PORTAL_ORGANIZATION_REALMS".to_owned(),
+        serde_json::Value::from(realms).to_string(),
+    );
+    vars.entry("JC_PORTAL_REACH".to_owned())
+        .or_insert_with(|| crate::siblings::reach(siblings.listener).to_string());
+    let reached = vars.entry("JC_PORTAL_REACH_HOSTS".to_owned()).or_default();
+    for (_, host) in &idm {
+        if !reached.is_empty() {
+            reached.push(',');
+        }
+        reached.push_str(host);
+    }
 }
 
 /// Points jc's own runner at the Portal's internal listener on `addr` (prod's deployment sets
@@ -606,5 +664,87 @@ mod tests {
         assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_CATALOGUES"));
         portal_only.organizations.clear();
         assert!(organization_vars(&portal_only, listener).is_empty());
+    }
+
+    /// T-7133: an Organization with `hosts.idm` gets its realm in the Portal's settings, its
+    /// sign-in host dialed at jc's listener beside the hosts jc already reaches; one without gets
+    /// none, and neither does a Portal whose realm or reach the environment named.
+    #[test]
+    fn an_organization_with_its_own_sign_in_host_gets_its_realm_in_the_portal() {
+        let text = "base_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            hosts = { portal = \"smartcity.bbsk.sk\", idm = \"idm.bbsk.sk\" }\n\
+            [[organizations]]\nname = \"zilina\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a2\"\n\
+            hosts = { portal = \"smartcity.zilina.sk\" }\n";
+        let file = crate::config::Config::parse_file(std::path::Path::new("jc.toml"), text)
+            .expect("parses");
+        let cfg = crate::config::Config::merge(crate::config::Cli::default(), file).expect("cfg");
+        let mut siblings = crate::siblings::Siblings::new(&[], "0.0.0.0:4000".parse().unwrap());
+        siblings.insert_remote(
+            Module::Kaisatsu,
+            crate::siblings::Sibling::direct(
+                "https://idm.city.example".into(),
+                "http://idm.city.example".into(),
+            ),
+        );
+        let installation = || {
+            BTreeMap::from([
+                (
+                    "JC_OIDC_ISSUER".to_owned(),
+                    "https://idm.city.example/realms/jc".to_owned(),
+                ),
+                ("JC_OIDC_CLIENT_ID".to_owned(), "portal-api".to_owned()),
+                ("JC_OIDC_CLIENT_SECRET".to_owned(), "s".to_owned()),
+                (
+                    "JC_PORTAL_COOKIE_KEY".to_owned(),
+                    "cookie-key-of-the-jc-tests-it-seals-no-session-anybody-uses-000001".to_owned(),
+                ),
+                ("JC_PORTAL_REACH".to_owned(), "127.0.0.1:4000".to_owned()),
+                (
+                    "JC_PORTAL_REACH_HOSTS".to_owned(),
+                    "idm.city.example".to_owned(),
+                ),
+                (
+                    "JC_PORTAL_ORGANIZATION_HOSTS".to_owned(),
+                    "bbsk=https://smartcity.bbsk.sk,zilina=https://smartcity.zilina.sk".to_owned(),
+                ),
+            ])
+        };
+        let none = |_: &str| None;
+        let mut vars = installation();
+        organization_realm_vars(&cfg.organizations, &siblings, "https", &mut vars, none);
+        assert_eq!(
+            vars["JC_PORTAL_REACH_HOSTS"],
+            "idm.city.example,idm.bbsk.sk"
+        );
+        let mount = Mount::new("portal", "https", "city.example", "/portal").unwrap();
+        let portal = config(&mount, none, vars).expect("the Portal takes the realms");
+        let realms = &portal.organization_realms;
+        assert_eq!(realms.len(), 1, "zilina has no sign-in host of its own");
+        assert_eq!(realms[0].organization, "bbsk");
+        assert_eq!(realms[0].issuer.as_str(), "https://idm.bbsk.sk/realms/bbsk");
+        assert_eq!(
+            realms[0].jwks_url.as_str(),
+            "http://idm.bbsk.sk/realms/bbsk/protocol/openid-connect/certs"
+        );
+        assert!(portal.reach.iter().any(|(host, at)| host == "idm.bbsk.sk"
+            && *at == "127.0.0.1:4000".parse::<std::net::SocketAddr>().unwrap()));
+
+        for set in ["JC_PORTAL_ORGANIZATION_REALMS", "JC_PORTAL_REACH"] {
+            let mut vars = installation();
+            let env = |key: &str| (key == set).then(|| "[]".to_owned());
+            organization_realm_vars(&cfg.organizations, &siblings, "https", &mut vars, env);
+            assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_REALMS"), "{set}");
+        }
+        let mut operator_realm = installation();
+        operator_realm.remove("JC_OIDC_ISSUER");
+        organization_realm_vars(
+            &cfg.organizations,
+            &siblings,
+            "https",
+            &mut operator_realm,
+            none,
+        );
+        assert!(!operator_realm.contains_key("JC_PORTAL_ORGANIZATION_REALMS"));
     }
 }
