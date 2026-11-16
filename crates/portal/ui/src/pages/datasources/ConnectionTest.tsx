@@ -6,6 +6,7 @@ import { asManifests, localized } from "../../api/manifest";
 import { RecordLink } from "../../components/RecordLink";
 import { RecordView, Button } from "../../components/ui";
 import { readsOf } from "../mqttbrokers/connections";
+import { WebhookPanel } from "./WebhookPanel";
 
 /** What the server read from the source (`api/datasource_test.rs`), or why it read nothing. */
 interface Probe {
@@ -22,7 +23,7 @@ interface Probe {
  * source on the project's runner, server-side under the project's grants, so the credential stays
  * a `secretRef` the runner fills and the answer holds only what the source sent.
  */
-export function ConnectionTest({ project, name }: { project: string; name: string }): JSX.Element {
+export function ConnectionTest({ project, name, type }: { project: string; name: string; type?: string }): JSX.Element {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language ?? "en";
   const test = useMutation({
@@ -50,7 +51,12 @@ export function ConnectionTest({ project, name }: { project: string; name: strin
   const probe = test.data;
 
   return (
-    <section aria-labelledby="datasource-test-heading" className="flex flex-col gap-3" data-testid="datasource-connection">
+    <section aria-labelledby={type === "webhook" ? "datasource-webhook-heading" : "datasource-test-heading"} className="flex flex-col gap-3" data-testid="datasource-connection">
+      {type === "webhook" ? (
+        // A webhook has no feed to read: it waits for its sender (PL-122).
+        <WebhookPanel project={project} name={name} />
+      ) : (
+        <>
       <h2 id="datasource-test-heading" className="text-body font-medium">
         {t("datasources.test.title")}
       </h2>
@@ -78,6 +84,8 @@ export function ConnectionTest({ project, name }: { project: string; name: strin
           </>
         ) : null}
       </div>
+        </>
+      )}
       <h2 className="text-body font-medium">{t("datasources.usedBy.title")}</h2>
       {readers.length > 0 ? (
         <ul className="flex flex-col gap-1">
