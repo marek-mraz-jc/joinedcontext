@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { asManifests, localized } from "../../api/manifest";
 import { operationAreas } from "../../components/AccessWords";
 import { DATA_WRITE_OPERATIONS } from "../../components/endpoints/operationGroups";
@@ -24,6 +24,7 @@ import {
   Select,
   Term,
 } from "../../components/ui";
+import { listManifests } from "../../api/odata";
 
 /** The actions that change context data, by the Portal's one list of them (R8, T-5592). */
 export function writesOf(actions: string[]): string[] {
@@ -300,11 +301,7 @@ function usePolicySources(project: string): PolicySource[] {
     queryKey: queryKeys.list(project, "policies"),
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "policies" } },
-        }),
-      ),
+      listManifests(project, "policies"),
   });
   return asManifests(policies.data?.items ?? []).map((policy) => ({
     name: policy.metadata.name,
@@ -377,11 +374,7 @@ export function EffectivePermissions({
   const endpoints = useQuery({
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      listManifests(project, "endpoints"),
   });
 
   const published = asManifests(endpoints.data?.items ?? []).filter(

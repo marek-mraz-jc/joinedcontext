@@ -4,6 +4,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
 import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // One Policy as a reader and an editor meet it (T-5591): from the Policies list, one click on the
 // row opens what it allows in words, its assigner, validity and last change, with the fields

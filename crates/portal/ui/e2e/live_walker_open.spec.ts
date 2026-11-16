@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { judgeOpened, openToJudge, openToWalk } from "./live/portal";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5185: the walker judged /projects/helsinki/policies/new as "boot: the Portal did not load". The
 // page drew its heading, then the Portal reloaded itself for a chunk it could not load (T-4949), and

@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6205: record lists moved onto the shared data grid (Organization brokers and data models, an
 // upload source's files, an App's scheduled jobs), filled, empty and failed. `vite preview` has

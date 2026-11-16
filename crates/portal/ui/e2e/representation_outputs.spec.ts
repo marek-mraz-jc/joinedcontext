@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The Endpoint form's named calendar and feed outputs (T-5218, API/11 EP-159) and the Endpoint page's
 // subscription links (T-4900, EP-125), against a stubbed API as models.spec.ts does: `vite preview` has

@@ -50,6 +50,7 @@ import { ORGANIZATION_GROUPS, OWN_ORGANIZATION_TABS } from "./AdminNav";
 /** Only an administrator opens Agents, so its code loads with the tab (bundle budget, T-4849). */
 const Agents = lazy(() => import("./Agents").then((module) => ({ default: module.Agents })));
 import type { OrganizationTab } from "./AdminNav";
+import { listManifests } from "../../api/odata";
 
 export type { OrganizationTab };
 export { isOrganizationTab, ORGANIZATION_TABS } from "./AdminNav";
@@ -113,11 +114,7 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
     queryKey: queryKeys.list(ORG_NAMESPACE, "rolebindings"),
     enabled: readsBindings,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "rolebindings" } },
-        }),
-      ),
+      listManifests(ORG_NAMESPACE, "rolebindings"),
   });
 
   const titles = new Map(

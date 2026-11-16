@@ -2,11 +2,12 @@ import { useEffect, useId, useMemo, useState, useRef } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 import { asManifests } from "../../api/manifest";
 import { parseModel } from "../models/linkml";
 import { Button, Checkbox, Field, Input, Select } from "../../components/ui";
 import { FormHeading } from "../../components/forms/FormRoute";
+import { listManifests } from "../../api/odata";
 
 export interface ClassConfig {
   ticked: boolean;
@@ -59,31 +60,19 @@ export function ModelPicker({
   const modelsQuery = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "datamodels" } },
-        }),
-      ),
+      listManifests(project, "datamodels"),
   });
 
   const projectionsQuery = useQuery({
     queryKey: queryKeys.list(project, "projections"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "projections" } },
-        }),
-      ),
+      listManifests(project, "projections"),
   });
 
   const endpointsQuery = useQuery({
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      listManifests(project, "endpoints"),
   });
 
   const matchingModel = useMemo(() => {

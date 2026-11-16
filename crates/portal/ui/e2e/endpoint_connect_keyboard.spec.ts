@@ -2,6 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4975: the live walker found axe scrollable-region-focusable on an Endpoint's page at 400 px.
 // The "Connect an AI assistant" lines scroll sideways there, so each must take keyboard focus.

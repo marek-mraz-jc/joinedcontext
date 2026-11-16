@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // Your access, Data access table (T-5593): opened from an Endpoint's page on that Endpoint, each
 // filter in words, two grants on one type grouped and each named by its Policy, at 1440 and 400 px.

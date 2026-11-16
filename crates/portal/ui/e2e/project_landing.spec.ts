@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // Where a first sign-in lands and what a project switch reopens (T-5603). `vite preview` has no
 // Portal API behind it, so the API is answered in the browser; the pages are the real build.

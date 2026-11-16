@@ -279,6 +279,83 @@ export async function doorAsRest(
   });
 }
 
+const UNDER = /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/(\w+)$/;
+const ORG_SET = /^\/api\/v1\/(\w+)$/;
+const KEYED =
+  /^\/api\/v1\/(\w+)\((?:project='((?:[^']|'')*)',name='((?:[^']|'')*)'|'((?:[^']|'')*)')\)$/;
+
+/**
+ * The REST read whose handler answers a manifest read of the service (api/odata.ts
+ * `listManifests`, `readManifest`: a set with `$select` of `spec`), and whether it reads one
+ * manifest; nothing for any other request. The server proves the two answer alike (odata_org_tests
+ * `a_manifests_spec_status_and_metadata_answer_as_the_rest_door`).
+ */
+export function manifestAsRest(
+  url: string | URL,
+): { rest: URL; one: boolean } | undefined {
+  const at = new URL(String(url), "http://localhost");
+  if (!(at.searchParams.get("$select") ?? "").split(",").includes("spec"))
+    return undefined;
+  const path = decodeURIComponent(at.pathname);
+  const unquote = (text: string) => text.replaceAll("''", "'");
+  const rest = (project: string, set: string, name?: string): URL => {
+    // The `org` namespace's own Roles are the Organization set `organizationRoles`.
+    const plural = set === "organizationRoles" ? "roles" : set;
+    const tail = name === undefined ? "" : `/${encodeURIComponent(name)}`;
+    return new URL(
+      `/api/v1/projects/${encodeURIComponent(project)}/${plural}${tail}`,
+      at.origin,
+    );
+  };
+  const under = UNDER.exec(path);
+  if (under) return { rest: rest(unquote(under[1]), under[2]), one: false };
+  const keyed = KEYED.exec(path);
+  if (keyed)
+    return keyed[4] === undefined
+      ? {
+          rest: rest(unquote(keyed[2]), keyed[1], unquote(keyed[3])),
+          one: true,
+        }
+      : { rest: rest("org", keyed[1], unquote(keyed[4])), one: true };
+  const org = ORG_SET.exec(path);
+  return org ? { rest: rest("org", org[1]), one: false } : undefined;
+}
+
+/** A REST manifest as the service's row of it with `$select` of the manifest's members. */
+function manifestRow(
+  manifest: Record<string, unknown>,
+): Record<string, unknown> {
+  const metadata = (manifest.metadata ?? {}) as { name?: string };
+  return {
+    "@odata.etag": `W/"${metadata.name ?? ""}"`,
+    name: metadata.name,
+    kind: manifest.kind,
+    metadata: manifest.metadata,
+    spec: manifest.spec ?? null,
+    status: manifest.status ?? null,
+  };
+}
+
+/** The REST read's answer as the service gives the manifest read's. */
+export async function manifestAnswer(
+  rest: Response,
+  one: boolean,
+): Promise<Response> {
+  if (!rest.ok) return asOData(rest);
+  const body = (await rest.json()) as Record<string, unknown>;
+  const answer = one
+    ? manifestRow(body)
+    : {
+        value: ((body.items ?? []) as Record<string, unknown>[]).map(
+          manifestRow,
+        ),
+      };
+  return new Response(JSON.stringify(answer), {
+    status: 200,
+    headers: { "Content-Type": "application/json", "OData-Version": "4.01" },
+  });
+}
+
 /**
  * Routes each Portal door call of the `fetch` stubbed now to its REST door's stub, its answer
  * wrapped as the service wraps it: a page test that stubs `fetch` itself calls this after.
