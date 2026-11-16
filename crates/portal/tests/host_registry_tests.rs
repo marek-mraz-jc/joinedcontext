@@ -14,6 +14,9 @@ use joinedcontext_portal::error::ApiError;
 use joinedcontext_portal::host_registry::{
     propose, remove, rows, seed, Proposal, SeedHost, SEEDED_BY,
 };
+use joinedcontext_portal::permissions::ORG_NAMESPACE;
+use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+use joinedcontext_portal::store::Mirror;
 use sqlx::PgPool;
 
 const RULES: Rules<'static> = Rules {
@@ -61,6 +64,21 @@ fn proposal<'a>(host: &'a str, organization: &'a str, id: Option<&'a str>) -> Pr
     }
 }
 
+/// A mirror holding each `(name, domain)` as an Organization manifest.
+fn orgs(all: &[(&str, &str)]) -> Mirror {
+    let mirror = Mirror::new();
+    for (name, domain) in all {
+        mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Organization".to_owned(),
+            metadata: ObjectMeta::new(name, ORG_NAMESPACE),
+            spec: serde_json::json!({ "domain": domain }),
+            status: None,
+        });
+    }
+    mirror
+}
+
 fn status(e: ApiError) -> StatusCode {
     e.into_response().status()
 }
@@ -73,26 +91,34 @@ async fn no_domain_without_proof() {
     let id = format!("sk_{r}");
     minted(&pool, &id, &domain).await;
     let org = format!("o{r}");
+    let unproved = format!("u{r}");
+    let never = format!("never{r}.sk");
+    let mirror = orgs(&[(&org, &domain), (&unproved, &never)]);
     for host in [
         "smartcity.other.sk".to_owned(),
         format!("x{domain}"),
         format!("{domain}.evil.com"),
     ] {
-        let e = propose(&pool, &RULES, &proposal(&host, &org, Some(&id)))
+        let e = propose(&pool, &mirror, &RULES, &proposal(&host, &org, Some(&id)))
             .await
             .expect_err(&host);
         assert_eq!(status(e), StatusCode::UNPROCESSABLE_ENTITY, "{host}");
     }
     let unminted = propose(
         &pool,
+        &mirror,
         &RULES,
-        &proposal(&format!("a.{domain}"), &org, Some("sk_never_minted")),
+        &proposal(
+            &format!("a.{never}"),
+            &unproved,
+            Some(&format!("sk_never{r}")),
+        ),
     )
     .await
     .expect_err("an id nobody minted");
     assert_eq!(status(unminted), StatusCode::UNPROCESSABLE_ENTITY);
     let host = format!("smartcity.{domain}");
-    propose(&pool, &RULES, &proposal(&host, &org, Some(&id)))
+    propose(&pool, &mirror, &RULES, &proposal(&host, &org, Some(&id)))
         .await
         .expect("under the minted domain");
     let row = rows(&pool)
@@ -108,6 +134,42 @@ async fn no_domain_without_proof() {
 }
 
 #[tokio::test]
+async fn an_organization_never_proves_a_host_by_another_organizations_id() {
+    let pool = pool().await;
+    let r = run("b");
+    let (a_domain, b_domain) = (format!("a{r}.sk"), format!("b{r}.sk"));
+    let b_id = format!("sk_b{r}");
+    minted(&pool, &format!("sk_a{r}"), &a_domain).await;
+    minted(&pool, &b_id, &b_domain).await;
+    let (a, b) = (format!("oa{r}"), format!("ob{r}"));
+    let mirror = orgs(&[(&a, &a_domain), (&b, &b_domain)]);
+    let host = format!("smartcity.{b_domain}");
+    // A names B's minted id to pass the minted-domain rule for a host under B's domain.
+    let e = propose(&pool, &mirror, &RULES, &proposal(&host, &a, Some(&b_id)))
+        .await
+        .expect_err("another Organization's id");
+    assert_eq!(status(e), StatusCode::UNPROCESSABLE_ENTITY);
+    // An Organization the mirror does not hold has no id to prove a host by.
+    let e = propose(
+        &pool,
+        &mirror,
+        &RULES,
+        &proposal(&host, "nobody", Some(&b_id)),
+    )
+    .await
+    .expect_err("no manifest");
+    assert_eq!(status(e), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(rows(&pool)
+        .await
+        .expect("rows")
+        .iter()
+        .all(|row| row.host != host));
+    propose(&pool, &mirror, &RULES, &proposal(&host, &b, Some(&b_id)))
+        .await
+        .expect("B under its own domain");
+}
+
+#[tokio::test]
 async fn reserved_labels_hold_at_the_portal_as_on_the_seed() {
     let pool = pool().await;
     let org = format!("o{}", run("r"));
@@ -116,7 +178,7 @@ async fn reserved_labels_hold_at_the_portal_as_on_the_seed() {
         "login.jcdev.example",
         "idm.jcdev.example",
     ] {
-        let e = propose(&pool, &RULES, &proposal(host, &org, None))
+        let e = propose(&pool, &Mirror::new(), &RULES, &proposal(host, &org, None))
             .await
             .expect_err(host);
         assert_eq!(status(e), StatusCode::UNPROCESSABLE_ENTITY, "{host}");
@@ -132,8 +194,8 @@ async fn one_host_one_organization_also_when_two_writes_race() {
         proposal(&host, "beta", None),
     );
     let (a, b) = tokio::join!(
-        propose(&pool, &RULES, &alpha),
-        propose(&pool, &RULES, &beta),
+        propose(&pool, &Mirror::new(), &RULES, &alpha),
+        propose(&pool, &Mirror::new(), &RULES, &beta),
     );
     let lost = match (a, b) {
         (Ok(()), Err(e)) | (Err(e), Ok(())) => e,

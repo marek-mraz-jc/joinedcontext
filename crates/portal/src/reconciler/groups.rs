@@ -99,7 +99,7 @@ fn requires_second_factor(mirror: &Mirror, organization: &str) -> bool {
 
 /// The id of the Organization manifest `organization` (`sk_bbsk` for `bbsk.sk`, EP-186), as the
 /// gateway derives a tenant's Organization (PF-130): from its `spec.domain` alone.
-fn organization_id(mirror: &Mirror, organization: &str) -> Option<String> {
+pub(crate) fn organization_id(mirror: &Mirror, organization: &str) -> Option<String> {
     let org = mirror.get(ORG_NAMESPACE, "Organization", organization)?;
     let domain = org.spec.get("domain")?.as_str()?;
     jc_core::names::OrganizationId::from_domain(domain)

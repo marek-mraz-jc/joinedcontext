@@ -1,10 +1,11 @@
 //! The host registry (evidence/T-7129/design.md §1, T-7135): table `organization_hosts`
-//! (migration 0058), every host an Organization answers on, its role and state. jc seeds it
+//! (migration 0059), every host an Organization answers on, its role and state. jc seeds it
 //! from jc.toml at start ([`seed`]); an operator's host Change writes through [`propose`], which
 //! holds the rules jc holds on the seed (`jc_router::registry`), and [`remove`] leaves a
 //! tombstone the seed never revives.
 
 use crate::error::ApiError;
+use crate::store::Mirror;
 use jc_router::registry::{self, Entry, Refusal, Rules};
 use sqlx::PgPool;
 
@@ -72,7 +73,8 @@ pub async fn rows(pool: &PgPool) -> Result<Vec<HostRow>, sqlx::Error> {
 pub struct Proposal<'a> {
     pub host: &'a str,
     pub organization: &'a str,
-    /// The minted Organization id the host is proved by.
+    /// The minted Organization id the host is proved by: the one `organization`'s manifest
+    /// derives from its `spec.domain`, never another Organization's.
     pub organization_id: Option<&'a str>,
     pub role: &'a str,
     pub by: &'a str,
@@ -80,8 +82,23 @@ pub struct Proposal<'a> {
 
 /// Adds `p` as `proposed` once the registry's rules hold against every row, in one
 /// transaction that locks out a concurrent write (two Changes for one host: the second is `409`).
-/// A host outside the installation's domain must lie under the domain of the minted id `p` names.
-pub async fn propose(pool: &PgPool, rules: &Rules<'_>, p: &Proposal<'_>) -> Result<(), ApiError> {
+/// A host outside the installation's domain must lie under the domain of the minted id `p` names,
+/// and that id must be the one `p.organization`'s manifest in `mirror` derives.
+pub async fn propose(
+    pool: &PgPool,
+    mirror: &Mirror,
+    rules: &Rules<'_>,
+    p: &Proposal<'_>,
+) -> Result<(), ApiError> {
+    if let Some(id) = p.organization_id {
+        let own = crate::reconciler::groups::organization_id(mirror, p.organization);
+        if own.as_deref() != Some(id) {
+            return Err(refused(Refusal::Invalid(format!(
+                "organizationId '{id}' is not the id of Organization '{}'",
+                p.organization
+            ))));
+        }
+    }
     let host = p.host.trim().to_ascii_lowercase();
     let mut tx = pool.begin().await.map_err(db)?;
     sqlx::query("LOCK TABLE organization_hosts IN SHARE ROW EXCLUSIVE MODE")
