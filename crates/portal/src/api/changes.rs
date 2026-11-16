@@ -2145,6 +2145,7 @@ async fn approve_every_file(
     let mut grants_access = false;
     let mut files = Vec::new();
     let mut judged: Vec<ResourceEnvelope> = Vec::new();
+    let domain = crate::api::assistant::org_domain(state, project);
     for file in shako.pull_request_files(pr.number).await? {
         let git_ref = if file.deleted {
             pr.base_ref()
@@ -2161,7 +2162,11 @@ async fn approve_every_file(
                 ))
             })?
             .content;
-        let envelope = serde_norway::from_str::<ResourceEnvelope>(&content).ok();
+        // Judged as the loader renders it: a file writes `{orgDomain}` where the domain goes
+        // (CC-74), and `urn:ngsi-ld:Endpoint:{orgDomain}:…` is no URN until then (T-6972).
+        let envelope =
+            serde_norway::from_str::<ResourceEnvelope>(&content.replace("{orgDomain}", &domain))
+                .ok();
         // A secrets file approves only as the form writes it, encrypted; a plain text one under
         // `secrets/` would put a credential in the repository (CC-06, T-6359).
         // Only its `sops` block may be plain: a fake `sops` key beside a plain value, or a

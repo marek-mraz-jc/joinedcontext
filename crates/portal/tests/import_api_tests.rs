@@ -711,6 +711,171 @@ async fn a_dry_run_reports_what_it_would_do_and_writes_nothing() {
     );
 }
 
+// --- format=files: a repository's files as they are (T-6972) -----------------------------
+
+const FILES_POLICY: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-air-read
+  namespace: banskabystrica
+spec:
+  contextSpaceRef: ovzdusie
+  assigner: did:web:banskabystrica.sk
+  assignee: { kind: role, id: public }
+  operations: [queryEntity, retrieveEntity]
+"#;
+
+const FILES_SPACE: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: ovzdusie
+  namespace: banskabystrica
+spec:
+  defaultLocale: en
+"#;
+
+/// The open-data Endpoint as `main` holds it, and as the move writes it: the same slug, the
+/// Policy named under `{orgDomain}` as the forge files write it (CC-74).
+const FILES_ENDPOINT_ON_MAIN: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: banskabystrica\nspec:\n  contextSpaceRef: ovzdusie\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n";
+const FILES_ENDPOINT: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: banskabystrica\nspec:\n  contextSpaceRef: ovzdusie\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: public\n  policyRefs:\n    - urn:ngsi-ld:Policy:{orgDomain}:banskabystrica-ovzdusie:public-air-read\n  enabledRepresentations: [ngsi-ld]\n";
+const FILES_ENDPOINT_PATH: &str = "spaces/ovzdusie/endpoints/public-air.yaml";
+const FILES_PIPELINE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: aq\n  namespace: banskabystrica\nspec:\n  class: resident\n  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:banskabystrica-ovzdusie:air\n";
+const FILES_PIPELINE_PATH: &str = "pipelines/aq/pipeline.yaml";
+
+/// The forge of [`forge`], whose `main` holds the open-data Endpoint, and the space, its read
+/// Policy and the internal Endpoint `air` the Pipeline writes through in the mirror.
+async fn files_world(groups: &[&str], org: Vec<Value>) -> (MockServer, AppState, String) {
+    use wiremock::matchers::query_param;
+    let server = forge().await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/{FILES_ENDPOINT_PATH}'"),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-endpoint",
+            "Content": base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                FILES_ENDPOINT_ON_MAIN,
+            ),
+        })))
+        .mount(&server)
+        .await;
+    let air = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: air\n  namespace: banskabystrica\nspec:\n  contextSpaceRef: ovzdusie\n  slug: b2xqzv4rk7oqfn6c3tlxw5yhpa\n  audience: organization\n  enabledRepresentations: [ngsi-ld]\n";
+    let (state, cookie) = state_as(&server, vec![FILES_SPACE, FILES_POLICY, air], groups, org);
+    (server, state, cookie)
+}
+
+fn files_archive() -> Vec<u8> {
+    archive(&[
+        (FILES_ENDPOINT_PATH, FILES_ENDPOINT),
+        (FILES_PIPELINE_PATH, FILES_PIPELINE),
+    ])
+}
+
+/// T-6972: the files a migration wrote land as one Change byte for byte: `{orgDomain}` stays
+/// for the loader to render, and the open-data Endpoint keeps the slug people use, though the
+/// mirror does not hold it (a bundle import refused the first and minted a new slug for the
+/// second on jc-dev).
+#[tokio::test]
+async fn a_repository_files_land_as_one_change_as_they_were_written() {
+    let (server, state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files");
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let (status, report) = send(
+        state.clone(),
+        &cookie,
+        &content_type,
+        body.clone(),
+        &format!("{uri}&dryRun=All"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(
+        report["created"],
+        json!([format!("projects/{PROJECT}/{FILES_PIPELINE_PATH}")])
+    );
+    assert_eq!(
+        report["replaced"],
+        json!([format!("projects/{PROJECT}/{FILES_ENDPOINT_PATH}")])
+    );
+    assert!(
+        written(&server).await.is_empty(),
+        "a dry run writes nothing"
+    );
+
+    let (status, change) = send(state, &cookie, &content_type, body, &uri).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{change}");
+    let committed =
+        common::committed_files(&server, "/odata/Repositories(Owner='bb',Name='org')").await;
+    let paths: Vec<&str> = committed.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            format!("projects/{PROJECT}/{FILES_PIPELINE_PATH}"),
+            format!("projects/{PROJECT}/{FILES_ENDPOINT_PATH}"),
+        ]
+    );
+    let text = |p: &str| {
+        committed
+            .iter()
+            .find(|(path, _)| path.ends_with(p))
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default()
+    };
+    assert!(
+        text(FILES_PIPELINE_PATH)
+            .contains("urn:ngsi-ld:Endpoint:{orgDomain}:banskabystrica-ovzdusie:air"),
+        "{committed:?}"
+    );
+    assert!(
+        text(FILES_ENDPOINT_PATH).contains("slug: mluyob4nz52lok3ssk7pgn5vwt"),
+        "{committed:?}"
+    );
+}
+
+/// PF-50 at the files door: each manifest is asked of the person's bindings, and a refusal
+/// writes nothing.
+#[tokio::test]
+async fn a_files_import_of_a_kind_the_person_may_not_propose_writes_nothing() {
+    let (server, state, cookie) = files_world(
+        &[],
+        vec![
+            role(
+                "endpoint-steward",
+                json!([{ "kinds": ["Endpoint"], "verbs": ["propose", "read"] }]),
+            ),
+            binding("endpoint-steward"),
+        ],
+    )
+    .await;
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files&dryRun=All");
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let (status, problem) = send(state, &cookie, &content_type, body, &uri).await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+    assert!(problem.to_string().contains("Pipeline"), "{problem}");
+    assert!(forge_calls(&server)
+        .await
+        .iter()
+        .all(|call| !call.contains("CommitFiles")));
+}
+
+/// PF-57: the import needs the dry run of exactly these bytes.
+#[tokio::test]
+async fn a_files_import_without_its_dry_run_is_refused() {
+    let (server, state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files");
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let (status, problem) = send(state, &cookie, &content_type, body, &uri).await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    assert!(written(&server).await.is_empty());
+}
+
 #[tokio::test]
 async fn the_readme_and_schemas_of_a_complete_export_are_never_written_into_the_project() {
     let server = forge().await;

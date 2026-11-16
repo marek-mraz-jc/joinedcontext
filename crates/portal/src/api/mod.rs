@@ -63,6 +63,7 @@ pub mod health;
 pub mod health_checks;
 pub mod if_match;
 pub mod import;
+pub mod import_files;
 pub mod import_git;
 pub mod internal;
 pub mod knowledge;
