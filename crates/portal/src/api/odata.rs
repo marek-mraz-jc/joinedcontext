@@ -507,36 +507,52 @@ pub(crate) async fn items_of(
                 .into(),
         );
     };
-    let mut input = set.input.clone();
+    // The runs set holds people's runs and the live journeys' test runs, the newest 100 of
+    // each, so a page narrows to either by `origin` as the REST list's `origin` does (AG-93,
+    // T-7145): one list of every origin would let the journeys push people's runs out.
+    let inputs = if set.op == "jc_run_list" {
+        ["person", "journey"]
+            .map(|origin| {
+                let mut input = set.input.clone();
+                input["origin"] = json!(origin);
+                input
+            })
+            .to_vec()
+    } else {
+        vec![set.input.clone()]
+    };
     let mut rows = Vec::new();
-    loop {
-        let page = ops::call(op, caller, state, project, input.clone())
-            .await
-            .map_err(IntoResponse::into_response)?;
-        let items = page
-            .get("items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let empty = items.is_empty();
-        rows.extend(items);
-        if rows.len() > MAX_ROWS {
-            return Err(bad(format!(
-                "{} holds more than {MAX_ROWS} rows here, more than one OData read covers",
-                set.set
-            ))
-            .into_response()
-            .into());
-        }
-        // A page names what follows as `next` (a cursor) or `nextCursor` (an offset).
-        let next = page.get("next").or_else(|| page.get("nextCursor"));
-        match (set.cursor, next) {
-            (Some(member), Some(next)) if !next.is_null() && !empty => {
-                input[member] = next.clone();
+    for mut input in inputs {
+        loop {
+            let page = ops::call(op, caller, state, project, input.clone())
+                .await
+                .map_err(IntoResponse::into_response)?;
+            let items = page
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let empty = items.is_empty();
+            rows.extend(items);
+            if rows.len() > MAX_ROWS {
+                return Err(bad(format!(
+                    "{} holds more than {MAX_ROWS} rows here, more than one OData read covers",
+                    set.set
+                ))
+                .into_response()
+                .into());
             }
-            _ => return Ok(rows),
+            // A page names what follows as `next` (a cursor) or `nextCursor` (an offset).
+            let next = page.get("next").or_else(|| page.get("nextCursor"));
+            match (set.cursor, next) {
+                (Some(member), Some(next)) if !next.is_null() && !empty => {
+                    input[member] = next.clone();
+                }
+                _ => break,
+            }
         }
     }
+    Ok(rows)
 }
 
 /// The value of a key literal: a string or an integer.

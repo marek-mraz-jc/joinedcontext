@@ -7407,6 +7407,22 @@
       "previewEmpty": "Vyberte Endpoint, typ a atribut a uvidíte řádky, které vizualizace zobrazí.",
       "noEndpointsTitle": "Není z čeho kreslit",
       "noEndpoints": "V tomto projektu zatím nesmíte číst žádný Endpoint. Požádejte vlastníka projektu o přístup nebo nejprve vytvořte Endpoint."
+    },
+    "move": {
+      "title": "Přesunout do nástěnky",
+      "lead": "Vloží každý zde uložený graf jako panel do jedné nástěnky, Saved charts, navržené jako změna. Po schválení to spusťte znovu a grafy, které obsahuje, se zde odeberou. Graf, který neobsahuje, zůstane zde.",
+      "check": "Zkontrolovat přesun",
+      "willPropose": "{before, plural, one {# uložený graf} few {# uložené grafy} other {# uložených grafů}}: nástěnka Saved charts dostane {panels, plural, one {# panel} few {# panely} other {# panelů}}. Do schválení se nic neodebere.",
+      "willRemove": "Schválená nástěnka Saved charts obsahuje {count, plural, one {# z těchto grafů} few {# z těchto grafů} other {# z těchto grafů}}; jejich odebráním zde se nic neztratí.",
+      "stay": "{count, plural, one {# graf zůstává uložen zde} few {# grafy zůstávají uloženy zde} other {# grafů zůstává uloženo zde}}:",
+      "propose": "Navrhnout nástěnku Saved charts",
+      "remove": "Odebrat {count, plural, one {# přesunutý graf} few {# přesunuté grafy} other {# přesunutých grafů}}",
+      "proposedTitle": "Nástěnka Saved charts čeká na schválení",
+      "openChange": "Otevřít změnu",
+      "removed": "{count, plural, one {Odebrán # přesunutý graf} few {Odebrány # přesunuté grafy} other {Odebráno # přesunutých grafů}}",
+      "removedLead": "Jsou to nyní panely nástěnky Saved charts.",
+      "running": "Přesun běží; počkejte na odpověď.",
+      "refusedTitle": "Přesun neproběhl; nic se nezměnilo"
     }
   },
   "activity": {
@@ -8156,7 +8172,8 @@
       "agents": "Agenti",
       "costs": "Náklady",
       "connectors": "Konektory",
-      "data-access": "Přístup k datům"
+      "data-access": "Přístup k datům",
+      "backups": "Zálohy"
     },
     "settings": {
       "title": "Nastavení",
@@ -8838,7 +8855,7 @@
       "access": "Kdo patří do organizace a co smí každý člověk, skupina a servisní účet. Každá změna se navrhne a schválí.",
       "projects": "Co drží a zveřejňují všechny projekty organizace, na jednom místě.",
       "platform": "Co instalace provozuje pro každý projekt: brokery, prostředí, členství v datovém prostoru, stav a náklady.",
-      "settings": "Doména organizace, jazyky, kontakty, pravidla a limity a co ještě chybí v nastavení."
+      "settings": "Doména organizace, jazyky, kontakty, pravidla a limity, zálohy konfigurace a co ještě chybí v nastavení."
     },
     "kindHidden": "Zde je vidí jen administrátor organizace, jehož role zahrnuje {kinds}. Požádejte administrátora organizace, aby je přidal do vaší role.",
     "agents": {
@@ -13410,6 +13427,98 @@
     "phase": {
       "merged": "zveřejněno",
       "rejected": "zamítnuto"
+    }
+  },
+  "backups": {
+    "loading": "Načítá se záloha…",
+    "unreadable": "Zálohu se nepodařilo načíst. Zkuste to za minutu.",
+    "lead": "Kopie konfigurace této organizace jako soubory s jejich identifikátory ve vašem vlastním S3 bucketu: její nastavení, role, přiřazení a manifesty každého projektu s jejich schématy. Bez dat entit, bez kódu, bez hodnot tajemství. Bucket uchovává každou verzi, takže i smazanou zálohu lze obnovit.",
+    "runs": {
+      "title": "Běhy",
+      "scheduled": "Běží každých {hours} hodin a vždy, když stisknete Spustit nyní.",
+      "off": "Plán je vypnutý: nic neběží, dokud ho nezapnete nebo nestisknete Spustit nyní. Bucket a jeho verze zůstávají.",
+      "now": "Spustit nyní",
+      "running": "Probíhá…",
+      "failed": "Běh se nedokončil. Zkontrolujte bucket níže a stiskněte znovu Spustit nyní.",
+      "never": "Zatím žádný běh. Stiskněte Spustit nyní pro první zálohu.",
+      "lastOk": "Poslední běh {at}, spustil {by}: nahráno {size}.",
+      "lastFailed": "Poslední běh {at}, spustil {by}, selhal: {reason}. Opravte bucket níže a stiskněte Spustit nyní.",
+      "done": "Záloha je nahrána jako nová verze."
+    },
+    "log": {
+      "title": "Kdo co udělal ({count})",
+      "ok": "Hotovo",
+      "failed": "Selhalo: viz důvod vedle",
+      "action": {
+        "run": "Záloha",
+        "delete": "Smazání",
+        "plan": "Kontrola obnovy",
+        "restore": "Obnova"
+      }
+    },
+    "versions": {
+      "title": "Verze",
+      "lead": "Každá záloha, kterou bucket uchovává, od nejnovější. Starší verze odcházejí po nastavené době uchování.",
+      "versioningOn": "Verzování zapnuto",
+      "versioningOff": "Verzování vypnuto: zálohy se odmítají",
+      "lockOn": "Object Lock zapnut",
+      "lockOff": "Bez Object Lock",
+      "empty": "V bucketu zatím není žádná verze",
+      "emptyHint": "Stiskněte výše Spustit nyní a nahrajte první.",
+      "deleted": "Smazaná",
+      "current": "Aktuální",
+      "download": "Stáhnout",
+      "restore": "Obnovit tuto verzi",
+      "delete": "Smazat zálohu",
+      "deleteTitle": "Smazat aktuální zálohu?",
+      "deleteHint": "Bucket zapíše značku smazání a ponechá každou starší verzi, takže ji můžete obnovit, dokud ji neodstraní doba uchování.",
+      "deletedHint": "Záloha je smazaná. Každá starší verze zůstává: obnovte některou níže nebo stiskněte Spustit nyní pro novou."
+    },
+    "restore": {
+      "title": "Obnovit tuto verzi",
+      "taken": "Vytvořena {at}.",
+      "planning": "Porovnává se tato verze s dnešní organizací…",
+      "same": "Není co obnovit: organizace je taková, jaká byla v této verzi.",
+      "organization": "Nastavení organizace",
+      "counts": "{created} vytvořit, {changed} změnit, {unchanged} beze změny",
+      "organizationNote": "Nastavení organizace se odsud nemění: stáhněte tuto verzi a navrhněte její soubory organization/ na kartě Nastavení.",
+      "proposed": "Navrženo jako změna. Jiný správce ji schválí ve Změnách.",
+      "propose": "Navrhnout obnovu",
+      "close": "Zavřít",
+      "project": "Projekt {project}"
+    },
+    "form": {
+      "title": "Bucket a plán",
+      "leadNew": "Kam jdou zálohy. Bucket musí mít zapnuté verzování; stránka to před uložením ověří.",
+      "leadSaved": "Změňte, kam jdou zálohy, jak často a jak dlouho zůstávají starší verze.",
+      "emptyTitle": "Záloha ještě není nastavena",
+      "emptyHint": "Vyplňte níže svůj S3 bucket a uložte. Potom stiskněte Spustit nyní pro první zálohu.",
+      "endpoint": "Adresa S3",
+      "region": "Region",
+      "bucket": "Bucket",
+      "prefix": "Složka",
+      "accessKeyId": "Identifikátor přístupového klíče",
+      "secretAccessKey": "Tajný přístupový klíč",
+      "secretKept": "Uložen; zadejte nový, chcete-li ho nahradit",
+      "everyHours": "Spouštět každých (hodin)",
+      "keepDays": "Uchovat starší verze (dní)",
+      "enabled": "Plánované zálohy zapnuty",
+      "save": "Uložit",
+      "saving": "Ověřuje se bucket…",
+      "saved": "Uloženo. Bucket odpověděl se zapnutým verzováním.",
+      "failed": "Bucket se neuložil. Zkontrolujte pole výše a uložte znovu.",
+      "invalid": "Neuloženo: pole {field} je třeba opravit, viz řádek pod ním."
+    },
+    "hint": {
+      "endpoint": "Adresa https služby S3, například https://s3.eu-central-1.amazonaws.com",
+      "region": "Region bucketu, například eu-central-1",
+      "bucket": "Název bucketu, například mesto-zalohy",
+      "prefix": "Složka v bucketu končící znakem /, například joinedcontext/. Prázdné pro kořen bucketu.",
+      "accessKeyId": "Identifikátor klíče účtu, který smí zapisovat do bucketu, například AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "Uloží se zapečetěný a už se nezobrazí. Nechte prázdné, chcete-li ponechat uložený.",
+      "everyHours": "1 až 672 hodin, například 24 pro jednou denně",
+      "keepDays": "1 až 3650 dní, například 90",
+      "enabled": "Vypnutí ponechá bucket i všechny verze; Spustit nyní funguje dál."
     }
   }
 }

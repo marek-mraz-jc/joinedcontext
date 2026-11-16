@@ -14,7 +14,8 @@ const ONLY_GALLERY = process.env.PW_ONLY === "gallery";
 export default defineConfig({
   testDir: "./e2e",
   // The live journeys need a Portal and a Keycloak; they run through playwright.live.config.ts.
-  testIgnore: ["**/live/**"],
+  // The release journeys need the throwaway stacks of playwright.release.config.ts (T-7156).
+  testIgnore: ["**/live/**", "**/release/**"],
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
@@ -33,7 +34,7 @@ export default defineConfig({
             // Both, and `**/live/**` first: a project's own `testIgnore` REPLACES the one above rather
             // than adding to it, so naming only the gallery here put the 49 live journeys — which need
             // a Portal and a Keycloak — back into the `e2e` lane (T-2413).
-            testIgnore: ["**/live/**", "**/gallery.spec.ts"],
+            testIgnore: ["**/live/**", "**/release/**", "**/gallery.spec.ts"],
           },
         ]),
     {

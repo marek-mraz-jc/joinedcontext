@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { EDITOR, goSignedIn } from "./portal";
+import { EDITOR, STEWARD, goSignedIn } from "./portal";
 
 const ADDRESS = "/projects/helsinki/grafana";
 
@@ -32,6 +32,40 @@ test.describe("Grafana visualizations", () => {
     const saved = page.getByRole("listitem").filter({ hasText: title });
     await expect(saved).toBeVisible();
     await expect(saved.getByRole("link", { name: `Open ${title} in a new tab` })).toHaveAttribute("href", /\/d\/pv-/);
+    await saved.getByRole("button", { name: `Remove ${title}` }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Remove from Grafana" }).click();
+    await expect(saved).toHaveCount(0);
+  });
+});
+
+test.describe("Saved charts moved into a dashboard", () => {
+  // The check only: a dry run proposes and removes nothing, so dev keeps its saved charts. The
+  // steward saves one chart so the move has something to count, reads the check, and removes it.
+  test("a steward checks moving the saved charts into one dashboard", async ({ page }) => {
+    test.setTimeout(120_000);
+    await goSignedIn(page, STEWARD, ADDRESS);
+    const form = page.getByRole("button", { name: "Save chart" });
+    const notReady = page.getByText("Dashboards are not ready for this project");
+    await expect(form.or(notReady)).toBeVisible();
+    if (await notReady.isVisible()) return;
+
+    const title = `t7161 ${Date.now()}`;
+    await page.getByLabel("Name", { exact: true }).fill(title);
+    for (const label of ["Endpoint", "Type", "Attribute"]) {
+      const select = page.getByLabel(label, { exact: true });
+      await expect(select.locator("option").nth(1)).toBeAttached();
+      await select.selectOption({ index: 1 });
+    }
+    await form.click();
+    const saved = page.getByRole("listitem").filter({ hasText: title });
+    await expect(saved).toBeVisible();
+
+    const move = page.getByRole("region", { name: "Move into a dashboard" });
+    await move.getByRole("button", { name: "Check the move" }).click();
+    const counted = move.getByRole("status").filter({ hasText: /Saved charts dashboard/ });
+    const refused = move.getByText("The move did not run; nothing changed");
+    await expect(counted.or(refused)).toBeVisible({ timeout: 30_000 });
+
     await saved.getByRole("button", { name: `Remove ${title}` }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Remove from Grafana" }).click();
     await expect(saved).toHaveCount(0);
