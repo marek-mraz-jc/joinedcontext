@@ -1296,7 +1296,7 @@ mod tests {
             .mount(
                 jc_router::MountSpec {
                     module: "kaisatsu".into(),
-                    host: Some("login.city.example".into()),
+                    host: Some("idm.city.example".into()),
                     path_prefix: None,
                 },
                 kaisatsu,
@@ -1317,10 +1317,10 @@ mod tests {
             Setup::prepare(dir.path(), &Module::ALL, &std::collections::BTreeMap::new()).unwrap();
         let taken = Some("127.0.0.1:40123".parse().unwrap());
         let v = vars(&siblings, &setup, true, &mount, None, taken, |_: &str| None);
-        assert_eq!(v["JC_OIDC_ISSUER"], "https://login.city.example/realms/jc");
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://idm.city.example/realms/jc");
         let url = &v["JC_OIDC_JWKS_URL"];
         assert!(!url.starts_with("https://"), "the gateway refuses {url}");
-        assert_eq!(url, &format!("http://login.city.example{certs}"));
+        assert_eq!(url, &format!("http://idm.city.example{certs}"));
         assert_eq!(v["JC_OIDC_JWKS_REACH"], listener.to_string());
         // The gateway's own reader takes the keys from there, never from DNS.
         let verifier = jc_core::auth::token::Verifier::new(v["JC_OIDC_ISSUER"].clone());

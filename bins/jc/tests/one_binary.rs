@@ -312,11 +312,11 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
     }
     let (_, body) = get(
         addr,
-        "login.city.test",
+        "idm.city.test",
         "/realms/jc/.well-known/openid-configuration",
     )
     .await;
-    assert!(body.contains("http://login.city.test/realms/jc"), "{body}");
+    assert!(body.contains("http://idm.city.test/realms/jc"), "{body}");
 
     // T-6705: the modules the edge never routes to answer their siblings on the in-pod listener,
     // loopback only, at their slug and whatever the Host; nothing else answers there.
@@ -383,8 +383,9 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
         "nope.city.test",
         "model-tools.city.test",
         "city.test",
-        "login.other.test",
-        "login.city.test.evil",
+        "login.city.test",
+        "idm.other.test",
+        "idm.city.test.evil",
     ] {
         let (status, _) = get(addr, host, "/realms/jc/.well-known/openid-configuration").await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{host}");

@@ -86,7 +86,9 @@ impl Jc {
                 if let Some(rest) = path.strip_prefix(&format!("/{slug}"))
                     && (rest.is_empty() || rest.starts_with('/'))
                 {
-                    return format!("http://{slug}.localhost:{}{rest}", self.port);
+                    // kaisatsu's host label is `idm` while its slug stays `login` (T-7001).
+                    let label = if slug == "login" { "idm" } else { slug };
+                    return format!("http://{label}.localhost:{}{rest}", self.port);
                 }
             }
         }
@@ -1125,7 +1127,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
 }
 
 /// Host mode: every module on its own host name, the Portal on `portal.localhost`. The Portal
-/// signs a person in through kaisatsu on `login.localhost`, keeps its cookies on its own host, writes
+/// signs a person in through kaisatsu on `idm.localhost`, keeps its cookies on its own host, writes
 /// people to kaisatsu and proposals to shako, and a module's slug on the Portal's host reaches the
 /// Portal, not the module. The deployment names its realm `dev`: jc makes it on first start (its
 /// first-start files, the first admin), and no realm `jc`.
