@@ -5,7 +5,8 @@ import tailwindcss from "@tailwindcss/vite";
 
 // The catalogue's live data widget (T-5082): EndpointDataView as one classic script and one
 // stylesheet with fixed names, `explorer.js` and `explorer.css`, which the deployment's viz host
-// serves beside explore.html (scripts/viz-explorer-bundle.sh). Its policy allows scripts from the
+// serves beside explore.html (scripts/viz-explorer-bundle.sh) and jc embeds from dist-explorer
+// (bins/jc/src/modules/viz.rs). Its policy allows scripts from the
 // host alone and no `eval`, so nothing loads later: no code splitting, every asset inlined.
 export default defineConfig({
   logLevel: "warn",

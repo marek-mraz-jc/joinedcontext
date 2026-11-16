@@ -688,6 +688,28 @@ def add_portal_audience(realm: dict) -> tuple[dict, bool]:
     return (dict(realm, clients=clients), True) if changed else (realm, False)
 
 
+# The attribute by which kaisatsu lets the Portal (view-clients) add an Endpoint audience to a client
+# it did not create (crates/kaisatsu/admin/src/compat.rs AUDIENCES_MANAGED_BY, T-6972): a Pipeline
+# re-aimed at an open-data Endpoint's write door after the import needs the door in its token.
+AUDIENCES_MANAGED_BY = "audiences-managed-by"
+
+
+def mark_pipeline_audiences(realm: dict) -> tuple[dict, list[str]]:
+    """Each `<project>-pipelines` client and each Pipeline's own client (`pipeline_own_client`)
+    marked AUDIENCES_MANAGED_BY: joinedcontext, so the Portal's workload-client wave may add the
+    audiences of the Endpoints its Pipelines write to and nothing else. Answers the realm and the
+    clientIds that gained the mark."""
+    marked, clients = [], []
+    for c in realm.get("clients") or []:
+        attrs = c.get("attributes") or {}
+        cid = str(c.get("clientId", ""))
+        if (cid.endswith("-pipelines") or pipeline_own_client(c)) and attrs.get(AUDIENCES_MANAGED_BY) != "joinedcontext":
+            c = dict(c, attributes={**attrs, AUDIENCES_MANAGED_BY: "joinedcontext"})
+            marked.append(cid)
+        clients.append(c)
+    return (dict(realm, clients=clients), marked) if marked else (realm, [])
+
+
 # jc's in-process model proxy introspects the assistant's tokens as `agent-proxy` and admits only a
 # token naming it in its audience (bins/jc/src/setup.rs PROXY_CLIENT, assistant_realm_file). Prod's
 # realm has none: its proxy is `<project>-agent-proxy`, federated-jwt with token exchange.
@@ -1128,6 +1150,9 @@ def cmd_realms(a):
         clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
         if accounts:
             print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")
+        clean, marked = mark_pipeline_audiences(clean)
+        if marked:
+            print(f"realm {name}: the Portal may add Endpoint audiences to {len(marked)} pipeline clients ({AUDIENCES_MANAGED_BY})")
         clean, portal_aud = add_portal_audience(clean)
         if portal_aud:
             print(f"realm {name}: portal-api's sign-in token names portal-api (Endpoint reads exchange it)")
@@ -1504,6 +1529,39 @@ def _writes(spec: dict) -> bool:
                and any(op in ENTITY_WRITES for op in r.get("operations") or []) for r in rules)
 
 
+def _public(spec: dict) -> bool:
+    """Whether a Policy spec grants anything to the role `public` (ODP-02), in itself or a rule."""
+    return any((r.get("effect") or "permission") != "prohibition"
+               and (r.get("assignee") or {}).get("kind") == "role" and (r.get("assignee") or {}).get("id") == "public"
+               for r in spec.get("rules") or [spec])
+
+
+def _project_domains(prepared: list) -> dict[str, str]:
+    """The domain each project's Policy URNs carry, as the gateway binds a policyRef
+    (policy_ref_domains, T-6502): the Project's own spec.domain, else its Organization's. A project
+    with neither is absent, and its refs keep `{orgDomain}`, the installation's domain."""
+    import yaml
+    orgs, projects = {}, {}
+    for _, _, name, _, files in prepared:
+        if name != ORG_REPOSITORY:
+            continue
+        for rel, data in files.items():
+            if not re.fullmatch(r"(organizations|projects)/[^/]+\.ya?ml", rel):
+                continue
+            try:
+                docs = [d for d in yaml.safe_load_all(data) if isinstance(d, dict)]
+            except yaml.YAMLError:
+                continue
+            for d in docs:
+                meta, spec = d.get("metadata") or {}, d.get("spec") or {}
+                if d.get("kind") == "Organization" and meta.get("name") and spec.get("domain"):
+                    orgs[meta["name"]] = spec["domain"]
+                elif d.get("kind") == "Project" and meta.get("name"):
+                    ref = spec.get("organizationRef")
+                    projects[meta["name"]] = (spec.get("domain"), ref.get("name") if isinstance(ref, dict) else ref)
+    return {p: own or orgs[org] for p, (own, org) in projects.items() if own or org in orgs}
+
+
 def write_doors(prepared: list, refused: list[str], key: str) -> list[dict]:
     """An export taken before EP-187 (T-6972) maps onto write doors, as T-6980 moved the
     deployment's seeds: each open-data Endpoint `refused` names gets an internal Endpoint
@@ -1512,8 +1570,10 @@ def write_doors(prepared: list, refused: list[str], key: str) -> list[dict]:
     only the Policies that write nothing. No entity, Policy or Pipeline is removed and nobody's
     access changes: the writers write through the door, readers read as before. The slug is an
     HMAC of the door under `key` (the import's forge token), unguessable and the same on a rerun.
-    Returns one row per door made; `prepared` is changed in place."""
+    Returns one row per door made, `publicReadsLost` naming a public Policy the open-data Endpoint
+    served and no longer does (the caller refuses the move then); `prepared` is changed in place."""
     import yaml
+    domains = _project_domains(prepared)
     flagged = {(m.group(1), m.group(2), m.group(3)) for m in map(_OPEN_DATA_WRITE.match, refused) if m}
     moved = []
     for _, owner, project, _, files in prepared:
@@ -1544,9 +1604,11 @@ def write_doors(prepared: list, refused: list[str], key: str) -> list[dict]:
             served_names = {u.rsplit(":", 1)[-1] for u in served} if served else \
                 {n for n, s in policies if _space_of(s) == space}
             # The URN names the space by its segment (urnSegment, else its name) under the
-            # organization's domain, which the reconciler fills in for {orgDomain} (CC-74).
+            # project's domain: the gateway binds a ref only under the project's own domains, and
+            # renders {orgDomain} with the installation's, another Organization's in a multi-org
+            # installation (T-6502).
             segment = next((d.get("spec", {}).get("urnSegment") for d in spaces.get(space, [])), None) or space
-            ref = f"urn:ngsi-ld:Policy:{{orgDomain}}:{segment}:"
+            ref = f"urn:ngsi-ld:Policy:{domains.get(project, '{orgDomain}')}:{segment}:"
             reads = sorted(n for n, s in policies if n in served_names and _space_of(s) == space and not _writes(s))
             door = f"{name}-write"
             slug = base64.b32encode(hmac.new(key.encode(), f"{project}/{space}/{door}".encode(),
@@ -1573,8 +1635,10 @@ def write_doors(prepared: list, refused: list[str], key: str) -> list[dict]:
                     files[prel] = target.sub(lambda m, door=door: m.group(1) + (m.group(2) or "") + door + m.group(3),
                                              text).encode()
                     aimed.append(prel)
+            public = {n for n, s in policies if n in served_names and _space_of(s) == space and _public(s)}
             moved.append({"endpoint": f"{project}/{name}", "door": f"{project}/{door}", "reads": reads,
-                          "writers": sorted(served_names - set(reads)), "pipelines": aimed})
+                          "writers": sorted(served_names - set(reads)), "pipelines": aimed,
+                          "publicReadsLost": sorted(public - set(reads))})
     return moved
 
 
@@ -1614,7 +1678,7 @@ def cmd_doors(a):
     before = {(owner, name): dict(files) for _, owner, name, _, files in prepared}
     found = jcctl_refusals(a.jcctl_bin, prepared)
     doors = write_doors(prepared, found, secrets.token_hex(32))
-    left = jcctl_refusals(a.jcctl_bin, prepared) if doors else found
+    left = (jcctl_refusals(a.jcctl_bin, prepared) if doors else found) + _lost_reads(doors)
     for _, owner, name, _, files in prepared:
         for rel, data in files.items():
             if before[owner, name].get(rel) != data:
@@ -1625,7 +1689,14 @@ def cmd_doors(a):
     (out / "doors.json").write_text(json.dumps({"before": ep187(found), "after": ep187(left), "refusalsAfter": [
         line for line in left if not line.startswith("warning:")], "doors": doors}, indent=1))
     print(f"EP-187 findings: {ep187(found)} before, {ep187(left)} after; {len(doors)} door(s) in {out}")
-    return 0 if ep187(left) == 0 else 1
+    return 0 if ep187(left) == 0 and not _lost_reads(doors) else 1
+
+
+def _lost_reads(doors: list[dict]) -> list[str]:
+    """A refusal per door whose open-data Endpoint would stop serving a public read it served."""
+    return [f"write door {d['door']}: the open-data Endpoint {d['endpoint']} would lose its public read "
+            f"{', '.join(d['publicReadsLost'])}; split the read rules into a Policy of their own first"
+            for d in doors if d["publicReadsLost"]]
 
 
 def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE,
@@ -1673,7 +1744,7 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
     doors = write_doors(prepared, refused, token) if refused else []
     if doors:
         report["writeDoors"] = doors
-        refused = validate(prepared)
+        refused = validate(prepared) + _lost_reads(doors)
     if refused:
         report["manifestRefusals"] = refused
         report.setdefault("problems", []).append(

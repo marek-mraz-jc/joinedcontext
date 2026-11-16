@@ -36,6 +36,7 @@ import {
   brokerOptions,
   dataSourceSchema,
   dataSourceUiSchema,
+  httpUiSchema,
   findEnvVars,
   isTypedDataSource,
   parseYamlStrings,
@@ -46,6 +47,7 @@ import {
 import type { CatalogInput, DataSourceType, TypedDataSourceType } from "../../schemas/kinds";
 import { runnerFieldHelp } from "../../schemas/kinds";
 import { ConnectionTest } from "./ConnectionTest";
+import { PresetDiscovery } from "./PresetDiscovery";
 import { useBentoInputs } from "./RunnerInputForm";
 import { TemplateGallery } from "./TemplateGallery";
 import { BlueprintCards } from "../flows/Gallery";
@@ -264,6 +266,9 @@ const RUNNER_GROUPS = [
   "utility",
 ] as const;
 
+/** The runner's inputs the wizard names beside the streams: file servers, queues, databases, a webhook. */
+const WIZARD_RUNNER_INPUTS = ["sftp", "aws_s3", "amqp_0_9", "amqp_1", "kafka", "kafka_franz", "sql_select", "http_server"];
+
 /** DataSources of one project: what the city reads from, and with which credential (MF-35). */
 export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   const { t, i18n } = useTranslation();
@@ -305,6 +310,14 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   const [probe, setProbe] = useState<Probe | null>(null);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
 
+  // The source a proposal just named, which the page offers to start a pipeline on (G-22).
+  const [proposed, setProposed] = useState<string | null>(null);
+  const startPipeline = (source: string) => {
+    const pipelines = `/projects/${project}/pipelines`;
+    handPrefill(pipelines, { class: "auto", source: { dataSourceRef: source } });
+    void navigate({ href: pipelines });
+  };
+
   const list = useQuery({
     queryKey: queryKeys.list(project, PLURAL),
     // A change on its way polls until it lands (T-1392).
@@ -331,6 +344,17 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   const brokerList = useReadableList(project, "mqttbrokers", "MqttBroker");
   const brokers = useMemo(() => brokerOptions(asManifests(brokerList.data?.items ?? [])), [brokerList.data]);
 
+  // The connections the wizard hands to their own form: the streams, and the runner's file
+  // servers, queues and databases this runner has (T-7094).
+  const wizardOthers = useMemo(
+    () => [
+      ...(["mqtt", "websocket"] as const).map((other) => ({ type: other, label: t(`datasources.type.${other}`) })),
+      ...(catalog?.inputs ?? [])
+        .filter((input) => WIZARD_RUNNER_INPUTS.includes(input.name))
+        .map((input) => ({ type: input.name, label: t(`datasources.type.${input.name}`, { defaultValue: input.name }) })),
+    ],
+    [catalog, t],
+  );
   const runnerCatalogInput = catalog?.inputs.find((i) => i.name === type);
   // Bento's summaries link their client libraries in markdown; the form shows the words (T-7093).
   const selectedSummary = runnerCatalogInput ? runnerFieldHelp(runnerCatalogInput.summary) : undefined;
@@ -411,9 +435,10 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
     mutationFn: async ({ form, draft: draftRef }: { form: DataSourceForm; draft?: { kind: string; name: string } }) => {
       return write(form, false, draftRef);
     },
-    onSuccess: (result) => {
+    onSuccess: (result, { form }) => {
       if (isChange(result)) {
         setChange(result);
+        setProposed(editing ? null : (form.name ?? null));
       }
       closeDialog();
       void queryClient.invalidateQueries({ queryKey: queryKeys.list(project, PLURAL) });
@@ -624,12 +649,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
               key: "pipeline",
               label: t("datasources.newPipeline"),
               onSelect: () => {
-                const pipelines = `/projects/${project}/pipelines`;
-                handPrefill(pipelines, {
-                  class: "auto",
-                  source: { dataSourceRef: source.metadata.name },
-                });
-                void navigate({ href: pipelines });
+                startPipeline(source.metadata.name);
               },
             },
           ]}
@@ -661,6 +681,13 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
       </div>
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
+      {change && proposed ? (
+        <div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => startPipeline(proposed)}>
+            {t("datasources.wizard.handoff", { name: proposed })}
+          </Button>
+        </div>
+      ) : null}
 
       {noSources ? setUps : null}
 
@@ -760,9 +787,11 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
           }
           uiSchema={
             isTypedDataSource(type)
-              ? editing
-                ? { ...dataSourceUiSchema, name: { "ui:readonly": true } }
-                : dataSourceUiSchema
+              ? {
+                  ...dataSourceUiSchema,
+                  ...(type === "http" ? httpUiSchema(draft?.http as Record<string, unknown> | undefined) : {}),
+                  ...(editing ? { name: { "ui:readonly": true } } : {}),
+                }
               : runnerCatalogInput
                 ? editing
                   ? { ...runnerDataSourceSchema(t, runnerCatalogInput).uiSchema, name: { "ui:readonly": true } }
@@ -775,7 +804,23 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
           submitLabel={t("datasources.propose")}
           submitting={propose.isPending}
           // Under the fields, where the credentials are typed, not above the first one (T-6163).
-          afterFields={<p className="text-caption text-fg-muted">{t("datasources.secretHint")}</p>}
+          afterFields={
+            <>
+              <p className="text-caption text-fg-muted">{t("datasources.secretHint")}</p>
+              {type === "http" ? (
+                <PresetDiscovery
+                  project={project}
+                  http={draft?.http as Record<string, unknown> | undefined}
+                  onUse={(http) => {
+                    setDraft((held) => ({ ...(held ?? {}), http }));
+                    setPlan(null);
+                    setProbe(null);
+                    setVerdict(null);
+                  }}
+                />
+              ) : null}
+            </>
+          }
           error={formError}
           onChange={(data) => {
             setDraft(data);
@@ -796,6 +841,18 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
         >
           {editing ? null : (
             <TemplateGallery
+              project={project}
+              secrets={secrets}
+              others={wizardOthers}
+              onPick={(other) => {
+                // The form of that type opens below, the wizard's advanced way (T-7094).
+                setType(other);
+                setDraft((held) => (held ? { name: held.name, title: held.title } : undefined));
+                setPlan(null);
+                setProbe(null);
+                setCollectedSecrets({});
+                document.getElementById("datasource-type")?.focus();
+              }}
               onUse={(chosen, form) => {
                 // The template fills the form and checks it at once: the first records show
                 // before anything is proposed (T-3249).
@@ -836,7 +893,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
               )}
             </div>
           ) : null}
-          {editing ? <ConnectionTest project={project} name={editing.metadata.name} /> : null}
+          {editing ? <ConnectionTest project={project} name={editing.metadata.name} type={typeOf(editing.spec ?? {})} /> : null}
         </div>
       </ResourceFormDialog>
       </SecretRefContext.Provider>

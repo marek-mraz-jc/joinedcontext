@@ -653,7 +653,19 @@
         },
         "assistant": "jc_datasource_check",
         "routes": [
-          "POST /api/v1/projects/{project}/datasources/{name}/test"
+          "POST /api/v1/projects/{project}/datasources/{name}/test",
+          "POST /api/v1/projects/{project}/datasources/{name}/test-event",
+          "POST /api/v1/projects/{project}/datasource-paging"
+        ]
+      },
+      "discover": {
+        "live": {
+          "spec": "datasource-discover.spec.ts",
+          "test": "a steward finds the feature types of a public WFS and writes one into the preset"
+        },
+        "assistant": "jc_datasource_discover",
+        "routes": [
+          "POST /api/v1/projects/{project}/datasource-discovery"
         ]
       },
       "read": {
@@ -745,7 +757,18 @@
         "assistant": "jc_pipeline_test",
         "routes": [
           "POST /api/v1/projects/{project}/pipelines/test",
+          "POST /api/v1/projects/{project}/pipelines/{name}/source-check",
           "POST /api/v1/projects/{project}/kpis/check"
+        ]
+      },
+      "script-test": {
+        "live": {
+          "spec": "scripts.spec.ts",
+          "test": "a script version is written, tested on the runner, proposed and approved by a second person"
+        },
+        "assistant": "jc_script_test",
+        "routes": [
+          "POST /api/v1/projects/{project}/scripts/test"
         ]
       },
       "target": {

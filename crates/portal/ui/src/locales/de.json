@@ -122,7 +122,8 @@
     "layers": "Kartenebenen",
     "csrs": "Kontextquellen",
     "health": "Zustand",
-    "repositories": "Repositories"
+    "repositories": "Repositories",
+    "scripts": "Skripte"
   },
   "auth": {
     "lead": "Melden Sie sich mit dem Konto Ihrer Organisation an, um diese Plattform zu verwalten.",
@@ -325,6 +326,7 @@
     },
     "history": {
       "filter": "Verlauf filtern",
+      "filtersToggle": "Filter",
       "kind": "Art",
       "name": "Name enthält",
       "apply": "Filtern",
@@ -343,6 +345,7 @@
       "older": "Ältere Änderungen zeigen",
       "empty": "Noch keine Änderung wurde zusammengeführt oder abgelehnt.",
       "emptyHint": "Eine Änderung erscheint hier mit der Person, die entschieden hat, sobald sie im Reiter Offen genehmigt oder abgelehnt wurde.",
+      "noneMatchHint": "Setzen Sie die Filter zurück oder erweitern Sie den Zeitraum, um mehr entschiedene Änderungen zu sehen.",
       "noneOnPage": "Keine dieser Änderungen dürfen Sie lesen. Ältere vielleicht schon.",
       "restore": "Wiederherstellen",
       "restoreOf": "{name} wiederherstellen",
@@ -2410,7 +2413,8 @@
       "mqtt": "MQTT-Broker",
       "http": "HTTP-Endpunkt",
       "websocket": "WebSocket-Stream",
-      "gtfs-rt": "GTFS-Realtime-Feed"
+      "gtfs-rt": "GTFS-Realtime-Feed",
+      "webhook": "Webhook (gesendete Ereignisse)"
     },
     "dialog": {
       "create": "Neue Datenquelle",
@@ -2418,7 +2422,8 @@
       "mqtt": "Abonniert Topics auf einem Broker und übergibt jede Nachricht der Pipeline, die ihn referenziert.",
       "http": "Ruft eine URL im Takt der Pipeline ab.",
       "websocket": "Hält einen Socket offen und liest die Nachrichten, die der Server sendet.",
-      "gtfs-rt": "Liest einen GTFS-Realtime-Feed; das Protobuf wird vor der Pipeline dekodiert."
+      "gtfs-rt": "Liest einen GTFS-Realtime-Feed; das Protobuf wird vor der Pipeline dekodiert.",
+      "webhook": "Wartet darauf, dass ein Absender Ereignisse sendet; sobald eine Pipeline die Quelle liest, zeigt die Seite die Adresse für ihn."
     },
     "field": {
       "type": "Typ",
@@ -2452,7 +2457,18 @@
       "broker": "Broker",
       "externalBroker": "Externer Broker (URL und Secret unten)",
       "records": "Datensätze stehen in",
-      "recordsHelp": "Bei einer JSON-Antwort mit den Datensätzen in einem Array der Pfad dorthin, zum Beispiel data.stations; jedes Element wird ein Datensatz. Leer gelassen wird die ganze Antwort ein Datensatz."
+      "recordsHelp": "Bei einer JSON-Antwort mit den Datensätzen in einem Array der Pfad dorthin, zum Beispiel data.stations; jedes Element wird ein Datensatz. Leer gelassen wird die ganze Antwort ein Datensatz.",
+      "format": "Format der Antwort",
+      "webhookAuth": "Wie sich der Absender ausweist",
+      "webhookHmac": "Signierter Inhalt (HMAC SHA-256)",
+      "webhookBearer": "Bearer-Token",
+      "maxBodyBytes": "Größter Inhalt (Bytes)",
+      "maxInFlight": "Ereignisse gleichzeitig"
+    },
+    "sheet": {
+      "label": "Blatt",
+      "help": "Das zu lesende Blatt nach dem Namen auf seinem Reiter, zum Beispiel Stationen 2026; die erste Zeile des Blatts benennt die Spalten. Leer gelassen wird das erste Blatt gelesen.",
+      "problem": "Ein Blattname hat 1 bis 31 Zeichen ohne : \\ / ? * [ ]."
     },
     "probe": {
       "title": "Ein Abruf des Feeds",
@@ -2491,6 +2507,18 @@
         "url": "Adresse der CSV-Datei",
         "urlHelp": "Die Adresse, die die Datei selbst herunterlädt, beginnend mit https://."
       },
+      "xlsx": {
+        "title": "Tabelle (Excel, ODS) unter einer Adresse",
+        "what": "Eine als .xlsx oder .ods veröffentlichte Arbeitsmappe, ein Datensatz je Zeile eines Blatts, bei jedem Lauf gelesen.",
+        "url": "Adresse der Tabelle",
+        "urlHelp": "Die Adresse, die die Datei selbst herunterlädt, beginnend mit https://, zum Beispiel https://data.example.org/stations.xlsx."
+      },
+      "shapefile": {
+        "title": "Shapefile (gezippt) unter einer Adresse",
+        "what": "Ein Zip mit einer Shapefile-Ebene (.shp, .dbf, .prj), ein GeoJSON-Feature je Datensatz in WGS 84, bei jedem Lauf gelesen.",
+        "url": "Adresse des Zips",
+        "urlHelp": "Die Adresse, die das Zip selbst herunterlädt, beginnend mit https://, zum Beispiel https://data.example.org/stadtteile.zip. Die .prj nennt das Koordinatensystem, zum Beispiel EPSG:25832 für UTM 32N."
+      },
       "json": {
         "title": "REST-API (JSON)",
         "what": "Eine API, die JSON liefert, bei jedem Lauf gelesen.",
@@ -2522,7 +2550,8 @@
         "url": "Geben Sie eine vollständige Adresse an, die mit https:// oder http:// beginnt.",
         "ckanDataset": "Das ist die Datensatzseite, keine Datei. Öffnen Sie dort die CSV- oder JSON-Ressource und kopieren Sie ihre Download-Adresse.",
         "layer": "Nennen Sie den zu lesenden Layer oder geben Sie die Adresse einer GeoJSON-Datei an.",
-        "records": "Geben Sie den Pfad als durch Punkte verbundene Namen an, zum Beispiel data.stations."
+        "records": "Geben Sie den Pfad als durch Punkte verbundene Namen an, zum Beispiel data.stations.",
+        "secretKey": "Geben Sie den Eintrag im Secret an, der die Zugangsdaten hält."
       }
     },
     "test": {
@@ -2531,7 +2560,8 @@
       "button": "Verbindung testen",
       "running": "Wird getestet…",
       "read": "Verbunden: {records, plural, one {# Datensatz} other {# Datensätze}} gelesen ({bytes} Bytes). Der erste:",
-      "failed": "Nichts gelesen: {reason}. Prüfen Sie Adresse und Zugangsdaten und testen Sie erneut."
+      "failed": "Nichts gelesen: {reason}. Prüfen Sie Adresse und Zugangsdaten und testen Sie erneut.",
+      "pages": "{pages, plural, one {# Seite} other {# Seiten}} gelesen."
     },
     "usedBy": {
       "title": "Verwendet von",
@@ -2541,6 +2571,176 @@
       "title": "Fertige Einrichtungen",
       "lead": "Eine Einrichtung schreibt die Quelle, ihre Pipeline und ihren Zeitplan in einer Änderung aus wenigen Antworten. Beispiel: ein GBFS-Feed für Leihräder, jede Minute abgefragt.",
       "back": "Zurück zu den Datenquellen"
+    },
+    "preset": {
+      "title": "Open-Data-API-Vorlage",
+      "hint": "Für einen CKAN-, ArcGIS-, OData-, WFS-, OGC-API-Features- oder SensorThings-Dienst: Die Plattform blättert selbst und findet die Datensätze. Lassen Sie Blättern und Datensätze liegen in leer, wenn Sie eine wählen.",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (Datensätze oder Datastore-Zeilen)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Datensätze pro Seite",
+      "organization": "Organisation",
+      "resourceId": "Ressourcen-ID",
+      "objectIdField": "Objekt-ID-Feld",
+      "outFields": "Gelesene Felder",
+      "typeNames": "Objektart",
+      "srsName": "Koordinatensystem",
+      "expand": "Verknüpfte Entitäten"
+    },
+    "paging": {
+      "title": "Blättern",
+      "hint": "Für eine blätternde API ohne Vorlage: wie die nächste Seite angefragt wird. Der Verbindungstest liest jede Seite und sagt, wie viele.",
+      "mode": "Nächste Seite per",
+      "modes": {
+        "page": "Seitennummer",
+        "offset": "Offset und Limit",
+        "cursor": "Cursor in der Antwort",
+        "link": "Link-Header (rel=next)",
+        "nextUrl": "Nächste URL in der Antwort"
+      },
+      "param": "Seitenparameter",
+      "start": "Erste Seite oder Offset",
+      "sizeParam": "Seitengrößenparameter",
+      "size": "Seitengröße",
+      "offsetParam": "Offset-Parameter",
+      "limitParam": "Limit-Parameter",
+      "limit": "Limit",
+      "cursor": "Cursor-Pfad",
+      "cursorParam": "Cursor-Parameter",
+      "cursorHeader": "Cursor-Header",
+      "next": "Pfad der nächsten URL",
+      "total": "Pfad der Gesamtzahl",
+      "more": "Pfad für weitere Seiten",
+      "maxPages": "Höchstens Seiten",
+      "maxRecords": "Höchstens Datensätze",
+      "delay": "Pause zwischen Seiten"
+    },
+    "discover": {
+      "title": "Im Dienst suchen",
+      "hint": "Liest die eigene Liste des Dienstes einmal auf dem Runner des Projekts, nur öffentliche Dienste, und bietet an, was diese Vorlage lesen kann.",
+      "needs": "Wählen Sie unter Open-Data-API-Vorlage eine API und geben Sie die URL des Dienstes ein, um zu sehen, was er anbietet.",
+      "button": "Suchen",
+      "running": "Dienst wird gelesen…",
+      "pick": "{count, plural, one {# Eintrag} other {# Einträge}} gefunden",
+      "pickHint": "Wählen Sie einen; Übernehmen schreibt ihn ins Formular, wo Sie ihn noch ändern können.",
+      "use": "Übernehmen",
+      "useNeeds": "Wählen Sie zuerst einen Eintrag aus der Liste.",
+      "truncated": "Der Dienst listet mehr, als das Portal liest; fehlt Ihrer, geben Sie eine engere URL ein.",
+      "none": "Der Dienst listet nichts, was diese Vorlage lesen kann. Prüfen Sie URL und API-Art.",
+      "failed": "Nichts gelistet: {reason}. Prüfen Sie URL und API-Art und versuchen Sie es erneut.",
+      "used": "Ins Formular geschrieben: {value}.",
+      "fields": {
+        "organization": "Organisation",
+        "layer": "Ebene",
+        "entitySet": "Entitätsmenge",
+        "typeNames": "Objektart",
+        "collection": "Sammlung",
+        "thing": "Thing"
+      },
+      "refused": "Bitten Sie eine Projektverwaltung um eine Rolle, die Datenquellen vorschlägt."
+    },
+    "wizard": {
+      "step": "{n}. {label}",
+      "kind": "Was Sie anbinden",
+      "address": "Adresse und Zugangsdaten",
+      "discover": "Aus dem Dienst wählen",
+      "pagingTitle": "Seiten",
+      "format": "Format",
+      "check": "Name und erste Zeilen",
+      "groups": {
+        "api": "Open-Data-API, Seite für Seite gelesen",
+        "file": "Eine Datei oder ein Feed unter einer Adresse",
+        "other": "Etwas anderes: ein Stream, ein Dateiserver, eine Queue, eine Datenbank oder ein Webhook"
+      },
+      "otherHelp": "Öffnet unten das vollständige Formular dieser Verbindung: MQTT, SFTP, Kafka, eine Datenbank und die anderen.",
+      "otherNone": "Verbindung wählen…",
+      "api": {
+        "ckan": "Alle Datensätze einer Organisation in einem CKAN-Portal.",
+        "arcgisFeature": "Die Objekte einer Ebene eines ArcGIS Feature Service.",
+        "odata": "Die Zeilen einer Entitätsmenge eines OData-v4-Dienstes.",
+        "wfs": "Alle Objekte eines WFS-2.0-Objekttyps als GeoJSON.",
+        "ogcFeatures": "Die Einträge einer OGC-API-Features-Sammlung.",
+        "sensorThings": "Die Things oder Datastreams eines SensorThings-Dienstes."
+      },
+      "apiUrl": "Adresse des Dienstes",
+      "apiUrlHelp": {
+        "ckan": "Die Adresse des Portals, zum Beispiel https://opendata-ajuntament.barcelona.cat/data.",
+        "arcgisFeature": "Die FeatureServer-Adresse, zum Beispiel https://services.example/arcgis/rest/services/Trees/FeatureServer.",
+        "odata": "Die Dienstwurzel mit .svc am Ende, zum Beispiel https://services.odata.org/V4/Northwind/Northwind.svc.",
+        "wfs": "Die WFS-Adresse vor dem Fragezeichen, zum Beispiel https://kartta.hel.fi/ws/geoserver/avoindata/wfs.",
+        "ogcFeatures": "Die Adresse der API, zum Beispiel https://demo.pygeoapi.io/master.",
+        "sensorThings": "Die Adresse mit Version, zum Beispiel https://iot.hamburg.de/v1.1."
+      },
+      "secret": "Zugangsdaten",
+      "secretPublic": "Keine: eine öffentliche Quelle",
+      "secretHelp": "Wählen Sie das Secret mit dem Schlüssel oder Token; ein Passwort wird hier nie eingegeben.",
+      "secretNone": "Die Datenquellen dieses Projekts nutzen noch kein Secret; eine öffentliche Quelle braucht keines. Eine Quelle mit Schlüssel bekommt ihr Secret im Formular unten.",
+      "secretKeyHelp": "Der Eintrag im Secret, der die Zugangsdaten hält, zum Beispiel token.",
+      "secretProbe": "Eine Quelle mit Zugangsdaten liest die Prüfung nicht; nach dem Speichern liest sie Verbindung testen.",
+      "pagingHint": "Liest die erste Antwort einmal auf dem Runner des Projekts und sagt, wie viele Seiten ein Lauf liest.",
+      "pagingButton": "Seitenaufteilung ermitteln",
+      "pagingRunning": "Lese die erste Antwort…",
+      "paging": {
+        "pages": "Liest {pages} Seiten zu {onPage} ({total} Datensätze).",
+        "more": "Liest Seiten zu {onPage}, bis der Dienst meldet, dass keine weiteren folgen.",
+        "walk": "Folgt der nächsten Seite, die der Dienst nennt, {onPage} Datensätze auf der ersten.",
+        "totalOnly": "Die erste Antwort nennt {total} Datensätze insgesamt, {onPage} auf dieser Seite, aber keine nächste Seite; legen Sie die Seitenaufteilung im Formular unten fest.",
+        "once": "Eine Antwort enthält alles: die Adresse wird pro Lauf einmal gelesen.",
+        "skipped": "Nicht zu ermitteln: {reason}. Versuchen Sie es erneut oder legen Sie die Seitenaufteilung im Formular unten fest."
+      },
+      "allPages": "Alle Seiten lesen",
+      "allPagesHint": "Schreibt die Seitenaufteilung ins Formular; ohne Haken wird nur die erste Seite gelesen.",
+      "presetPages": "Die API-Art teilt die Quelle selbst in Seiten, mit der Seitengröße, die der Dienst erlaubt, wenn Sie im Formular unten keine festlegen.",
+      "oneRead": "Eine Datei oder ein Feed wird bei jedem Lauf ganz gelesen: es gibt keine Seiten.",
+      "rows": "Ein Datensatz pro Zeile",
+      "rowsHint": "Jede CSV-Zeile erreicht die Pipeline als ein Datensatz mit den Spaltennamen der Kopfzeile.",
+      "handoff": "Pipeline auf {name} starten",
+      "picked": "Gewählt: {value}. Formular ausfüllen und prüfen schreibt es ins Formular unten."
+    },
+    "webhook": {
+      "title": "Wohin Absender senden",
+      "hint": "Tragen Sie die Adresse einer Pipeline beim Absender ein. Er sendet POST-Anfragen mit dem Header unten.",
+      "header": "HTTP-Header: {header}",
+      "maxBody": "Größter Inhalt: {bytes} Bytes",
+      "noReaders": "Noch liest keine Pipeline diese Quelle, daher hat sie keine Adresse. Legen Sie eine Pipeline an, die sie liest, und kommen Sie zurück.",
+      "unpublished": "Diese Installation veröffentlicht keine Adresse für Webhooks. Bitten Sie eine Administratorin, den Ingest-Eintrag in die Bereitstellung aufzunehmen.",
+      "copy": "Adresse kopieren",
+      "copied": "Adresse kopiert",
+      "test": {
+        "title": "Testereignis senden",
+        "hint": "Sendet den Inhalt unten an die gewählte Pipeline, signiert wie Ihr Absender signiert. Das Ereignis durchläuft die Pipeline wie ein echtes.",
+        "button": "Testereignis senden",
+        "running": "Wird gesendet…",
+        "accepted": "Angenommen ({status}): Die Pipeline hat das Ereignis übernommen.",
+        "refused": "Der Runner antwortete {status}: {answer}",
+        "unauthorized": "Das Geheimnis oder der Header dieser Quelle passt nicht zu dem, was der Runner hat: prüfen Sie beides und senden Sie erneut."
+      },
+      "testPipeline": {
+        "label": "Pipeline",
+        "help": "Eine der Pipelines, die diese Quelle lesen, zum Beispiel ttn-uplinks."
+      },
+      "testBody": {
+        "label": "Inhalt",
+        "help": "Das Ereignis, wie Ihr Absender es senden würde, zum Beispiel das JSON eines Uplinks laut Dokumentation Ihres Anbieters."
+      }
+    },
+    "signatureHeader": {
+      "label": "Signatur-Header",
+      "help": "Der Header, in den Ihr Absender die Signatur schreibt, zum Beispiel X-Hub-Signature-256."
+    },
+    "signingSecret": {
+      "label": "Signaturgeheimnis",
+      "help": "Das Geheimnis mit dem gemeinsamen Signaturschlüssel, zum Beispiel ttn-webhook mit dem Schlüssel secret. Legen Sie es zuerst unter Geheimnisse an."
+    },
+    "bearerToken": {
+      "label": "Zugriffstoken",
+      "help": "Das Geheimnis mit dem Token, das der Absender hinter Bearer schreibt, zum Beispiel chirpstack mit dem Schlüssel token."
     }
   },
   "pipelines": {
@@ -2855,7 +3055,17 @@
       "lastSamples": "Letzte Nachrichten durch diesen Schritt",
       "lastSamplesNone": "Durch diesen Schritt ist noch nichts gelaufen.",
       "lastSamplesUnavailable": "Die letzten Nachrichten sind nicht verfügbar.",
-      "lastSamplesWithheld": "Zurückgehalten: Der Ziel-Endpunkt verbirgt Attribute, und vor der Zuordnung tragen sie noch die Namen der Quelle. Wählen Sie die Ausgabe, um zu sehen, was geschrieben wurde."
+      "lastSamplesWithheld": "Zurückgehalten: Der Ziel-Endpunkt verbirgt Attribute, und vor der Zuordnung tragen sie noch die Namen der Quelle. Wählen Sie die Ausgabe, um zu sehen, was geschrieben wurde.",
+      "tier": {
+        "forms": "Mit einem Formular einrichten",
+        "advanced": "Erweitert: ändern den Nachrichtenfluss",
+        "bloblang": "In Bloblang geschrieben"
+      },
+      "tierHint": {
+        "forms": "Ohne Code: jeder öffnet ein Formular mit Hinweis je Feld, zum Beispiel verwirft dedupe einen Datensatz der letzten Stunde.",
+        "advanced": "Auch diese haben Formulare, aber sie verzweigen, wiederholen oder versuchen ihre Schritte erneut: eine falsche Einstellung kann Datensätze verwerfen oder doppeln. Führen Sie nach jeder Änderung den Pipeline-Test aus.",
+        "bloblang": "Ein Textfeld mit Hinweisen: für Abbildungen, die der Mapper nicht abdeckt, zum Beispiel root.name = this.name.uppercase()."
+      }
     },
     "emptyHint": "Fügen Sie mit der Schaltfläche eine Datenquelle und eine Pipeline hinzu, oder lassen Sie den Assistenten eine aus dem bauen, was Sie schon haben.",
     "expiryRemoves": "Entitäten, die {window} lang nicht aktualisiert wurden, werden entfernt",
@@ -2891,7 +3101,23 @@
       "maskedKept": "{count, plural, one {# Datensatz bleibt in der Liste: ein Wert wurde als Geheimnis maskiert, und eine Wiederholung würde die Maske schreiben. Das nächste Lesen der Quelle bringt ihn erneut.} other {# Datensätze bleiben in der Liste: ein Wert wurde jeweils als Geheimnis maskiert, und eine Wiederholung würde die Maske schreiben. Das nächste Lesen der Quelle bringt sie erneut.}}",
       "newest": "Neueste",
       "older": "Ältere Datensätze",
-      "openRun": "Seinen Lauf öffnen"
+      "openRun": "Seinen Lauf öffnen",
+      "groups": {
+        "title": "Nach Regel",
+        "lead": "Alle aufbewahrten Datensätze nach verletzter Regel und Attribut, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe.",
+        "export": "CSV exportieren",
+        "exporting": "Wird exportiert…",
+        "exportHint": "Alle aufbewahrten Datensätze mit Regel und Grund, Geheimnisse maskiert und personenbezogene Attribute ausgelassen. Die Datei: {file}.",
+        "count": "{count, plural, one {# Datensatz} other {# Datensätze}}",
+        "allowed": "Das Modell erlaubt:",
+        "fix": {
+          "model": "Im Datenmodell beheben: Es lehnt dieses Attribut oder diesen Wert ab. Ist die Quelle richtig, erweitern Sie den Slot oder deklarieren Sie das Attribut.",
+          "mapping": "Im Mapping beheben: Es schreibt einen Wert falscher Form. Wandeln Sie ihn um oder bilden Sie ihn auf das ab, was der Slot annimmt.",
+          "step": "Den Schritt beheben: Ein Schritt der Pipeline ist an diesen Datensätzen gescheitert. Den Fehler zeigt der Lauf des Datensatzes.",
+          "runner": "Der Runner hat diese Datensätze ohne Modellregel abgelehnt. Seine Worte zeigt der Lauf des Datensatzes."
+        },
+        "example": "Beispiel"
+      }
     },
     "runs": {
       "open": "Läufe und Protokoll",
@@ -3089,13 +3315,52 @@
         "title": "Lebensdauer",
         "hint": "Wann die Entitäten oder einige ihrer Felder den Raum verlassen. Gespeichert als Lebensdauer der Pipeline, nie als Mapping-Code.",
         "pickType": "Wählen Sie zuerst das Ziel und den Typ, den das Mapping schreibt: Die Lebensdauer gilt je Typ."
+      },
+      "sourceCheck": {
+        "title": "Ganze Quelle prüfen",
+        "hint": "Führt die gespeicherte Pipeline über jede Seite ihrer Quelle aus und zählt, was ein echter Lauf annehmen und ablehnen würde, nach Regel. Nichts wird geschrieben. Sie endet nach 60 s oder 50 000 Datensätzen. Beispiel: eine CKAN-Quelle mit 12 Seiten, 2 300 Datensätze.",
+        "run": "Ganze Quelle prüfen",
+        "again": "Erneut prüfen",
+        "running": "Jede Seite der Quelle wird gelesen; das dauert bis zu 60 s.",
+        "unsaved": "Die Prüfung liest die gespeicherte Pipeline: schlagen Sie diese vor und prüfen Sie sie, sobald ihre Änderung zusammengeführt ist.",
+        "failed": "Die Prüfung lief nicht",
+        "counts": "{count, plural, one {# Datensatz} other {# Datensätze}}: {accepted, number} angenommen, {rejected, number} abgelehnt",
+        "complete": "Jede Seite der Quelle wurde gelesen; ein echter Lauf würde dieselben Datensätze auf die Liste der abgelehnten setzen.",
+        "partial": "Die Prüfung hat nicht die ganze Quelle gelesen, die Zahlen decken nur den gelesenen Teil. Der Grund steht unten.",
+        "rows": "{count, plural, one {# abgelehnter Datensatz} other {Die ersten # abgelehnten Datensätze}}",
+        "place": "Datensatz {place}",
+        "more": "{count, plural, one {# weiterer Datensatz ist} other {# weitere Datensätze sind}} in den Gruppen oben gezählt.",
+        "groupsLead": "Jeder Datensatz, den die Prüfung abgelehnt hat, nach verletzter Regel und Attribut gezählt, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe.",
+        "completeClean": "Jede Seite der Quelle wurde gelesen und kein Datensatz verletzt eine Regel: ein echter Lauf würde alle schreiben.",
+        "retry": "Führen Sie sie erneut aus, sobald der Grund oben behoben ist."
+      },
+      "schedule": {
+        "title": "Wann sie läuft",
+        "hint": "Wählen Sie in Worten, wie oft; die nächsten fünf Starts erscheinen in Ihrer Zeit.",
+        "field": "Zeitplan",
+        "resident": "Diese Pipeline läuft ständig und schreibt jeden Datensatz bei Ankunft; setzen Sie unter Basisdaten die Klasse scheduled für einen Zeitplan.",
+        "byPeriod": "Die Pipeline liest ihre Quelle alle {period}, wie ihre Periode sagt. Fügen Sie einen Zeitplan hinzu, um sie zu festen Zeiten laufen zu lassen.",
+        "add": "Nach Zeitplan ausführen",
+        "remove": "Zeitplan entfernen",
+        "floor": "Dieses Projekt erlaubt einer Pipeline höchstens {floor} zu laufen.",
+        "belowFloor": "Dieser Zeitplan läuft {gap}, öfter, als das Projekt erlaubt ({floor}). Wählen Sie einen langsameren Zeitplan oder bitten Sie einen Admin, das Minimum des Projekts zu senken.",
+        "afterApply": "Der erste Lauf startet zur ersten oben genannten Zeit, sobald die Änderung genehmigt und angewendet ist.",
+        "hints": {
+          "field": "Wie oft die Pipeline ihre Quelle liest, zum Beispiel täglich um 03:00. Zeiten sind UTC, wie der Runner sie liest.",
+          "none": "Kein Zeitplan: die Pipeline läuft, wenn die Quelle Datensätze sendet, zum Beispiel ein MQTT-Thema. Fügen Sie einen Zeitplan für eine zeitgesteuert gelesene Quelle hinzu, etwa eine CSV-Datei."
+        },
+        "clock": {
+          "hours": "{count, plural, one {einmal pro Stunde} other {alle # Stunden}}",
+          "minutes": "{count, plural, one {jede Minute} other {alle # Minuten}}",
+          "seconds": "{count, plural, one {jede Sekunde} other {alle # Sekunden}}"
+        }
       }
     },
     "mapper": {
       "mode": "Wie aus jedem Datensatz eine Entität wird",
       "modeMap": "Felder zuordnen",
       "modeCode": "Bloblang schreiben",
-      "modeMapHint": "Wählen Sie für jedes Attribut ein Feld des Datensatzes, einen Ausdruck, einen festen Wert oder einen Punkt.",
+      "modeMapHint": "Wählen Sie je Attribut ein Feld des Datensatzes, mit Schritten wie Leerzeichen entfernen oder Werte übersetzen, einen Verweis auf eine andere Entität, ein Feld je Sprache, eine Geometrie, verbundene Felder, einen Ausdruck oder einen festen Wert.",
       "modeCodeHint": "Schreiben Sie den Bloblang-Schritt selbst.",
       "type": "Entitätstyp",
       "typeHint": "Ein Typ aus dem Datenmodell des Zielraums; seine Attribute stehen unten.",
@@ -3133,12 +3398,104 @@
         "notBoolean": "{field} enthält „{value}“, weder true noch false; {name} erwartet true oder false. Wählen Sie ein anderes Feld oder ändern Sie die Stichprobe.",
         "notValue": "{field} enthält „{value}“; {name} erwartet einen der Werte {values}. Wählen Sie ein anderes Feld oder ändern Sie die Stichprobe.",
         "noId": "Wählen Sie das Feld, aus dem die Id jeder Entität entsteht.",
-        "notTime": "{field} enthält {value}, das ist keine Zeit: RFC-3339-Text wie 2026-10-20T14:30:00Z oder Unix-Sekunden verwenden."
+        "notTime": "{field} enthält {value}, das ist keine Zeit: RFC-3339-Text wie 2026-10-20T14:30:00Z oder Unix-Sekunden verwenden.",
+        "notShaped": "{field} enthält „{value}“, was das Datumsformat von {name} nicht lesen kann. Wählen Sie das Format der Quelle."
       },
       "expiry": {
         "migrated": "Die Endzeit, die dieser Schritt schrieb, ist jetzt die Lebensdauer der Pipeline im Schritt Lebensdauer. Sie wird mit Ihrem nächsten Vorschlag gespeichert.",
         "migrateField": "Dieser Schritt schreibt expiresAt aus dem Datensatzfeld {field}, und kein Datum-Zeit-Attribut wird aus diesem Feld gemappt. Mappen Sie es auf ein solches Attribut, wählen Sie ein Ende im Schritt Lebensdauer oder verwerfen Sie die eigenen Zeilen des Schritts.",
         "drop": "Eigenes expiresAt des Schritts verwerfen"
+      },
+      "geojson": "Geometrie aus einem GeoJSON-Feld…",
+      "wkt": "Geometrie aus einem WKT-Feld…",
+      "ref": "Verweis auf {target} über ein Schlüsselfeld…",
+      "languagesChoice": "Ein Feld je Sprache…",
+      "concatChoice": "Mehrere Felder verbunden…",
+      "refField": "Schlüsselfeld von {target}",
+      "languages": "Text je Sprache",
+      "language": "Sprache",
+      "languageField": "Feld für {tag}",
+      "languageRemove": "Sprache {tag} entfernen",
+      "languageAdd": "Sprache hinzufügen",
+      "remove": "Entfernen",
+      "wktField": "WKT-Feld",
+      "geojsonField": "GeoJSON-Feld",
+      "crs": "Koordinatensystem der Quelle",
+      "crsName": {
+        "EPSG_4326": "EPSG:4326 · WGS 84, Grad (GPS)",
+        "EPSG_4258": "EPSG:4258 · ETRS89, Grad",
+        "EPSG_3857": "EPSG:3857 · Web Mercator, Meter",
+        "EPSG_25829": "EPSG:25829 · ETRS89 / UTM 29N (Portugal, Galicien)",
+        "EPSG_25830": "EPSG:25830 · ETRS89 / UTM 30N (Zentralspanien)",
+        "EPSG_25831": "EPSG:25831 · ETRS89 / UTM 31N (Barcelona, Katalonien)",
+        "EPSG_25832": "EPSG:25832 · ETRS89 / UTM 32N (Westdeutschland)",
+        "EPSG_25833": "EPSG:25833 · ETRS89 / UTM 33N (Ostdeutschland)",
+        "EPSG_25834": "EPSG:25834 · ETRS89 / UTM 34N (Ostpolen, Ostslowakei)",
+        "EPSG_3879": "EPSG:3879 · ETRS89 / GK25 (Helsinki, Finnland)",
+        "EPSG_3067": "EPSG:3067 · ETRS89 / TM35FIN (Finnland)",
+        "EPSG_5514": "EPSG:5514 · S-JTSK / Krovak (Slowakei, Tschechien)",
+        "EPSG_2056": "EPSG:2056 · CH1903+ / LV95 (Schweiz)",
+        "EPSG_27700": "EPSG:27700 · British National Grid (Großbritannien)"
+      },
+      "concat": "Zu verbindende Felder",
+      "concatPart": "Feld {number}",
+      "concatRemove": "Feld {field} aus der Verbindung entfernen",
+      "concatAdd": "Feld hinzufügen",
+      "separator": "Zwischen den Feldern",
+      "separatorNone": "nichts",
+      "separatorSpace": "ein Leerzeichen",
+      "transforms": "Umwandlungen von {name}",
+      "transform": {
+        "trim": "Leerzeichen entfernen",
+        "lower": "Kleinbuchstaben",
+        "upper": "Großbuchstaben",
+        "decimalComma": "Zahl mit Dezimalkomma",
+        "date": "Datum in einem Format",
+        "lookup": "Werte in die des Modells übersetzen",
+        "default": "Wert, wenn leer"
+      },
+      "transformHint": {
+        "trim": "Entfernt Leerzeichen um den Text: „ Bo “ wird „Bo“.",
+        "lower": "Schreibt den Text klein: „Bo“ wird „bo“.",
+        "upper": "Schreibt den Text groß: „bo“ wird „BO“.",
+        "decimalComma": "Liest Text wie 1.234,5 als Zahl 1234.5: Punkte und Leerzeichen trennen Tausender, das Komma ist das Dezimalzeichen.",
+        "lookup": "Jeder Wert der Stichprobe, den das Modell nicht kennt, erhält einen Wert des Modells; andere bleiben, wie sie sind."
+      },
+      "transformRemove": "Schritt {what} entfernen",
+      "transformAdd": "Wert umwandeln",
+      "transformPick": "— Schritt hinzufügen —",
+      "dateFormat": "Datumsformat des Feldes",
+      "dateFormats": {
+        "0": "Tag.Monat.Jahr, 20.10.2025",
+        "1": "Tag/Monat/Jahr, 20/10/2025",
+        "2": "Monat/Tag/Jahr, 10/20/2025",
+        "3": "Jahr-Monat-Tag, 2025-10-20",
+        "4": "Tag.Monat.Jahr Stunde:Minute, 20.10.2025 14:30",
+        "5": "Tag/Monat/Jahr Stunde:Minute, 20/10/2025 14:30",
+        "6": "Jahr-Monat-Tag Stunde:Minute:Sekunde, 2025-10-20 14:30:00"
+      },
+      "defaultValue": "Wert bei leerem Feld",
+      "lookupEmpty": "Jeder Wert der Stichprobe ist bereits einer des Modells; lesen Sie eine andere Stichprobe, um weitere zu übersetzen.",
+      "lookupHint": "Wert der Quelle → Wert des Modells",
+      "lookupRow": "„{from}“ wird",
+      "lookupKeep": "— unverändert lassen —",
+      "observedAt": "Beobachtet um, für {name}",
+      "hint": {
+        "concat": "Die Felder werden in dieser Reihenfolge verbunden, leere übersprungen; zum Beispiel ergeben Straße und Hausnummer C/ Major 1.",
+        "concatPart": "Ein Feld der Stichprobe, zum Beispiel ADRECA.",
+        "crs": "Das System der Koordinaten der Quelle; der Runner schreibt WGS 84. Zum Beispiel nutzen Barcelonas offene Daten ETRS89 / UTM 31N.",
+        "dateFormat": "Wie die Quelle ein Datum schreibt; das Attribut erhält ISO 8601, zum Beispiel wird 20/10/2025 zu 2025-10-20.",
+        "defaultValue": "Wird geschrieben, wenn ein Datensatz das Feld leer lässt, zum Beispiel 0 oder unknown.",
+        "geojsonField": "Ein Feld mit einer GeoJSON-Geometrie als Text oder Objekt, zum Beispiel ein Point mit den Koordinaten [2.17, 41.38].",
+        "languageField": "Das Feld mit dem Text in {tag}, zum Beispiel NAME_{tag}.",
+        "language": "Ein Sprachkürzel, zum Beispiel en oder ca.",
+        "languages": "Wählen Sie ein Feld für jede Sprache der Quelle, zum Beispiel NOM_CA für ca und NOM_ES für es. Ein leeres Feld entfällt.",
+        "lookupRow": "Einer der Werte des Modells, zum Beispiel {example}.",
+        "observedAt": "Optional: ein Feld mit der Messzeit des Werts als RFC-3339-Text wie 2026-10-20T14:30:00Z oder Unix-Sekunden; es wird das observedAt des Attributs.",
+        "refField": "Das Feld mit der eigenen Id von {target} in diesem Raum, zum Beispiel ein Bezirkscode wie 01.",
+        "separator": "Was zwischen zwei verbundenen Feldern steht, zum Beispiel Komma und Leerzeichen.",
+        "transformAdd": "Optionale Schritte, der Reihe nach auf das Feld angewandt, zum Beispiel Leerzeichen entfernen und dann Werte übersetzen.",
+        "wktField": "Ein Feld mit Well-Known Text, zum Beispiel POINT (2.17 41.38)."
       }
     },
     "debug": {
@@ -3520,7 +3877,7 @@
       "grants": "Berechtigungen",
       "byPolicy": "Erlaubt durch Policy {policy}",
       "fix": "Behebung: {fix}",
-      "counts": "{sent} gesendet, {rejected} abgelehnt, {failed} fehlgeschlagen",
+      "counts": "{sent} gesendet, {rejected, number} abgelehnt, {failed} fehlgeschlagen",
       "perMinute": "{rate} Datensätze pro Minute",
       "openPipeline": "Pipeline öffnen",
       "openRuns": "Läufe",
@@ -4149,6 +4506,7 @@
       "search": "Personen suchen",
       "show": "Zugriff anzeigen",
       "failed": "Der Zugriff konnte nicht angezeigt werden. Versuchen Sie es in einer Minute erneut; der Grund steht unten.",
+      "refused": "Sie dürfen diesen Zugriff nicht sehen. Nur eine Administratorin oder ein Administrator der Organisation sieht den Zugriff anderer Personen oder Konten; der Grund steht unten.",
       "nothing": "Erreicht nichts",
       "nothingLead": "Kein Endpoint dieses Projekts lässt sie zu oder gewährt ihnen etwas. Gewähren Sie Zugriff mit einer Policy, einer Gruppe oder einer Rollenbindung.",
       "space": "Bereich {space}",
@@ -7571,9 +7929,10 @@
       "type": "Entitätstyp",
       "typeHelp": "Leer lassen, um nach jedem Typ zu fragen.",
       "submit": "Gateway fragen",
-      "failed": "Das Gateway konnte nicht gefragt werden. Versuchen Sie es in einer Minute erneut; der Grund steht unten.",
+      "failed": "Das Gateway konnte nicht gefragt werden. Den Grund und Erneut versuchen finden Sie unten.",
       "allowed": "Erlaubt",
       "refused": "Abgelehnt",
+      "refusedNext": "Um es zu erlauben, fügen Sie dieser Person, Gruppe oder Rolle eine Berechtigung in einer Policy des Raums des Endpoints in der Liste oben hinzu und fragen Sie erneut.",
       "decidedBy": "Entschieden durch die Policy",
       "reason": {
         "policy_grant_matched": "Eine Policy erlaubt diese Aktion.",
@@ -8436,6 +8795,7 @@
       "measured": "Speicher gemessen {at}; KI umgerechnet zu {rate} {currency} für einen US-Dollar.",
       "partial": "Einige Spaces oder Assistenten haben nicht geantwortet; sie zählen hier 0. Die Gründe stehen in den Zeilen jedes Projekts.",
       "empty": "Noch kein Projekt hat einen Space oder einen Assistenten, daher gehört der ganze Monat der Plattform. Legen Sie in einem Projekt einen Context Space an, um seinen Anteil zu sehen.",
+      "emptyAction": "Projekte öffnen",
       "caption": "Kosten pro Projekt, {month}",
       "project": "Projekt",
       "node": "Serveranteil",
@@ -9085,6 +9445,11 @@
       "0": "0: höchstens einmal (eine Nachricht kann verloren gehen)",
       "1": "1: mindestens einmal (eine Nachricht kann doppelt kommen)",
       "2": "2: genau einmal (am langsamsten)"
+    },
+    "httpBodyFormat": {
+      "csv": "CSV",
+      "xlsx": "Tabelle (xlsx, ods)",
+      "shapefile": "Shapefile (als zip)"
     }
   },
   "picker": {
@@ -12861,5 +13226,83 @@
     "signIn": "Dieser Connector braucht eine Anmeldung: Wo der Assistent nach der Anmeldung fragt, wählen Sie OAuth und melden sich mit Ihrem Portal-Konto an.",
     "list": "Einrichtung je Assistent",
     "other": "Anderer MCP-Client"
+  },
+  "scripts": {
+    "workbench": {
+      "title": "Skript-Werkstatt",
+      "purpose": "Schreiben Sie die nächste Version eines gespeicherten Skripts, führen Sie seine Tests auf dem Runner des Projekts aus und schlagen Sie sie zur Prüfung vor."
+    },
+    "empty": "Noch kein Skript: Benennen Sie es unten, schreiben Sie Code und Tests und schlagen Sie Version 1.0.0 vor.",
+    "field": {
+      "script": "Skript",
+      "newScript": "Neues Skript",
+      "name": "Name",
+      "code": "Code",
+      "tests": "Testfälle",
+      "timeout": "Zeit pro Datensatz (ms)",
+      "memory": "Speicher pro Datensatz (MiB)",
+      "version": "Version",
+      "target": "Bindungen verschieben auf"
+    },
+    "hint": {
+      "script": "Wählen Sie ein Skript des Projekts, um seine nächste Version zu bearbeiten, oder beginnen Sie ein neues.",
+      "name": "Kleinbuchstaben, Ziffern und Bindestriche, z. B. sjtsk-to-wgs84.",
+      "code": "Code, der den Datensatz liest und zurückschreibt, z. B. record.checked = true. Er erreicht kein Netzwerk, keine Dateien und keine Geheimnisse.",
+      "tests": "Eine JSON-Liste von Tests, jeder mit Namen, Eingabe- und erwartetem Datensatz, z. B. die Startliste im Feld.",
+      "timeout": "1 bis 200, z. B. 50. Leer bedeutet 50.",
+      "memory": "1 bis 64, z. B. 32. Leer bedeutet 32.",
+      "version": "MAJOR.MINOR.PATCH über der neuesten Version, z. B. {version}.",
+      "target": "Eine veröffentlichte Version, z. B. 1.1.0. Jede verschobene Pipeline führt sie nach Genehmigung der Änderung aus."
+    },
+    "reason": {
+      "name": "Benennen Sie das Skript mit Kleinbuchstaben, Ziffern und Bindestrichen.",
+      "code": "Schreiben Sie 1 bis 65536 Bytes Code.",
+      "tests": "Schreiben Sie die Tests als JSON-Liste von Objekten mit name, input und expected.",
+      "run": "Führen Sie zuerst die Tests aus.",
+      "versionFormat": "Schreiben Sie die Version als MAJOR.MINOR.PATCH, z. B. 1.1.0.",
+      "versionOrder": "Wählen Sie eine Version über {version}.",
+      "timeout": "Schreiben Sie eine ganze Zahl von 1 bis 200.",
+      "memory": "Schreiben Sie eine ganze Zahl von 1 bis 64.",
+      "limits": "Korrigieren Sie zuerst die Grenzen.",
+      "pipelineRights": "Ihre Rolle schlägt in diesem Projekt keine Pipelines vor.",
+      "pick": "Wählen Sie die zu verschiebenden Pipelines.",
+      "failing": "{count, plural, one {# Test schlägt fehl: Korrigieren Sie den Code oder den Test.} other {# Tests schlagen fehl: Korrigieren Sie den Code oder die Tests.}}",
+      "runner": "Der Runner des Projekts hat nicht geantwortet. Versuchen Sie es in einer Minute erneut; scheitert es weiter, bitten Sie Ihre Administration, den Runner zu prüfen.",
+      "rightsNext": "Ihre Rolle schlägt in diesem Projekt keine Skripte vor und kann daher auch ihre Tests nicht ausführen. Bitten Sie eine Projektadministration um eine Rolle, die Skripte vorschlägt, etwa pipeline-editor.",
+      "proposed": "Bearbeiten Sie den Code, um die nächste Version zu schreiben.",
+      "runFailed": "Die Tests liefen nicht: Beheben Sie, was die Meldung oben sagt, und führen Sie sie erneut aus."
+    },
+    "action": {
+      "run": "Tests ausführen",
+      "propose": "Version {version} vorschlagen",
+      "move": "{count, plural, one {# Pipeline auf {version} verschieben} other {# Pipelines auf {version} verschieben}}"
+    },
+    "results": {
+      "caption": "Testergebnisse",
+      "test": "Testname",
+      "verdict": "Ergebnis",
+      "output": "Ausgabe",
+      "time": "Zeit",
+      "pass": "Bestanden",
+      "fail": "Fehlgeschlagen",
+      "changed": "Geändert",
+      "outputOf": "Ausgabe von {test}",
+      "empty": "Führen Sie die Tests aus, um hier das Ergebnis jedes Tests zu sehen.",
+      "emptyTitle": "Noch kein Ergebnis",
+      "millis": "{count} ms",
+      "changedNote": "Ein als Geändert markierter Test schreibt eine andere Ausgabe als die neueste gespeicherte Version {version}."
+    },
+    "proposed": "Version {version} ist vorgeschlagen. Eine zweite Person genehmigt sie auf der Seite Genehmigungen; Pipelines behalten ihre Bindungen, bis Sie sie verschieben.",
+    "used": {
+      "title": "Pipelines, die {name} nutzen",
+      "caption": "Pipelines, die {name} binden",
+      "emptyTitle": "Keine Pipeline nutzt dieses Skript",
+      "empty": "Fügen Sie einer Pipeline einen Skriptschritt mit {name} hinzu oder wenden Sie es in ihren Skripten an, um sie hier zu sehen.",
+      "pipeline": "Pipeline",
+      "pinned": "Gebundene Version",
+      "already": "Bereits auf {version}.",
+      "moved": "Eine Änderung vorgeschlagen, die {names} auf {version} verschiebt.",
+      "onTarget": "Auf der Zielversion"
+    }
   }
 }

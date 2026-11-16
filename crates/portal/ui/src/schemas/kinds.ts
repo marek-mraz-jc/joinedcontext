@@ -439,8 +439,14 @@ export function generateSlug(): string {
 // and the first type is the one a new form opens on (T-3211).
 /** A `records` path of an http DataSource: 1 to 8 dot-separated names (jc-core records_mapping). */
 export const RECORDS_PATH = "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,7}$";
+/**
+ * A sheet name a workbook can hold, as jc-core's `sheet_name_gap` checks it (T-7086): 1 to 31
+ * characters, none of `: \\ / ? * [ ]` or a control character, no `'` or space at either end.
+ */
+export const SHEET_NAME = "^(?![' ])(?!.*[' ]$)[^:\\\\/?*\\[\\]\\p{Cc}]{1,31}$";
 
-export const DATA_SOURCE_TYPES = ["http", "mqtt", "websocket", "gtfs-rt"] as const;
+// A webhook last: the one type a sender pushes to, rendered on the runner's ingest listener (PL-122).
+export const DATA_SOURCE_TYPES = ["http", "mqtt", "websocket", "gtfs-rt", "webhook"] as const;
 
 export type TypedDataSourceType = (typeof DATA_SOURCE_TYPES)[number];
 
@@ -456,6 +462,7 @@ export const CONNECTION_BLOCK: Record<TypedDataSourceType, string> = {
   http: "http",
   websocket: "webSocket",
   "gtfs-rt": "gtfsRt",
+  webhook: "webhook",
 };
 
 /**
@@ -634,6 +641,16 @@ export function dataSourceSchema(
           title: t("datasources.field.records"),
           pattern: RECORDS_PATH,
         },
+        // T-7086: how the body becomes records; a spreadsheet is read one row per record, a
+        // zipped shapefile one GeoJSON feature per record (T-7089).
+        format: {
+          type: "string",
+          title: t("datasources.field.format"),
+          oneOf: (["csv", "xlsx", "shapefile"] as const).map((format) => ({ const: format, title: t(`choice.httpBodyFormat.${format}`) })),
+        },
+        sheet: { type: "string", title: t("datasources.sheet.label"), pattern: SHEET_NAME },
+        preset: presetSchema(t),
+        paging: pagingSchema(t),
         authorization: {
           type: "object",
           title: t("datasources.field.authorization"),
@@ -654,6 +671,74 @@ export function dataSourceSchema(
       properties: {
         url: { type: "string", title: t("datasources.field.url"), pattern: "^wss?://.+" },
         openMessage: { type: "string", title: t("datasources.field.openMessage") },
+      },
+    },
+    // PL-122: exactly one credential, chosen first; jc-core refuses none, two, or `public`.
+    webhook: {
+      type: "object",
+      title: t("datasources.type.webhook"),
+      required: ["auth"],
+      properties: {
+        auth: {
+          type: "object",
+          title: t("datasources.field.webhookAuth"),
+          oneOf: [
+            {
+              title: t("datasources.field.webhookHmac"),
+              required: ["hmac"],
+              properties: {
+                hmac: {
+                  type: "object",
+                  title: t("datasources.field.webhookHmac"),
+                  required: ["header", "secretRef"],
+                  properties: {
+                    header: {
+                      type: "string",
+                      title: t("datasources.signatureHeader.label"),
+                      description: t("datasources.signatureHeader.help"),
+                      pattern: "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$",
+                      maxLength: 128,
+                      examples: ["X-Hub-Signature-256"],
+                    },
+                    secretRef: {
+                      ...secretRef(t, t("datasources.signingSecret.label"), secrets),
+                      description: t("datasources.signingSecret.help"),
+                    },
+                  },
+                },
+              },
+            },
+            {
+              title: t("datasources.field.webhookBearer"),
+              required: ["bearer"],
+              properties: {
+                bearer: {
+                  type: "object",
+                  title: t("datasources.field.webhookBearer"),
+                  required: ["tokenRef"],
+                  properties: {
+                    tokenRef: {
+                      ...secretRef(t, t("datasources.bearerToken.label"), secrets),
+                      description: t("datasources.bearerToken.help"),
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+        maxBodyBytes: {
+          type: "integer",
+          title: t("datasources.field.maxBodyBytes"),
+          minimum: 1,
+          maximum: 16777216,
+        },
+        maxInFlight: {
+          type: "integer",
+          title: t("datasources.field.maxInFlight"),
+          minimum: 1,
+          maximum: 1024,
+        },
       },
     },
     "gtfs-rt": {
@@ -679,7 +764,133 @@ export function dataSourceSchema(
       name,
       title,
       [CONNECTION_BLOCK[type]]: connection[type],
-      tls,
+      // A webhook is called over the installation's own HTTPS edge: no certificate to trust.
+      ...(type === "webhook" ? {} : { tls }),
+    },
+  };
+}
+
+/** The open data APIs `spec.http.preset` reads (jc-core `HttpPresetKind`). */
+export const PRESET_KINDS = ["ckan", "arcgisFeature", "odata", "wfs", "ogcFeatures", "sensorThings"] as const;
+export type PresetKind = (typeof PRESET_KINDS)[number];
+
+/** How `spec.http.paging` names the next page (jc-core `HttpPagingMode`). */
+export const PAGING_MODES = ["page", "offset", "cursor", "link", "nextUrl"] as const;
+
+/** A field of the preset or paging block, titled `datasources.<block>.<name>`; its help is in
+ * forms/datasource.uischema.yaml, as every DataSource field's is. */
+function hinted(t: (key: string) => string, block: string, name: string, schema: JsonSchema): JsonSchema {
+  return { ...schema, title: t(`datasources.${block}.${name}`) };
+}
+
+/**
+ * `spec.http.preset` (T-7067, T-7076): an open data API the platform knows, which sets the
+ * paging and the records itself; each field names the kinds it applies to in its hint, and jc-core
+ * refuses one the kind does not read.
+ */
+function presetSchema(t: (key: string) => string): JsonSchema {
+  const text = (name: string, pattern?: string) =>
+    hinted(t, "preset", name, { type: "string", minLength: 1, maxLength: 200, ...(pattern ? { pattern } : {}) });
+  return {
+    type: "object",
+    title: t("datasources.preset.title"),
+    description: t("datasources.preset.hint"),
+    required: ["kind"],
+    properties: {
+      kind: hinted(t, "preset", "kind", {
+        type: "string",
+        oneOf: PRESET_KINDS.map((kind) => ({ const: kind, title: t(`datasources.preset.kinds.${kind}`) })),
+      }),
+      pageSize: hinted(t, "preset", "pageSize", { type: "integer", minimum: 1, maximum: 10000 }),
+      organization: text("organization"),
+      resourceId: text("resourceId"),
+      objectIdField: text("objectIdField", "^[A-Za-z_][A-Za-z0-9_]*$"),
+      outFields: hinted(t, "preset", "outFields", {
+        type: "array",
+        items: { type: "string", pattern: "^[A-Za-z_][A-Za-z0-9_]*$" },
+      }),
+      typeNames: text("typeNames"),
+      srsName: text("srsName", "^EPSG:[0-9]{4,6}$"),
+      expand: text("expand"),
+    },
+  };
+}
+
+/** `spec.http.paging` (T-7056): how a paged source names its next page, for a source no preset reads. */
+function pagingSchema(t: (key: string) => string): JsonSchema {
+  const text = (name: string) => hinted(t, "paging", name, { type: "string", minLength: 1, maxLength: 200 });
+  const count = (name: string, maximum?: number) =>
+    hinted(t, "paging", name, { type: "integer", minimum: name === "start" ? 0 : 1, ...(maximum ? { maximum } : {}) });
+  return {
+    type: "object",
+    title: t("datasources.paging.title"),
+    description: t("datasources.paging.hint"),
+    required: ["mode"],
+    properties: {
+      mode: hinted(t, "paging", "mode", {
+        type: "string",
+        oneOf: PAGING_MODES.map((mode) => ({ const: mode, title: t(`datasources.paging.modes.${mode}`) })),
+      }),
+      param: text("param"),
+      start: count("start"),
+      sizeParam: text("sizeParam"),
+      size: count("size"),
+      offsetParam: text("offsetParam"),
+      limitParam: text("limitParam"),
+      limit: count("limit"),
+      cursor: text("cursor"),
+      cursorParam: text("cursorParam"),
+      cursorHeader: text("cursorHeader"),
+      next: text("next"),
+      total: text("total"),
+      more: text("more"),
+      maxPages: count("maxPages", 10000),
+      maxRecords: count("maxRecords"),
+      delay: hinted(t, "paging", "delay", { type: "string", pattern: "^[0-9]+(ms|s)$" }),
+    },
+  };
+}
+
+/** The preset fields each kind reads, beside `kind` (jc-core `HttpPreset::validate`). */
+const PRESET_FIELDS: Record<PresetKind, string[]> = {
+  ckan: ["pageSize", "organization", "resourceId"],
+  arcgisFeature: ["pageSize", "objectIdField", "outFields"],
+  odata: ["pageSize"],
+  wfs: ["pageSize", "typeNames", "srsName"],
+  ogcFeatures: ["pageSize"],
+  sensorThings: ["pageSize", "expand"],
+};
+
+/** The paging fields each mode reads, beside `mode` and the stop rules every mode has. */
+const PAGING_FIELDS: Record<(typeof PAGING_MODES)[number], string[]> = {
+  page: ["param", "start", "sizeParam", "size"],
+  offset: ["offsetParam", "limitParam", "limit", "start"],
+  cursor: ["cursor", "cursorParam", "cursorHeader"],
+  link: [],
+  nextUrl: ["next"],
+};
+const PAGING_STOPS = ["total", "more", "maxPages", "maxRecords", "delay"];
+
+/** `names` of `all` that are not in `shown`, hidden. */
+function hiddenExcept(all: string[], shown: string[]): UiSchema {
+  return Object.fromEntries(all.filter((name) => !shown.includes(name)).map((name) => [name, HIDDEN]));
+}
+
+/**
+ * The http form shows the fields the chosen preset kind or paging mode reads (T-7076): none before
+ * a kind or a mode is chosen, and no Paging block once a preset pages the source itself.
+ */
+export function httpUiSchema(http: Record<string, unknown> | undefined): UiSchema {
+  const preset = (http?.preset ?? {}) as { kind?: string };
+  const paging = (http?.paging ?? {}) as { mode?: string };
+  const presetAll = [...new Set(Object.values(PRESET_FIELDS).flat())];
+  const pagingAll = [...new Set([...Object.values(PAGING_FIELDS).flat(), ...PAGING_STOPS])];
+  const kind = (PRESET_KINDS as readonly string[]).includes(preset.kind ?? "") ? (preset.kind as PresetKind) : undefined;
+  const mode = (PAGING_MODES as readonly string[]).includes(paging.mode ?? "") ? (paging.mode as (typeof PAGING_MODES)[number]) : undefined;
+  return {
+    http: {
+      preset: hiddenExcept(presetAll, kind ? PRESET_FIELDS[kind] : []),
+      paging: kind ? HIDDEN : hiddenExcept(pagingAll, mode ? [...PAGING_FIELDS[mode], ...PAGING_STOPS] : []),
     },
   };
 }
@@ -687,6 +898,9 @@ export function dataSourceSchema(
 /** Long free text gets a text area; the rest is default rendering. */
 export const dataSourceUiSchema: UiSchema = {
   webSocket: { openMessage: { "ui:widget": "textarea" } },
+  // Each credential choice renders with a uiSchema of its own, so the choice's help is not said a
+  // second time inside it and the one-field branch reads as its fields (rjsf MultiSchemaField).
+  webhook: { auth: { oneOf: [{}, {}] } },
 };
 
 /** Where a sync source reads from (MF-27): one of the three, chosen before the form opens. */
@@ -812,6 +1026,8 @@ export interface CatalogField {
   optional?: boolean;
   default: unknown;
   description: string;
+  /** The only values the runner takes, offered as a dropdown (ekiben-inputs.json, T-7092). */
+  options?: string[];
 }
 
 /** Bento runner input catalog item (PL-50). */
@@ -962,6 +1178,7 @@ export function runnerInputSchema(input: CatalogInput): { schema: JsonSchema; ui
       if (runnerRequires(f)) propSchema.minItems = 1;
     } else if (f.kind === "scalar" && scalarType) {
       propSchema.type = scalarType;
+      if (f.options) propSchema.enum = f.options;
     } else {
       propSchema.type = "string";
       propUi["ui:widget"] = "textarea";

@@ -122,7 +122,8 @@
     "layers": "Mapové vrstvy",
     "csrs": "Kontextové zdroje",
     "health": "Zdraví",
-    "repositories": "Repozitáře"
+    "repositories": "Repozitáře",
+    "scripts": "Skripty"
   },
   "auth": {
     "lead": "Přihlaste se účtem své organizace a spravujte tuto platformu.",
@@ -325,6 +326,7 @@
     },
     "history": {
       "filter": "Filtrovat historii",
+      "filtersToggle": "Filtry",
       "kind": "Druh",
       "name": "Název obsahuje",
       "apply": "Filtrovat",
@@ -343,6 +345,7 @@
       "older": "Zobrazit starší změny",
       "empty": "Zatím nebyla sloučena ani zamítnuta žádná změna.",
       "emptyHint": "Změna se tu objeví i s tím, kdo o ní rozhodl, jakmile ji na kartě Otevřené schválíte nebo zamítnete.",
+      "noneMatchHint": "Zrušte filtry nebo rozšiřte období, abyste viděli více rozhodnutých změn.",
       "noneOnPage": "Žádnou z těchto změn nemáte právo číst. Starší možná ano.",
       "restore": "Obnovit",
       "restoreOf": "Obnovit {name}",
@@ -2410,7 +2413,8 @@
       "mqtt": "MQTT broker",
       "http": "HTTP koncový bod",
       "websocket": "WebSocket proud",
-      "gtfs-rt": "GTFS-realtime zdroj"
+      "gtfs-rt": "GTFS-realtime zdroj",
+      "webhook": "Webhook (zasílané události)"
     },
     "dialog": {
       "create": "Nový zdroj dat",
@@ -2418,7 +2422,8 @@
       "mqtt": "Odebírá témata na brokeru a každou zprávu předá pipeline, která na něj odkazuje.",
       "http": "Periodicky stahuje URL v periodě samotné pipeline.",
       "websocket": "Drží otevřený socket a čte zprávy, které server posílá.",
-      "gtfs-rt": "Čte GTFS-realtime feed; protobuf se dekóduje ještě před pipeline."
+      "gtfs-rt": "Čte GTFS-realtime feed; protobuf se dekóduje ještě před pipeline.",
+      "webhook": "Čeká, až odesílatel pošle události; když zdroj čte pipeline, stránka ukáže adresu, kterou mu dáte."
     },
     "field": {
       "type": "Typ",
@@ -2452,7 +2457,18 @@
       "broker": "Broker",
       "externalBroker": "Externí broker (URL a secret níže)",
       "records": "Záznamy jsou v",
-      "recordsHelp": "U odpovědi JSON, která má záznamy v poli, cesta k němu, například data.stations; každá položka je jeden záznam. Prázdné pole čte celou odpověď jako jeden záznam."
+      "recordsHelp": "U odpovědi JSON, která má záznamy v poli, cesta k němu, například data.stations; každá položka je jeden záznam. Prázdné pole čte celou odpověď jako jeden záznam.",
+      "format": "Formát odpovědi",
+      "webhookAuth": "Jak se odesílatel prokazuje",
+      "webhookHmac": "Podepsané tělo (HMAC SHA-256)",
+      "webhookBearer": "Token nositele (Bearer)",
+      "maxBodyBytes": "Největší tělo (bajty)",
+      "maxInFlight": "Událostí najednou"
+    },
+    "sheet": {
+      "label": "List",
+      "help": "List ke čtení podle názvu na jeho záložce, například Stanice 2026; první řádek listu pojmenovává sloupce. Prázdné pole čte první list.",
+      "problem": "Název listu má 1 až 31 znaků bez : \\ / ? * [ ]."
     },
     "probe": {
       "title": "Jedno stažení feedu",
@@ -2491,6 +2507,18 @@
         "url": "Adresa souboru CSV",
         "urlHelp": "Adresa, která stáhne samotný soubor, začíná na https://."
       },
+      "xlsx": {
+        "title": "Tabulka (Excel, ODS) na adrese",
+        "what": "Sešit zveřejněný jako .xlsx nebo .ods, jeden záznam na řádek listu, načtený při každém běhu.",
+        "url": "Adresa tabulky",
+        "urlHelp": "Adresa, která stáhne samotný soubor, začíná https://, například https://data.example.org/stations.xlsx."
+      },
+      "shapefile": {
+        "title": "Shapefile (v zipu) na adrese",
+        "what": "Zip s jednou vrstvou shapefile (.shp, .dbf, .prj), jeden prvek GeoJSON na záznam ve WGS 84, načtený při každém běhu.",
+        "url": "Adresa zipu",
+        "urlHelp": "Adresa, která stáhne samotný zip, začíná https://, například https://data.example.org/mestske-casti.zip. Soubor .prj určuje souřadnicový systém, například EPSG:5514 pro S-JTSK."
+      },
       "json": {
         "title": "REST API (JSON)",
         "what": "API, které odpovídá v JSON, čtené při každém běhu.",
@@ -2522,7 +2550,8 @@
         "url": "Zadejte celou adresu začínající na https:// nebo http://.",
         "ckanDataset": "Tohle je stránka datasetu, ne soubor. Otevřete na ní zdroj CSV nebo JSON a zkopírujte jeho adresu ke stažení.",
         "layer": "Zadejte vrstvu ke čtení, nebo adresu souboru GeoJSON.",
-        "records": "Zadejte cestu jako názvy spojené tečkami, např. data.stations."
+        "records": "Zadejte cestu jako názvy spojené tečkami, např. data.stations.",
+        "secretKey": "Uveďte položku v tajemství, která drží přístupový údaj."
       }
     },
     "test": {
@@ -2531,7 +2560,8 @@
       "button": "Otestovat připojení",
       "running": "Testuje se…",
       "read": "Připojeno: {records, plural, one {načten # záznam} few {načteny # záznamy} other {načteno # záznamů}} ({bytes} bajtů). První z nich:",
-      "failed": "Nic se nenačetlo: {reason}. Zkontrolujte adresu a přihlašovací údaje a otestujte znovu."
+      "failed": "Nic se nenačetlo: {reason}. Zkontrolujte adresu a přihlašovací údaje a otestujte znovu.",
+      "pages": "Přečteno {pages, plural, one {# stránka} few {# stránky} other {# stránek}}."
     },
     "usedBy": {
       "title": "Používají ho",
@@ -2541,6 +2571,176 @@
       "title": "Připravená nastavení",
       "lead": "Nastavení zapíše zdroj, jeho pipeline i plán v jedné změně z několika odpovědí. Příklad: kanál GBFS sdílených kol načítaný každou minutu.",
       "back": "Zpět na zdroje dat"
+    },
+    "preset": {
+      "title": "Předvolba otevřeného API",
+      "hint": "Pro službu CKAN, ArcGIS, OData, WFS, OGC API Features nebo SensorThings: platforma ji sama stránkuje a najde záznamy. Při volbě předvolby nechte Stránkování a Záznamy jsou v prázdné.",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (datové sady nebo řádky datastore)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Záznamů na stránku",
+      "organization": "Organizace",
+      "resourceId": "ID zdroje",
+      "objectIdField": "Pole ID objektu",
+      "outFields": "Čtená pole",
+      "typeNames": "Typ prvku",
+      "srsName": "Souřadnicový systém",
+      "expand": "Související entity"
+    },
+    "paging": {
+      "title": "Stránkování",
+      "hint": "Pro stránkované API bez předvolby: jak se žádá o další stránku. Test připojení projde všechny stránky a řekne, kolik jich přečetl.",
+      "mode": "Další stránka podle",
+      "modes": {
+        "page": "Číslo stránky",
+        "offset": "Posun a limit",
+        "cursor": "Kurzor v odpovědi",
+        "link": "Hlavička Link (rel=next)",
+        "nextUrl": "Další URL v odpovědi"
+      },
+      "param": "Parametr stránky",
+      "start": "První stránka nebo posun",
+      "sizeParam": "Parametr velikosti stránky",
+      "size": "Velikost stránky",
+      "offsetParam": "Parametr posunu",
+      "limitParam": "Parametr limitu",
+      "limit": "Limit",
+      "cursor": "Cesta ke kurzoru",
+      "cursorParam": "Parametr kurzoru",
+      "cursorHeader": "Hlavička kurzoru",
+      "next": "Cesta k další URL",
+      "total": "Cesta k celkovému počtu",
+      "more": "Cesta k dalším stránkám",
+      "maxPages": "Nejvíc stránek",
+      "maxRecords": "Nejvíc záznamů",
+      "delay": "Pauza mezi stránkami"
+    },
+    "discover": {
+      "title": "Najít ve službě",
+      "hint": "Přečte vlastní seznam služby jednou na runneru projektu, jen veřejné služby, a nabídne, co tato předvolba umí číst.",
+      "needs": "Zvolte API v Předvolbě otevřeného API a napište URL služby, abyste viděli, co nabízí.",
+      "button": "Najít",
+      "running": "Čtu službu…",
+      "pick": "Nalezeno {count, plural, one {# položka} few {# položky} other {# položek}}",
+      "pickHint": "Vyberte jednu; Použít ji zapíše do formuláře, kde ji ještě můžete změnit.",
+      "use": "Použít",
+      "useNeeds": "Nejprve vyberte položku ze seznamu.",
+      "truncated": "Služba vypisuje víc, než Portál čte; chybí-li vaše položka, zadejte užší URL.",
+      "none": "Služba nevypisuje nic, co by tato předvolba četla. Zkontrolujte URL a druh API.",
+      "failed": "Nic se nevypsalo: {reason}. Zkontrolujte URL a druh API a zkuste to znovu.",
+      "used": "Zapsáno do formuláře: {value}.",
+      "fields": {
+        "organization": "Organizace",
+        "layer": "Vrstva",
+        "entitySet": "Sada entit",
+        "typeNames": "Typ prvku",
+        "collection": "Kolekce",
+        "thing": "Thing"
+      },
+      "refused": "Požádejte správce projektu o roli, která navrhuje datové zdroje."
+    },
+    "wizard": {
+      "step": "{n}. {label}",
+      "kind": "Co připojujete",
+      "address": "Adresa a přístupový údaj",
+      "discover": "Výběr ze služby",
+      "pagingTitle": "Stránky",
+      "format": "Formát",
+      "check": "Název a první řádky",
+      "groups": {
+        "api": "API otevřených dat, čtené po stránkách",
+        "file": "Soubor nebo kanál na adrese",
+        "other": "Něco jiného: proud, souborový server, fronta, databáze nebo webhook"
+      },
+      "otherHelp": "Otevře níže celý formulář toho připojení: MQTT, SFTP, Kafka, databáze a další.",
+      "otherNone": "Vyberte připojení…",
+      "api": {
+        "ckan": "Všechny datové sady jedné organizace na portálu CKAN.",
+        "arcgisFeature": "Prvky jedné vrstvy služby ArcGIS Feature Service.",
+        "odata": "Řádky jedné množiny entit služby OData v4.",
+        "wfs": "Všechny prvky jednoho typu WFS 2.0 jako GeoJSON.",
+        "ogcFeatures": "Položky jedné kolekce OGC API Features.",
+        "sensorThings": "Věci nebo datové proudy služby SensorThings."
+      },
+      "apiUrl": "Adresa služby",
+      "apiUrlHelp": {
+        "ckan": "Adresa portálu, například https://opendata-ajuntament.barcelona.cat/data.",
+        "arcgisFeature": "Adresa FeatureServer, například https://services.example/arcgis/rest/services/Trees/FeatureServer.",
+        "odata": "Kořen služby končící na .svc, například https://services.odata.org/V4/Northwind/Northwind.svc.",
+        "wfs": "Adresa WFS před otazníkem, například https://kartta.hel.fi/ws/geoserver/avoindata/wfs.",
+        "ogcFeatures": "Adresa API, například https://demo.pygeoapi.io/master.",
+        "sensorThings": "Adresa s verzí, například https://iot.hamburg.de/v1.1."
+      },
+      "secret": "Přístupový údaj",
+      "secretPublic": "Žádný: veřejný zdroj",
+      "secretHelp": "Vyberte tajemství s klíčem nebo tokenem; heslo se sem nikdy nepíše.",
+      "secretNone": "Zdroje dat tohoto projektu zatím nepoužívají žádné tajemství; veřejný zdroj ho nepotřebuje. Zdroj s klíčem dostane tajemství ve formuláři níže.",
+      "secretKeyHelp": "Položka v tajemství, která drží přístupový údaj, například token.",
+      "secretProbe": "Zdroj s přístupovým údajem kontrola nenačte; po uložení ho načte Otestovat připojení.",
+      "pagingHint": "Jednou přečte první odpověď na běžci projektu a řekne, kolik stránek běh přečte.",
+      "pagingButton": "Zjistit stránkování",
+      "pagingRunning": "Čtu první odpověď…",
+      "paging": {
+        "pages": "Přečte {pages} stránek po {onPage} ({total} záznamů).",
+        "more": "Čte stránky po {onPage}, dokud služba neřekne, že další nejsou.",
+        "walk": "Jde na další stránku, kterou služba uvede, na první je {onPage} záznamů.",
+        "totalOnly": "První odpověď uvádí {total} záznamů celkem, {onPage} na této stránce, ale neuvádí další stránku; nastavte stránkování ve formuláři níže.",
+        "once": "Jedna odpověď obsahuje vše: adresa se při běhu přečte jednou.",
+        "skipped": "Nelze zjistit: {reason}. Zkuste to znovu nebo nastavte stránkování ve formuláři níže."
+      },
+      "allPages": "Číst všechny stránky",
+      "allPagesHint": "Zapíše stránkování do formuláře; bez něj se přečte jen první stránka.",
+      "presetPages": "Druh API stránkuje zdroj sám, s velikostí stránky, kterou služba dovolí, pokud ji nenastavíte ve formuláři níže.",
+      "oneRead": "Soubor nebo kanál se při každém běhu přečte celý: stránky nemá.",
+      "rows": "Jeden záznam na řádek",
+      "rowsHint": "Každý řádek CSV přijde do pipeline jako jeden záznam s názvy sloupců z hlavičky.",
+      "handoff": "Spustit pipeline nad {name}",
+      "picked": "Vybráno: {value}. Vyplnit formulář a zkontrolovat ho zapíše do formuláře níže."
+    },
+    "webhook": {
+      "title": "Kam odesílatelé posílají",
+      "hint": "Adresu pipeline vložte do odesílatele. Posílá požadavky POST s hlavičkou níže.",
+      "header": "Hlavička: {header}",
+      "maxBody": "Největší tělo: {bytes} bajtů",
+      "noReaders": "Tento zdroj zatím nečte žádná pipeline, proto nemá adresu. Vytvořte pipeline, která ho čte, a vraťte se.",
+      "unpublished": "Tato instalace nezveřejňuje adresu pro webhooky. Požádejte administrátora, aby do nasazení přidal vstupní záznam.",
+      "copy": "Kopírovat adresu",
+      "copied": "Adresa zkopírována",
+      "test": {
+        "title": "Poslat testovací událost",
+        "hint": "Pošle tělo níže vybrané pipeline, podepsané tak, jak ho podepisuje váš odesílatel. Událost projde pipeline jako skutečná.",
+        "button": "Poslat testovací událost",
+        "running": "Posílám…",
+        "accepted": "Přijato ({status}): pipeline událost převzala.",
+        "refused": "Běžec odpověděl {status}: {answer}",
+        "unauthorized": "Tajemství nebo hlavička, které tento zdroj uvádí, neodpovídají tomu, co má běžec: zkontrolujte obojí a pošlete znovu."
+      },
+      "testPipeline": {
+        "label": "Pipeline",
+        "help": "Jedna z pipeline, které čtou tento zdroj, například ttn-uplinks."
+      },
+      "testBody": {
+        "label": "Tělo",
+        "help": "Událost tak, jak by ji poslal odesílatel, například JSON jednoho uplinku podle dokumentace poskytovatele."
+      }
+    },
+    "signatureHeader": {
+      "label": "Hlavička s podpisem",
+      "help": "Hlavička, do které odesílatel zapisuje podpis, například X-Hub-Signature-256."
+    },
+    "signingSecret": {
+      "label": "Podpisové tajemství",
+      "help": "Tajemství se sdíleným podpisovým klíčem, například ttn-webhook s klíčem secret. Nejprve ho přidejte v části Tajemství."
+    },
+    "bearerToken": {
+      "label": "Přístupový token",
+      "help": "Tajemství s tokenem, který odesílatel píše za Bearer, například chirpstack s klíčem token."
     }
   },
   "pipelines": {
@@ -2855,7 +3055,17 @@
       "lastSamples": "Poslední zprávy tímto krokem",
       "lastSamplesNone": "Tímto krokem zatím nic neprošlo.",
       "lastSamplesUnavailable": "Poslední zprávy nejsou k dispozici.",
-      "lastSamplesWithheld": "Skryto: cílový endpoint skrývá atributy a před mapováním nesou ještě názvy ze zdroje. Vyberte výstup a uvidíte, co se zapsalo."
+      "lastSamplesWithheld": "Skryto: cílový endpoint skrývá atributy a před mapováním nesou ještě názvy ze zdroje. Vyberte výstup a uvidíte, co se zapsalo.",
+      "tier": {
+        "forms": "Nastavení formulářem",
+        "advanced": "Pokročilé: mění tok zpráv",
+        "bloblang": "Psané v Bloblangu"
+      },
+      "tierHint": {
+        "forms": "Bez kódu: každý otevře formulář s nápovědou u každého pole, například dedupe zahodí záznam viděný za poslední hodinu.",
+        "advanced": "I tyto mají formuláře, ale větví, opakují nebo zkoušejí znovu kroky v sobě: špatné nastavení může záznamy zahodit nebo zopakovat. Po každé změně spusťte test pipeline.",
+        "bloblang": "Textové pole s nápovědou: pro mapování, která mapovač nepokrývá, například root.name = this.name.uppercase()."
+      }
     },
     "emptyHint": "Přidejte datový zdroj a pipeline tlačítkem, nebo požádejte asistenta, aby ji postavil z toho, co už máte.",
     "expiryRemoves": "Entity, které se neaktualizovaly {window}, se odstraňují",
@@ -2891,7 +3101,23 @@
       "maskedKept": "{count, plural, one {# záznam zůstává v seznamu: jeho hodnota byla zamaskována jako tajemství a opakování by zapsalo masku. Přinese ho další čtení zdroje.} few {# záznamy zůstávají v seznamu: jejich hodnoty byly zamaskovány jako tajemství a opakování by zapsalo masku. Přinese je další čtení zdroje.} other {# záznamů zůstává v seznamu: jejich hodnoty byly zamaskovány jako tajemství a opakování by zapsalo masku. Přinese je další čtení zdroje.}}",
       "newest": "Nejnovější",
       "older": "Starší záznamy",
-      "openRun": "Otevřít jeho běh"
+      "openRun": "Otevřít jeho běh",
+      "groups": {
+        "title": "Podle pravidla",
+        "lead": "Všechny uchované záznamy podle porušeného pravidla a atributu, největší skupina první. Opravte nejdřív největší skupinu.",
+        "export": "Exportovat CSV",
+        "exporting": "Exportuje se…",
+        "exportHint": "Všechny uchované záznamy s pravidlem a důvodem, tajemství zamaskovaná a osobní atributy vynechané. Soubor: {file}.",
+        "count": "{count, plural, one {# záznam} few {# záznamy} other {# záznamů}}",
+        "allowed": "Model povoluje:",
+        "fix": {
+          "model": "Opravte v datovém modelu: odmítá tento atribut nebo hodnotu. Je-li zdroj správný, rozšiřte slot nebo atribut deklarujte.",
+          "mapping": "Opravte v mapování: zapisuje hodnotu špatného tvaru. Převeďte ji nebo namapujte na to, co slot přijímá.",
+          "step": "Opravte krok: krok pipeline na těchto záznamech selhal. Chybu kroku najdete v běhu záznamu.",
+          "runner": "Runner tyto záznamy odmítl bez pravidla modelu. Jeho slova najdete v běhu záznamu."
+        },
+        "example": "Příklad"
+      }
     },
     "runs": {
       "open": "Běhy a záznam",
@@ -3089,13 +3315,52 @@
         "title": "Životnost",
         "hint": "Kdy entity nebo některá jejich pole opustí prostor. Uloží se jako životnost pipeline, nikdy jako kód mapování.",
         "pickType": "Nejprve vyberte cíl a typ, který mapování zapisuje: životnost se nastavuje pro každý typ."
+      },
+      "sourceCheck": {
+        "title": "Zkontrolovat celý zdroj",
+        "hint": "Spustí uloženou pipeline nad každou stránkou zdroje a spočítá, co by ostrý běh přijal a odmítl, podle pravidla. Nic se nezapíše. Zastaví se po 60 s nebo 50 000 záznamech. Příklad: zdroj CKAN s 12 stránkami, 2 300 záznamů.",
+        "run": "Zkontrolovat celý zdroj",
+        "again": "Zkontrolovat znovu",
+        "running": "Čte se každá stránka zdroje; trvá to nejvýše 60 s.",
+        "unsaved": "Kontrola čte uloženou pipeline: navrhněte tuto a zkontrolujte ji, až se její změna sloučí.",
+        "failed": "Kontrola se nespustila",
+        "counts": "{count, plural, one {# záznam} few {# záznamy} other {# záznamů}}: přijato {accepted, number}, odmítnuto {rejected, number}",
+        "complete": "Přečetla se každá stránka zdroje; ostrý běh by dal na seznam odmítnutých tytéž záznamy.",
+        "partial": "Kontrola nepřečetla celý zdroj, takže počty pokrývají jen přečtenou část. Důvod je níže.",
+        "rows": "{count, plural, one {# odmítnutý záznam} few {První # odmítnuté záznamy} other {Prvních # odmítnutých záznamů}}",
+        "place": "Záznam {place}",
+        "more": "{count, plural, one {Další # záznam je započítán} few {Další # záznamy jsou započítány} other {Dalších # záznamů je započítáno}} ve skupinách výše.",
+        "groupsLead": "Každý záznam, který kontrola odmítla, spočítaný podle porušeného pravidla a atributu, největší skupina první. Opravte nejprve největší skupinu.",
+        "completeClean": "Přečetla se každá stránka zdroje a žádný záznam neporušuje pravidlo: ostrý běh by zapsal všechny.",
+        "retry": "Spusťte ji znovu, až bude důvod výše vyřešen."
+      },
+      "schedule": {
+        "title": "Kdy běží",
+        "hint": "Vyberte slovy, jak často; dalších pět spuštění se ukáže ve vašem čase.",
+        "field": "Rozvrh",
+        "resident": "Tato pipeline běží stále a zapisuje každý záznam, když přijde; pro rozvrh nastavte v Základních údajích třídu scheduled.",
+        "byPeriod": "Pipeline čte zdroj každých {period}, jak říká její perioda. Přidejte rozvrh, má-li běžet v určených časech.",
+        "add": "Spouštět podle rozvrhu",
+        "remove": "Odebrat rozvrh",
+        "floor": "Tento projekt dovoluje pipeline běžet nejvýše {floor}.",
+        "belowFloor": "Tento rozvrh běží {gap}, častěji, než projekt dovoluje ({floor}). Vyberte pomalejší rozvrh nebo požádejte správce o snížení minima projektu.",
+        "afterApply": "První běh se spustí v prvním čase výše, jakmile je změna schválena a nasazena.",
+        "hints": {
+          "field": "Jak často pipeline čte svůj zdroj, například každý den v 03:00. Časy jsou v UTC, jak je čte runner.",
+          "none": "Bez rozvrhu: pipeline běží, když zdroj pošle záznamy, například téma MQTT. Přidejte rozvrh pro zdroj čtený podle času, například soubor CSV."
+        },
+        "clock": {
+          "hours": "{count, plural, one {jednou za hodinu} few {každé # hodiny} other {každých # hodin}}",
+          "minutes": "{count, plural, one {každou minutu} few {každé # minuty} other {každých # minut}}",
+          "seconds": "{count, plural, one {každou sekundu} few {každé # sekundy} other {každých # sekund}}"
+        }
       }
     },
     "mapper": {
       "mode": "Jak se z každého záznamu stane entita",
       "modeMap": "Přiřadit pole",
       "modeCode": "Napsat Bloblang",
-      "modeMapHint": "Pro každý atribut vyberte pole záznamu, výraz, pevnou hodnotu nebo bod.",
+      "modeMapHint": "Pro každý atribut vyberte pole záznamu, s kroky jako oříznutí nebo překlad hodnot, odkaz na jinou entitu, pole pro každý jazyk, geometrii, spojená pole, výraz nebo pevnou hodnotu.",
       "modeCodeHint": "Krok v Bloblangu napište sami.",
       "type": "Typ entity",
       "typeHint": "Typ z datového modelu cílového prostoru; jeho atributy jsou níže.",
@@ -3133,12 +3398,104 @@
         "notBoolean": "{field} obsahuje „{value}“, což není true ani false; {name} očekává true nebo false. Vyberte jiné pole nebo změňte vzorek.",
         "notValue": "{field} obsahuje „{value}“; {name} očekává jednu z hodnot {values}. Vyberte jiné pole nebo změňte vzorek.",
         "noId": "Vyberte pole, ze kterého vznikne id každé entity.",
-        "notTime": "{field} obsahuje {value}, což není čas: použijte text RFC 3339, například 2026-10-20T14:30:00Z, nebo Unix sekundy."
+        "notTime": "{field} obsahuje {value}, což není čas: použijte text RFC 3339, například 2026-10-20T14:30:00Z, nebo Unix sekundy.",
+        "notShaped": "{field} obsahuje „{value}“, což tvar data pro {name} nepřečte. Vyberte tvar, jaký zdroj píše."
       },
       "expiry": {
         "migrated": "Čas konce, který tento krok zapisoval, je nyní životností pipeline v kroku Životnost. Uloží se s vaším dalším návrhem.",
         "migrateField": "Tento krok zapisuje expiresAt z pole záznamu {field} a z něj se nemapuje žádný atribut s datem a časem. Namapujte ho na takový atribut, vyberte konec v kroku Životnost nebo zahoďte vlastní řádky kroku.",
         "drop": "Zahodit vlastní expiresAt kroku"
+      },
+      "geojson": "Geometrie z pole GeoJSON…",
+      "wkt": "Geometrie z pole WKT…",
+      "ref": "Odkaz na {target} podle klíčového pole…",
+      "languagesChoice": "Jedno pole pro každý jazyk…",
+      "concatChoice": "Více polí spojených…",
+      "refField": "Klíčové pole entity {target}",
+      "languages": "Text pro každý jazyk",
+      "language": "Jazyk",
+      "languageField": "Pole pro {tag}",
+      "languageRemove": "Odebrat jazyk {tag}",
+      "languageAdd": "Přidat jazyk",
+      "remove": "Odebrat",
+      "wktField": "Pole WKT",
+      "geojsonField": "Pole GeoJSON",
+      "crs": "Souřadnicový systém zdroje",
+      "crsName": {
+        "EPSG_4326": "EPSG:4326 · WGS 84, stupně (GPS)",
+        "EPSG_4258": "EPSG:4258 · ETRS89, stupně",
+        "EPSG_3857": "EPSG:3857 · Web Mercator, metry",
+        "EPSG_25829": "EPSG:25829 · ETRS89 / UTM 29N (Portugalsko, Galicie)",
+        "EPSG_25830": "EPSG:25830 · ETRS89 / UTM 30N (střední Španělsko)",
+        "EPSG_25831": "EPSG:25831 · ETRS89 / UTM 31N (Barcelona, Katalánsko)",
+        "EPSG_25832": "EPSG:25832 · ETRS89 / UTM 32N (západní Německo)",
+        "EPSG_25833": "EPSG:25833 · ETRS89 / UTM 33N (východní Německo)",
+        "EPSG_25834": "EPSG:25834 · ETRS89 / UTM 34N (východní Polsko, východní Slovensko)",
+        "EPSG_3879": "EPSG:3879 · ETRS89 / GK25 (Helsinky, Finsko)",
+        "EPSG_3067": "EPSG:3067 · ETRS89 / TM35FIN (Finsko)",
+        "EPSG_5514": "EPSG:5514 · S-JTSK / Křovák (Slovensko, Česko)",
+        "EPSG_2056": "EPSG:2056 · CH1903+ / LV95 (Švýcarsko)",
+        "EPSG_27700": "EPSG:27700 · British National Grid (Velká Británie)"
+      },
+      "concat": "Pole ke spojení",
+      "concatPart": "Pole {number}",
+      "concatRemove": "Odebrat pole {field} ze spojení",
+      "concatAdd": "Přidat pole",
+      "separator": "Mezi poli",
+      "separatorNone": "nic",
+      "separatorSpace": "mezera",
+      "transforms": "Úpravy hodnoty {name}",
+      "transform": {
+        "trim": "Oříznout mezery",
+        "lower": "Malá písmena",
+        "upper": "Velká písmena",
+        "decimalComma": "Číslo s desetinnou čárkou",
+        "date": "Datum ve tvaru",
+        "lookup": "Přeložit hodnoty na hodnoty modelu",
+        "default": "Hodnota, když je prázdné"
+      },
+      "transformHint": {
+        "trim": "Odstraní mezery kolem textu: „ Bo “ bude „Bo“.",
+        "lower": "Zapíše text malými písmeny: „Bo“ bude „bo“.",
+        "upper": "Zapíše text velkými písmeny: „bo“ bude „BO“.",
+        "decimalComma": "Přečte text jako 1.234,5 jako číslo 1234.5: tečky a mezery oddělují tisíce, čárka je desetinná.",
+        "lookup": "Každá hodnota vzorku, kterou model nemá, dostane jednu z hodnot modelu; ostatní zůstanou, jak jsou."
+      },
+      "transformRemove": "Odebrat krok {what}",
+      "transformAdd": "Upravit hodnotu",
+      "transformPick": "— přidat krok —",
+      "dateFormat": "Tvar data v poli",
+      "dateFormats": {
+        "0": "den.měsíc.rok, 20.10.2025",
+        "1": "den/měsíc/rok, 20/10/2025",
+        "2": "měsíc/den/rok, 10/20/2025",
+        "3": "rok-měsíc-den, 2025-10-20",
+        "4": "den.měsíc.rok hodina:minuta, 20.10.2025 14:30",
+        "5": "den/měsíc/rok hodina:minuta, 20/10/2025 14:30",
+        "6": "rok-měsíc-den hodina:minuta:sekunda, 2025-10-20 14:30:00"
+      },
+      "defaultValue": "Hodnota při prázdném poli",
+      "lookupEmpty": "Každá hodnota vzorku už je hodnotou modelu; načtěte jiný vzorek, chcete-li překládat další.",
+      "lookupHint": "Hodnota zdroje → hodnota modelu",
+      "lookupRow": "„{from}“ bude",
+      "lookupKeep": "— ponechat —",
+      "observedAt": "Čas pozorování pro {name}",
+      "hint": {
+        "concat": "Pole se spojí v tomto pořadí, prázdná se vynechají; například ulice a číslo domu dají C/ Major 1.",
+        "concatPart": "Pole vzorku, například ADRECA.",
+        "crs": "Systém, ve kterém jsou souřadnice zdroje; runner zapisuje WGS 84. Například otevřená data Barcelony používají ETRS89 / UTM 31N.",
+        "dateFormat": "Jak zdroj zapisuje datum; atribut dostane ISO 8601, například 20/10/2025 bude 2025-10-20.",
+        "defaultValue": "Zapíše se, když záznam nechá pole prázdné, například 0 nebo unknown.",
+        "geojsonField": "Pole s geometrií GeoJSON jako text nebo objekt, například Point se souřadnicemi [2.17, 41.38].",
+        "languageField": "Pole s textem v jazyce {tag}, například NAME_{tag}.",
+        "language": "Jazykový kód, například en nebo ca.",
+        "languages": "Vyberte pole pro každý jazyk zdroje, například NOM_CA pro ca a NOM_ES pro es. Prázdné pole se vynechá.",
+        "lookupRow": "Jedna z hodnot modelu, například {example}.",
+        "observedAt": "Volitelné: pole s časem měření hodnoty jako text RFC 3339, například 2026-10-20T14:30:00Z, nebo Unix sekundy; stane se observedAt atributu.",
+        "refField": "Pole s vlastním id entity {target} v tomto prostoru, například kód městské části jako 01.",
+        "separator": "Co stojí mezi dvěma spojenými poli, například čárka a mezera.",
+        "transformAdd": "Volitelné kroky použité na pole v pořadí, například oříznout mezery a pak přeložit hodnoty na hodnoty modelu.",
+        "wktField": "Pole s textem WKT, například POINT (2.17 41.38)."
       }
     },
     "debug": {
@@ -3520,7 +3877,7 @@
       "grants": "Oprávnění",
       "byPolicy": "Povoleno politikou {policy}",
       "fix": "Oprava: {fix}",
-      "counts": "odesláno {sent}, odmítnuto {rejected}, selhalo {failed}",
+      "counts": "odesláno {sent}, odmítnuto {rejected, number}, selhalo {failed}",
       "perMinute": "{rate} záznamů za minutu",
       "openPipeline": "Otevřít pipeline",
       "openRuns": "Běhy",
@@ -4149,6 +4506,7 @@
       "search": "Hledat osoby",
       "show": "Zobrazit přístup",
       "failed": "Přístup se nepodařilo zobrazit. Zkuste to znovu za minutu; důvod je níže.",
+      "refused": "Tento přístup nesmíte zobrazit. Přístup jiné osoby nebo účtu prohlíží jen správce organizace; důvod je níže.",
       "nothing": "Nedosáhne ničeho",
       "nothingLead": "Žádný Endpoint tohoto projektu je nepřipouští ani jim nic neuděluje. Přístup udělíte politikou, skupinou nebo vazbou role.",
       "space": "prostor {space}",
@@ -7571,9 +7929,10 @@
       "type": "Typ entity",
       "typeHelp": "Nechte prázdné pro dotaz na jakýkoli typ.",
       "submit": "Zeptat se brány",
-      "failed": "Bránu se nepodařilo zeptat. Zkuste to znovu za minutu; důvod je níže.",
+      "failed": "Bránu se nepodařilo zeptat. Důvod a Zkusit znovu najdete níže.",
       "allowed": "Povoleno",
       "refused": "Odmítnuto",
+      "refusedNext": "Chcete-li to povolit, přidejte této osobě, skupině nebo roli oprávnění v zásadě prostoru koncového bodu v seznamu výše a zeptejte se znovu.",
       "decidedBy": "Rozhodla Policy",
       "reason": {
         "policy_grant_matched": "Tuto akci povoluje Policy.",
@@ -8436,6 +8795,7 @@
       "measured": "Úložiště změřeno {at}; AI přepočteno kurzem {rate} {currency} za jeden americký dolar.",
       "partial": "Některé prostory nebo asistenti neodpověděli; počítají se zde jako 0. Důvody jsou v řádcích každého projektu.",
       "empty": "Žádný projekt zatím nemá prostor ani asistenta, proto celý měsíc patří platformě. Vytvořte v projektu Context Space a uvidíte jeho podíl.",
+      "emptyAction": "Otevřít projekty",
       "caption": "Náklady podle projektů, {month}",
       "project": "Projekt",
       "node": "Podíl na serveru",
@@ -9085,6 +9445,11 @@
       "0": "0: nejvýše jednou (zpráva se může ztratit)",
       "1": "1: alespoň jednou (zpráva se může opakovat)",
       "2": "2: právě jednou (nejpomalejší)"
+    },
+    "httpBodyFormat": {
+      "csv": "CSV",
+      "xlsx": "Tabulka (xlsx, ods)",
+      "shapefile": "Shapefile (zabalený v zip)"
     }
   },
   "picker": {
@@ -12861,5 +13226,83 @@
     "signIn": "Tento konektor vyžaduje přihlášení: když se asistent zeptá na způsob přihlášení, zvolte OAuth a přihlaste se účtem Portálu.",
     "list": "Postup pro jednotlivé asistenty",
     "other": "Jiný klient MCP"
+  },
+  "scripts": {
+    "workbench": {
+      "title": "Dílna skriptů",
+      "purpose": "Napište další verzi uloženého skriptu, spusťte jeho testy na runneru projektu a navrhněte ji k posouzení."
+    },
+    "empty": "Zatím žádný skript: pojmenujte ho níže, napište kód a testy a navrhněte verzi 1.0.0.",
+    "field": {
+      "script": "Skript",
+      "newScript": "Nový skript",
+      "name": "Název",
+      "code": "Kód",
+      "tests": "Testy",
+      "timeout": "Čas na záznam (ms)",
+      "memory": "Paměť na záznam (MiB)",
+      "version": "Verze",
+      "target": "Přesunout připnutí na"
+    },
+    "hint": {
+      "script": "Vyberte skript projektu a upravte jeho další verzi, nebo začněte nový.",
+      "name": "Malá písmena, číslice a pomlčky, např. sjtsk-to-wgs84.",
+      "code": "Kód, který čte záznam a zapisuje ho zpět, např. record.checked = true. Nedosáhne na síť, soubory ani tajemství.",
+      "tests": "Seznam testů v JSON, každý s názvem, vstupním a očekávaným záznamem, např. úvodní seznam v poli.",
+      "timeout": "1 až 200, např. 50. Prázdné znamená 50.",
+      "memory": "1 až 64, např. 32. Prázdné znamená 32.",
+      "version": "MAJOR.MINOR.PATCH vyšší než nejnovější verze, např. {version}.",
+      "target": "Zveřejněná verze, např. 1.1.0. Každá přesunutá pipeline ji spustí po schválení změny."
+    },
+    "reason": {
+      "name": "Pojmenujte skript malými písmeny, číslicemi a pomlčkami.",
+      "code": "Napište 1 až 65536 bajtů kódu.",
+      "tests": "Napište testy jako seznam JSON objektů s name, input a expected.",
+      "run": "Nejprve spusťte testy.",
+      "versionFormat": "Napište verzi jako MAJOR.MINOR.PATCH, např. 1.1.0.",
+      "versionOrder": "Vyberte verzi vyšší než {version}.",
+      "timeout": "Napište celé číslo od 1 do 200.",
+      "memory": "Napište celé číslo od 1 do 64.",
+      "limits": "Nejprve opravte limity.",
+      "pipelineRights": "Vaše role v tomto projektu nenavrhuje pipelines.",
+      "pick": "Vyberte pipelines k přesunu.",
+      "failing": "{count, plural, one {# test selhal: opravte kód nebo test.} few {# testy selhaly: opravte kód nebo testy.} other {# testů selhalo: opravte kód nebo testy.}}",
+      "runner": "Runner projektu neodpověděl. Zkuste to znovu za minutu; pokud to stále selhává, požádejte správce, aby runner zkontroloval.",
+      "rightsNext": "Vaše role v tomto projektu nenavrhuje skripty, a proto nemůže spouštět ani jejich testy. Požádejte správce projektu o roli, která navrhuje skripty, jako je pipeline-editor.",
+      "proposed": "Upravte kód a napište další verzi.",
+      "runFailed": "Testy se nespustily: opravte, co říká zpráva výše, a spusťte je znovu."
+    },
+    "action": {
+      "run": "Spustit testy",
+      "propose": "Navrhnout verzi {version}",
+      "move": "{count, plural, one {Přesunout # pipeline na {version}} few {Přesunout # pipelines na {version}} other {Přesunout # pipelines na {version}}}"
+    },
+    "results": {
+      "caption": "Výsledky testů",
+      "test": "Název testu",
+      "verdict": "Výsledek",
+      "output": "Výstup",
+      "time": "Čas",
+      "pass": "Prošel",
+      "fail": "Selhal",
+      "changed": "Změněno",
+      "outputOf": "Výstup testu {test}",
+      "empty": "Spusťte testy a výsledek každého se zobrazí zde.",
+      "emptyTitle": "Zatím bez výsledku",
+      "millis": "{count} ms",
+      "changedNote": "Test označený Změněno zapíše jiný výstup než nejnovější uložená verze {version}."
+    },
+    "proposed": "Verze {version} je navržena. Schválí ji druhá osoba na stránce Schválení; pipelines si připnutí ponechají, dokud je nepřesunete.",
+    "used": {
+      "title": "Pipelines používající {name}",
+      "caption": "Pipelines, které připínají {name}",
+      "emptyTitle": "Tento skript nepoužívá žádná pipeline",
+      "empty": "Přidejte do pipeline krok skriptu s názvem {name} nebo ho použijte v jejích skriptech a objeví se zde.",
+      "pipeline": "Pipeline",
+      "pinned": "Připnutá verze",
+      "already": "Už je na {version}.",
+      "moved": "Navržena jedna změna přesouvající {names} na {version}.",
+      "onTarget": "Na cílové verzi"
+    }
   }
 }

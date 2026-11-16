@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The Endpoint form's datasets of one Endpoint (ADR-N-068, EP-174, EP-175), against a stubbed API
 // as representation_outputs.spec.ts does. Shots of every state at 1440 and 400 go to

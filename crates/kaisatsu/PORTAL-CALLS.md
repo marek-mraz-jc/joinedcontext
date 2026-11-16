@@ -107,6 +107,12 @@ The Portal needs none of these; each refusal has its test in `portal_contract.rs
   optional, resolved at each token request and listing, so a deleted scope is gone at once and
   `endpoint:*` or an unmarked scope is never taken (T-6857).
 - portal-api writes no unmanaged client (`portal-reconciler`, `mcp-hub`) and creates no person.
+  One exception (T-6972): on a client whose realm file sets the attribute
+  `audiences-managed-by: joinedcontext` (an imported pipeline client, marked by
+  `deploy/rehearsal/rehearsal.py realms`), it may `POST` one new `oidc-audience-mapper` naming a
+  custom audience and no client's (C5). It changes or removes no mapper of the import (409 on a
+  held name) and writes nothing else on that client (`workload_clients.rs add_imported_audiences`,
+  `the_portal_adds_a_door_audience_to_an_imported_pipeline_client_the_realm_marked`).
 - portal-reconciler lists, reads and writes no client.
 - `POST /users` stores no role mapping, group or service-account link from the body, for every
   caller below realm admin; the person holds the realm's `defaultRoles`.

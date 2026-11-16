@@ -2903,6 +2903,7 @@ dependencies = [
  "jsonschema",
  "jsonwebtoken",
  "lettre",
+ "linkml-model",
  "metrics",
  "metrics-exporter-prometheus",
  "mime_guess",
@@ -3106,6 +3107,16 @@ checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
 dependencies = [
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "linkml-model"
+version = "0.3.0"
+dependencies = [
+ "moka",
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -13,7 +13,7 @@ export const EKIBEN_FIELDS = {
       optional: false,
       default: null,
       description:
-        "The SHA256 fingerprint of the server's host key as its operator confirms it (ssh-keyscan sftp.example.org | ssh-keygen -lf - shows it); the runner connects only to that key, e.g. SHA256:Nh0Me49Zh9fDw/VYUfq43IJmI1T+XrjiYONPND8GzaM.",
+        "The server's SHA256 host key fingerprint, for example SHA256:Nh0Me49Zh9fDw/VYUfq43IJmI1T+XrjiYONPND8GzaM; only a server presenting it is accepted. Get it from the operator, or run ssh-keyscan host | ssh-keygen -lf - and confirm with them.",
     },
     {
       after: "credentials.password",

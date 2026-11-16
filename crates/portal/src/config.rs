@@ -135,6 +135,11 @@ pub struct Config {
     /// sidecar (`JC_PORTAL_PIPELINE_IDENTITY=pipeline`) rather than its project's `pipelines`
     /// account (`project`, the default), PL-19. Set once the federated mechanism is seen working.
     pub pipeline_identity: bool,
+    /// Whether the validation stage before every write checks a record with the space's LinkML
+    /// model (`JC_PORTAL_PIPELINE_STAGE=linkml`, the runner's `linkml_validate`, G-19) rather
+    /// than one JSON Schema per class (`json-schema`, the default). Set once a space's reject
+    /// sets agree under both (`ekiben-processors` bench, T-7068).
+    pub pipeline_linkml_stage: bool,
     /// How such a stream proves its pipeline's client: the runner's token sidecar
     /// (`pipeline`), or the client's own secret (`pipeline-secret`, jc: one process, no
     /// Kubernetes identity; the clients come with the imported realm).
@@ -281,6 +286,11 @@ pub struct Config {
     /// call the Portal API with the viewer's session (T-2476), and another App's. `None` serves
     /// on every host, as a Portal without an edge in front of it does.
     pub apps_url: Option<Url>,
+    /// Where a webhook DataSource's sender posts (`JC_PORTAL_INGEST_URL`, PL-122, e.g.
+    /// `https://portal.{domain}/ingest/default`): a pipeline's address is
+    /// `{ingest_url}/{project}.{pipeline}/{dataSource}`. `None`: this installation publishes no
+    /// ingest listener, and the DataSource page says so.
+    pub ingest_url: Option<String>,
     /// Whether this Portal answers the App hosts under `apps_url` itself (`JC_PORTAL_SERVE_APP_HOSTS=true`,
     /// jc with its `*.apps.{domain}` entry): every request on `{name}.apps.{domain}` reaches App
     /// `name` alone ([`crate::apps::app_host`]), as the edge file has APISIX do where an edge
@@ -469,6 +479,7 @@ impl std::fmt::Debug for Config {
             )
             .field("mail_from", &self.mail_from)
             .field("pipeline_identity", &self.pipeline_identity)
+            .field("pipeline_linkml_stage", &self.pipeline_linkml_stage)
             .field("pipeline_credential", &self.pipeline_credential)
             .field("pipelines_concurrency", &self.pipelines_concurrency)
             .field("pipeline_namespace", &self.pipeline_namespace)
@@ -501,6 +512,7 @@ impl std::fmt::Debug for Config {
             .field("reconciler_state_dir", &self.reconciler_state_dir)
             .field("removal_hold_percent", &self.removal_hold_percent)
             .field("apps_url", &self.apps_url.as_ref().map(Url::as_str))
+            .field("ingest_url", &self.ingest_url)
             .field("serve_app_hosts", &self.serve_app_hosts)
             .field("app_pods", &self.app_pods)
             .field("artifact_store", &self.artifact_store)
@@ -967,6 +979,33 @@ fn removal_hold_percent(lookup: &impl Fn(&str) -> Option<String>) -> Result<u8, 
             var: "JC_PORTAL_REMOVAL_HOLD_PERCENT",
             reason: format!("`{raw}` is not a whole percent from 1 to 100, e.g. 25"),
         })
+}
+
+/// `JC_PORTAL_INGEST_URL`: an absolute `http(s)` URL with a path and no query or fragment,
+/// kept without its trailing `/`.
+fn ingest_url(lookup: &impl Fn(&str) -> Option<String>) -> Result<Option<String>, ConfigError> {
+    let Some(raw) = lookup("JC_PORTAL_INGEST_URL").filter(|v| !v.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let invalid = |reason: &str| ConfigError::Invalid {
+        var: "JC_PORTAL_INGEST_URL",
+        reason: reason.to_owned(),
+    };
+    let url: Url = raw
+        .trim()
+        .parse()
+        .map_err(|e: url::ParseError| invalid(&e.to_string()))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+    {
+        return Err(invalid(
+            "an http(s) URL without a query, such as https://portal.example.org/ingest/default",
+        ));
+    }
+    Ok(Some(url.as_str().trim_end_matches('/').to_owned()))
 }
 
 fn apps_url(lookup: &impl Fn(&str) -> Option<String>) -> Result<Option<Url>, ConfigError> {
@@ -2043,6 +2082,17 @@ impl Config {
 
         // PL-19: a value nobody meant is refused at start-up, not read as either identity.
         use crate::reconciler::streams::PipelineCredential;
+        let pipeline_linkml_stage =
+            match lookup("JC_PORTAL_PIPELINE_STAGE").as_deref().map(str::trim) {
+                None | Some("") | Some("json-schema") => false,
+                Some("linkml") => true,
+                Some(other) => {
+                    return Err(ConfigError::Invalid {
+                        var: "JC_PORTAL_PIPELINE_STAGE",
+                        reason: format!("`{other}` is neither `json-schema` nor `linkml`"),
+                    })
+                }
+            };
         let (pipeline_identity, pipeline_credential) = match lookup("JC_PORTAL_PIPELINE_IDENTITY")
             .as_deref()
             .map(str::trim)
@@ -2167,6 +2217,7 @@ impl Config {
             lookup("JC_PORTAL_RECONCILER_STATE_DIR").filter(|dir| !dir.trim().is_empty());
         let removal_hold_percent = removal_hold_percent(&lookup)?;
         let apps_url = apps_url(&lookup)?;
+        let ingest_url = ingest_url(&lookup)?;
         let serve_app_hosts = apps_url.is_some()
             && lookup("JC_PORTAL_SERVE_APP_HOSTS").is_some_and(|v| v.trim() == "true");
         let app_pods = app_pods(&lookup)?;
@@ -2229,6 +2280,7 @@ impl Config {
             pipeline_runner_url,
             pipeline_runner_token,
             pipeline_identity,
+            pipeline_linkml_stage,
             pipeline_credential,
             pipelines_concurrency,
             pipeline_namespace,
@@ -2265,6 +2317,7 @@ impl Config {
             reconciler_state_dir,
             removal_hold_percent,
             apps_url,
+            ingest_url,
             serve_app_hosts,
             app_pods,
             branding_file,
@@ -2323,6 +2376,7 @@ impl Config {
             pipeline_runner_url: None,
             pipeline_runner_token: None,
             pipeline_identity: false,
+            pipeline_linkml_stage: false,
             pipeline_credential: crate::reconciler::streams::PipelineCredential::Sidecar,
             pipelines_concurrency: (1, 1),
             pipeline_namespace: None,
@@ -2360,6 +2414,7 @@ impl Config {
             reconciler_state_dir: None,
             removal_hold_percent: crate::reconciler::removal_hold::DEFAULT_PERCENT,
             apps_url: None,
+            ingest_url: None,
             serve_app_hosts: false,
             app_pods: std::collections::BTreeMap::new(),
             branding_file: None,
@@ -3158,6 +3213,18 @@ mod tests {
             .expect_err("a typo is refused")
             .to_string();
         assert!(err.contains("JC_PORTAL_PIPELINE_IDENTITY"), "{err}");
+        let stage = |value: &str| {
+            Config::from_vars(|k| (k == "JC_PORTAL_PIPELINE_STAGE").then(|| value.to_owned()))
+        };
+        assert!(!with(None).expect("default").pipeline_linkml_stage);
+        assert!(
+            !stage("json-schema")
+                .expect("json-schema")
+                .pipeline_linkml_stage
+        );
+        assert!(stage("linkml").expect("linkml").pipeline_linkml_stage);
+        let err = stage("LinkML").expect_err("a typo is refused").to_string();
+        assert!(err.contains("JC_PORTAL_PIPELINE_STAGE"), "{err}");
     }
 
     /// PL-78: each lane runs one pipeline at a time until configured, and a count below one or a

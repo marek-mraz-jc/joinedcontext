@@ -39,6 +39,7 @@ pub fn build_full_registry() -> Arc<Registry> {
     ekiben_io_nats::register_all(&reg);
     ekiben_io_sql::register_all(&reg);
     ekiben_io_s3::register_all(&reg);
+    ekiben_io_remote::register_all(&reg);
     ekiben_io_amqp::register_all(&reg);
     ekiben_io_kafka::register_all(&reg);
     ekiben_io_sftp::register_all(&reg);
@@ -51,4 +52,13 @@ pub fn build_full_registry() -> Arc<Registry> {
     #[cfg(feature = "protobuf")]
     ekiben_protobuf::register(&reg);
     reg
+}
+
+/// The shared ingest listener's router for a host that serves it on a listener of its own
+/// (jc, T-7088). From this call on every `http_server` input of the process is served there,
+/// only with `auth`, and never binds an `address` of its own (streams mode).
+pub fn hosted_ingest_router() -> axum::Router {
+    ekiben_io_http::http_server::set_streams_mode();
+    ekiben_io_http::ingest::activate();
+    ekiben_io_http::ingest::router()
 }

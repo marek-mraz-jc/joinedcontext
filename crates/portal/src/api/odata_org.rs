@@ -53,6 +53,7 @@ use crate::api::odata::{
     MAX_TOP, NAMESPACE, SERVED,
 };
 use crate::api::odata_ops;
+use crate::api::odata_portal;
 use crate::api::ops::caller_of;
 use crate::auth::session::{CurrentUser, Front};
 use crate::ops::Caller;
@@ -345,15 +346,15 @@ static ORG: LazyLock<OrgServed> = LazyLock::new(|| {
         title: "JoinedContext Organization".into(),
         sets: evaluated_sets,
     };
-    let evaluated = Arc::new(service.model());
-    let public = Arc::new(public_model(
+    let evaluated = Arc::new(with_detail(service.model()));
+    let public = Arc::new(public_model(with_detail(
         Service {
             namespace: NAMESPACE.into(),
             title: "JoinedContext Organization".into(),
             sets: public_sets,
         }
         .model(),
-    ));
+    )));
     OrgServed {
         minimised: Arc::new(minimise((*public).clone())),
         public,
@@ -535,14 +536,25 @@ fn metadata_json(model: &Model) -> Result<String, String> {
 
 /// An OData error object with API/09's problem members inside (API/13 §2a).
 fn error(status: StatusCode, slug: &str, message: &str) -> Response {
+    error_with(status, slug, message, Map::new())
+}
+
+/// [`error`] with `extra` members beside the problem's: `target`, `details`, `hint`.
+fn error_with(
+    status: StatusCode,
+    slug: &str,
+    message: &str,
+    extra: Map<String, Value>,
+) -> Response {
     let title = status.canonical_reason().unwrap_or("Error");
-    let body = json!({ "error": {
-        "code": slug,
-        "message": message,
-        "type": crate::error::type_uri(slug),
-        "title": title,
-        "status": status.as_u16(),
-    }});
+    let mut inner = Map::new();
+    inner.insert("code".into(), json!(slug));
+    inner.insert("message".into(), json!(message));
+    inner.insert("type".into(), json!(crate::error::type_uri(slug)));
+    inner.insert("title".into(), json!(title));
+    inner.insert("status".into(), json!(status.as_u16()));
+    inner.extend(extra);
+    let body = json!({ "error": inner });
     (status, headers("application/json"), body.to_string()).into_response()
 }
 
@@ -591,7 +603,29 @@ async fn as_odata_error(response: Response) -> Response {
         .and_then(|t| t.rsplit('/').next())
         .unwrap_or_else(|| slug_of(status))
         .to_owned();
-    let mut answer = error(status, &slug, &message);
+    // What a person fixes: each field the problem names is a detail with its target (ADR-N-070
+    // item 8), the first one the error's own, and the problem's hint.
+    let mut extra = Map::new();
+    let details: Vec<Value> = problem
+        .get("errors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            Some(
+                json!({ "code": slug, "message": e.get("message")?.as_str()?,
+                         "target": e.get("path")?.as_str()? }),
+            )
+        })
+        .collect();
+    if let Some(first) = details.first() {
+        extra.insert("target".into(), first["target"].clone());
+        extra.insert("details".into(), Value::Array(details));
+    }
+    if let Some(hint) = problem.get("hint").filter(|h| h.is_string()) {
+        extra.insert("hint".into(), hint.clone());
+    }
+    let mut answer = error_with(status, &slug, &message, extra);
     if let Some(etag) = etag {
         answer.headers_mut().insert(header::ETAG, etag);
     }
@@ -611,13 +645,45 @@ fn headers(content_type: &'static str) -> [(header::HeaderName, HeaderValue); 3]
 
 const JSON: &str = "application/json;odata.metadata=minimal";
 
-/// The Organization of the running request: its pin, else the installation's when it holds one.
-fn organization(state: &AppState) -> Option<String> {
-    crate::organization_host::organization().or_else(|| {
-        (!crate::permissions::several_organizations(&state.mirror))
-            .then(|| crate::permissions::installation_organization(&state.mirror))
-            .flatten()
-    })
+/// The Organization the request at `rel` reads (API/15 §6, a host serving several): its pin,
+/// else the Organization of the project the path names, else the caller's only one, else the
+/// installation's, as the REST compat doors on that host answer. None when none of these names
+/// one; rights are checked per caller after it either way.
+fn organization(state: &AppState, user: &CurrentUser, rel: &str) -> Option<String> {
+    let mirror = &state.mirror;
+    crate::organization_host::organization()
+        .or_else(|| {
+            addressed_project(rel)
+                .and_then(|project| crate::permissions::organization_of(mirror, project))
+        })
+        .or_else(|| {
+            let mut own = crate::permissions::organizations(mirror)
+                .into_iter()
+                .map(|(name, _)| name)
+                .filter(|name| {
+                    crate::permissions::belongs_to_organization(
+                        mirror,
+                        &state.config.bootstrap_admins,
+                        &user.0.identity,
+                        name,
+                    )
+                });
+            match (own.next(), own.next()) {
+                (Some(only), None) => Some(only),
+                _ => None,
+            }
+        })
+        .or_else(|| crate::permissions::installation_organization(mirror))
+}
+
+/// The project a service path starts with, `projects('x')…` or `projects/x…`.
+fn addressed_project(rel: &str) -> Option<&str> {
+    let rest = rel.strip_prefix("projects")?;
+    let name = match rest.strip_prefix("('") {
+        Some(quoted) => quoted.split_once("')")?.0,
+        None => rest.strip_prefix('/')?.split(['/', '?']).next()?,
+    };
+    is_dns1123(name).then_some(name)
 }
 
 /// The public root of the service: the Organization host's base (the registry's, never the
@@ -695,6 +761,78 @@ async fn kind_rows(
 
 /// The member every entity carries its `ETag` in (API/13 §2a).
 const ETAG: &str = "@odata.etag";
+
+/// The members a manifest kind's entity holds whole: the envelope's, as the REST door's
+/// `GET …/{plural}/{name}` answers it (API/13 §2a, T-7097).
+const MANIFEST_DETAIL: [&str; 3] = ["spec", "status", "metadata"];
+
+/// A Change's detail, as `jc_change_get` answers it: what the inbox and an approval read.
+const CHANGE_DETAIL: [&str; 9] = [
+    "metadata",
+    "status",
+    "summary",
+    "author",
+    "createdAt",
+    "planFields",
+    "files",
+    "waitsOn",
+    "decision",
+];
+
+/// The most Changes one page answers with their detail: each is a read of the forge.
+// ponytail: one jc_change_get per row; a batch read in the change store when a page wants more.
+const CHANGE_DETAIL_MAX: usize = 50;
+
+/// The `Edm.Untyped` members of `set`'s rows, answered only when `$select` names them, so a list
+/// stays thin.
+fn detail(set: &str) -> &'static [&'static str] {
+    match kind(set).or_else(|| org_set(set)) {
+        Some(list) if list.set == CHANGES => &CHANGE_DETAIL,
+        Some(list) if manifest_kind(list) => &MANIFEST_DETAIL,
+        _ => &[],
+    }
+}
+
+/// `model` with each set's [`detail`] members declared on its entity type.
+fn with_detail(mut model: Model) -> Model {
+    for schema in &mut model.schemas {
+        let typed: Vec<(String, &'static [&'static str])> = schema
+            .entity_container
+            .iter()
+            .flat_map(|container| &container.entity_sets)
+            .map(|set| {
+                let ty = set.entity_type.rsplit('.').next().unwrap_or_default();
+                (ty.to_owned(), detail(&set.name))
+            })
+            .filter(|(_, members)| !members.is_empty())
+            .collect();
+        for ty in &mut schema.entity_types {
+            let Some((_, members)) = typed.iter().find(|(name, _)| *name == ty.name) else {
+                continue;
+            };
+            for member in *members {
+                if !ty.properties.iter().any(|p| p.name == *member) {
+                    ty.properties
+                        .push(Property::new(*member, TypeRef::single("Edm.Untyped")));
+                }
+            }
+        }
+    }
+    model
+}
+
+/// The names `options` selects, `$select` items of one segment.
+fn selected(options: &QueryOptions) -> Vec<&str> {
+    options
+        .select
+        .iter()
+        .flatten()
+        .filter_map(|item| match item {
+            odata_url::SelectItem::Path(path) if path.len() == 1 => Some(path[0].as_str()),
+            _ => None,
+        })
+        .collect()
+}
 
 /// An entity's `ETag`: a manifest's own (API/13 §3, what the REST door compares), else a SHA-256
 /// of the row the caller reads (a Change, a Workspace, an Endpoints page row).
@@ -832,12 +970,84 @@ struct Read<'a> {
 }
 
 impl Read<'_> {
-    fn table(&self, set: &str, rows: Vec<Value>) -> Result<MemoryTable, Refused> {
-        let info = ORG
+    /// `set` over `rows`, its [`detail`] members a property only where `options` selects them.
+    fn table(
+        &self,
+        set: &str,
+        rows: Vec<Value>,
+        options: &QueryOptions,
+    ) -> Result<MemoryTable, Refused> {
+        let mut info = ORG
             .service
             .info(ORG.evaluated.clone(), set)
             .ok_or_else(|| no(not_found(format!("no entity set {set}"))))?;
+        let asked = selected(options);
+        info.properties
+            .retain(|p| !detail(set).contains(&p.as_str()) || asked.contains(&p.as_str()));
         MemoryTable::new(info, rows).map_err(|e| no(Refusal::from(e)))
+    }
+
+    /// Puts the [`detail`] members `answer` selects into each of its rows: a manifest's from the
+    /// envelope the REST door reads (the rows are the ones its list let the caller read), a
+    /// Change's from `jc_change_get`, run through the registry door as `GET …/changes/{id}`.
+    async fn fill(&self, set: &str, answer: &mut Answer) -> Result<(), Refused> {
+        let members = detail(set);
+        let asked: Vec<&str> = answer
+            .select
+            .iter()
+            .flatten()
+            .map(String::as_str)
+            .filter(|name| members.contains(name))
+            .collect();
+        let Some(list) = kind(set).or_else(|| org_set(set)) else {
+            return Ok(());
+        };
+        if asked.is_empty() {
+            return Ok(());
+        }
+        let change = list.set == CHANGES;
+        if change && answer.rows.len() > CHANGE_DETAIL_MAX {
+            return Err(no(bad(format!(
+                "a page with a Change's {} holds at most {CHANGE_DETAIL_MAX} Changes; ask with \
+                 $top={CHANGE_DETAIL_MAX} or fewer",
+                asked.join(", ")
+            ))));
+        }
+        let in_org = org_set(set).is_some();
+        for (row, key) in answer.rows.iter_mut().zip(&answer.keys) {
+            let (Value::Object(row), Some(key)) = (row, key.as_str()) else {
+                continue;
+            };
+            let (project, name) = match key.split_once('/') {
+                Some((project, name)) if !in_org => (project, name),
+                _ => (ORG_NAMESPACE, key),
+            };
+            let whole = if change {
+                let Some(op) = crate::ops::find("jc_change_get") else {
+                    return Err(no(not_found("jc_change_get is not registered")));
+                };
+                match crate::ops::call(op, &self.caller, self.state, project, json!({ "id": name }))
+                    .await
+                {
+                    Ok(whole) => whole,
+                    Err(e) => return Err(Box::new(as_odata_error(e.into_response()).await)),
+                }
+            } else {
+                let mirror = &self.state.mirror;
+                mirror
+                    .get(project, &list.type_name, name)
+                    .or_else(|| mirror.refused(project, &list.type_name, name))
+                    .and_then(|envelope| serde_json::to_value(envelope).ok())
+                    .unwrap_or(Value::Null)
+            };
+            for member in &asked {
+                row.insert(
+                    (*member).to_owned(),
+                    whole.get(*member).cloned().unwrap_or(Value::Null),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Every project of the Organization the caller may read, as rows of `projects`.
@@ -877,7 +1087,7 @@ impl Read<'_> {
         rows: Vec<Value>,
     ) -> Result<(Answer, Value), Refused> {
         let tags = etags(&rows);
-        let table = self.table(set, rows)?;
+        let table = self.table(set, rows, options)?;
         let query_text = canonical(path, options);
         let mut options = options.clone();
         if let Some(token) = options.skiptoken.take() {
@@ -899,6 +1109,7 @@ impl Read<'_> {
             .await
             .map_err(|e| no(Refusal::from(e)))?;
         tag(&mut answer, &tags);
+        self.fill(set, &mut answer).await?;
         strip_key(&mut answer.rows);
         let mut body = Map::new();
         let root = service_root(self.state);
@@ -1030,6 +1241,10 @@ fn counting(options: &QueryOptions) -> QueryOptions {
 
 /// One entity: the first row of `answer`, else 404.
 fn entity(root: &str, context: &str, answer: Answer, what: &str) -> Response {
+    let context = match &answer.select {
+        Some(names) => format!("{context}({})", names.join(",")),
+        None => context.to_owned(),
+    };
     let Some(Value::Object(row)) = answer.rows.into_iter().next() else {
         return refused(not_found(format!("no {what} you may read")));
     };
@@ -1057,7 +1272,7 @@ async fn by_key(
     what: &str,
 ) -> Response {
     let tags = etags(&rows);
-    let table = match read.table(set, rows) {
+    let table = match read.table(set, rows, options) {
         Ok(table) => table,
         Err(r) => return *r,
     };
@@ -1068,6 +1283,9 @@ async fn by_key(
     match answered {
         Ok(mut answer) => {
             tag(&mut answer, &tags);
+            if let Err(r) = read.fill(set, &mut answer).await {
+                return *r;
+            }
             strip_key(&mut answer.rows);
             entity(&service_root(read.state), context, answer, what)
         }
@@ -1862,14 +2080,21 @@ fn manifest_kind(set: &ListSet) -> bool {
     !set.endpoint_list && crate::resource::by_kind(&set.type_name).is_some()
 }
 
+/// The registry's operations and the Portal doors a caller's `$metadata` offers.
+type Offered<'a> = (
+    &'a [&'static crate::ops::Operation],
+    &'a [&'static odata_portal::Door],
+);
+
 /// The CSDL XML of the caller: the bound actions they may call inside the schema.
 fn xml_for(
     base: &str,
     rights: &Rights,
     visible: &BTreeSet<String>,
-    offered: &[&'static crate::ops::Operation],
+    offered: Offered<'_>,
 ) -> String {
-    let mut actions = odata_ops::xml(offered);
+    let mut actions = odata_ops::xml(offered.0);
+    actions.push_str(&odata_portal::xml(offered.1));
     for (name, binding, parameters) in bound_actions(rights, visible) {
         actions.push_str(&format!(
             r#"<Action Name="{name}" IsBound="true"><Parameter Name="bindingParameter" Type="{binding}" Nullable="false"/>"#
@@ -1894,13 +2119,16 @@ fn json_for(
     base: &str,
     rights: &Rights,
     visible: &BTreeSet<String>,
-    offered: &[&'static crate::ops::Operation],
+    offered: Offered<'_>,
 ) -> String {
     let Ok(mut doc) = serde_json::from_str::<Value>(base) else {
         return base.to_owned();
     };
     if let Some(schema) = doc.get_mut(NAMESPACE).and_then(Value::as_object_mut) {
-        for (name, overload) in odata_ops::json(offered) {
+        for (name, overload) in odata_ops::json(offered.0)
+            .into_iter()
+            .chain(odata_portal::json(offered.1))
+        {
             schema.insert(name.to_owned(), Value::Array(vec![overload]));
         }
         for (name, binding, parameters) in bound_actions(rights, visible) {
@@ -1929,7 +2157,7 @@ fn metadata(
     query: &str,
     rights: &Rights,
     visible: &BTreeSet<String>,
-    offered: &[&'static crate::ops::Operation],
+    offered: Offered<'_>,
 ) -> Response {
     let json_asked = query.split('&').any(|p| {
         p.split_once('=').is_some_and(|(n, v)| {
@@ -2045,11 +2273,25 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
     };
     // Front's rejection is Infallible.
     let Ok(front) = Front::from_request_parts(&mut parts, &state).await;
-    let Some(org) = organization(&state) else {
+    let Some(org) = organization(&state, &user, &rel) else {
         return refused(not_found(
-            "this address serves several Organizations; read one at /{org}/api/v1/",
+            "this address serves several Organizations and names none of yours; read one at \
+             /{org}/api/v1/",
         ));
     };
+    if let Some((entity, name)) = called.as_ref().or(action.as_ref()) {
+        if name.starts_with(odata_portal::PREFIX) {
+            let call = Call {
+                state: &state,
+                user,
+                front,
+                org: &org,
+                headers: &parts.headers,
+                body,
+            };
+            return portal_door(call, entity, name, &query, called.is_some()).await;
+        }
+    }
     if let Some((entity, call)) = called {
         return function(&state, user, front, &org, &entity, &call, &query).await;
     }
@@ -2081,13 +2323,16 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
     }
     if metadata_asked {
         let projects = readable_projects(&state, &user, &org);
-        let offered = odata_ops::offered(&state, &user, front, &projects);
+        let people = crate::permissions::installation_organization(&state.mirror).as_deref()
+            == Some(org.as_str());
+        let offered = odata_ops::offered(&state, &user, front, &projects, people);
+        let doors = odata_portal::offered(&state, &user, front, &org, people, !projects.is_empty());
         return metadata(
             &parts.headers,
             &query,
             &rights(&state, &user, &org),
             &visible_sets(&state, &user, &org, &projects),
-            &offered,
+            (&offered, &doors),
         );
     }
     if rel.is_empty() {
@@ -2498,6 +2743,36 @@ fn operation_project(
     }
 }
 
+/// Where the operation `name` bound to `entity` runs: the `org` namespace for one of
+/// [`odata_ops::ORGANIZATION_BOUND`] on the `Organization` singleton of the installation's
+/// Organization, else the project it is bound to. Another Organization's singleton offers none,
+/// and answers as an unknown operation does.
+fn operation_target(
+    state: &AppState,
+    user: &CurrentUser,
+    org: &str,
+    entity: &str,
+    name: &str,
+) -> Result<String, Refused> {
+    let people = odata_ops::ORGANIZATION_BOUND.contains(&name);
+    if entity == ORGANIZATION {
+        let installation = crate::permissions::installation_organization(&state.mirror);
+        return if people && installation.as_deref() == Some(org) {
+            Ok(ORG_NAMESPACE.to_owned())
+        } else {
+            Err(no(not_found(
+                "the Organization has no such operation; $metadata lists the ones you may call",
+            )))
+        };
+    }
+    if people {
+        return Err(no(not_found(format!(
+            "{name} is bound to the Organization, e.g. Organization/{NAMESPACE}.{name}"
+        ))));
+    }
+    operation_project(state, user, org, entity)
+}
+
 /// `GET {project}/JoinedContext.Portal.{name}(...)`: a read-only operation of the registry.
 async fn function(
     state: &AppState,
@@ -2509,9 +2784,9 @@ async fn function(
     query: &str,
 ) -> Response {
     let answer = async {
-        let project = operation_project(state, &user, org, entity)?;
         let (name, params) = odata_ops::function_call(call, query)
             .map_err(|(status, slug, message)| Box::new(error(status, slug, &message)))?;
+        let project = operation_target(state, &user, org, entity, &name)?;
         let op = crate::ops::find(&name)
             .filter(|_| odata_ops::form(&name) == Some(odata_ops::Form::Function))
             .ok_or_else(|| {
@@ -2552,7 +2827,7 @@ async fn operation_action(call: Call<'_>, entity: &str, name: &str) -> Response 
         body,
     } = call;
     let answer = async {
-        let project = operation_project(state, &user, org, entity)?;
+        let project = operation_target(state, &user, org, entity, name)?;
         let op =
             crate::ops::find(name).ok_or_else(|| no(not_found(format!("no action {name}"))))?;
         let mut input = if body.is_empty() {
@@ -2592,6 +2867,151 @@ async fn operation_action(call: Call<'_>, entity: &str, name: &str) -> Response 
         Err(refusal) => *refusal,
     }
 }
+
+/// A Portal door (API/13 §2b, T-7100): `GET` of a `portal_*` function or `POST` of a `portal_*`
+/// action, answered for a person's browser session only by its REST door's handler, routed by the
+/// API router itself, so its permission check, lane, status and refusal are the REST door's.
+async fn portal_door(
+    call: Call<'_>,
+    entity: &str,
+    called: &str,
+    query: &str,
+    function: bool,
+) -> Response {
+    let Call {
+        state,
+        user,
+        front,
+        org,
+        headers,
+        body,
+    } = call;
+    let answer = async {
+        if !odata_portal::is_person_session(&user, front) {
+            let (status, slug, message) = odata_portal::bearer_refusal();
+            return Err(Box::new(error(status, slug, &message)));
+        }
+        let (name, params) = if function {
+            odata_ops::function_call(called, query)
+                .map_err(|(status, slug, message)| Box::new(error(status, slug, &message)))?
+        } else {
+            (called.to_owned(), action_parameters(&body)?)
+        };
+        let door = odata_portal::find(&name)
+            .filter(|door| door.is_function() == function)
+            .ok_or_else(|| {
+                no(not_found(format!(
+                    "the service has no {} {name}; $metadata lists the ones you may call",
+                    if function { "function" } else { "action" }
+                )))
+            })?;
+        let project = door_target(state, &user, org, entity, door)?;
+        let rest = odata_portal::rest(door, project.as_deref(), &params)
+            .map_err(|(status, slug, message)| Box::new(error(status, slug, &message)))?;
+        let mut request = Request::builder()
+            .method(door.method.clone())
+            .uri(rest.path_and_query);
+        for (name, value) in headers {
+            if ![
+                header::CONTENT_TYPE,
+                header::CONTENT_LENGTH,
+                header::ACCEPT,
+                header::IF_MATCH,
+            ]
+            .contains(name)
+                && !name.as_str().starts_with("odata-")
+            {
+                request = request.header(name, value);
+            }
+        }
+        request = request.header(header::ACCEPT, "application/json");
+        if rest.body.is_some() {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+        }
+        let request = request
+            .body(Body::from(rest.body.unwrap_or_default()))
+            .map_err(|_| no(bad(format!("{name}: a parameter is no valid address"))))?;
+        // ponytail: the API router is built per door call (a person's click, never a hot path);
+        // keep one in AppState if a profile ever shows it.
+        let mut router = crate::api::router().with_state(state.clone());
+        let Ok(response) = tower::Service::call(&mut router, request).await;
+        Ok::<_, Refused>(response)
+    };
+    match answer.await {
+        Ok(response) if response.status().is_success() => door_answer(state, response).await,
+        Ok(response) => as_odata_error(response).await,
+        Err(refusal) => *refusal,
+    }
+}
+
+/// An action's parameters: its JSON object body, or none.
+fn action_parameters(body: &[u8]) -> Result<Map<String, Value>, Refused> {
+    if body.is_empty() {
+        return Ok(Map::new());
+    }
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Object(params)) => Ok(params),
+        _ => Err(no(bad(
+            "an action's parameters are a JSON object, as $metadata names them",
+        ))),
+    }
+}
+
+/// The project a door call runs in: none for the installation's `Organization`, else the
+/// project `entity` names, readable in `org`.
+fn door_target(
+    state: &AppState,
+    user: &CurrentUser,
+    org: &str,
+    entity: &str,
+    door: &odata_portal::Door,
+) -> Result<Option<String>, Refused> {
+    let name = door.name;
+    match door.bound {
+        odata_portal::Bound::Organization => {
+            let installation = crate::permissions::installation_organization(&state.mirror);
+            if entity == ORGANIZATION && installation.as_deref() == Some(org) {
+                Ok(None)
+            } else {
+                Err(no(not_found(format!(
+                    "{name} is bound to the installation's Organization, e.g. \
+                     Organization/{NAMESPACE}.{name}"
+                ))))
+            }
+        }
+        odata_portal::Bound::Project if entity == ORGANIZATION => Err(no(not_found(format!(
+            "{name} is bound to a project, e.g. projects('air')/{NAMESPACE}.{name}"
+        )))),
+        odata_portal::Bound::Project => operation_project(state, user, org, entity).map(Some),
+    }
+}
+
+/// A door's REST success as the service answers a function or action: its body under `value`
+/// (`204` as `200` with `null`), the REST answer's `Cache-Control` kept, so a temporary password
+/// is never cached.
+async fn door_answer(state: &AppState, response: Response) -> Response {
+    let status = match response.status() {
+        StatusCode::NO_CONTENT => StatusCode::OK,
+        status => status,
+    };
+    let cache = response.headers().get(header::CACHE_CONTROL).cloned();
+    let bytes = axum::body::to_bytes(response.into_body(), MAX_ANSWER)
+        .await
+        .unwrap_or_default();
+    let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    let body = json!({
+        "@odata.context": format!("{}$metadata#Edm.Untyped", service_root(state)),
+        "value": value,
+    });
+    let mut answer = (status, headers(JSON), body.to_string()).into_response();
+    if let Some(cache) = cache {
+        answer.headers_mut().insert(header::CACHE_CONTROL, cache);
+    }
+    answer
+}
+
+/// The most a Portal door's REST answer may weigh.
+const MAX_ANSWER: usize = 16 << 20;
 
 /// The compat negotiation in front of `/api/v1` (API/13 §2a).
 pub async fn negotiate(State(state): State<AppState>, request: Request, next: Next) -> Response {

@@ -3,6 +3,9 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The health log (T-5067): a project's Health page as a steward meets it, errors first with the
 // fix under each, in English and Slovak, light and dark, at 1440 and 400 px; an empty log; a

@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // One Policy as a reader and an editor meet it (T-5591): from the Policies list, one click on the
 // row opens what it allows in words, its assigner, validity and last change, with the fields
@@ -54,7 +58,9 @@ async function stubApi(page: Page, persona: keyof typeof PERSONAS): Promise<void
     if (path === "/api/v1/projects") return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ProjectList", items: [{ name: "helsinki" }] });
     if (path.endsWith("/policies")) return json(list([POLICY]));
     if (path.endsWith("/policies/bikes-ops-steward")) return json(POLICY);
-    if (path.endsWith("/changes/history")) return json({ ...list([MERGED]), next: null });
+    if (odataCall(route.request().url())?.name === "jc_change_history") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: odataBody({ ...list([MERGED]), next: null }) });
+    }
     return json(list([]));
   });
 }

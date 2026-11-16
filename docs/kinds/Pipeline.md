@@ -31,6 +31,7 @@ Two shapes (PL-54, ADR-N-023): `v1alpha1` holds one `source`, one `compute`, one
 | `quotas` | [PipelineQuotas](#pipelinequotas) | no | Resource quotas allocated to this pipeline runner (PL-11). |
 | `routes` | list of [PipelineRoute](#pipelineroute) | no | Routes by condition (PL-73): a message after `steps` takes the first route whose `when` holds; one no route takes is written through `outputs`; `v1alpha2`. |
 | `schedule` | string | no | Standard cron schedule expression for scheduled runs (PL-04, PL-26..PL-28). |
+| `scripts` | list of [AppliedScript](#appliedscript) | no | Published Script versions applied to every record, or to records of some types (PL-119); `v1alpha2`. |
 | `secretRefs` | list of [SecretRef](#secretref) | no | Secret references injected into runner environments (PL-14..PL-16). |
 | `source` | [PipelineSource](#pipelinesource) | no | Optional context source query or subscription trigger for derived pipelines (PL-31). |
 | `sourceDeletes` | [SourceDeletes](#sourcedeletes) | no | How the pipeline follows a record its source removed (PL-96…PL-100); absent, nothing is deleted, as with `mode: never`. |
@@ -68,6 +69,7 @@ Compute execution specification (PL-33).
 | `kpi` | [KpiStep](#kpistep) | no | The indicator of a `kpi` step over several sources (PL-102…PL-104). |
 | `mappingRef` | [Ref](#ref) | no | Reference to a `Mapping` resource. |
 | `module` | string | no | Path or package of the compute module (for wasm). |
+| `scriptRef` | [ScriptRef](#scriptref) | no | The published Script version a `script` step runs (PL-119), e.g. `{name: sjtsk-to-wgs84, version: 1.0.0}`. |
 
 ## Expiry
 
@@ -136,6 +138,16 @@ One route of a `v1alpha2` pipeline (PL-73): its condition, its own steps and its
 | `outputs` | list of [PipelineOutput](#pipelineoutput) | yes | Where the route writes, each through its own Endpoint (PL-55). |
 | `steps` | list of [Step](#step) | no | The route's own steps, after the pipeline's `steps`. |
 | `when` | string | yes | A Bloblang query; the messages it is true for take this route. |
+
+## AppliedScript
+
+A Script version a pipeline applies to every record (PL-119).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `applyTo` | [ApplyTo](#applyto) | yes | Where it runs: `steps-start` (before the first step) or `before-output` (after the last). |
+| `scriptRef` | [ScriptRef](#scriptref) | yes | The published version, e.g. `{name: drop-test-rows, version: 1.0.0}`. |
+| `types` | list of string | no | The entity types it runs for, e.g. `[ParkingSpot]`; absent, every record. |
 
 ## SecretRef
 
@@ -224,7 +236,7 @@ A `datacube` step (PL-112).
 
 Execution technology category for pipeline compute steps (PL-33).
 
-Type: one of `"bloblang"`, `"mapping"`, `"wasm"`, `"container"`, `"kpi"`, `"datacube"`
+Type: one of `"bloblang"`, `"mapping"`, `"wasm"`, `"container"`, `"kpi"`, `"datacube"`, `"script"`
 
 ## KpiStep
 
@@ -244,6 +256,15 @@ A `kpi` step (PL-102).
 Reference to another resource, either bare name or typed reference (MF-07).
 
 Type: string or [TypedRef](#typedref)
+
+## ScriptRef
+
+A pinned version of a Script, e.g. `{name: sjtsk-to-wgs84, version: 1.0.0}` (PL-119).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | The Script's name in the same project. |
+| `version` | string | yes | A published version of it. |
 
 ## AttributeHistory
 
@@ -296,6 +317,12 @@ The mint option of a pipeline's output (ADR-N-041 §3.4, Architecture/08).
 Mutation mode for pipeline output writers (PL-32).
 
 Type: one of `"upsert"`, `"replace"`, `"update-attrs"`, `"merge"`, `"backfill"`
+
+## ApplyTo
+
+Where an [`AppliedScript`] runs among the pipeline's steps (PL-119).
+
+Type: one of `"steps-start"`, `"before-output"`
 
 ## SourceQuery
 

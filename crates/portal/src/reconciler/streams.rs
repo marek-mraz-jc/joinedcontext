@@ -576,7 +576,8 @@ impl StreamDeployer {
             "{}/internal/pipelines/{project}/{pipeline}/rejected",
             internal.trim_end_matches('/')
         );
-        if !crate::pipeline_validation::insert_stage(stream, &schema, &sink) {
+        let linkml = schemas.stage_linkml(project, space);
+        if !crate::pipeline_validation::insert_stage(stream, &schema, linkml.as_deref(), &sink) {
             tracing::warn!(
                 project,
                 pipeline,
@@ -727,6 +728,13 @@ impl StreamDeployer {
                         continue;
                     }
                 };
+                // Each Script pin becomes its version's `javascript` processor, digest checked
+                // (PL-120); a pin that does not hold renders no stream.
+                let mut spec = spec;
+                if let Err(err) = crate::scripts::inline(mirror, &ns, &mut spec) {
+                    outcomes.push((ns.clone(), name, StreamOutcome::Error(err)));
+                    continue;
+                }
 
                 let first = spec.sources().into_iter().next();
                 let ds_ref_name = first
@@ -765,7 +773,6 @@ impl StreamDeployer {
                 let stream_spaces = StreamSpaces::of(mirror, &ns, &spec);
                 let spaces = &stream_spaces.spaces;
                 // `unitCode: model` (G-15) is written as the code the space's model declares.
-                let mut spec = spec;
                 if let Some(schemas) = self.model_schemas().filter(|_| !spec.attributes.is_empty())
                 {
                     for space in spaces {
@@ -4461,6 +4468,9 @@ output:
             serde_json::json!({ "generate": { "interval": "1s", "count": 3 } }),
             serde_json::json!({ "label": "input_0", "file": { "paths": ["/data/x.json"] } }),
             serde_json::json!({ "broker": { "inputs": [{ "file": {} }, { "csv": {} }] } }),
+            // T-7092: ekiben's own ftp and imap inputs read once per run and end.
+            serde_json::json!({ "ftp": { "address": "files.example.org:21", "path": "/x/*.csv" } }),
+            serde_json::json!({ "imap": { "address": "imap.example.org:993" } }),
         ] {
             assert!(input_ends_by_itself(&finite), "{finite} finishes");
         }
@@ -5492,6 +5502,7 @@ output:
             bloblang: None,
             kpi: None,
             datacube: None,
+            script_ref: None,
         })];
         assert!(!eligible(&wasm));
     }
@@ -6053,6 +6064,7 @@ output:
         assert!(crate::pipeline_validation::insert_stage(
             &mut stream,
             &schema,
+            None,
             "http://portal/rejected"
         ));
         let labels = processor_labels(&stream);

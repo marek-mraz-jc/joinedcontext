@@ -16,8 +16,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use jc_core::kinds::{PipelineSpec, Verb};
 use jcctl::pipeline_test::{
-    harness, lint_errors, trace, Captured, Sample, SampleFormat, TestError, TestTrace, EMPTY_BODY,
-    FETCH_FAILED, MAX_MESSAGES, MAX_SAMPLE_BYTES, STREAM_PREFIX,
+    harness_of, lint_errors, trace, Captured, Sample, SampleFormat, TestError, TestTrace,
+    EMPTY_BODY, FETCH_FAILED, MAX_MESSAGES, MAX_SAMPLE_BYTES, STREAM_PREFIX,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -100,6 +100,10 @@ pub struct SampleRequest {
     /// How the sample is split into messages.
     #[serde(default)]
     pub format: SampleFormatRequest,
+    /// The sheet of an `xlsx` sample by its tab name, such as `Stations 2026`; absent, the
+    /// first sheet.
+    #[serde(default)]
+    pub sheet: Option<String>,
 }
 
 /// How a sample is split: one message, a CSV row each, or a JSON array's elements.
@@ -111,11 +115,20 @@ pub enum SampleFormatRequest {
     Text,
     Csv,
     Json,
+    /// A spreadsheet by `url`: one message per row of `sheet`, or of the first sheet.
+    Xlsx,
+    /// A zipped shapefile by `url`: one WGS 84 GeoJSON Feature per record.
+    Shapefile,
 }
 
 impl From<SampleRequest> for Sample {
     fn from(request: SampleRequest) -> Self {
-        let SampleRequest { text, url, format } = request;
+        let SampleRequest {
+            text,
+            url,
+            format,
+            sheet,
+        } = request;
         Sample {
             text,
             url,
@@ -123,8 +136,11 @@ impl From<SampleRequest> for Sample {
                 SampleFormatRequest::Text => SampleFormat::Text,
                 SampleFormatRequest::Csv => SampleFormat::Csv,
                 SampleFormatRequest::Json => SampleFormat::Json,
+                SampleFormatRequest::Xlsx => SampleFormat::Xlsx,
+                SampleFormatRequest::Shapefile => SampleFormat::Shapefile,
             },
             records: None,
+            sheet,
         }
     }
 }
@@ -386,7 +402,7 @@ pub(crate) async fn run_harness(
 ) -> Result<TestTrace, ApiError> {
     let attributes = attributes_of(state, project, spec, name)?;
     run_stream(state, project, |capture| {
-        let mut config = harnessed(&state.mirror, project, spec, sample, capture)?;
+        let mut config = harnessed(&state.mirror, project, spec, sample, capture, MAX_MESSAGES)?;
         with_lifetime(&mut config, spec, attributes.clone())?;
         Ok(config)
     })
@@ -396,22 +412,27 @@ pub(crate) async fn run_harness(
 /// The harness of `spec` with the spaces its mapping reads (`env("JC_SPACE")`, …) written in as
 /// the live stream has them: without them a mapping minting ids from its space made
 /// `…:<nil>:…` in the test and every record was refused, while the same mapping ran live (T-6567).
-fn harnessed(
+pub(crate) fn harnessed(
     mirror: &crate::store::Mirror,
     project: &str,
     spec: &PipelineSpec,
     sample: &Sample,
     capture: &str,
+    max: usize,
 ) -> Result<Value, ApiError> {
-    let mut config =
-        harness(spec, sample, capture).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    // A Script pin runs its version's code, as the live stream does (PL-120): the trace names
+    // the step by its index.
+    let mut inlined = spec.clone();
+    crate::scripts::inline(mirror, project, &mut inlined).map_err(ApiError::BadRequest)?;
+    let mut config = harness_of(&inlined, sample, capture, max)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     crate::reconciler::streams::StreamSpaces::of(mirror, project, spec).inject(&mut config);
     Ok(config)
 }
 
 /// The step of `spec.attributes` (G-15) as the live stream of the pipeline `name` runs it, its
 /// `unitCode: model` resolved from the models of the spaces it writes, as the reconciler does.
-fn attributes_of(
+pub(crate) fn attributes_of(
     state: &AppState,
     project: &str,
     spec: &PipelineSpec,
@@ -435,7 +456,7 @@ fn attributes_of(
 /// where a live stream runs them (G-15, PL-82, PL-107, T-4840, T-4845), so the trace's records
 /// carry the `unitCode`, `observedAt` and `expiresAt` they would be written with. A message that
 /// already failed skips them: its envelope keeps the error it failed with.
-fn with_lifetime(
+pub(crate) fn with_lifetime(
     config: &mut Value,
     spec: &PipelineSpec,
     attributes: Option<Value>,
@@ -485,7 +506,7 @@ pub(crate) async fn run_messages(
     let sample = messages_sample(messages);
     let attributes = attributes_of(state, project, spec, name)?;
     run_stream(state, project, |capture| {
-        let mut config = harnessed(&state.mirror, project, spec, &sample, capture)?;
+        let mut config = harnessed(&state.mirror, project, spec, &sample, capture, MAX_MESSAGES)?;
         split_messages(&mut config);
         with_lifetime(&mut config, spec, attributes.clone())?;
         Ok(config)
@@ -512,6 +533,7 @@ fn messages_sample(messages: &[Value]) -> Sample {
         url: None,
         format: SampleFormat::Text,
         records: None,
+        sheet: None,
     }
 }
 
@@ -548,6 +570,55 @@ pub(crate) async fn run_stream_within(
     window: Window,
     config: impl FnOnce(&str) -> Result<Value, ApiError>,
 ) -> Result<(TestTrace, bool), ApiError> {
+    run_stream_gathering(state, project, config, async move |receiver| {
+        let (captured, limited) = collect(receiver, window).await;
+        let mut result = trace(&captured);
+        // A request source answers at least one message; an empty trace with no error read as
+        // "the mapping made nothing and nothing failed" while the runner never answered (T-6275).
+        // A streamed window (no quiet) may hear a silent topic, which is no failure.
+        if captured.is_empty() && window.quiet.is_some() {
+            result.errors.push(silent_runner(window));
+        }
+        (result, limited)
+    })
+    .await
+}
+
+/// What one ephemeral stream's captured messages become: a test's trace, or the whole-source
+/// check's counts (T-7085). The stream's own errors (a harness the runner refused, a delete it
+/// refused) go into it beside what it gathered.
+pub(crate) trait Gathered: Sized {
+    /// The answer of a create the runner refused, with the lint errors it named.
+    fn refused(errors: Vec<TestError>) -> Self;
+    /// One error of the stream rather than of a message.
+    fn runner_error(&mut self, error: TestError);
+}
+
+impl Gathered for (TestTrace, bool) {
+    fn refused(errors: Vec<TestError>) -> Self {
+        (
+            TestTrace {
+                errors,
+                ..TestTrace::default()
+            },
+            false,
+        )
+    }
+
+    fn runner_error(&mut self, error: TestError) {
+        self.0.errors.push(error);
+    }
+}
+
+/// One ephemeral stream on the project's runner whose captured messages `gather` reads: the
+/// project's test slot held, the harness principal presented, the stream deleted whatever
+/// happened.
+pub(crate) async fn run_stream_gathering<T: Gathered>(
+    state: &AppState,
+    project: &str,
+    config: impl FnOnce(&str) -> Result<Value, ApiError>,
+    gather: impl AsyncFnOnce(&mut mpsc::UnboundedReceiver<Captured>) -> T,
+) -> Result<T, ApiError> {
     let runner = state
         .config
         .pipeline_runner_url
@@ -586,14 +657,14 @@ pub(crate) async fn run_stream_within(
         .config
         .pipeline_identity
         .then_some(state.config.pipeline_credential);
-    let outcome = create_and_trace(
+    let outcome = create_and_gather(
         http,
         project,
         &stream,
         &config,
         identity,
-        window,
         &mut receiver,
+        gather,
     )
     .await;
     // Another replica's test in flight: its stream is not this test's to delete.
@@ -611,10 +682,10 @@ pub(crate) async fn run_stream_within(
         Ok(answer) => Err(answer.status().to_string()),
         Err(err) => Err(err.to_string()),
     };
-    let (mut result, limited) = outcome?;
+    let mut result = outcome?;
     if let Err(err) = deleted {
         tracing::warn!(project = %project, error = %err, "pipeline test stream not deleted");
-        result.errors.push(TestError {
+        result.runner_error(TestError {
             stage: "runner".into(),
             // The stream, not a step: nothing the author wrote failed here.
             step: None,
@@ -622,23 +693,23 @@ pub(crate) async fn run_stream_within(
             message: "the test stream could not be deleted; the runner keeps it until it is".into(),
         });
     }
-    Ok((result, limited))
+    Ok(result)
 }
 
-/// Creates the harness stream and reads its trace: what the harness posted back, or the lint
-/// errors of a create the runner refused (4xx). A create that did not answer, or answered 5xx,
+/// Creates the harness stream and gathers what the harness posted back, or the lint errors of a
+/// create the runner refused (4xx). A create that did not answer, or answered 5xx,
 /// is the caller's 503 with the runner's words kept in the log. The project's stream still on the
 /// runner: a left-over one is removed and the create sent again, a live one (another Portal
 /// replica's test) is the caller's 409.
-async fn create_and_trace(
+async fn create_and_gather<T: Gathered>(
     http: &reqwest::Client,
     project: &str,
     stream: &str,
     config: &Value,
     identity: Option<crate::reconciler::streams::PipelineCredential>,
-    window: Window,
     receiver: &mut mpsc::UnboundedReceiver<Captured>,
-) -> Result<(TestTrace, bool), ApiError> {
+    gather: impl AsyncFnOnce(&mut mpsc::UnboundedReceiver<Captured>) -> T,
+) -> Result<T, ApiError> {
     let config = credentialed(config, project, identity);
     let (mut status, mut refusal) = create(http, project, stream, &config).await?;
     if held(status, &refusal) && left_over_removed(http, stream).await {
@@ -651,24 +722,14 @@ async fn create_and_trace(
     }
 
     if status.is_success() {
-        let (captured, limited) = collect(receiver, window).await;
-        let mut result = trace(&captured);
-        // A request source answers at least one message; an empty trace with no error read as
-        // "the mapping made nothing and nothing failed" while the runner never answered (T-6275).
-        // A streamed window (no quiet) may hear a silent topic, which is no failure.
-        if captured.is_empty() && window.quiet.is_some() {
-            result.errors.push(silent_runner(window));
-        }
-        Ok((result, limited))
+        Ok(gather(receiver).await)
     } else if status.is_client_error() {
-        let refused = TestTrace {
-            errors: lint_errors(&refusal)
+        Ok(T::refused(
+            lint_errors(&refusal)
                 .into_iter()
                 .map(|error| without_client(error, project))
                 .collect(),
-            ..TestTrace::default()
-        };
-        Ok((refused, false))
+        ))
     } else {
         tracing::warn!(project = %project, status = %status, "pipeline runner refused a test stream");
         Err(ApiError::Unavailable(
@@ -806,7 +867,7 @@ fn answers_xml(spec: &Value, url: &str) -> bool {
 
 /// How one fetch of a DataSource at `url` is read, shared by the workbench's sample and the
 /// DataSource Check (MF-39, PL-43): a CSV split into rows when the connection says `format: csv`
-/// (PL-114) or into the elements of its `records` array, and kept whole otherwise, as the runner hands it over, an XML feed taken as it is and turned
+/// (PL-114), a spreadsheet into the rows of its `sheet` when it says `format: xlsx` (T-7086) or into the elements of its `records` array, and kept whole otherwise, as the runner hands it over, an XML feed taken as it is and turned
 /// into JSON by the same `xml` step a pipeline reading it starts with, anything else parsed as
 /// JSON. Reading XML as JSON failed on its first `<` and the page said the source answered a
 /// web page (T-4818). The spec's target is the minimum a PipelineSpec needs to exist.
@@ -822,8 +883,15 @@ pub(crate) fn sampling(
     let xml = answers_xml(spec, &url);
     // The runner splits an `http` body into rows only when the DataSource says `format: csv`
     // (PL-114); any other CSV reaches the steps whole, so the sample does too (T-5350).
-    let rows = spec.pointer("/http/format").and_then(Value::as_str) == Some("csv");
-    let format = if xml {
+    let body_format = spec.pointer("/http/format").and_then(Value::as_str);
+    let rows = body_format == Some("csv");
+    // A spreadsheet is split into its rows by the same `unarchive` the live source renders
+    // (T-7086); it is binary, so neither the XML nor the JSON read below applies to it.
+    let format = if body_format == Some("xlsx") {
+        SampleFormat::Xlsx
+    } else if body_format == Some("shapefile") {
+        SampleFormat::Shapefile
+    } else if xml {
         SampleFormat::Text
     } else if rows {
         SampleFormat::Csv
@@ -854,6 +922,10 @@ pub(crate) fn sampling(
         url: Some(url),
         format,
         records,
+        sheet: spec
+            .pointer("/http/sheet")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     };
     Ok((sample, serde_json::from_value(plan)?))
 }
@@ -885,6 +957,7 @@ pub(crate) fn answer_of(trace: TestTrace) -> Probe {
         None if trace.input.events > 0 => Probe {
             records: Some(trace.input.events),
             bytes: Some(trace.input.bytes),
+            pages: None,
             sample: trace.input.sample,
             skipped: None,
         },
@@ -905,7 +978,7 @@ pub(crate) fn feed_failed(probe: &Probe) -> Option<&str> {
 
 /// A failed fetch or parse in plain words: the HTTP status, a timeout, an empty body, or the
 /// last clause of the transport or JSON error (`connection refused`, `no such host`).
-fn outcome_of(error: &str) -> String {
+pub(crate) fn outcome_of(error: &str) -> String {
     let last = |text: &str| text.rsplit(": ").next().unwrap_or(text).to_owned();
     let Some(fetch) = error.strip_prefix(FETCH_FAILED) else {
         return format!("the feed is not JSON: {}", last(error));
@@ -936,6 +1009,7 @@ mod tests {
     use crate::api::internal::pipeline_tests::captured;
     use axum::body::Bytes;
     use axum::http::StatusCode;
+    use jcctl::pipeline_test::harness;
     use serde_json::json;
 
     /// T-6832: a project made after the runner started named an undefined variable; the answer
@@ -1052,6 +1126,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         };
         let config = harnessed(
             &mirror,
@@ -1059,6 +1134,7 @@ mod tests {
             &spec,
             &sample,
             "http://portal-internal:9090/x",
+            MAX_MESSAGES,
         )
         .expect("harness");
         let text = config.to_string();
@@ -1079,6 +1155,62 @@ mod tests {
         harness(&spec, &sample, "http://portal-internal:9090/x").expect("harness")
     }
 
+    /// PL-43/PL-120 (T-7083): a script step is tested as the version's `javascript` code, and a
+    /// pin of a draft is refused before the runner sees it.
+    #[test]
+    fn the_harness_runs_a_pinned_script_as_its_code() {
+        let code = "bento.v0_msg_set_string('tested')";
+        let script = |state: &str| {
+            serde_json::from_value::<crate::resource::ResourceEnvelope>(json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Script",
+                "metadata": { "name": "flag", "namespace": "helsinki" },
+                "spec": { "language": "javascript", "versions": [{ "version": "1.0.0",
+                    "state": state, "code": code, "sha256": jc_core::kinds::script::digest(code) }] }
+            }))
+            .expect("script")
+        };
+        let spec: PipelineSpec = serde_json::from_value(json!({
+            "class": "auto",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+            "steps": [{ "kind": "script", "scriptRef": { "name": "flag", "version": "1.0.0" } }],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:intake" }]
+        }))
+        .expect("spec");
+        let sample = Sample {
+            text: Some("{}".into()),
+            url: None,
+            format: SampleFormat::Json,
+            records: None,
+            sheet: None,
+        };
+        let mirror = crate::store::Mirror::new();
+        mirror.upsert(script("published"));
+        let config = harnessed(
+            &mirror,
+            "helsinki",
+            &spec,
+            &sample,
+            "http://portal-internal:9090/x",
+            MAX_MESSAGES,
+        )
+        .expect("harness");
+        let text = config.to_string();
+        assert!(
+            text.contains("javascript") && text.contains("tested"),
+            "{text}"
+        );
+        mirror.upsert(script("draft"));
+        assert!(harnessed(
+            &mirror,
+            "helsinki",
+            &spec,
+            &sample,
+            "http://x",
+            MAX_MESSAGES
+        )
+        .is_err());
+    }
+
     /// T-4840: the test runs the lifetime step where a live stream does, after the author's
     /// steps and before the envelope, and only on a message that did not fail.
     #[test]
@@ -1094,6 +1226,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         };
         let mut config = harness(&spec, &sample, "http://portal-internal:9090/x").expect("harness");
         let before = config["pipeline"]["processors"]
@@ -1158,6 +1291,7 @@ mod tests {
             url: Some("https://feed.example/x.json".into()),
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         });
         assert_eq!(url["input"]["generate"]["count"], 1);
         assert!(url["input"].get("http_client").is_none());
@@ -1180,6 +1314,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         });
         assert!(text["input"]["generate"]["mapping"]
             .as_str()
@@ -1199,6 +1334,7 @@ mod tests {
             url: None,
             format: SampleFormat::Csv,
             records: None,
+            sheet: None,
         });
         let processors = csv["pipeline"]["processors"]
             .as_array()
@@ -1234,6 +1370,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         });
         let oauth2 = &config["output"]["http_client"]["oauth2"];
         assert_eq!(oauth2["enabled"], true, "{config}");
@@ -1255,6 +1392,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         });
         let envelope = config["pipeline"]["processors"]
             .as_array()
@@ -1393,11 +1531,26 @@ mod tests {
                 json!({ "url": "https://x.example/export", "format": "csv" }),
                 SampleFormat::Csv,
             ),
+            // T-7086: a spreadsheet splits into rows as the live run does, by any URL.
+            (
+                json!({ "url": "https://x.example/stats", "format": "xlsx", "sheet": "2026" }),
+                SampleFormat::Xlsx,
+            ),
+            (
+                json!({ "url": "https://x.example/stats.xlsx", "format": "xlsx" }),
+                SampleFormat::Xlsx,
+            ),
+            // T-7089: a zipped shapefile splits into Features as the live run does.
+            (
+                json!({ "url": "https://x.example/kaupunginosat.zip", "format": "shapefile" }),
+                SampleFormat::Shapefile,
+            ),
         ] {
             let url = http["url"].as_str().expect("url").to_owned();
             let spec = json!({ "type": "http", "http": http });
             let (sample, plan) = sampling(&spec, url.clone()).expect("plan");
             assert_eq!(sample.format, format, "{http}");
+            assert_eq!(sample.sheet.as_deref(), http["sheet"].as_str(), "{http}");
             assert!(plan.steps().is_empty(), "{url}");
         }
     }

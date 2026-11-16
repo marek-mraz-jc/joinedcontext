@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The preview bridge of a run page (T-0679, SDK-18, AP-63). `vite preview` serves the built
 // bundle with no Portal behind it, so the API and the endpoint are answered from the browser;

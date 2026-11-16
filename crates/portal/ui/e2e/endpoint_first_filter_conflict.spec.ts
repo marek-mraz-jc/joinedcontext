@@ -1,6 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // F-UI2-013: an Endpoint without a projection proposes its first filter as one import that
 // creates the projection. A projection of that name created since the page loaded (a concurrent

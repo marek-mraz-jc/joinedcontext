@@ -319,7 +319,7 @@ describe("the pipeline workbench", () => {
     expect(value.split("\n").at(-1)).toBe('root.quality = { "type": "Property", "value": "good" }');
   });
 
-  it("shows_seven_steps_in_order_each_with_its_hint", () => {
+  it("shows_eight_steps_in_order_each_with_its_hint", () => {
     stub({}, { ops: [] });
     show({});
     const titles = screen
@@ -333,8 +333,12 @@ describe("the pipeline workbench", () => {
       "workbench-target-title",
       "workbench-mapping-title",
       "workbench-output-title",
+      // When it runs is a step of its own, no longer under More options (G-23).
+      "workbench-schedule-step-title",
       "workbench-lifetime-title",
       "workbench-validation-title",
+      // The whole-source check follows the steps: it reads the saved pipeline, not the draft (T-7085).
+      "source-check-title",
     ]);
     for (const hint of [
       en.pipelines.workbench.source.hint,
@@ -343,6 +347,7 @@ describe("the pipeline workbench", () => {
       en.pipelines.workbench.output.hint,
       en.pipelines.workbench.validation.hint,
       en.pipelines.workbench.target.hint,
+      en.pipelines.workbench.schedule.hint,
     ]) {
       expect(screen.getByText(hint)).toBeInTheDocument();
     }

@@ -39,6 +39,7 @@ pub mod data_access;
 pub mod data_views;
 pub mod datamodels;
 pub mod datasource_test;
+pub mod datasource_webhook;
 pub mod delete;
 pub mod drafts;
 pub mod drift;
@@ -83,6 +84,7 @@ pub mod odata;
 pub mod odata_endpoints;
 pub mod odata_ops;
 pub mod odata_org;
+pub mod odata_portal;
 pub mod opendata_pages;
 pub mod ops;
 pub mod organization_addresses;
@@ -92,6 +94,7 @@ pub mod organization_widgets;
 pub mod people;
 pub mod people_ids;
 pub mod permissions;
+pub mod pipeline_source_check;
 pub mod pipeline_templates;
 pub mod pipeline_test;
 pub mod pipelines;
@@ -102,6 +105,7 @@ pub mod projects;
 pub mod quality;
 pub mod resources;
 pub mod restore;
+pub mod script_test;
 pub mod secrets;
 pub mod setup;
 pub mod space_move;
@@ -139,7 +143,10 @@ pub fn router() -> Router<AppState> {
         .merge(app_share::router())
         .merge(assistant::router())
         .merge(pipeline_test::router())
+        .merge(script_test::router())
+        .merge(pipeline_source_check::router())
         .merge(datasource_test::router())
+        .merge(datasource_webhook::router())
         .merge(blueprints::router())
         .merge(branding::router())
         .merge(catalogue::router())

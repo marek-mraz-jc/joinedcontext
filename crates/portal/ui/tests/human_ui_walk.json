@@ -1210,6 +1210,8 @@
         "evidence/deployer/T-3986/full-0500/portal-organization-groups-dialog-remove-air-quality-steward-steward-en-1440.png"
       ]
     },
+    "src/pages/datasources/PresetDiscovery.tsx": null,
+    "src/pages/datasources/WebhookPanel.tsx": null,
     "src/pages/datasources/TemplateGallery.tsx": {
       "walkedBy": "deployer",
       "date": "2026-10-20",
@@ -1843,6 +1845,16 @@
         "evidence/worker-t4862/T-4862/flow-map-error-400.png"
       ]
     },
+    "src/pages/pipelines/MapperSources.tsx": {
+      "walkedBy": "worker-t7062",
+      "date": "2026-11-15",
+      "screenshots": [
+        "evidence/T-7062/shots/g18-mapper-ref-lang-1440.png",
+        "evidence/T-7062/shots/g18-mapper-ref-lang-400.png",
+        "evidence/T-7062/shots/g18-mapper-transforms-1440.png",
+        "evidence/T-7062/shots/g18-mapper-transforms-400.png"
+      ]
+    },
     "src/pages/pipelines/OutputMapper.tsx": {
       "walkedBy": "deployer",
       "date": "2026-10-20",
@@ -1877,6 +1889,7 @@
         "evidence/deployer/T-3986/full-0500/portal-organization-groups-dialog-remove-air-quality-steward-steward-en-1440.png"
       ]
     },
+    "src/pages/pipelines/SourceCheck.tsx": null,
     "src/pages/pipelines/PipelineHealth.tsx": {
       "walkedBy": "worker-t5048",
       "date": "2026-10-21",
@@ -2001,6 +2014,16 @@
         "evidence/T-5369/access-request-form-phone.png",
         "evidence/T-5369/access-request-sent-desktop.png",
         "evidence/T-5369/access-request-sent-phone.png"
+      ]
+    },
+    "src/pages/pipelines/WorkbenchSchedule.tsx": {
+      "walkedBy": "worker-t7062",
+      "date": "2026-11-15",
+      "screenshots": [
+        "evidence/T-7062/shots/g23-schedule-1440.png",
+        "evidence/T-7062/shots/g23-schedule-400.png",
+        "evidence/T-7062/shots/g23-schedule-refused-1440.png",
+        "evidence/T-7062/shots/g23-schedule-refused-400.png"
       ]
     },
     "src/pages/policies/TryAPerson.tsx": {
@@ -2305,6 +2328,24 @@
       "screenshots": [
         "supervisor/reports/workflows-2026-10-21/copies/walk/bring-back-1440.png",
         "supervisor/reports/workflows-2026-10-21/copies/walk/bring-back-400.png"
+      ]
+    },
+    "src/pages/scripts/ScriptsPage.tsx": {
+      "walkedBy": "worker-t7083 (stub walk, e2e/scripts.spec.ts)",
+      "date": "2026-11-15",
+      "screenshots": [
+        "evidence/T-7084/scripts-empty-1440.png",
+        "evidence/T-7084/scripts-empty-400.png",
+        "evidence/T-7084/scripts-results-1440.png",
+        "evidence/T-7084/scripts-results-400.png",
+        "evidence/T-7084/scripts-proposed-1440.png",
+        "evidence/T-7084/scripts-proposed-400.png",
+        "evidence/T-7084/scripts-moved-1440.png",
+        "evidence/T-7084/scripts-moved-400.png",
+        "evidence/T-7084/scripts-error-1440.png",
+        "evidence/T-7084/scripts-error-400.png",
+        "evidence/T-7084/scripts-refusal-1440.png",
+        "evidence/T-7084/scripts-refusal-400.png"
       ]
     },
     "src/pages/secrets/SecretFormPage.tsx": {

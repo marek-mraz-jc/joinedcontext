@@ -43,6 +43,8 @@ pub enum DataSourceType {
     WebSocket,
     /// A GTFS-realtime protobuf feed, polled over HTTP and decoded by the runner.
     GtfsRt,
+    /// Events a sender pushes to the runner's shared ingest listener (PL-122, ADR-N-071).
+    Webhook,
     /// Any input the pinned Bento runner ships (PL-50).
     Runner(String),
 }
@@ -55,6 +57,7 @@ impl DataSourceType {
             Self::Http => "http",
             Self::WebSocket => "websocket",
             Self::GtfsRt => "gtfs-rt",
+            Self::Webhook => "webhook",
             Self::Runner(name) => name.as_str(),
         }
     }
@@ -94,6 +97,7 @@ impl<'de> Deserialize<'de> for DataSourceType {
             "http" => Self::Http,
             "websocket" => Self::WebSocket,
             "gtfs-rt" => Self::GtfsRt,
+            "webhook" => Self::Webhook,
             _ => Self::Runner(s),
         })
     }
@@ -117,6 +121,7 @@ impl JsonSchema for DataSourceType {
                     serde_json::json!("http"),
                     serde_json::json!("websocket"),
                     serde_json::json!("gtfs-rt"),
+                    serde_json::json!("webhook"),
                     serde_json::json!("nats"),
                     serde_json::json!("csv"),
                     serde_json::json!("http_client"),
@@ -179,9 +184,14 @@ pub struct HttpConnection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive: Option<HttpArchive>,
     /// How the body becomes messages: `csv` or `xlsx` hands each row to the steps as one message
-    /// keyed by the header's column names; absent, the whole body is one message (PL-114).
+    /// keyed by the header's column names, `shapefile` each record of a zipped shapefile as a
+    /// WGS 84 GeoJSON Feature; absent, the whole body is one message (PL-114).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<HttpBodyFormat>,
+    /// The sheet of an `xlsx` body to read, by its name as the workbook's tab shows it
+    /// (`Stations 2026`); absent, the first sheet (T-7086).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
     /// Where the records sit in a JSON body: a dotted path to an array, `data.stations` for a
     /// GBFS feed. The runner hands each element to the steps as one message; absent, the whole
     /// body is one message. Names only, never an expression (PL-114).
@@ -263,6 +273,29 @@ pub enum HttpBodyFormat {
     /// keyed by the header row, each value as text the way the sheet's CSV export writes it,
     /// dates in RFC 3339 (the runner's `unarchive` format `xlsx`, T-7058).
     Xlsx,
+    /// A zip holding one ESRI shapefile layer (`.shp`, `.dbf`, `.prj`): one GeoJSON Feature per
+    /// record, reprojected from the `.prj`'s CRS to WGS 84, properties from the `.dbf` (the
+    /// runner's `unarchive` format `shapefile`, T-7089).
+    Shapefile,
+}
+
+/// Why `name` cannot be the `sheet` of an `xlsx` body, or `None`: the rules a spreadsheet's own
+/// tab names keep (1 to 31 characters, none of `: \ / ? * [ ]`, no control character, not
+/// starting or ending with `'`), so the name the runner is handed is one a workbook can hold.
+pub fn sheet_name_gap(name: &str) -> Option<&'static str> {
+    let length = name.chars().count();
+    if !(1..=31).contains(&length) {
+        Some("a sheet name is 1 to 31 characters, such as Stations 2026")
+    } else if name
+        .chars()
+        .any(|c| c.is_control() || matches!(c, ':' | '\\' | '/' | '?' | '*' | '[' | ']'))
+    {
+        Some("a sheet name holds no control character and none of : \\ / ? * [ ]")
+    } else if name.starts_with('\'') || name.ends_with('\'') || name.trim() != name {
+        Some("a sheet name neither starts nor ends with ' or a space")
+    } else {
+        None
+    }
 }
 
 /// The named members of the archive an `http` connection serves (PL-72, Architecture/08 §6).
@@ -604,13 +637,14 @@ impl HttpPaging {
                 "page and offset paging, total and maxRecords count the records: name their array in records",
             );
         }
-        if http.archive.is_some() || http.format == Some(HttpBodyFormat::Csv) {
+        if http.archive.is_some() || http.format.is_some() {
             return refuse(
                 "spec.http.paging",
-                if http.archive.is_some() {
-                    "archive"
-                } else {
-                    "csv"
+                match http.format {
+                    _ if http.archive.is_some() => "archive",
+                    Some(HttpBodyFormat::Xlsx) => "xlsx",
+                    Some(HttpBodyFormat::Shapefile) => "shapefile",
+                    _ => "csv",
                 }
                 .to_string(),
                 "paging reads JSON pages; an archive or a csv body is read whole",
@@ -1167,6 +1201,86 @@ impl Authorization {
     }
 }
 
+/// A pushed feed: the runner's shared ingest listener answers its POSTs (PL-122, ADR-N-071).
+///
+/// Only the reconciler renders the `http_server` input this becomes, so the managed door keeps
+/// authentication and both caps whatever a manifest says; an author-written `http_server` stays
+/// refused (PL-50).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WebhookConnection {
+    /// How a sender proves it may post: exactly one of `hmac` and `bearer`.
+    pub auth: WebhookAuth,
+    /// The largest body accepted, in bytes (1 to 16777216; 1048576 when absent). A larger one
+    /// answers 413 before any step runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_body_bytes: Option<u64>,
+    /// How many requests may wait for their answer at once (1 to 1024; 64 when absent); more
+    /// answer 503.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_in_flight: Option<u32>,
+}
+
+impl WebhookConnection {
+    /// `maxBodyBytes` when absent: 1 MiB, the runner's own default.
+    pub const DEFAULT_MAX_BODY_BYTES: u64 = 1024 * 1024;
+    /// The largest `maxBodyBytes` the runner accepts: 16 MiB.
+    pub const MAX_BODY_BYTES: u64 = 16 * 1024 * 1024;
+    /// `maxInFlight` when absent.
+    pub const DEFAULT_MAX_IN_FLIGHT: u32 = 64;
+    /// The largest `maxInFlight` accepted.
+    pub const MAX_IN_FLIGHT: u32 = 1024;
+
+    /// The body cap in force.
+    pub fn max_body_bytes(&self) -> u64 {
+        self.max_body_bytes.unwrap_or(Self::DEFAULT_MAX_BODY_BYTES)
+    }
+
+    /// The in-flight cap in force.
+    pub fn max_in_flight(&self) -> u32 {
+        self.max_in_flight.unwrap_or(Self::DEFAULT_MAX_IN_FLIGHT)
+    }
+
+    /// The one credential reference of `auth`, if exactly one is set.
+    pub fn credential(&self) -> Option<&SecretRef> {
+        match (&self.auth.hmac, &self.auth.bearer) {
+            (Some(hmac), None) => Some(&hmac.secret_ref),
+            (None, Some(bearer)) => Some(&bearer.token_ref),
+            _ => None,
+        }
+    }
+}
+
+/// A webhook's authentication; there is no `public` option.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WebhookAuth {
+    /// The body's hex SHA-256 HMAC in the provider's header, with or without `sha256=`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hmac: Option<WebhookHmac>,
+    /// `Authorization: Bearer <token>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bearer: Option<WebhookBearer>,
+}
+
+/// An HMAC-signed webhook (GitHub's `X-Hub-Signature-256`, a form tool's own header).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WebhookHmac {
+    /// The header the provider writes its signature into, such as `X-Hub-Signature-256`.
+    pub header: String,
+    /// The shared signing secret.
+    pub secret_ref: SecretRef,
+}
+
+/// A webhook that sends a fixed bearer token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WebhookBearer {
+    /// The token the sender presents.
+    pub token_ref: SecretRef,
+}
+
 /// How the runner trusts the feed's certificate.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -1198,6 +1312,9 @@ pub struct DataSourceSpec {
     /// The GTFS-realtime connection, present when `type` is `gtfs-rt`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gtfs_rt: Option<GtfsRtConnection>,
+    /// The webhook a sender pushes to, present when `type` is `webhook`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook: Option<WebhookConnection>,
     /// Transport security for the connection above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls: Option<TlsSettings>,
@@ -1248,8 +1365,8 @@ impl DataSourceSpec {
     pub fn terminates(&self) -> bool {
         match &self.source_type {
             DataSourceType::Http | DataSourceType::GtfsRt => true,
-            DataSourceType::Mqtt | DataSourceType::WebSocket => false,
-            DataSourceType::Runner(name) => bento_inputs::TERMINATING.contains(&name.as_str()),
+            DataSourceType::Mqtt | DataSourceType::WebSocket | DataSourceType::Webhook => false,
+            DataSourceType::Runner(name) => input_terminates(name),
         }
     }
 
@@ -1295,6 +1412,7 @@ impl DataSourceSpec {
             self.http.is_some().then_some("http"),
             self.web_socket.is_some().then_some("webSocket"),
             self.gtfs_rt.is_some().then_some("gtfsRt"),
+            self.webhook.is_some().then_some("webhook"),
         ]
         .into_iter()
         .flatten()
@@ -1304,12 +1422,14 @@ impl DataSourceSpec {
             DataSourceType::Mqtt
             | DataSourceType::Http
             | DataSourceType::WebSocket
-            | DataSourceType::GtfsRt => {
+            | DataSourceType::GtfsRt
+            | DataSourceType::Webhook => {
                 let expected = match self.source_type {
                     DataSourceType::Mqtt => "mqtt",
                     DataSourceType::Http => "http",
                     DataSourceType::WebSocket => "webSocket",
                     DataSourceType::GtfsRt => "gtfsRt",
+                    DataSourceType::Webhook => "webhook",
                     DataSourceType::Runner(_) => unreachable!(),
                 };
                 if present != [expected] {
@@ -1321,8 +1441,8 @@ impl DataSourceSpec {
                 }
             }
             DataSourceType::Runner(name) => {
-                if !bento_inputs::INPUTS.contains(&name.as_str()) {
-                    let mut accepted = vec!["mqtt", "http", "websocket", "gtfs-rt"];
+                if !known_input(name) {
+                    let mut accepted = vec!["mqtt", "http", "websocket", "gtfs-rt", "webhook"];
                     accepted.extend(runner_inputs());
                     return Err(Error::Invalid {
                         field: "spec.type".to_string(),
@@ -1352,6 +1472,13 @@ impl DataSourceSpec {
                     reason: "runner data sources carry their own tls configuration inside `spec.input`, not `spec.tls`",
                 });
             }
+            if self.source_type == DataSourceType::Webhook {
+                return Err(Error::Name {
+                    field: "spec.tls",
+                    value: String::new(),
+                    reason: "a webhook is called over the installation's own HTTPS edge; `spec.tls` belongs to a connection the runner opens",
+                });
+            }
             if tls.insecure_skip_verify {
                 return Err(Error::Name {
                     field: "spec.tls.insecureSkipVerify",
@@ -1373,6 +1500,7 @@ impl DataSourceSpec {
             ("spec.http", serde_json::to_string(&self.http)),
             ("spec.webSocket", serde_json::to_string(&self.web_socket)),
             ("spec.gtfsRt", serde_json::to_string(&self.gtfs_rt)),
+            ("spec.webhook", serde_json::to_string(&self.webhook)),
         ];
         for (field, text) in typed {
             if let Some(reason) = text.ok().as_deref().and_then(refused_runner_read) {
@@ -1412,7 +1540,21 @@ impl DataSourceSpec {
                         return Err(Error::Name {
                             field: "spec.http.records",
                             value: records.clone(),
-                            reason: "records splits a JSON body; a body of format csv or xlsx is split by its rows already",
+                            reason: "records splits a JSON body; a body of format csv, xlsx or shapefile is split by its rows already",
+                        });
+                    }
+                }
+                if let Some(sheet) = &http.sheet {
+                    let reason = if http.format != Some(HttpBodyFormat::Xlsx) {
+                        Some("sheet names the sheet of an xlsx body: set format: xlsx, or drop sheet")
+                    } else {
+                        sheet_name_gap(sheet)
+                    };
+                    if let Some(reason) = reason {
+                        return Err(Error::Name {
+                            field: "spec.http.sheet",
+                            value: sheet.clone(),
+                            reason,
                         });
                     }
                 }
@@ -1444,6 +1586,10 @@ impl DataSourceSpec {
                     "spec.gtfsRt.url",
                 )
             }
+            DataSourceType::Webhook => {
+                self.validate_typed_common()?;
+                validate_webhook(self.webhook.as_ref().expect("checked above"))
+            }
             DataSourceType::Runner(name) => self.validate_runner(name, files),
         }
     }
@@ -1466,6 +1612,17 @@ impl DataSourceSpec {
                 authorization
                     .header_ref
                     .validate("spec.http.authorization.headerRef")?;
+            }
+        }
+        if let Some(webhook) = &self.webhook {
+            if let Some(hmac) = &webhook.auth.hmac {
+                hmac.secret_ref
+                    .validate("spec.webhook.auth.hmac.secretRef")?;
+            }
+            if let Some(bearer) = &webhook.auth.bearer {
+                bearer
+                    .token_ref
+                    .validate("spec.webhook.auth.bearer.tokenRef")?;
             }
         }
         if let Some(tls) = &self.tls {
@@ -1541,6 +1698,12 @@ impl DataSourceSpec {
             .iter()
             .find(|(n, _)| *n == runner_name)
             .map(|(_, paths)| *paths)
+            .or_else(|| {
+                EKIBEN_ONLY_INPUTS
+                    .iter()
+                    .find(|(n, _, _)| *n == runner_name)
+                    .map(|(_, paths, _)| *paths)
+            })
             .unwrap_or(&[]);
 
         let input_val = self.input.as_ref().expect("checked above");
@@ -1695,9 +1858,49 @@ impl DataSourceSpec {
                 }
                 refs
             }
+            DataSourceType::Webhook => self
+                .webhook
+                .as_ref()
+                .and_then(WebhookConnection::credential)
+                .into_iter()
+                .collect(),
             DataSourceType::Runner(_) => self.secrets.iter().collect(),
         }
     }
+}
+
+/// `spec.webhook`: one credential, a header name for `hmac`, both caps in range (PL-122).
+fn validate_webhook(webhook: &WebhookConnection) -> Result<()> {
+    match (&webhook.auth.hmac, &webhook.auth.bearer) {
+        (Some(hmac), None) => header_name(&hmac.header).map_err(|_| Error::Name {
+            field: "spec.webhook.auth.hmac.header",
+            value: hmac.header.clone(),
+            reason: "a header name is a token: letters, digits and !#$%&'*+-.^_`|~, such as X-Hub-Signature-256",
+        })?,
+        (None, Some(_)) => {}
+        _ => {
+            return Err(Error::Name {
+                field: "spec.webhook.auth",
+                value: String::new(),
+                reason: "a webhook names exactly one of `hmac` and `bearer`; anyone could post to one without",
+            })
+        }
+    }
+    if !(1..=WebhookConnection::MAX_BODY_BYTES).contains(&webhook.max_body_bytes()) {
+        return Err(Error::Name {
+            field: "spec.webhook.maxBodyBytes",
+            value: webhook.max_body_bytes().to_string(),
+            reason: "maxBodyBytes is 1 to 16777216 (16 MiB), such as 1048576",
+        });
+    }
+    if !(1..=WebhookConnection::MAX_IN_FLIGHT).contains(&webhook.max_in_flight()) {
+        return Err(Error::Name {
+            field: "spec.webhook.maxInFlight",
+            value: webhook.max_in_flight().to_string(),
+            reason: "maxInFlight is 1 to 1024, such as 64",
+        });
+    }
+    Ok(())
 }
 
 /// Validates that the pipeline's execution class is compatible with the data source (PL-04, PL-50).
@@ -1752,6 +1955,14 @@ const REFUSED_INPUTS: &[&str] = &[
     "subprocess",
 ];
 
+/// The inputs only the pipeline runner (ekiben) builds, which the generated Bento tables
+/// (`bento_inputs`) do not list (T-7087): per input the fields that hold a credential, so they
+/// take only a `${VAR}` of spec.secrets as a Bento-documented secret does (MF-35), and whether
+/// it ends on its own once it has read what there is. The Portal's form reads the same inputs
+/// from ui/src/schemas/ekiben-inputs.json; tests/runner_lists.test.ts keeps the two equal.
+const EKIBEN_ONLY_INPUTS: &[(&str, &[&str], bool)] =
+    &[("ftp", &["password"], true), ("imap", &["password"], true)];
+
 /// The inputs that carry inputs of their own, and the field that holds them.
 const WRAPPER_INPUTS: &[(&str, &str)] = &[
     ("batched", "child"),
@@ -1774,12 +1985,32 @@ fn refused_input(field: &'static str, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// The runner inputs an author may name: the Bento catalog's, less the refused ones, that the
-/// pipeline runner (ekiben) also builds (T-6825).
+/// Whether the runner input `name` ends on its own once it has read what there is: Bento's
+/// `TERMINATING` list or ekiben's own table (PL-04).
+pub fn input_terminates(name: &str) -> bool {
+    bento_inputs::TERMINATING.contains(&name)
+        || EKIBEN_ONLY_INPUTS
+            .iter()
+            .any(|(n, _, ends)| *n == name && *ends)
+}
+
+/// Whether `name` is an input the Bento catalog or ekiben's own table (`EKIBEN_ONLY_INPUTS`)
+/// knows.
+fn known_input(name: &str) -> bool {
+    bento_inputs::INPUTS.contains(&name) || EKIBEN_ONLY_INPUTS.iter().any(|(n, _, _)| *n == name)
+}
+
+/// The runner inputs an author may name: the Bento catalog's and ekiben's own
+/// (`EKIBEN_ONLY_INPUTS`), less the refused ones, that the pipeline runner (ekiben) builds
+/// (T-6825).
 pub fn runner_inputs() -> impl Iterator<Item = &'static str> {
-    bento_inputs::INPUTS.iter().copied().filter(|name| {
-        !REFUSED_INPUTS.contains(name) && super::ekiben_components::INPUTS.contains(name)
-    })
+    bento_inputs::INPUTS
+        .iter()
+        .copied()
+        .chain(EKIBEN_ONLY_INPUTS.iter().map(|(name, _, _)| *name))
+        .filter(|name| {
+            !REFUSED_INPUTS.contains(name) && super::ekiben_components::INPUTS.contains(name)
+        })
 }
 
 /// Refuses an input the Bento catalog knows and the pipeline runner does not build, at save
@@ -1855,7 +2086,7 @@ fn validate_input_tree(
             .iter()
             .filter(|(key, _)| !matches!(key.as_str(), "label" | "processors"))
         {
-            if !bento_inputs::INPUTS.contains(&child_name.as_str()) {
+            if !known_input(child_name) {
                 return Err(Error::Invalid {
                     field: "spec.input".to_owned(),
                     reason: format!("unknown input `{child_name}` inside `{name}`"),
@@ -2299,6 +2530,139 @@ mod address_tests {
 }
 
 #[cfg(test)]
+mod webhook_tests {
+    use super::{DataSourceSpec, DataSourceType};
+    use serde_json::{json, Value};
+
+    fn spec(webhook: Value) -> DataSourceSpec {
+        serde_json::from_value(json!({ "type": "webhook", "webhook": webhook })).expect("parses")
+    }
+
+    fn refusal(source: &DataSourceSpec) -> String {
+        source.validate().expect_err("refused").to_string()
+    }
+
+    const HMAC: &str = "X-Hub-Signature-256";
+
+    /// PL-122: an hmac or a bearer webhook is valid, resident, and its one credential is the
+    /// reference the reconciler resolves.
+    #[test]
+    fn an_hmac_or_a_bearer_webhook_is_a_resident_source_with_one_credential() {
+        let hmac = spec(json!({
+            "auth": { "hmac": { "header": HMAC, "secretRef": { "name": "ttn", "key": "secret" } } }
+        }));
+        hmac.validate().expect("valid");
+        assert_eq!(hmac.source_type, DataSourceType::Webhook);
+        assert!(!hmac.terminates());
+        assert_eq!(hmac.secret_refs().len(), 1);
+        assert_eq!(hmac.secret_refs()[0].name, "ttn");
+        let webhook = hmac.webhook.as_ref().expect("block");
+        assert_eq!(
+            (webhook.max_body_bytes(), webhook.max_in_flight()),
+            (1_048_576, 64)
+        );
+
+        let bearer = spec(json!({
+            "auth": { "bearer": { "tokenRef": { "name": "chirpstack", "key": "token" } } },
+            "maxBodyBytes": 16_777_216, "maxInFlight": 1
+        }));
+        bearer.validate().expect("valid");
+        assert_eq!(bearer.secret_refs()[0].name, "chirpstack");
+    }
+
+    /// No webhook without authentication, and none with two: a sender is one kind.
+    #[test]
+    fn a_webhook_names_exactly_one_credential_and_no_public_option() {
+        for auth in [
+            json!({}),
+            json!({
+                "hmac": { "header": HMAC, "secretRef": { "name": "a" } },
+                "bearer": { "tokenRef": { "name": "b" } }
+            }),
+        ] {
+            let err = refusal(&spec(json!({ "auth": auth })));
+            assert!(
+                err.contains("spec.webhook.auth") && err.contains("exactly one"),
+                "{err}"
+            );
+        }
+        assert!(serde_json::from_value::<DataSourceSpec>(json!({
+            "type": "webhook", "webhook": { "auth": { "public": true } }
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<DataSourceSpec>(json!({
+            "type": "webhook", "webhook": { "auth": { "bearer": { "tokenRef": { "name": "b" } } }, "address": "0.0.0.0:4195" }
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn caps_header_and_credential_are_checked_naming_the_field() {
+        let bearer = json!({ "bearer": { "tokenRef": { "name": "b" } } });
+        for (webhook, field) in [
+            (
+                json!({ "auth": bearer, "maxBodyBytes": 0 }),
+                "spec.webhook.maxBodyBytes",
+            ),
+            (
+                json!({ "auth": bearer, "maxBodyBytes": 16_777_217 }),
+                "spec.webhook.maxBodyBytes",
+            ),
+            (
+                json!({ "auth": bearer, "maxInFlight": 0 }),
+                "spec.webhook.maxInFlight",
+            ),
+            (
+                json!({ "auth": bearer, "maxInFlight": 1025 }),
+                "spec.webhook.maxInFlight",
+            ),
+            (
+                json!({ "auth": { "hmac": { "header": "X Sig", "secretRef": { "name": "a" } } } }),
+                "spec.webhook.auth.hmac.header",
+            ),
+            (
+                json!({ "auth": { "bearer": { "tokenRef": { "name": "ghp_0123456789abcdefghijklmnopqrstuvwxyz" } } } }),
+                "spec.webhook.auth.bearer.tokenRef",
+            ),
+        ] {
+            let err = refusal(&spec(webhook));
+            assert!(err.contains(field), "{field}: {err}");
+        }
+    }
+
+    /// The managed listener is the only one: `http_server` stays refused as an author's input,
+    /// and a webhook carries no other block, input, secrets or tls.
+    #[test]
+    fn http_server_stays_refused_and_a_webhook_carries_nothing_else() {
+        let server: DataSourceSpec = serde_json::from_value(json!({
+            "type": "http_server", "input": { "path": "/hook" }
+        }))
+        .expect("parses");
+        let err = refusal(&server);
+        assert!(err.contains("http_server"), "{err}");
+
+        let auth = json!({ "bearer": { "tokenRef": { "name": "b" } } });
+        for extra in [
+            json!({ "http": { "url": "https://feeds.example/x" } }),
+            json!({ "input": { "path": "/x" } }),
+            json!({ "secrets": [{ "name": "b", "envVar": "B" }] }),
+            json!({ "tls": { "caCertRef": { "name": "ca" } } }),
+        ] {
+            let mut value = json!({ "type": "webhook", "webhook": { "auth": auth } });
+            value
+                .as_object_mut()
+                .expect("object")
+                .extend(extra.as_object().expect("object").clone());
+            let source: DataSourceSpec = serde_json::from_value(value).expect("parses");
+            assert!(source.validate().is_err(), "{extra}");
+        }
+        let missing: DataSourceSpec =
+            serde_json::from_value(json!({ "type": "webhook" })).expect("parses");
+        assert!(refusal(&missing).contains("spec"));
+    }
+}
+
+#[cfg(test)]
 mod runner_registry_tests {
     fn source(input: &str) -> String {
         format!(
@@ -2370,8 +2734,47 @@ mod runner_registry_tests {
                 super::super::ekiben_components::INPUTS.contains(name),
                 "{name}"
             );
-            assert!(super::bento_inputs::INPUTS.contains(name), "{name}");
+            assert!(
+                super::bento_inputs::INPUTS.contains(name)
+                    || super::EKIBEN_ONLY_INPUTS.iter().any(|(n, _, _)| n == name),
+                "{name}"
+            );
         }
+        assert!(offered.contains(&"ftp") && offered.contains(&"imap"));
         assert!(!offered.contains(&"kafka") && !offered.contains(&"stdin"));
+    }
+
+    /// T-7092: an ftp or imap password is a `${VAR}` naming a spec.secrets entry, as a
+    /// Bento-documented secret is; a password typed in is refused naming the field, and both
+    /// inputs end on their own, so a schedule may run them.
+    #[test]
+    fn an_ekiben_input_password_is_a_secret_reference_only() {
+        let ftp = |password: &str| {
+            source(&format!(
+                "  type: ftp\n  input:\n    address: files.example.org:21\n    username: exports\n    password: {password}\n    path: /exports/*.csv\n  secrets:\n    - name: ftp-login\n      key: password\n      envVar: FTP_PASSWORD\n"
+            ))
+        };
+        let err = crate::registry::validate_yaml("DataSource", &ftp("hunter2"))
+            .expect("a kind")
+            .expect_err("a literal password")
+            .to_string();
+        assert!(err.contains("spec.input.password"), "{err}");
+        crate::registry::validate_yaml("DataSource", &ftp("\"${FTP_PASSWORD}\""))
+            .expect("a kind")
+            .expect("a password from the source's secret");
+        let imap = source(
+            "  type: imap\n  input:\n    address: imap.example.org:993\n    username: exports@city.example.org\n    password: \"${OTHER}\"\n  secrets:\n    - name: imap-login\n      key: password\n      envVar: IMAP_PASSWORD\n",
+        );
+        let err = crate::registry::validate_yaml("DataSource", &imap)
+            .expect("a kind")
+            .expect_err("a variable no secret declares")
+            .to_string();
+        assert!(err.contains("spec.input.password"), "{err}");
+        for yaml in [ftp("\"${FTP_PASSWORD}\""), imap] {
+            let source =
+                crate::envelope::ResourceEnvelope::<super::DataSourceSpec>::from_yaml(&yaml)
+                    .expect("parses");
+            assert!(source.spec.terminates(), "{yaml}");
+        }
     }
 }

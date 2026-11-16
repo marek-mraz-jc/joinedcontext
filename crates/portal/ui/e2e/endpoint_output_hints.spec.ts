@@ -2,6 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Locator } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6134: on the Endpoint editor every dropdown of a calendar or map output reads its hint to a
 // screen reader, as the walker asks of every form field (UI-16).

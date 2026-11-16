@@ -565,7 +565,7 @@ impl Input for SftpInput {
                     continue;
                 }
             };
-            let mut parts = self.s.scanner.scan(body)?;
+            let mut parts = self.s.scanner.scan(&body, &path)?;
             if parts.is_empty() {
                 if self.s.delete_on_finish {
                     let _ = session.sftp.remove_file(path.clone()).await;

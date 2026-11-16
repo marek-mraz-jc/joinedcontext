@@ -11084,6 +11084,202 @@
         }
       }
     },
+    "/api/v1/projects/{project}/datasource-discovery": {
+      "post": {
+        "tags": [
+          "datasources"
+        ],
+        "summary": "Data Source Discovery",
+        "description": "Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things.",
+        "operationId": "discover_datasource",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The choices, or `skipped` with the reason in plain words",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Discovery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The URL does not name a service of the kind, or names one the runner may not reach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant proposes a DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A test of this project is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No pipeline runner is configured, or it did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/datasource-paging": {
+      "post": {
+        "tags": [
+          "datasources"
+        ],
+        "summary": "Data Source Paging",
+        "description": "Reads the first answer of an address once on the project's runner and answers how the source pages: the walk for `spec.http.paging` (a Link header, a next link, ArcGIS, WFS or CKAN), where the records sit, the records on the first page, the announced total and the pages a walk reads. Nothing is written.",
+        "operationId": "guess_datasource_paging",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PagingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The guess, or `skipped` with the reason in plain words",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagingGuess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The URL does not parse, carries a credential, or names an address the runner may not reach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant proposes a DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A test of this project is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The address is not on the public internet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No pipeline runner is configured, or it did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/datasources/{name}/test": {
       "post": {
         "tags": [
@@ -11175,6 +11371,190 @@
           },
           "503": {
             "description": "No pipeline runner is configured, or it did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/datasources/{name}/test-event": {
+      "post": {
+        "tags": [
+          "datasources"
+        ],
+        "summary": "Webhook Test Event",
+        "description": "Posts the body to one reading pipeline's webhook through the runner's ingest handler, signed with the source's credential, and answers the status a sender would see. The event runs through the pipeline like a real one.",
+        "operationId": "test_event",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "DataSource name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestEvent"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the runner answered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestEventAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant proposes a DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The source is no webhook, `pipeline` reads no such source, or `body` is empty or over the cap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The runner does not run in this process, or holds no credential for the source yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/datasources/{name}/webhook": {
+      "get": {
+        "tags": [
+          "datasources"
+        ],
+        "summary": "Webhook Addresses",
+        "description": "The URL each reading pipeline is posted to, the header a sender sets and the body cap. Never the credential.",
+        "operationId": "webhook_info",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "DataSource name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The addresses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant reads this DataSource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The DataSource is not of type webhook",
             "content": {
               "application/json": {
                 "schema": {
@@ -22779,6 +23159,138 @@
         }
       }
     },
+    "/api/v1/projects/{project}/ops/jc_datasource_discover": {
+      "post": {
+        "description": "Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things",
+        "operationId": "jc_datasource_discover",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "kind": "ckan",
+                "url": "example"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "description": "The preset kind",
+                    "enum": [
+                      "ckan",
+                      "arcgisFeature",
+                      "odata",
+                      "wfs",
+                      "ogcFeatures",
+                      "sensorThings"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "description": "The service or any address under it",
+                    "maxLength": 2048,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "url"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "field",
+                    "url",
+                    "choices",
+                    "truncated"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Data Source Discovery",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "registry",
+          "kind": "DataSource",
+          "verb": "propose"
+        }
+      }
+    },
     "/api/v1/projects/{project}/ops/jc_draft_drop": {
       "post": {
         "description": "Discards a shared draft (AG-61)",
@@ -26786,7 +27298,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "aspect": {
-                    "description": "projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did",
+                    "description": "projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did; costs: a month's costs per project; addresses: the Organization's addresses; dataAccess: who reads which Endpoint; widgetOptions: home page Dashboards to pick; personReadable: what one person reads",
                     "enum": [
                       "projects",
                       "setup",
@@ -26795,7 +27307,12 @@
                       "limits",
                       "brokers",
                       "agents",
-                      "agentActivity"
+                      "agentActivity",
+                      "costs",
+                      "addresses",
+                      "dataAccess",
+                      "widgetOptions",
+                      "personReadable"
                     ],
                     "type": "string"
                   },
@@ -26804,11 +27321,74 @@
                     "maxLength": 128,
                     "type": "string"
                   },
+                  "endpoint": {
+                    "description": "dataAccess: one Endpoint's row, by slug",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "group": {
+                    "description": "dataAccess: one group's column",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "inProject": {
+                    "description": "agentActivity: one project's runs",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
                   "limit": {
                     "description": "agentActivity: page size, default 20",
                     "maximum": 50,
                     "minimum": 1,
                     "type": "integer"
+                  },
+                  "month": {
+                    "description": "costs: e.g. 2026-09, default last month",
+                    "pattern": "^[0-9]{4}-[0-9]{2}$",
+                    "type": "string"
+                  },
+                  "organization": {
+                    "description": "widgetOptions: the Organization, by name",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "person": {
+                    "description": "personReadable: the Keycloak user id; agentActivity: runs this person started",
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "profile": {
+                    "description": "agentActivity: one agent profile's runs",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "run": {
+                    "description": "agentActivity: one run",
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "since": {
+                    "description": "agentActivity: runs started at or after, e.g. 2026-11-01T00:00:00Z",
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "space": {
+                    "description": "agentActivity: runs that read this Context Space",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "until": {
+                    "description": "agentActivity: runs started before",
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "verdict": {
+                    "description": "agentActivity: refused, runs with a refused step",
+                    "enum": [
+                      "ok",
+                      "refused"
+                    ],
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -34702,7 +35282,8 @@
                       "Environment",
                       "Dashboard",
                       "Layer",
-                      "Portal"
+                      "Portal",
+                      "Script"
                     ],
                     "examples": [
                       "Pipeline"
@@ -34826,6 +35407,183 @@
           "checkedBy": "project",
           "kind": "*",
           "verb": "read"
+        }
+      }
+    },
+    "/api/v1/projects/{project}/ops/jc_script_test": {
+      "post": {
+        "description": "Runs a Script version's tests on the runner",
+        "operationId": "jc_script_test",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "code": "example",
+                "tests": [
+                  {
+                    "expected": {},
+                    "input": {},
+                    "name": "example"
+                  }
+                ]
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "description": "JavaScript",
+                    "maxLength": 65536,
+                    "type": "string"
+                  },
+                  "limits": {
+                    "additionalProperties": false,
+                    "description": "Run limits",
+                    "properties": {
+                      "memoryMb": {
+                        "description": "MiB heap",
+                        "maximum": 64,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "timeoutMs": {
+                        "description": "ms per run",
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "tests": {
+                    "description": "In/out cases",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expected": {
+                          "description": "Expected out",
+                          "maxProperties": 512,
+                          "type": "object"
+                        },
+                        "input": {
+                          "description": "In",
+                          "maxProperties": 512,
+                          "type": "object"
+                        },
+                        "name": {
+                          "description": "Test name",
+                          "maxLength": 63,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "input",
+                        "expected"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "code",
+                  "tests"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "results": {
+                      "description": "Per test: name, ok, the output or the error, and millis",
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Script Test",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "registry",
+          "kind": "Script",
+          "verb": "propose"
         }
       }
     },
@@ -38482,6 +39240,150 @@
         }
       }
     },
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/export": {
+      "get": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Export Rejected Records",
+        "description": "Every record the pipeline holds rejected (at most 1000), newest first, as CSV: its rule, attribute, step, run, message and the record as JSON, secrets masked as they were kept and the attributes the project's models mark personal withheld (G-21, PL-61, PL-110). Needs read on the pipeline.",
+        "operationId": "export_rejected",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Pipeline name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/csv, one row per rejected record",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The list or a model could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/groups": {
+      "get": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Group Rejected Records",
+        "description": "Every record the pipeline holds rejected, counted by the rule it broke and the attribute it broke it at, the largest group first, each with its newest three records (secrets masked), where the fix belongs and, for an enum, the values the model allows (G-21, PL-61). Needs read on the pipeline.",
+        "operationId": "get_rejected_groups",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Pipeline name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RejectedGroups"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The list could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/pipelines/{name}/rejected/retry": {
       "post": {
         "tags": [
@@ -38923,6 +39825,98 @@
           },
           "404": {
             "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/pipelines/{name}/source-check": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Check Whole Source",
+        "description": "Runs the saved pipeline over every page of its http DataSource as a dry run on the project's runner and counts what a live run would accept and reject, by rule and attribute, with the first 1000 rejected records (secrets masked). Nothing is written. Ends at 60 s or 50 000 records and holds the project's one pipeline test slot (G-21, G-07). Needs read on the pipeline.",
+        "operationId": "check_source",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Pipeline name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the CSRF token is missing or does not match, or the caller lacks the verb this write needs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The pipeline reads no saved http DataSource, or a test of this project is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No pipeline runner is configured, or it did not answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -39678,6 +40672,125 @@
           },
           "503": {
             "description": "No repository configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/scripts/test": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Script Test",
+        "description": "Runs a Script version's tests on the project's runner, in the sandbox the live stream uses, without writing.",
+        "operationId": "test_script",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "`code`: the version's source. `limits`: `timeoutMs` and `memoryMb`. `tests`: 1 to 20 `{name, input, expected}`.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptTestRequest"
+              },
+              "example": {
+                "code": "let m = bento.v0_msg_as_structured(); m.ok = true; bento.v0_msg_set_structured(m);",
+                "tests": [
+                  {
+                    "expected": {
+                      "id": 1,
+                      "ok": true
+                    },
+                    "input": {
+                      "id": 1
+                    },
+                    "name": "flags-one"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Each test's result, in the order sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptTestAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant proposes a Script in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A test of this project is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The code, a limit or a test is outside its bounds, naming the field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No pipeline runner is configured, or it did not answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -49693,6 +50806,24 @@
           "unreadable"
         ]
       },
+      "Choice": {
+        "type": "object",
+        "description": "One thing the person can pick.",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "What the person reads."
+          },
+          "value": {
+            "type": "string",
+            "description": "What the form writes: an organization name, a layer id, an entity set, a feature type\nname, a collection id or a Thing id."
+          }
+        }
+      },
       "CkanStatus": {
         "type": "object",
         "description": "The CKAN picture of one project.",
@@ -51437,6 +52568,69 @@
           }
         },
         "additionalProperties": false
+      },
+      "DiscoverRequest": {
+        "type": "object",
+        "description": "What to list: the preset kind and the service's URL as the person typed it.",
+        "required": [
+          "kind",
+          "url"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`ckan`, `arcgisFeature`, `odata`, `wfs`, `ogcFeatures` or `sensorThings`.",
+            "example": "arcgisFeature"
+          },
+          "url": {
+            "type": "string",
+            "description": "The service or any address under it, `https://geodata.example/rest/services/X/FeatureServer/0/query`.",
+            "example": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "kind": "wfs",
+          "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs"
+        }
+      },
+      "Discovery": {
+        "type": "object",
+        "description": "The listing of one service, or why there is none.",
+        "required": [
+          "field",
+          "url",
+          "choices",
+          "truncated"
+        ],
+        "properties": {
+          "choices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Choice"
+            },
+            "description": "What the service lists, in its order, at most `MAX_CHOICES`."
+          },
+          "field": {
+            "type": "string",
+            "description": "The form field a choice fills: `organization`, `layer`, `entitySet`, `typeNames`,\n`collection` or `thing`."
+          },
+          "skipped": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why nothing is listed: the service did not answer, or answered something else."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The answer was longer than the Portal reads, or listed more than `MAX_CHOICES`."
+          },
+          "url": {
+            "type": "string",
+            "description": "The listing's address the runner read."
+          }
+        }
       },
       "DisplayMode": {
         "type": "string",
@@ -55952,6 +57146,84 @@
           }
         }
       },
+      "PagingGuess": {
+        "type": "object",
+        "description": "What the first answer says about the pages after it.",
+        "required": [
+          "more"
+        ],
+        "properties": {
+          "more": {
+            "type": "boolean",
+            "description": "The answer says more pages follow without saying how many (ArcGIS, a next link)."
+          },
+          "onPage": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The records on the first page.",
+            "minimum": 0
+          },
+          "pages": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The pages a walk reads: the total over the first page's records, rounded up.",
+            "minimum": 0
+          },
+          "paging": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The walk to write into `spec.http.paging`; absent when the answer names no next page\nthe runner can follow."
+          },
+          "records": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the records sit, for `spec.http.records`: `features`, `value`, `result.results`."
+          },
+          "skipped": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why nothing was guessed: the address did not answer, or answered no JSON."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The records in all, as the answer announces them.",
+            "minimum": 0
+          }
+        }
+      },
+      "PagingRequest": {
+        "type": "object",
+        "description": "The address whose first answer is read.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The address the source reads, as the person typed it."
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&request=GetFeature&typeNames=avoindata:x&outputFormat=application/json"
+        }
+      },
       "PairedTab": {
         "type": "object",
         "description": "A Portal tab paired with a connector (T-5967).",
@@ -57179,6 +58451,13 @@
             "$ref": "#/components/schemas/PipelineTestSampleFormat",
             "description": "How the sample is split into messages."
           },
+          "sheet": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sheet of an `xlsx` sample by its tab name, such as `Stations 2026`; absent, the\nfirst sheet."
+          },
           "text": {
             "type": [
               "string",
@@ -57202,7 +58481,9 @@
         "enum": [
           "text",
           "csv",
-          "json"
+          "json",
+          "xlsx",
+          "shapefile"
         ]
       },
       "Place": {
@@ -57896,6 +59177,14 @@
               "integer",
               "null"
             ],
+            "minimum": 0
+          },
+          "pages": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The pages a paged source's read walked (`spec.http.paging` or a preset); absent unpaged.",
             "minimum": 0
           },
           "records": {
@@ -58848,6 +60137,86 @@
           }
         }
       },
+      "RejectedGroup": {
+        "type": "object",
+        "description": "One rule broken at one path, how often and its newest records (G-21): what the rejected list\nis grouped by, counted over every record kept, not a page.",
+        "required": [
+          "rule",
+          "path",
+          "count",
+          "examples"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rejected"
+            },
+            "description": "The group's newest records, at most [`EXAMPLES`]."
+          },
+          "path": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          }
+        }
+      },
+      "RejectedGroupView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RejectedGroup"
+          },
+          {
+            "type": "object",
+            "required": [
+              "fix"
+            ],
+            "properties": {
+              "allowed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The values the model allows at `path`, for an `sh:in` group."
+              },
+              "fix": {
+                "type": "string",
+                "description": "Where the fix belongs: `model` (the space's data model refuses the value or the\nattribute), `mapping` (the mapping writes the wrong shape), `step` (a step of the pipeline\nfailed) or `runner` (the runner refused it without a model rule)."
+              }
+            }
+          }
+        ],
+        "description": "One group with where its fix belongs."
+      },
+      "RejectedGroups": {
+        "type": "object",
+        "description": "The rejected list grouped by rule and path (G-21): what a steward fixes first.",
+        "required": [
+          "groups",
+          "total"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RejectedGroupView"
+            },
+            "description": "The largest group first, at most 50."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many records the pipeline holds, at most 1000 (PL-61).",
+            "minimum": 0
+          }
+        }
+      },
       "RejectedPage": {
         "type": "object",
         "description": "One page of a pipeline's rejected records.",
@@ -59752,6 +61121,135 @@
         },
         "additionalProperties": false
       },
+      "ScriptLimitsBody": {
+        "type": "object",
+        "description": "jc-core's `ScriptLimits` as the document publishes it (PL-118).",
+        "properties": {
+          "memoryMb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "MiB per message, 1 to 64, e.g. `32`.",
+            "minimum": 0
+          },
+          "timeoutMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Milliseconds per message, 1 to 200, e.g. `50`.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScriptTestAnswer": {
+        "type": "object",
+        "description": "Every test's result, in the order the tests were sent.",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptTestResult"
+            }
+          }
+        }
+      },
+      "ScriptTestBody": {
+        "type": "object",
+        "description": "jc-core's `ScriptTest` as the document publishes it (PL-118); only the schema reads it.",
+        "required": [
+          "name",
+          "input",
+          "expected"
+        ],
+        "properties": {
+          "expected": {
+            "description": "The message the script must produce, as JSON."
+          },
+          "input": {
+            "description": "The input message, as JSON."
+          },
+          "name": {
+            "type": "string",
+            "description": "A short name, e.g. `converts-one-point`."
+          }
+        }
+      },
+      "ScriptTestRequest": {
+        "type": "object",
+        "description": "What a Script test runs: the code of one version, its limits and its tests.",
+        "required": [
+          "code",
+          "tests"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The version's source, at most 64 KiB."
+          },
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScriptLimitsBody",
+                "description": "Time and memory per message; absent, the runner's defaults."
+              }
+            ]
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptTestBody"
+            },
+            "description": "One to 20 tests, each `{name, input, expected}`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScriptTestResult": {
+        "type": "object",
+        "description": "One test's result.",
+        "required": [
+          "name",
+          "ok",
+          "millis"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the script failed on the input (a throw, the time or memory limit)."
+          },
+          "millis": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The run on the runner, stream start to answer, in milliseconds.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The test's name."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Whether the script made exactly `expected` of `input`."
+          },
+          "output": {
+            "description": "What the script made of the input, when it made something."
+          }
+        }
+      },
       "SecretList": {
         "type": "object",
         "description": "The project's secrets, by name.",
@@ -60002,6 +61500,64 @@
           }
         },
         "additionalProperties": false
+      },
+      "SourceCheck": {
+        "type": "object",
+        "description": "What the whole-source check found (G-21).",
+        "required": [
+          "records",
+          "accepted",
+          "rejected",
+          "complete",
+          "groups",
+          "rows",
+          "errors"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records the space's model takes.",
+            "minimum": 0
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "Whether the whole source was read: `false` when 60 s or 50 000 records ended the check\nfirst, or the source's read failed, so the counts cover part of it."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What stopped the source or the runner, in words a person can act on."
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RejectedGroupView"
+            },
+            "description": "The rejected records counted by rule and attribute, the largest first, each with its\nfirst three records, where the fix belongs and, for an enum, the values the model allows."
+          },
+          "records": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records the steps made, each checked: `accepted` plus `rejected`.",
+            "minimum": 0
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records a live run would put on the rejected list.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rejected"
+            },
+            "description": "The first 1000 rejected records, secrets masked; `id` is the record's place in the run."
+          }
+        }
       },
       "SourceChoice": {
         "type": "string",
@@ -61043,6 +62599,49 @@
           }
         }
       },
+      "TestEvent": {
+        "type": "object",
+        "description": "A test event: the body posted to one reading pipeline's address.",
+        "required": [
+          "pipeline",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The body, as the provider would send it, such as `{\"temperature\": 21.5}`."
+          },
+          "pipeline": {
+            "type": "string",
+            "description": "A pipeline that reads this source, such as `ttn-uplinks`."
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "body": "{\"temperature\": 21.5}",
+          "pipeline": "ttn-uplinks"
+        }
+      },
+      "TestEventAnswer": {
+        "type": "object",
+        "description": "What the runner answered a test event.",
+        "required": [
+          "status",
+          "answer"
+        ],
+        "properties": {
+          "answer": {
+            "type": "string",
+            "description": "The first 2048 bytes of the answer's body."
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The HTTP status the sender would have seen: 200 once the pipeline took the event.",
+            "minimum": 0
+          }
+        }
+      },
       "TestPublish": {
         "type": "object",
         "description": "One message a ServiceAccount would publish (API/01 §44a).",
@@ -61734,6 +63333,64 @@
           },
           "refusalsRead": {
             "type": "boolean"
+          }
+        }
+      },
+      "WebhookAddress": {
+        "type": "object",
+        "description": "Where one pipeline reading the source is posted to.",
+        "required": [
+          "pipeline"
+        ],
+        "properties": {
+          "pipeline": {
+            "type": "string",
+            "description": "The reading pipeline."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The URL a sender posts to, or `None` when this installation publishes no ingest listener."
+          }
+        }
+      },
+      "WebhookInfo": {
+        "type": "object",
+        "description": "What a sender needs to post to a webhook DataSource.",
+        "required": [
+          "auth",
+          "header",
+          "maxBodyBytes",
+          "addresses",
+          "published"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookAddress"
+            },
+            "description": "One address per reading pipeline, by pipeline name; empty when no pipeline reads it."
+          },
+          "auth": {
+            "type": "string",
+            "description": "`hmac` or `bearer`."
+          },
+          "header": {
+            "type": "string",
+            "description": "The header the sender sets: the signature header, or `Authorization`."
+          },
+          "maxBodyBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The largest body accepted, in bytes.",
+            "minimum": 0
+          },
+          "published": {
+            "type": "boolean",
+            "description": "Whether this installation publishes the ingest listener at all."
           }
         }
       },

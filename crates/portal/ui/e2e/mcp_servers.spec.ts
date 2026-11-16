@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-3156: a project's named MCP servers in a real browser, the API and the members' own MCP
 // surfaces answered in the browser. A server's address, client and entry; its members' health and

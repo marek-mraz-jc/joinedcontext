@@ -2440,10 +2440,11 @@ pub(crate) fn is_access_kind(kind: &str) -> bool {
 
 /// Kinds a second person approves: the access kinds, a Policy or DelegationPolicy, which opens
 /// data to whoever it names, and a DataModel, whose new version every space, Endpoint and
-/// pipeline of it validates against (PF-58, T-4830). An administrator's own change of any other
+/// pipeline of it validates against (PF-58, T-4830), and a Script, code every pipeline pinning it
+/// runs (PL-121). An administrator's own change of any other
 /// kind may still be approved by its author (P-10, T-6714).
 pub(crate) fn needs_second_person(kind: &str) -> bool {
-    is_access_kind(kind) || matches!(kind, "Policy" | "DelegationPolicy" | "DataModel")
+    is_access_kind(kind) || matches!(kind, "Policy" | "DelegationPolicy" | "DataModel" | "Script")
 }
 
 /// Whether `envelope` hands `identity` access: a Policy whose grant names them, a Group they are
@@ -4840,6 +4841,14 @@ mod tests {
 
     /// The secrets list is a DataSource proposer's (T-5971): its changes are listed to who may
     /// propose or approve one across the project, never to a reader or a one-space grant.
+    /// PL-121: a Script is code every pipeline pinning it runs, so its proposer never approves
+    /// it, an administrator included; a Pipeline keeps the administrator exception of PF-58.
+    #[test]
+    fn a_script_is_approved_by_a_second_person() {
+        assert!(needs_second_person("Script"));
+        assert!(!needs_second_person("Pipeline"));
+    }
+
     #[test]
     fn a_secret_change_is_read_by_a_data_source_proposer_or_approver_alone() {
         let state = AppState::new(Config::for_tests(), None);

@@ -387,9 +387,8 @@ describe("data sources view", () => {
     await userEvent.click(await screen.findByRole("button", { name: en.datasources.add }));
     const dialog = await findFormPage();
     const gallery = within(dialog).getByTestId("datasource-templates");
-    // T-6163: closed at first, one summary line above the first field.
-    expect(gallery).not.toHaveAttribute("open");
-    await userEvent.click(within(gallery).getByText(en.datasources.template.title));
+    // T-7094 (G-22): the wizard is the first choice, open; the form below stays the advanced way.
+    expect(gallery).toHaveAttribute("open");
     await userEvent.click(within(gallery).getByRole("button", { name: new RegExp(en.datasources.template["gtfs-rt"].title) }));
     await userEvent.type(within(gallery).getByLabelText(new RegExp(en.datasources.template["gtfs-rt"].url)), "https://gtfs.example.org/vehicle-positions.pb");
     expect(within(gallery).getByLabelText(/Name/)).toHaveValue("vehicle-positions");

@@ -1,24 +1,30 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { QualityScore } from "../../components/quality/QualityScore";
 
 /**
  * The quality score of the dataset this Endpoint serves, with what to fix for a reader of its
  * space (T-5112). A failed read says so in one line and never takes the page down.
  */
-export function EndpointQuality({ project, name }: { project: string; name: string }): JSX.Element | null {
+export function EndpointQuality({
+  project,
+  name,
+}: {
+  project: string;
+  name: string;
+}): JSX.Element | null {
   const { t } = useTranslation();
   const score = useQuery({
     queryKey: ["endpoint-quality", project, name],
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/endpoints/{name}/quality", {
-          params: { path: { project, name } },
-        }),
-      ),
+      (await door(
+        "portal_endpoint_quality",
+        { endpoint: name },
+        project,
+      )) as RestAnswer<"get_endpoint_quality">,
   });
   if (score.isPending) return null;
   if (score.isError || !Array.isArray(score.data?.parts)) {

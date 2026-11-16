@@ -15,6 +15,17 @@ export interface BentoCatalog {
 
 let cachedCatalog: BentoCatalog | undefined;
 
+/** Bento's catalog with the inputs only ekiben builds (ekiben-inputs.json: ftp and imap, T-7092),
+ * kept to those the runner builds and the platform accepts, by name. */
+export function runnerCatalog(bento: BentoCatalog, ekiben: { inputs: CatalogInput[] }): BentoCatalog {
+  const names = new Set(bento.inputs.map(({ name }) => name));
+  const inputs = [...bento.inputs, ...ekiben.inputs.filter(({ name }) => !names.has(name))];
+  return {
+    ...bento,
+    inputs: inputs.filter(({ name }) => offeredInput(name)).sort((a, b) => a.name.localeCompare(b.name)),
+  };
+}
+
 /** Lazily imports the Bento inputs catalog (~280 KB) so initial page bundle is small, kept to
  * the inputs the runner builds (T-6825). */
 export function useBentoInputs(): BentoCatalog | undefined {
@@ -23,10 +34,9 @@ export function useBentoInputs(): BentoCatalog | undefined {
   useEffect(() => {
     if (cachedCatalog) return;
     let active = true;
-    void import("../../schemas/bento-inputs.json").then((mod) => {
-      const bento = mod.default as BentoCatalog;
+    void Promise.all([import("../../schemas/bento-inputs.json"), import("../../schemas/ekiben-inputs.json")]).then(([bento, ekiben]) => {
       // Only the inputs the server accepts: the runner builds it and the platform does not refuse it.
-      cachedCatalog = { ...bento, inputs: bento.inputs.filter(({ name }) => offeredInput(name)) };
+      cachedCatalog = runnerCatalog(bento.default as BentoCatalog, ekiben.default as { inputs: CatalogInput[] });
       if (active) {
         setCatalog(cachedCatalog);
       }

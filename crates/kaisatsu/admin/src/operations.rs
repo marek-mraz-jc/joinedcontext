@@ -132,25 +132,73 @@ pub(crate) async fn ensure_person_ceiling(
 /// Refuses putting people into a group that carries realm-wide authority (realm roles the caller
 /// does not hold, or roles of an admin client) unless the caller manages people realm-wide: a
 /// membership hands out the group's roles, which an Organization admin may not grant (ADM-04).
-pub(crate) fn ensure_may_join_group(ctx: &RequestCtx, group: &GroupRepresentation) -> Result<()> {
+pub(crate) async fn ensure_may_join_group(
+    ctx: &RequestCtx,
+    store: &dyn Store,
+    realm: &str,
+    group: &GroupRepresentation,
+) -> Result<()> {
     let caller = &ctx.principal;
     if caller.has_realm_mgmt_role("manage-users") || caller.has_realm_mgmt_role("scim") {
         return Ok(());
     }
     let admin_client =
         |c: &str| matches!(c, "realm-management" | "broker") || c.ends_with("-realm");
-    let realm_wide = group
-        .realm_roles
-        .iter()
-        .any(|r| !caller.realm_roles.contains(r))
-        || group
-            .client_roles
-            .iter()
-            .any(|(client, roles)| admin_client(client) && !roles.is_empty());
-    if realm_wide {
-        return Err(KaisatsuError::Forbidden(
+    let refused = || {
+        Err(KaisatsuError::Forbidden(
             "this group carries realm-wide roles: only a realm administrator or user manager adds its members".into(),
-        ));
+        ))
+    };
+    let realm_admin_clients = {
+        let mut ids = Vec::new();
+        for name in ["realm-management", "broker"] {
+            ids.extend(
+                store
+                    .get_client_by_client_id(realm, name)
+                    .await?
+                    .map(|c| c.id),
+            );
+        }
+        ids
+    };
+    // A member gets the roles of the group and of its ancestors, held on the group or mapped
+    // to it through the admin API (as tokens hand them down).
+    let mut seen = std::collections::BTreeSet::new();
+    let mut next = Some(group.clone());
+    while let Some(g) = next.take() {
+        if !seen.insert(g.id.clone()) {
+            break;
+        }
+        let realm_wide = g
+            .realm_roles
+            .iter()
+            .any(|r| !caller.realm_roles.contains(r))
+            || g.client_roles
+                .iter()
+                .any(|(client, roles)| admin_client(client) && !roles.is_empty());
+        if realm_wide {
+            return refused();
+        }
+        if store
+            .list_role_mappings_for_principal(realm, "group", &g.id, None)
+            .await?
+            .iter()
+            .any(|m| !caller.realm_roles.contains(&m.role_name))
+        {
+            return refused();
+        }
+        for client in &realm_admin_clients {
+            if !store
+                .list_role_mappings_for_principal(realm, "group", &g.id, Some(client))
+                .await?
+                .is_empty()
+            {
+                return refused();
+            }
+        }
+        if let Some(parent) = g.parent_id.as_deref() {
+            next = store.get_group(realm, None, parent).await?;
+        }
     }
     Ok(())
 }
@@ -302,7 +350,7 @@ pub async fn execute(
                     managed_by: group.managed_by.clone(),
                 },
             ))?;
-            ensure_may_join_group(ctx, &group)?;
+            ensure_may_join_group(ctx, store.as_ref(), realm, &group).await?;
             store.add_user_to_group(realm, &user.id, &group.id).await?;
             record_admin_write(
                 state,

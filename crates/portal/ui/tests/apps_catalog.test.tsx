@@ -830,6 +830,7 @@ describe("the apps page's create address", () => {
 
   it("opens nothing for a role that may not propose an App, and says why without an API word", async () => {
     await renderRoute({
+      doorsAsRest: true,
       path: "/projects/helsinki/apps/new",
       permissions: { project: "helsinki", bootstrap: false, grants: [] },
     });

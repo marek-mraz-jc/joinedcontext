@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { api, queryKeys } from "../../api/client";
 import { asManifests, localized } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { useProjects } from "../../api/projects";
@@ -23,6 +23,7 @@ import {
 } from "../../components/ui";
 import { AdminGrid } from "../../components/grid/AdminGrid";
 import type { DataColumn } from "../../components/grid/AdminGrid";
+import { listManifests } from "../../api/odata";
 
 /** An App name, as the server takes it: a DNS-1123 label of at most 63 characters. */
 const APP_NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
@@ -279,11 +280,7 @@ export function OrganizationApplications(): JSX.Element {
     queries: names.map((project) => ({
       queryKey: queryKeys.list(project, "apps"),
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: "apps" } },
-          }),
-        ),
+        listManifests(project, "apps"),
     })),
   });
   const [importing, setImporting] = useState(false);

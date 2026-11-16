@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { type ManifestSet, organizationReading, readManifest } from "../../api/odata";
 import i18n from "../../i18n";
 import { isChange, ORG_NAMESPACE } from "../../api/manifest";
 import { AccountAccess } from "../access/AccountAccess";
@@ -29,7 +30,7 @@ const STATE_TONE: Record<AgentItem["state"], BadgeTone> = {
 };
 
 /** The plural of each agent kind, for its manifest's address. */
-const PLURAL: Record<string, string> = {
+const PLURAL: Record<string, ManifestSet | undefined> = {
   AssistantDeployment: "assistantdeployments",
   AgentProfile: "agentprofiles",
   McpServer: "mcpservers",
@@ -50,7 +51,7 @@ function useAgents() {
   return useQuery({
     queryKey: ["organizationAgents"],
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/agents")),
+    queryFn: async () => organizationReading("agents"),
   });
 }
 
@@ -393,17 +394,7 @@ function PauseControl({ item }: { item: AgentItem }): JSX.Element | null {
   const mayPropose = permissions.can("AssistantDeployment", "propose");
   const flip = useMutation({
     mutationFn: async () => {
-      const stored = (await unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: {
-            path: {
-              project: item.project,
-              plural: "assistantdeployments",
-              name: item.name,
-            },
-          },
-        }),
-      )) as Manifest & { status?: unknown };
+      const stored = (await readManifest(item.project, "assistantdeployments", item.name)) as Manifest & { status?: unknown };
       const { status: _status, ...envelope } = stored;
       const body = {
         ...envelope,
@@ -629,12 +620,11 @@ function Settings({ item }: { item: AgentItem }): JSX.Element {
   const manifest = useQuery({
     queryKey: ["organizationAgents", item.project, plural, item.name],
     enabled: plural !== undefined,
-    queryFn: async () =>
-      (await unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project: item.project, plural, name: item.name } },
-        }),
-      )) as Manifest,
+    queryFn: async () => {
+      // `enabled` runs this only for a kind with a set.
+      if (plural === undefined) throw new Error(`no set for ${item.kind}`);
+      return (await readManifest(item.project, plural, item.name)) as Manifest;
+    },
   });
   if (plural === undefined) {
     return (
