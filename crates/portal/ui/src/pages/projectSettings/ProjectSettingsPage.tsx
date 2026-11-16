@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
+import { readManifest } from "../../api/odata";
 import { localized, ORG_NAMESPACE, plainTitle } from "../../api/manifest";
 import { useProjectOrganization, useProjectTitles } from "../../api/projects";
 import { administersOrganization, readsOnceKnown, usePermissions } from "../../api/permissions";
@@ -191,11 +192,7 @@ function General({ project }: { project: string }): JSX.Element {
     queryKey: [...queryKeys.list(ORG_NAMESPACE, "projects"), project],
     enabled: reads === true,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "projects", name: project } },
-        }),
-      ),
+      readManifest(ORG_NAMESPACE, "projects", project),
   });
   // The project's own Organization: with several, the first of the list is another body's.
   const { organization } = useProjectOrganization(project);

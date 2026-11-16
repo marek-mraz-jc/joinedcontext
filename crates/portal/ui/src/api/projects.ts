@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { api, queryKeys, unwrap } from "./client";
+import { listOrganizations } from "./odata";
 import { asManifests, localized, ORG_NAMESPACE } from "./manifest";
 import type { Manifest } from "./manifest";
 import { useTranslation } from "react-i18next";
@@ -121,11 +122,7 @@ export function useProjectOrganization(project: string): { organization: Manifes
   const organizations = useQuery({
     queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "organizations" } },
-        }),
-      ),
+      listOrganizations(),
   });
   const items = asManifests(organizations.data?.items ?? []);
   const organization = name !== undefined ? items.find((item) => item.metadata.name === name) : items.length === 1 ? items[0] : undefined;

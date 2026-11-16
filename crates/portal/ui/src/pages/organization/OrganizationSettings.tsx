@@ -3,8 +3,8 @@ import { Fragment } from "react";
 import type { JSX, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
-import { organizationReading } from "../../api/odata";
+import { queryKeys } from "../../api/client";
+import { listOrganizations, organizationReading } from "../../api/odata";
 import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
 import { useChosenOrganizationName } from "../../api/projects";
 import { EditResourceAction } from "../../components/EditResourceDialog";
@@ -159,11 +159,7 @@ export function OrganizationSettings(): JSX.Element {
   const organizations = useQuery({
     queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "organizations" } },
-        }),
-      ),
+      listOrganizations(),
   });
   // The catalog with the operator's bounds and the values in force (API/01 §28): the sections
   // below and the range every numeric field of the form is held to (PF-97, PF-102).

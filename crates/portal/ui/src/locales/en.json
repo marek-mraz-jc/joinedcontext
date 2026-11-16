@@ -10366,6 +10366,7 @@
     "domain-not-verified": "Verify the domain in the organization settings first.",
     "self-approval": "Ask another approver to decide your own change.",
     "resource-not-found": "Check the name in the address; it does not exist or is not shared with you.",
+    "several-organizations": "Open the Organization's own address, or choose it in Administration.",
     "method-not-allowed": "Use one of the methods this address allows.",
     "read-only-view": "This view only reads; change the data through the endpoint it is built on.",
     "conflict": "Load it again and repeat the change on what is there now.",

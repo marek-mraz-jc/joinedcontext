@@ -10366,6 +10366,7 @@
     "domain-not-verified": "Bestätigen Sie zuerst die Domain in den Organisationseinstellungen.",
     "self-approval": "Bitten Sie eine andere Person mit Freigaberecht, über Ihre Änderung zu entscheiden.",
     "resource-not-found": "Prüfen Sie den Namen in der Adresse; er existiert nicht oder ist nicht für Sie freigegeben.",
+    "several-organizations": "Öffnen Sie die eigene Adresse der Organisation oder wählen Sie sie in der Verwaltung.",
     "method-not-allowed": "Verwenden Sie eine der Methoden, die diese Adresse erlaubt.",
     "read-only-view": "Diese Ansicht liest nur; ändern Sie die Daten über den Endpunkt, auf dem sie aufbaut.",
     "conflict": "Laden Sie es neu und wiederholen Sie die Änderung am aktuellen Stand.",

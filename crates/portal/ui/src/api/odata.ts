@@ -7,7 +7,7 @@ import {
   originTransport,
   type ODataModel,
 } from "@joinedcontext/sdk";
-import { ApiError, loginRedirectUrl, type WireProblem } from "./client";
+import { api, ApiError, loginRedirectUrl, unwrap, type WireProblem } from "./client";
 import { ORG_NAMESPACE } from "./manifest";
 import type { components, operations } from "./schema";
 import { announceSessionEnded } from "./sessionEnded";
@@ -17,6 +17,8 @@ import { announceStepUp, stepUpUrl } from "./stepUp";
 export const ODATA_ROOT = "/api/v1/";
 
 const SECOND_FACTOR = "https://joinedcontext.com/errors/second-factor-required";
+/** The service's refusal of an address that serves several Organizations (T-7104). */
+const SEVERAL_ORGANIZATIONS = "several-organizations";
 
 /** The problem type of an answer, an OData error object's or a REST problem's. */
 function typeOf(body: unknown): unknown {
@@ -254,7 +256,6 @@ export type ManifestSet = Exclude<
   | "endpointList"
   | "entities"
   | "members"
-  | "projects"
   | "repositories"
   | "revisions"
   | "runs"
@@ -289,10 +290,21 @@ interface ManifestRow {
   "@odata.etag"?: string;
 }
 
-function asManifest(row: ManifestRow): Manifest {
+/**
+ * The rows that carry no `kind` member: a `projects` row is the Project's own (T-7104), keyed by
+ * name in the Organization's repository.
+ */
+const KIND_OF: Partial<Record<ManifestSet, string>> = { projects: "Project" };
+
+/** The members `$select` names on `plural`'s rows. */
+function membersOf(plural: ManifestSet): readonly string[] {
+  return KIND_OF[plural] ? MANIFEST_MEMBERS.filter((m) => m !== "kind") : MANIFEST_MEMBERS;
+}
+
+function asManifest(row: ManifestRow, kind?: string): Manifest {
   const manifest = {
     apiVersion: API_VERSION,
-    kind: row.kind,
+    kind: kind ?? row.kind,
     metadata: row.metadata,
     spec: row.spec ?? undefined,
     status: row.status ?? null,
@@ -320,13 +332,24 @@ export async function listManifests(
       ? client.from(orgSet(plural))
       : client.under(project, plural);
   const items: Manifest[] = [];
-  const rows = query.select(...(MANIFEST_MEMBERS as unknown as never[])).all();
+  const kind = KIND_OF[plural];
+  const rows = query.select(...(membersOf(plural) as never[])).all();
   await refusedAs(
     (async () => {
-      for await (const row of rows) items.push(asManifest(row as ManifestRow));
+      for await (const row of rows) {
+        // A project's member reads its row but not its manifest, which the REST list leaves out.
+        if ((row as ManifestRow).metadata == null) continue;
+        items.push(asManifest(row as ManifestRow, kind));
+      }
     })(),
   );
   return { items };
+}
+
+/** A manifest the caller may not read, refused as the REST door refuses it. */
+function notFound(name: string): ApiError {
+  const detail = `resource '${name}' not found in project '${ORG_NAMESPACE}'`;
+  return new ApiError(404, detail, { type: "about:blank", title: "Not Found", status: 404, detail });
 }
 
 /**
@@ -338,10 +361,35 @@ export async function readManifest(
   plural: ManifestSet,
   name: string,
 ): Promise<Manifest> {
-  const row = await refusedAs(
+  const members = membersOf(plural);
+  const row = (await refusedAs(
     project === ORG_NAMESPACE
-      ? client.get(orgSet(plural), name, MANIFEST_MEMBERS)
-      : client.get(plural, { project, name }, MANIFEST_MEMBERS),
-  );
-  return asManifest(row as ManifestRow);
+      ? client.get(orgSet(plural), name, members)
+      : client.get(plural, { project, name }, members),
+  )) as ManifestRow;
+  if (row.metadata == null) throw notFound(name);
+  return asManifest(row, KIND_OF[plural]);
+}
+
+/**
+ * The Organization this service serves, as the REST door's `GET /projects/org/organizations`
+ * lists it (`items`): its `Organization` singleton with `$select` of the manifest's members, none
+ * when the caller may not read its manifest (T-7104).
+ */
+export async function listOrganizations(): Promise<{ items: Manifest[] }> {
+  let row: ManifestRow;
+  try {
+    row = (await client.singleton(ORGANIZATION, ["name", "spec", "status", "metadata"])) as ManifestRow;
+  } catch (error) {
+    // An address of several Organizations serves no one's service: the installation's
+    // administrators choose among them there (`?org=`, ADR-N-058 section 2.7), so its REST list.
+    if (error instanceof ODataError && error.code === SEVERAL_ORGANIZATIONS)
+      return unwrap(
+        await api.GET("/api/v1/projects/{project}/{plural}", {
+          params: { path: { project: ORG_NAMESPACE, plural: "organizations" } },
+        }),
+      );
+    throw toApiError(error);
+  }
+  return { items: row.metadata == null ? [] : [asManifest(row, ORGANIZATION)] };
 }

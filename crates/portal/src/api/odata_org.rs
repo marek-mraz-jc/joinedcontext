@@ -71,6 +71,8 @@ const ROW_KEY: &str = "_key";
 /// The singletons, answered without the evaluator.
 const ME: &str = "me";
 const ORGANIZATION: &str = "Organization";
+/// The error code of an address that serves several Organizations and so no service of one.
+const SEVERAL_ORGANIZATIONS: &str = "several-organizations";
 /// How long a `$skiptoken` stays good.
 const TOKEN_TTL_SECS: u64 = 3600;
 /// Options the service does not serve: 501, never ignored (API/13 §2a).
@@ -405,6 +407,11 @@ fn public_model(mut model: Model) -> Model {
             Property::new("name", TypeRef::single("Edm.String")).required(),
             Property::new("title", TypeRef::single("Edm.String")),
         ];
+        organization.properties.extend(
+            MANIFEST_DETAIL
+                .iter()
+                .map(|member| Property::new(*member, TypeRef::single("Edm.Untyped"))),
+        );
         schema.entity_types.push(person);
         schema.entity_types.push(organization);
         if let Some(container) = schema.entity_container.as_mut() {
@@ -672,6 +679,18 @@ fn readable(state: &AppState, user: &CurrentUser, org: &str, project: &str) -> b
         && crate::api::projects::readable(state, &user.0.identity, project)
 }
 
+/// Whether the REST door `GET /projects/{ORG_NAMESPACE}/{plural}/{name}` hands the caller this
+/// manifest of the Organization's repository (`resources::get_resource`): a Project's, or the
+/// Organization's own.
+fn org_manifest_readable(
+    state: &AppState,
+    user: &CurrentUser,
+    envelope: &crate::resource::ResourceEnvelope,
+) -> bool {
+    let effective = crate::permissions::for_request(state, &user.0.identity, ORG_NAMESPACE);
+    effective.may_read_some(&envelope.kind) && effective.may_read_envelope(&envelope.kind, envelope)
+}
+
 fn project_row(state: &AppState, name: &str, org: &str) -> Value {
     let manifest = state
         .mirror
@@ -754,6 +773,9 @@ const CHANGE_DETAIL_MAX: usize = 50;
 /// The `Edm.Untyped` members of `set`'s rows, answered only when `$select` names them, so a list
 /// stays thin.
 fn detail(set: &str) -> &'static [&'static str] {
+    if set == PROJECTS {
+        return &MANIFEST_DETAIL;
+    }
     match kind(set).or_else(|| org_set(set)) {
         Some(list) if list.set == CHANGES => &CHANGE_DETAIL,
         Some(list) if manifest_kind(list) => &MANIFEST_DETAIL,
@@ -967,13 +989,18 @@ impl Read<'_> {
             .map(String::as_str)
             .filter(|name| members.contains(name))
             .collect();
-        let Some(list) = kind(set).or_else(|| org_set(set)) else {
+        let list = kind(set).or_else(|| org_set(set));
+        let projects = set == PROJECTS;
+        let Some(type_name) = list
+            .map(|list| list.type_name.as_str())
+            .or(projects.then_some("Project"))
+        else {
             return Ok(());
         };
         if asked.is_empty() {
             return Ok(());
         }
-        let change = list.set == CHANGES;
+        let change = list.is_some_and(|list| list.set == CHANGES);
         if change && answer.rows.len() > CHANGE_DETAIL_MAX {
             return Err(no(bad(format!(
                 "a page with a Change's {} holds at most {CHANGE_DETAIL_MAX} Changes; ask with \
@@ -981,7 +1008,7 @@ impl Read<'_> {
                 asked.join(", ")
             ))));
         }
-        let in_org = org_set(set).is_some();
+        let in_org = projects || org_set(set).is_some();
         for (row, key) in answer.rows.iter_mut().zip(&answer.keys) {
             let (Value::Object(row), Some(key)) = (row, key.as_str()) else {
                 continue;
@@ -1003,8 +1030,13 @@ impl Read<'_> {
             } else {
                 let mirror = &self.state.mirror;
                 mirror
-                    .get(project, &list.type_name, name)
-                    .or_else(|| mirror.refused(project, &list.type_name, name))
+                    .get(project, type_name, name)
+                    .or_else(|| mirror.refused(project, type_name, name))
+                    // A project's member may not read its manifest in the Organization's
+                    // repository: the row stays theirs, its manifest members are null.
+                    .filter(|envelope| {
+                        !projects || org_manifest_readable(self.state, self.user, envelope)
+                    })
                     .and_then(|envelope| serde_json::to_value(envelope).ok())
                     .unwrap_or(Value::Null)
             };
@@ -2168,7 +2200,11 @@ fn headers_for(content_type: &'static str) -> [(header::HeaderName, HeaderValue)
     headers(content_type)
 }
 
-fn singleton(state: &AppState, user: &CurrentUser, org: &str, name: &str) -> Response {
+/// The members of the `Organization` singleton: its name and title, and the manifest's
+/// [`MANIFEST_DETAIL`] when `$select` names them (T-7104).
+const ORGANIZATION_MEMBERS: [&str; 5] = ["name", "title", "spec", "status", "metadata"];
+
+fn singleton(state: &AppState, user: &CurrentUser, org: &str, name: &str, query: &str) -> Response {
     let root = service_root(state);
     let body = if name == ME {
         let id = &user.0.identity;
@@ -2180,16 +2216,46 @@ fn singleton(state: &AppState, user: &CurrentUser, org: &str, name: &str) -> Res
             "email": id.email,
         })
     } else {
+        let select: Option<Vec<String>> = url::form_urlencoded::parse(query.as_bytes())
+            .find(|(k, _)| k.eq_ignore_ascii_case("$select"))
+            .map(|(_, v)| v.split(',').map(|m| m.trim().to_owned()).collect());
+        if let Some(unknown) = select
+            .iter()
+            .flatten()
+            .find(|m| !ORGANIZATION_MEMBERS.contains(&m.as_str()))
+        {
+            return refused(bad(format!(
+                "the Organization has no member {unknown}; $select one of {}",
+                ORGANIZATION_MEMBERS.join(", ")
+            )));
+        }
         let manifest = state
             .mirror
             .get(crate::permissions::ORG_NAMESPACE, ORGANIZATION, org);
+        // Its spec, status and metadata as the REST door hands them to this caller, else null.
+        let whole = manifest
+            .as_ref()
+            .filter(|m| org_manifest_readable(state, user, m))
+            .and_then(|m| serde_json::to_value(m).ok())
+            .unwrap_or(Value::Null);
         // Its `@odata.etag` is the REST door's `ETag`: the If-Match of `propose_update`.
-        json!({
-            "@odata.context": format!("{root}$metadata#{ORGANIZATION}"),
+        let mut body = json!({
+            "@odata.context": match &select {
+                Some(names) => format!("{root}$metadata#{ORGANIZATION}({})", names.join(",")),
+                None => format!("{root}$metadata#{ORGANIZATION}"),
+            },
             "@odata.etag": manifest.as_ref().map(|m| m.etag()),
-            "name": org,
-            "title": manifest.and_then(|m| m.metadata.title),
-        })
+        });
+        let names = select.unwrap_or_else(|| vec!["name".into(), "title".into()]);
+        for member in names {
+            let value = match member.as_str() {
+                "name" => json!(org),
+                "title" => json!(manifest.as_ref().and_then(|m| m.metadata.title.clone())),
+                other => whole.get(other).cloned().unwrap_or(Value::Null),
+            };
+            body[member] = value;
+        }
+        body
     };
     ok_json(&body)
 }
@@ -2242,9 +2308,12 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
     // Front's rejection is Infallible.
     let Ok(front) = Front::from_request_parts(&mut parts, &state).await;
     let Some(org) = organization(&state) else {
-        return refused(not_found(
-            "this address serves several Organizations; read one at /{org}/api/v1/",
-        ));
+        // Its own code: the UI reads such an address's Organizations through the REST list.
+        return error(
+            StatusCode::NOT_FOUND,
+            SEVERAL_ORGANIZATIONS,
+            "this address serves several Organizations; read one at its own host",
+        );
     };
     if let Some((entity, name)) = called.as_ref().or(action.as_ref()) {
         if name.starts_with(odata_portal::PREFIX) {
@@ -2307,10 +2376,21 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
         return service_document(&state, &visible_sets(&state, &user, &org, &projects));
     }
     if rel == ME || rel == ORGANIZATION {
-        if option_names(&query).iter().any(|n| n != "$format") {
-            return refused(bad(format!("{rel} takes no query option")));
+        let takes: &[&str] = if rel == ME {
+            &["$format"]
+        } else {
+            &["$format", "$select"]
+        };
+        if let Some(n) = option_names(&query)
+            .iter()
+            .find(|n| !takes.contains(&n.as_str()))
+        {
+            return refused(bad(format!(
+                "{rel} takes {} only, not {n}",
+                takes.join(" and ")
+            )));
         }
-        return singleton(&state, &user, &org, &rel);
+        return singleton(&state, &user, &org, &rel, &query);
     }
     let (page, preferred) = page_size(&parts.headers);
     let read = Read {

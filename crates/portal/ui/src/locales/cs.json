@@ -10366,6 +10366,7 @@
     "domain-not-verified": "Nejprve ověřte doménu v nastavení organizace.",
     "self-approval": "Požádejte jiného schvalovatele, aby rozhodl o vaší změně.",
     "resource-not-found": "Zkontrolujte název v adrese; neexistuje nebo s vámi není sdílený.",
+    "several-organizations": "Otevřete vlastní adresu organizace nebo ji vyberte ve Správě.",
     "method-not-allowed": "Použijte některou z metod, které tato adresa povoluje.",
     "read-only-view": "Tento pohled jen čte; data měňte přes endpoint, na kterém stojí.",
     "conflict": "Načtěte to znovu a zopakujte změnu nad aktuálním stavem.",

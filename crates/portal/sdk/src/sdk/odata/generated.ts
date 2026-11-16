@@ -461,7 +461,10 @@ export interface MqttBroker {
 }
 
 export interface Organization {
+  metadata?: unknown | null;
   name: string;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   "@odata.etag"?: string;
 }
@@ -537,9 +540,12 @@ export interface Portal {
 }
 
 export interface Project {
+  metadata?: unknown | null;
   name: string;
   organization?: string | null;
   sample?: boolean | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   "@odata.etag"?: string;
 }

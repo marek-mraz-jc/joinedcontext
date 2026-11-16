@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { listOrganizations } from "../../api/odata";
 import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
 import { useChosenOrganizationName } from "../../api/projects";
 import type { components } from "../../api/schema";
@@ -21,11 +22,7 @@ function useOrganizations() {
   return useQuery({
     queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "organizations" } },
-        }),
-      ),
+      listOrganizations(),
   });
 }
 

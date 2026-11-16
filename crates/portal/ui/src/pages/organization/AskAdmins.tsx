@@ -2,7 +2,8 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
+import { listOrganizations } from "../../api/odata";
 import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
 import { useAdministers } from "../../api/permissions";
 import { Alert } from "../../components/ui";
@@ -35,7 +36,7 @@ export function AskAdmins({
     queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
     retry: false,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project: ORG_NAMESPACE, plural: "organizations" } } })),
+      listOrganizations(),
   });
   const items = asManifests(organizations.data?.items ?? []);
   const organization =

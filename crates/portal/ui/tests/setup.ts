@@ -109,7 +109,7 @@ function listingThePage(stubbed: typeof fetch): typeof fetch {
       const read = manifestAsRest(new URL(input instanceof Request ? input.url : String(input), window.location.href));
       if (!read) return listing(Reflect.apply(target, self, args), ...args);
       const rest = new Request(read.rest);
-      return listing(Reflect.apply(target, self, [rest]), rest).then((answer) => manifestAnswer(answer, read.one));
+      return listing(Reflect.apply(target, self, [rest]), rest).then((answer) => manifestAnswer(answer, read.one, read.organization));
     },
   });
 }
