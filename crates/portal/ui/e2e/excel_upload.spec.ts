@@ -8,7 +8,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
-import { manifestReadsAsRest } from "./manifestReads";
+import { manifestReadsAsRest, restOrDoor } from "./manifestReads";
 import { workbook } from "../tests/xlsxFixture";
 
 // The shared drafts and a run's turns go through the OData service (T-7119): its doors reach these REST stubs.
@@ -140,8 +140,9 @@ for (const [label, width, height] of [["1440", 1440, 900], ["400", 400, 860]] as
 
     test("a failed check names what to fix and offers no proposal", async ({ page }) => {
       await stub(page, []);
-      await page.route("**/ops/jc_space_complete", (route) =>
-        route.fulfill({
+      // Every operation shares the door: the stub answers jc_space_complete, its REST address.
+      await page.route(restOrDoor("/ops/jc_space_complete", "portal_operation_run"), (route) =>
+        !route.request().url().endsWith("/ops/jc_space_complete") ? route.fallback() : route.fulfill({
           contentType: "application/json",
           body: JSON.stringify({
             space: "garages",

@@ -2,6 +2,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { doorsAsRest } from "./manifestReads";
+
+// T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me"]));
 
 // T-7104: a project's settings and the Organization's read the Project manifest from the service's
 // `projects` set and the Organization's own from its `Organization` singleton, each with $select

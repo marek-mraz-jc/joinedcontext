@@ -17,8 +17,8 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { api, queryKeys, unwrap } from "../../api/client";
-import { door, type RestAnswer } from "../../api/odata";
+import { queryKeys } from "../../api/client";
+import { door, manifestEtag, readManifest, type RestAnswer } from "../../api/odata";
 import { isChange } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -631,13 +631,10 @@ function FieldEditor({
       // The row is the list as it was read: a Change merged since then would be undone by a
       // manifest rebuilt from it (F-R2UI2-007). The edit goes onto the manifest as it is now, and
       // its ETag makes the server refuse it with 412 if it moves again before the write.
-      const read = await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-        params: { path: { project: edit.project, plural: edit.plural, name: manifest.metadata.name } },
-      });
-      const current = (await unwrap(read)) as unknown as Manifest;
+      const current = (await readManifest(edit.project, edit.plural, manifest.metadata.name)) as Manifest;
       const next = withSpecValue(current, path, storedValue(widget, held, specValue(current, path)));
       const { status: _status, ...body } = next as Manifest & { status?: unknown };
-      return proposeChecked(edit.project, edit.plural, body as unknown as ResourceProposal, false, read.response.headers.get("ETag") ?? undefined);
+      return proposeChecked(edit.project, edit.plural, body as unknown as ResourceProposal, false, manifestEtag(current));
     },
     onSuccess: (result) => {
       if (isChange(result)) edit.onChange(result);

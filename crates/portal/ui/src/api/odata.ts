@@ -310,8 +310,14 @@ export type ManifestSet = Exclude<
 const inCopy = {
   list: async (project: string, plural: string) =>
     unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural } } })),
-  read: async (project: string, plural: string, name: string) =>
-    unwrap(await api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path: { project, plural, name } } })),
+  read: async (project: string, plural: string, name: string) => {
+    const read = await api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path: { project, plural, name } } });
+    const manifest = await unwrap(read);
+    // The REST door's ETag, as a service row's `@odata.etag`, for the write's If-Match.
+    const etag = read.response.headers.get("ETag");
+    if (etag) etags.set(manifest, etag);
+    return manifest;
+  },
   write: async (
     project: string,
     plural: string,

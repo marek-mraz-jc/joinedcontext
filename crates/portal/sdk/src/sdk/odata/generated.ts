@@ -1035,6 +1035,7 @@ export interface Functions {
   portal_mcp_confirmation_get: { id: string };
   portal_mcp_elicitation_get: { projectName: string; id: string };
   portal_model_catalogue: { subject?: string; refresh?: boolean };
+  portal_model_source: { name: string };
   portal_mqtt_allowance: Record<string, never>;
   portal_mqtt_binding_list: { broker: string };
   portal_mqtt_broker_access: { broker: string; account?: string };
@@ -1053,6 +1054,7 @@ export interface Functions {
   portal_own_connector_list: Record<string, never>;
   portal_own_connector_options: Record<string, never>;
   portal_people_list: { search?: string; first?: number; max?: number };
+  portal_permissions_me: Record<string, never>;
   portal_person_get: { person: string };
   portal_person_names: { ids?: string };
   portal_pipeline_access_request_endpoints: { pipeline: string };
@@ -1203,6 +1205,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_mcp_confirmation_get: ["Organization"],
   portal_mcp_elicitation_get: ["Organization"],
   portal_model_catalogue: ["Organization"],
+  portal_model_source: ["Project"],
   portal_mqtt_allowance: ["Project"],
   portal_mqtt_binding_list: ["Project"],
   portal_mqtt_broker_access: ["Project"],
@@ -1221,6 +1224,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_own_connector_list: ["Organization"],
   portal_own_connector_options: ["Organization"],
   portal_people_list: ["Organization"],
+  portal_permissions_me: ["Project"],
   portal_person_get: ["Organization"],
   portal_person_names: ["Organization"],
   portal_pipeline_access_request_endpoints: ["Project"],
@@ -1375,6 +1379,7 @@ export interface Actions {
   portal_opendata_page_preview: { body?: unknown };
   portal_opendata_page_revert: { page: string; lang: string };
   portal_opendata_page_set: { page: string; lang: string; body?: unknown };
+  portal_operation_run: { name: string; body?: unknown };
   portal_organization_change_approve: { id: string; body?: unknown };
   portal_organization_change_reject: { id: string; body?: unknown };
   portal_organization_change_restore: { id: string };
@@ -1403,6 +1408,8 @@ export interface Actions {
   portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
   portal_preferences_set: { body?: unknown };
+  portal_preview_error_report: { id: string; body?: unknown };
+  portal_preview_observation_report: { id: string; body?: unknown };
   portal_project_delete: Record<string, never>;
   portal_project_duplicate: { body?: unknown };
   portal_project_repoint: { body?: unknown };
@@ -1541,6 +1548,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_opendata_page_preview: ["Organization"],
   portal_opendata_page_revert: ["Organization"],
   portal_opendata_page_set: ["Organization"],
+  portal_operation_run: ["Project"],
   portal_organization_change_approve: ["Organization"],
   portal_organization_change_reject: ["Organization"],
   portal_organization_change_restore: ["Organization"],
@@ -1569,6 +1577,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],
   portal_preferences_set: ["Organization"],
+  portal_preview_error_report: ["Project"],
+  portal_preview_observation_report: ["Project"],
   portal_project_delete: ["Project"],
   portal_project_duplicate: ["Project"],
   portal_project_repoint: ["Project"],

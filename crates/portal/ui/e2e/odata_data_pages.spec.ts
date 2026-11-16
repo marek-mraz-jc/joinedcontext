@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { odataBody } from "../tests/odata";
+import { doorsAsRest } from "./manifestReads";
+
+// T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me"]));
 
 // T-7073, T-7074, T-7075: the data pages, the pipelines and the shared parts read and write their
 // manifests through the Organization's OData service (api/odata.ts listManifests, proposeManifest,

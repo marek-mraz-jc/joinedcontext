@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { doorsAsRest } from "./manifestReads";
+
+// T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me"]));
 
 // Administration access forms in plain words (T-4832): a new Role and a new service account start
 // from a preset (Reader, Writer, Steward, Pipeline writer) and show the raw kinds, verbs and CIM 009

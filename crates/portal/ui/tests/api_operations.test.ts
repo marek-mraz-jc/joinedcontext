@@ -46,11 +46,15 @@ describe("callOperation", () => {
     });
   });
 
-  it("falls back to the error code, then to nothing, never to an empty sentence", async () => {
+  it("falls back to the title, then to nothing, never to an empty sentence", async () => {
+    answer(409, { title: "Conflict", status: 409 });
+    expect(await callOperation("helsinki", "x", {})).toMatchObject({ status: 409, reason: "Conflict" });
     answer(409, { error: "draft_conflict", detail: "" });
-    expect(await callOperation("helsinki", "x", {})).toMatchObject({ reason: "draft_conflict" });
+    expect(await callOperation("helsinki", "x", {})).toEqual({ ok: false, status: 409, reason: undefined });
     answer(500, {});
-    expect(await callOperation("helsinki", "x", {})).toEqual({ ok: false, status: 500, reason: undefined });
+    const failed = await callOperation("helsinki", "x", {});
+    expect(failed).toMatchObject({ ok: false, status: 500 });
+    expect(failed.ok === false && failed.reason).not.toBe("");
   });
 });
 

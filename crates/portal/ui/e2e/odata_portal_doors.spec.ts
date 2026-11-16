@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { odataBody } from "../tests/odata";
+import { doorsAsRest } from "./manifestReads";
+
+// T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me"]));
 
 // T-7100: the person-only doors (API/13 §2b, Portal doors) through the Organization's OData
 // service, `…/JoinedContext.Portal.portal_*`. Each journey runs the real build against the

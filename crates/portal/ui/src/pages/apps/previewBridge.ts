@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
-import { api, readCsrfToken } from "../../api/client";
+import { readCsrfToken } from "../../api/client";
+import { doorAction } from "../../api/odata";
 import { pickElement } from "../../assistant/state";
 import { MAX_REASON, reasonProblem } from "../../components/entities/reason";
 
@@ -272,7 +273,8 @@ export function previewObservationOf(data: unknown, fallbackVersion?: number): P
 export function observationRelay(
   project: string,
   id: string,
-  fetchImpl: typeof fetch = (input, init) => globalThis.fetch(input, init),
+  send: (observation: PreviewObservation) => Promise<unknown> = (observation) =>
+    doorAction("portal_preview_observation_report", { id, body: observation }, project),
 ): (observation: PreviewObservation) => void {
   const relayed = new Set<number>();
   return (observation) => {
@@ -280,19 +282,7 @@ export function observationRelay(
       return;
     }
     relayed.add(observation.version);
-    void fetchImpl(
-      `/api/v1/projects/${encodeURIComponent(project)}/agent-runs/${encodeURIComponent(id)}/preview-observations`,
-      {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-          "x-csrf-token": readCsrfToken() ?? "",
-        },
-        body: JSON.stringify(observation),
-      },
-    ).catch(() => undefined);
+    void send(observation).catch(() => undefined);
   };
 }
 
@@ -540,12 +530,7 @@ export function usePreviewBridge(
         return;
       }
       seen.add(key);
-      void api
-        .POST("/api/v1/projects/{project}/agent-runs/{id}/preview-errors", {
-          params: { path: { project, id } },
-          body: error,
-        })
-        .catch(() => undefined);
+      void doorAction("portal_preview_error_report", { id, body: error }, project).catch(() => undefined);
     };
     const key = `${project}/${id}`;
     if (relay.current?.key !== key) {

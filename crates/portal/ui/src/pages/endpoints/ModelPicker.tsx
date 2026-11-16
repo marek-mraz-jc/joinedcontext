@@ -8,6 +8,7 @@ import { parseModel } from "../models/linkml";
 import { Button, Checkbox, Field, Input, Select } from "../../components/ui";
 import { FormHeading } from "../../components/forms/FormRoute";
 import { listManifests } from "../../api/odata";
+import { readModelSource } from "../../api/datamodelSource";
 
 export interface ClassConfig {
   ticked: boolean;
@@ -91,13 +92,8 @@ export function ModelPicker({
     queryKey: ["datamodels", project, matchingModel?.metadata.name, "source"],
     enabled: Boolean(matchingModel && needsSourceFetch),
     queryFn: async () => {
-      const res = await globalThis.fetch(
-        new Request(
-          `${window.location.origin}/api/v1/projects/${encodeURIComponent(project)}/datamodels/${encodeURIComponent(matchingModel!.metadata.name)}/source`,
-        ),
-      );
-      if (!res.ok) return "";
-      return res.text();
+      // A source that cannot be read leaves the picker on the manifest's own LinkML.
+      return readModelSource(project, matchingModel!.metadata.name).catch(() => "");
     },
   });
 
