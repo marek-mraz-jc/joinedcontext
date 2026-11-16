@@ -57,6 +57,7 @@ afterEach(() => {
 describe("the temporal audit of a space (T-4844)", () => {
   it("shows each attribute's recording, time source, unit, keeping and verdict in words", async () => {
     const { container } = renderAudit(() => json(AUDIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Show the 2 OK rows" }));
     const table = await screen.findByRole("table", { name: T.caption });
     const speed = within(table).getByRole("row", { name: /speed/ });
     expect(within(speed).getByText(T.recordMode.every)).toBeInTheDocument();
@@ -84,6 +85,7 @@ describe("the temporal audit of a space (T-4844)", () => {
         ],
       }),
     );
+    await userEvent.click(await screen.findByRole("button", { name: "Show the 2 OK rows" }));
     const table = await screen.findByRole("table", { name: T.caption });
     const date = within(table).getByRole("row", { name: /dateObserved/ });
     expect(within(date).getByText(`Time: ${T.source.received}`)).toBeInTheDocument();
@@ -101,12 +103,47 @@ describe("the temporal audit of a space (T-4844)", () => {
   it("filters by pipeline and by verdict, and says when nothing matches", async () => {
     renderAudit(() => json(AUDIT));
     const table = await screen.findByRole("table", { name: T.caption });
-    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
     await userEvent.selectOptions(screen.getByLabelText(T.pipelineFilter), "air-quality");
     expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(2);
     await userEvent.selectOptions(screen.getByLabelText(T.verdictFilter), "duplicates-rows");
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.getByText(T.noMatch)).toBeInTheDocument();
+  });
+
+  it("folds the OK rows while another verdict is listed, and a verdict chip filters the list (T-7109)", async () => {
+    const { container } = renderAudit(() => json(AUDIT));
+    const table = await screen.findByRole("table", { name: T.caption });
+    // Only what needs a change is listed at first: the OK rows wait behind one button.
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(within(table).queryByRole("row", { name: /speed/ })).not.toBeInTheDocument();
+    const show = screen.getByRole("button", { name: "Show the 2 OK rows" });
+    expect(show).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(show);
+    expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(4);
+    await userEvent.click(screen.getByRole("button", { name: "Hide the OK rows" }));
+    expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(2);
+    // A chip is a toggle: pressed, it lists its verdict alone and sets the verdict select.
+    const ok = screen.getByRole("button", { name: `${T.verdict.ok}: 2` });
+    expect(ok).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(ok);
+    expect(ok).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText(T.verdictFilter)).toHaveValue("ok");
+    expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: /OK rows/ })).not.toBeInTheDocument();
+    // Pressed again, every verdict is listed and the OK rows fold again.
+    await userEvent.click(ok);
+    expect(ok).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByLabelText(T.verdictFilter)).toHaveValue("");
+    expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(2);
+    await expectNoAxeViolations(container);
+  });
+
+  it("lists the OK rows when every row is OK, with nothing to fold", async () => {
+    renderAudit(() => json({ ...AUDIT, rows: [row({}), row({ attribute: "pm10" })] }));
+    const table = await screen.findByRole("table", { name: T.caption });
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: /OK rows/ })).not.toBeInTheDocument();
   });
 
   it("says so when no readable pipeline writes the space", async () => {

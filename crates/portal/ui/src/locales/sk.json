@@ -1357,6 +1357,8 @@
       "allPipelines": "Všetky pipeline",
       "verdictFilter": "Verdikt",
       "allVerdicts": "Všetky verdikty",
+      "showOk": "{count, plural, one {Zobraziť # riadok v poriadku} few {Zobraziť # riadky v poriadku} other {Zobraziť # riadkov v poriadku}}",
+      "hideOk": "Skryť riadky v poriadku",
       "noMatch": "Týmto filtrom nezodpovedá žiadny riadok",
       "caption": "Ako sa zápisy každej pipeline menia na riadky histórie",
       "attribute": "Atribút",

@@ -7,6 +7,7 @@ import type { components } from "../../api/schema";
 import {
   Alert,
   Badge,
+  Button,
   EmptyState,
   Field,
   PageFailed,
@@ -44,6 +45,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
   const { t } = useTranslation();
   const [pipeline, setPipeline] = useState(ALL);
   const [verdict, setVerdict] = useState(ALL);
+  const [showOk, setShowOk] = useState(false);
   const audit = useQuery({
     queryKey: ["projects", project, "spaces", space, "temporal-audit"],
     retry: false,
@@ -77,9 +79,13 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
     return <EmptyState bare title={t("spaces.temporal.empty")} description={t("spaces.temporal.emptyHint")} />;
   }
   const pipelines = [...new Set(rows.map((row) => row.pipeline))].sort();
-  const shown = rows.filter(
+  const matching = rows.filter(
     (row) => (pipeline === ALL || row.pipeline === pipeline) && (verdict === ALL || row.verdict === verdict),
   );
+  // What needs a change comes first: the OK rows fold away while another verdict is listed (T-7109).
+  const okRows = matching.filter((row) => row.verdict === "ok").length;
+  const folded = verdict === ALL && !showOk && okRows < matching.length ? okRows : 0;
+  const shown = folded > 0 ? matching.filter((row) => row.verdict !== "ok") : matching;
   const list = (items: string[]) => (items.length === 0 ? t("spaces.temporal.none") : items.join(", "));
   // A duration in the Retention tab's words: "30 days", "Off: no history", "Forever".
   const duration = (iso: string) => {
@@ -101,7 +107,15 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
       <ul className="flex flex-wrap gap-2" aria-label={t("spaces.temporal.summary")}>
         {VERDICTS.map((v) => (
           <li key={v}>
-            <Badge tone={TONE[v]}>{t("spaces.temporal.count", { verdict: t(`spaces.temporal.verdict.${v}`), n: verdicts[v] ?? 0 })}</Badge>
+            {/* A chip filters the list by its verdict; pressed again it lists every verdict. */}
+            <button
+              type="button"
+              aria-pressed={verdict === v}
+              onClick={() => setVerdict(verdict === v ? ALL : v)}
+              className={`focus-ring touch-size inline-flex items-center rounded-full ${verdict === v ? "ring-2 ring-border-focus" : ""}`}
+            >
+              <Badge tone={TONE[v]}>{t("spaces.temporal.count", { verdict: t(`spaces.temporal.verdict.${v}`), n: verdicts[v] ?? 0 })}</Badge>
+            </button>
           </li>
         ))}
       </ul>
@@ -187,6 +201,11 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
             ))}
           </TableBody>
         </Table>
+      )}
+      {(folded > 0 || (showOk && verdict === ALL && okRows > 0 && okRows < matching.length)) && (
+        <Button variant="secondary" size="sm" aria-expanded={folded === 0} onClick={() => setShowOk(folded > 0)}>
+          {folded > 0 ? t("spaces.temporal.showOk", { count: folded }) : t("spaces.temporal.hideOk")}
+        </Button>
       )}
     </div>
   );

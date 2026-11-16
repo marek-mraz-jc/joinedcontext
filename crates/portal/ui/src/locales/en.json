@@ -1357,6 +1357,8 @@
       "allPipelines": "All pipelines",
       "verdictFilter": "Verdict",
       "allVerdicts": "All verdicts",
+      "showOk": "{count, plural, one {Show the # OK row} other {Show the # OK rows}}",
+      "hideOk": "Hide the OK rows",
       "noMatch": "No row matches these filters",
       "caption": "How each pipeline's writes become history rows",
       "attribute": "Attribute",
