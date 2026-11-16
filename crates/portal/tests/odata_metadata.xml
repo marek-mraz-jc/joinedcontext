@@ -569,6 +569,7 @@
           <PropertyRef Name="sha"/>
         </Key>
         <Property Name="author" Type="Edm.String"/>
+        <Property Name="date" Type="Edm.String"/>
         <Property Name="message" Type="Edm.String"/>
         <Property Name="sha" Type="Edm.String" Nullable="false"/>
       </EntityType>
