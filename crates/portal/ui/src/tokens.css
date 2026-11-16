@@ -145,6 +145,8 @@
   --jc-font-size-sm: 0.75rem;
   /* 15rem: at 13rem the project switcher cut a city's slug to "banskabystri…" (T-7148). */
   --portal-sidebar-width: 15rem;
+  /* The phone drawer takes the room a phone has, so a project's name is not cut (T-7148). */
+  --portal-sidebar-drawer-width: min(85vw, 20rem);
   /* The preview column of an application: the page IS the application, so the frame takes what
      the viewport allows and never falls below a phone's screen. The building state uses the
      same box, so the column does not jump when the preview arrives (AP-63, UI-42). */

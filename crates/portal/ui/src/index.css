@@ -90,6 +90,7 @@
   --spacing-section: var(--portal-space-section);
   --spacing-stack: var(--portal-space-stack);
   --spacing-sidebar: var(--portal-sidebar-width);
+  --spacing-sidebar-drawer: var(--portal-sidebar-drawer-width);
   --spacing-preview: var(--portal-preview-height);
   --spacing-preview-min: var(--portal-preview-min-height);
   --spacing-below-header: var(--portal-below-header);
