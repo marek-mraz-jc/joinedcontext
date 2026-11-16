@@ -323,6 +323,40 @@ async fn an_off_main_and_a_non_writers_merge_requests_are_named_to_an_org_admin_
     );
 }
 
+/// T-7126: the Approvals page reads the merge requests outside the Changes on their own door,
+/// which answers what the list's `outside` holds and reads no Change's manifests.
+#[tokio::test]
+async fn the_outside_door_names_what_the_list_names_to_an_org_admin_alone() {
+    let (_server, state) = forge(&["read", "propose"]).await;
+    let (_, body) = get(&state, APPROVER, "/api/v1/projects/ovzdusie/changes").await;
+    let list: ChangeList = serde_json::from_value(body).expect("ChangeList");
+    let (status, outside) = get(
+        &state,
+        APPROVER,
+        "/api/v1/projects/ovzdusie/changes/outside",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{outside}");
+    assert_eq!(
+        outside["items"],
+        serde_json::to_value(&list.outside).expect("json")
+    );
+    assert_eq!(list.outside.len(), 2);
+
+    let (status, outside) = get(&state, WRITER, "/api/v1/projects/ovzdusie/changes/outside").await;
+    assert_eq!(status, StatusCode::OK, "{outside}");
+    assert_eq!(outside["items"], json!([]), "a writer is not told");
+    // Who may not read the project's Changes meets the list's refusal here too.
+    let (listed, _) = get(&state, OUTSIDER, "/api/v1/projects/ovzdusie/changes").await;
+    let (outside, _) = get(
+        &state,
+        OUTSIDER,
+        "/api/v1/projects/ovzdusie/changes/outside",
+    )
+    .await;
+    assert_eq!(outside, listed);
+}
+
 #[tokio::test]
 async fn the_detail_shows_the_repository_ci_on_the_head_commit() {
     let (_server, state) = forge(&["read", "propose"]).await;

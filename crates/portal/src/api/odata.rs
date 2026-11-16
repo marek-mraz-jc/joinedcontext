@@ -477,6 +477,20 @@ pub(crate) async fn rows_of(
     state: &AppState,
     project: &str,
 ) -> Result<Vec<Value>, Box<Response>> {
+    Ok(items_of(set, caller, state, project)
+        .await?
+        .into_iter()
+        .map(flat)
+        .collect())
+}
+
+/// The items [`rows_of`] flattens into rows, each as its operation answered it.
+pub(crate) async fn items_of(
+    set: &ListSet,
+    caller: &Caller,
+    state: &AppState,
+    project: &str,
+) -> Result<Vec<Value>, Box<Response>> {
     if set.endpoint_list {
         return endpoint_list::rows(state, &caller.identity, project)
             .await
@@ -501,7 +515,7 @@ pub(crate) async fn rows_of(
             .cloned()
             .unwrap_or_default();
         let empty = items.is_empty();
-        rows.extend(items.into_iter().map(flat));
+        rows.extend(items);
         if rows.len() > MAX_ROWS {
             return Err(bad(format!(
                 "{} holds more than {MAX_ROWS} rows here, more than one OData read covers",

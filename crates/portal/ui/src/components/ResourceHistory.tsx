@@ -2,8 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../api/client";
-import { call, readChange } from "../api/odata";
+import { ApiError, queryKeys } from "../api/client";
+import { call, changeManifests, readChange } from "../api/odata";
 import { usePermissions } from "../api/permissions";
 import { changeSentence, fieldSentence, landed } from "../routes/changeWords";
 import type { PlannedField } from "../routes/changeWords";
@@ -65,11 +65,7 @@ export function ResourceHistory({
   );
   const restore = useMutation({
     mutationFn: async (id: string) => {
-      const list = await unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/{id}/manifests", {
-          params: { path: { project, id } },
-        }),
-      );
+      const list = await changeManifests(project, id);
       const manifest = list.items.find((item) => item.kind === kind && item.metadata.name === name);
       if (!manifest) {
         throw new Error(t("resourceHistory.notWritten", { kind, name }));
