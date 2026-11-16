@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// A Portal door over OData (T-7105) reaches its REST door's stub below.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4851, AG-134…AG-136: an agent's Activity tab in a real browser at 1440 and 400, the API
 // answered in the browser as the other mocked specs do: runs with their steps, the alerts, Stop

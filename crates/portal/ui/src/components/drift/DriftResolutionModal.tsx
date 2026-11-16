@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { doorAction } from "../../api/odata";
 import {
   Alert,
   Badge,
@@ -62,15 +63,10 @@ export function DriftResolutionModal({
       if (!entity) {
         throw new Error("no entity");
       }
-      const path = { project, space: entity.space, id: entity.id };
-      return unwrap(
-        resolution === "revert"
-          ? await api.POST("/api/v1/projects/{project}/drift/{space}/{id}/revert", {
-              params: { path },
-            })
-          : await api.POST("/api/v1/projects/{project}/drift/{space}/{id}/adopt", {
-              params: { path },
-            }),
+      return doorAction(
+        resolution === "revert" ? "portal_drift_revert" : "portal_drift_adopt",
+        { space: entity.space, id: entity.id },
+        project,
       );
     },
     onSuccess: (_result, resolution) => {

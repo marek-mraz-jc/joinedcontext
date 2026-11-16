@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// A Portal door over OData (T-7105) reaches its REST door's stub below.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The temporal audit on a space's Retention tab (T-4844): each attribute a pipeline writes, how
 // the space records it, where the time of a row comes from and a verdict in words. `vite preview`

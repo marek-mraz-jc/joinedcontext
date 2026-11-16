@@ -9,7 +9,7 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../api/client";
+import { door, doorAction, type RestAnswer } from "../api/odata";
 import type { components } from "../api/schema";
 import { Alert, Button, Checkbox, Dialog, Field, RadioGroup, Select } from "./ui";
 
@@ -37,7 +37,7 @@ export function AlertDialog({ project: offered, scope, target, label, projects, 
   const queryClient = useQueryClient();
   const mine = useQuery({
     queryKey: ALERTS_KEY,
-    queryFn: async () => (await unwrap(await api.GET("/api/v1/alerts", {}))).items,
+    queryFn: async () => ((await door("portal_alert_list", {})) as RestAnswer<"list_alerts">).items,
   });
   const current = mine.data?.find((one) => one.project === project && one.scope === scope && one.target === target);
   const [events, setEvents] = useState<Event[] | null>(null);
@@ -53,24 +53,22 @@ export function AlertDialog({ project: offered, scope, target, label, projects, 
 
   const save = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.PUT("/api/v1/alerts", {
-          body: { project, scope, target, events: shownEvents, delivery: shownDelivery },
-        }),
-      ),
+      doorAction("portal_alert_subscribe", {
+        body: { project, scope, target, events: shownEvents, delivery: shownDelivery },
+      }),
     onSuccess: done,
     onError: fail,
   });
   const stop = useMutation({
     mutationFn: async (id: number) => {
-      await unwrap(await api.DELETE("/api/v1/alerts/{id}", { params: { path: { id } } }));
+      await doorAction("portal_alert_unsubscribe", { id: String(id) });
     },
     onSuccess: done,
     onError: fail,
   });
   const mute = useMutation({
     mutationFn: async ({ id, duration }: { id: number; duration: string | null }) =>
-      unwrap(await api.POST("/api/v1/alerts/{id}/mute", { params: { path: { id } }, body: { for: duration } })),
+      doorAction("portal_alert_mute", { id: String(id), body: { for: duration } }),
     onSuccess: done,
     onError: fail,
   });

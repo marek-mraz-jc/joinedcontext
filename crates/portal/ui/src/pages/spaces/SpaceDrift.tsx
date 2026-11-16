@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door } from "../../api/odata";
 import { usePermissions } from "../../api/permissions";
 import { DriftResolutionModal } from "../../components/drift/DriftResolutionModal";
 import type { DriftedEntity } from "../../components/drift/DriftResolutionModal";
@@ -67,13 +67,7 @@ export function SpaceDrift({ project, space }: { project: string; space: string 
   const drift = useQuery({
     queryKey: ["drift", project],
     queryFn: async () =>
-      asDriftList(
-        await unwrap(
-          await api.GET("/api/v1/projects/{project}/drift", {
-            params: { path: { project } },
-          }),
-        ),
-      ),
+      asDriftList(await door("portal_drift_list", {}, project)),
   });
 
   if (drift.isPending) {

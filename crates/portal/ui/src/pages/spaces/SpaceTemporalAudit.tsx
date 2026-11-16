@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door } from "../../api/odata";
 import type { components } from "../../api/schema";
 import {
   Alert,
@@ -48,11 +49,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
     queryKey: ["projects", project, "spaces", space, "temporal-audit"],
     retry: false,
     queryFn: async (): Promise<Audit> =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/spaces/{space}/temporal-audit", {
-          params: { path: { project, space } },
-        }),
-      ),
+      (await door("portal_space_temporal_audit", { space }, project)) as Audit,
   });
 
   // A skeleton is a <tbody>: it goes inside a Table, never straight into the section.

@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// A Portal door over OData (T-7105) reaches its REST door's stub below.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // A space row as a dialog (T-4828): `?row=<urn>` opens it, Fields, History with every version and
 // who changed it, Comments as tabs; "Add row" opens the type's form. `vite preview` has no Portal
