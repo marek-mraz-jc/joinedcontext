@@ -8,6 +8,17 @@ import { manifestReadsAsRest } from "./manifestReads";
 
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
+const TOOL_DOORS: Record<string, string> = { generate: "portal_model_compile", "sdm-catalog": "portal_model_catalogue", "import-sdm": "portal_model_import" };
+
+/** Model Tools' REST address `/api/v1/tools/{tool}` (any tool when none is named) or its Portal door (T-7173). */
+function modelTool(tool?: string): (url: URL) => boolean {
+  const doors = tool ? [TOOL_DOORS[tool]] : Object.values(TOOL_DOORS);
+  return (url) =>
+    url.pathname === `/api/v1/tools/${tool ?? ""}` ||
+    (!tool && url.pathname.startsWith("/api/v1/tools/")) ||
+    doors.some((door) => decodeURIComponent(url.pathname).includes(`/JoinedContext.Portal.${door}`));
+}
+
 // The Data models page as a person meets it (T-2765, T-2762; DM-61, DM-62): the list of the project's
 // models, one click to a model's own page, and its diagram, form and YAML. `vite preview` has no
 // Portal API behind it, so the API is answered in the browser; the pages are the real build.
@@ -339,7 +350,7 @@ test.describe("one plain model editor (T-4829)", () => {
     test(`a catalogue model that cannot be imported says why at ${width} px`, async ({ page }) => {
       await page.setViewportSize({ width, height: width > 600 ? 900 : 860 });
       await stubKpi(page, ["read", "propose"]);
-      await page.route("**/api/v1/tools/**", async (route) => {
+      await page.route(modelTool(), async (route) => {
         const path = new URL(route.request().url()).pathname;
         const body = path.endsWith("/sdm-catalog")
           ? { subjects: [{ name: "dataModel.TourismDestinations", title: "TourismDestinations", models: [{ id: "dataModel.TourismDestinations/Event", name: "Event", description: "An event of interest to visitors.", attributes: ["subCategory"] }] }] }
@@ -421,7 +432,7 @@ test.describe("a model change is proposed, and read back (T-4830)", () => {
     test(`the Form tab has no schema error, History lists v1.0.0, Propose waits for an edit at ${width} px`, async ({ page }) => {
       await page.setViewportSize({ width, height: width > 600 ? 900 : 860 });
       await stubKpi(page, ["read", "propose"]);
-      await page.route((url) => url.pathname === "/api/v1/tools/generate" || odataCall(url)?.name === "portal_model_compile", (route) =>
+      await page.route(modelTool("generate"), (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(KPI_ARTIFACTS) }),
       );
       await page.route((url) => odataCall(url)?.name === "jc_change_history", (route) =>
@@ -762,7 +773,7 @@ test.describe("a model's lists on the shared grid (T-6753)", () => {
 
       await page.unrouteAll({ behavior: "ignoreErrors" });
       await stubKpi(page, ["read", "propose"]);
-      await page.route((url) => url.pathname === "/api/v1/tools/generate" || odataCall(url)?.name === "portal_model_compile", (route) =>
+      await page.route(modelTool("generate"), (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(KPI_ARTIFACTS) }),
       );
       await page.goto("/projects/helsinki/models?edit=helsinki-kpi&lang=en");
