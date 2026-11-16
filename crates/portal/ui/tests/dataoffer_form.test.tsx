@@ -153,6 +153,6 @@ describe("the DataOffers page", () => {
     page(["read"]);
     const buttons = await screen.findAllByRole("button", { name: newLabel });
     await waitFor(() => expect(buttons[0]).toHaveAttribute("aria-disabled", "true"));
-    expect(buttons[0]).toHaveAccessibleDescription(/propose/);
+    expect(buttons[0]).toHaveAccessibleDescription(/cannot add or change /);
   });
 });

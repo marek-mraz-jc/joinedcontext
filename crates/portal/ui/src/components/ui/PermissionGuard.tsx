@@ -11,21 +11,21 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 /**
  * Why a control is refused. At organization scope it names who may, in words (T-4831): "Only an
  * organization administrator can add or change agent profiles.", never the verb and the kind's
- * code name the raw sentence quoted to an administrator on Agent profiles.
+ * code name the raw sentence quoted to an administrator on Agent profiles. A project says the same in
+ * its own words (T-7106): "Your role in helsinki cannot add or change sync sources. Whoever manages
+ * the project can grant it.", never "'propose' on 'SyncSource'".
  */
 export function deniedReason(t: Translate, project: string, verb: Verb, kind: string): string {
+  const words = { action: t(`permissions.action.${verb}`, { defaultValue: verb }), kinds: kindPlural(kind, t) };
   return project === ORG_NAMESPACE
-    ? t("permissions.deniedOrganization", {
-        action: t(`permissions.action.${verb}`, { defaultValue: verb }),
-        kinds: kindPlural(kind, t),
-      })
-    : t("permissions.denied", { verb, kind });
+    ? t("permissions.deniedOrganization", words)
+    : t("permissions.denied", { ...words, project });
 }
 
 /**
  * Disabled with a reason (T-0603, UI-44, PF-50, PF-51): a control whose verb the caller's
- * effective permissions deny stays where it is, disabled, and says which verb on which kind the
- * role lacks. The guard reflects `permissions/me` and decides nothing: the same request sent
+ * effective permissions deny stays where it is, disabled, and says in words what the role cannot do
+ * to which kind. The guard reflects `permissions/me` and decides nothing: the same request sent
  * directly is the API's 403. While the first read is on its way the control is disabled with
  * "Checking your access…" (T-5833: a viewer on a slow Portal pressed "Add a source" before the
  * document said no); a read that failed, and a bootstrap administrator, leave it as it is.

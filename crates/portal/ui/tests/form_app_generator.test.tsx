@@ -134,7 +134,7 @@ describe("the application generator (T-1760)", () => {
     renderPage(generator(), { path: `/projects/${PROJECT}`, answer: reads() });
     // Refused once the person's permissions are read, not before: the button exists earlier.
     const button = await screen.findByRole("button", { name: i18n.t("apps.generate.submit") });
-    await waitFor(() => expectDenied(button, /propose/));
+    await waitFor(() => expectDenied(button, /cannot add or change applications\./));
   });
 
   it("refuses_a_typed_name_that_could_not_be_a_url_segment", async () => {

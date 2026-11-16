@@ -18,6 +18,7 @@ import {
   Table,
   TableSkeleton,
 } from "../../components/ui";
+import { deniedReason } from "../../components/ui/PermissionGuard";
 
 type Run = components["schemas"]["PipelineRun"];
 
@@ -144,7 +145,7 @@ export function PipelineRunsView({
   });
   const runRefusal =
     !permissions.can("Pipeline", "propose") || !permissions.can("Pipeline", "approve")
-      ? t("permissions.denied", { verb: "approve", kind: "Pipeline" })
+      ? deniedReason(t, project, "approve", "Pipeline")
       : undefined;
   const items: Run[] = runs.data?.items ?? [];
   const facts = runFacts(items);

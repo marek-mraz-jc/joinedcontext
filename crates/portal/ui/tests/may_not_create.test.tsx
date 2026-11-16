@@ -29,7 +29,7 @@ describe("a list's greyed create button", () => {
     await renderRoute({ path: "/projects/helsinki/spaces", permissions: VIEWER });
     const add = await screen.findByRole("button", { name: new RegExp(en.spaces.add) });
     await waitFor(() => expect(add).toHaveAttribute("aria-disabled", "true"));
-    expect(add).toHaveAccessibleDescription(/ContextSpace/);
+    expect(add).toHaveAccessibleDescription(/cannot add or change /);
     expect(screen.queryByText(en.form.mayNotCreate)).toBeNull();
     expect(screen.getAllByRole("button", { name: new RegExp(en.spaces.fromFile) })[0]).toHaveAttribute("aria-disabled", "true");
   });

@@ -287,6 +287,15 @@
     "withdrawn": "You withdrew this change. It was closed without merging, and your reason is on its record.",
     "withdrawReason": "Why are you withdrawing it?",
     "withdrawReasonHint": "Recorded on the change, for example: proposed the wrong model version.",
+    "decision": {
+      "rejectedTitle": "Rejected",
+      "approvedTitle": "Approved",
+      "by": "Decided by {by}.",
+      "byAt": "Decided by {by} on {at}.",
+      "reason": "Reason: {reason}",
+      "noReason": "No reason was given.",
+      "rejectedNext": "Nothing this change proposed was applied. To try again, fix what the reason names in the resource and save it: that proposes a new change."
+    },
     "rejectCancel": "Cancel",
     "rejectReasonHint": "The author reads it on the change and needs it to fix the change.",
     "filterMine": "Only mine",
@@ -7195,7 +7204,7 @@
   "permissions": {
     "unchecked": "Your access could not be checked just now. You can still fill in the form: the server checks your rights again when you propose.",
     "checking": "Checking your access…",
-    "denied": "Disabled: your role does not permit ''{verb}'' on ''{kind}'' in this project",
+    "denied": "Your role in {project} cannot {action} {kinds}. Whoever manages the project can grant it.",
     "deniedOrganization": "Only an organization administrator can {action} {kinds}.",
     "action": {
       "read": "see",
@@ -8257,6 +8266,7 @@
         "localeHelp": "The language of the sign-in pages and the realm’s e-mails for this person.",
         "localeRealm": "The realm’s default",
         "emailInvalid": "Type an e-mail address such as jana.novakova@example.org.",
+        "emailTakenNext": "Find this person in the People list and give them a role from their page.",
         "required": "Required."
       },
       "language": {

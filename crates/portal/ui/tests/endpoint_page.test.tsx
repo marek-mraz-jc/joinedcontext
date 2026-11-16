@@ -796,9 +796,9 @@ describe("the endpoint's own settings page", () => {
     expect(
       screen.getByRole("button", { name: en.catalogue.publish.open }),
     ).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getAllByTitle(/'propose' on 'Endpoint'/)).toHaveLength(2);
+    expect(screen.getAllByTitle(/cannot add or change endpoints\./)).toHaveLength(2);
     expect(
-      screen.getByTitle(/'propose' on 'ModelProjection'/),
+      screen.getByTitle(/cannot add or change model projections\./),
     ).toBeInTheDocument();
   });
 
@@ -870,7 +870,7 @@ describe("the endpoint's own settings page", () => {
       }),
     ).toHaveAttribute(
       "title",
-      expect.stringContaining("'delete' on 'Endpoint'"),
+      expect.stringContaining("cannot delete endpoints."),
     );
   });
 

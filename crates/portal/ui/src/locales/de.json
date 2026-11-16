@@ -287,6 +287,15 @@
     "withdrawn": "Sie haben diese Änderung zurückgezogen. Sie wurde ohne Zusammenführen geschlossen, Ihr Grund steht in ihrem Verlauf.",
     "withdrawReason": "Warum ziehen Sie sie zurück?",
     "withdrawReasonHint": "Wird an der Änderung vermerkt, zum Beispiel: falsche Modellversion vorgeschlagen.",
+    "decision": {
+      "rejectedTitle": "Abgelehnt",
+      "approvedTitle": "Genehmigt",
+      "by": "Entschieden von {by}.",
+      "byAt": "Entschieden von {by} am {at}.",
+      "reason": "Grund: {reason}",
+      "noReason": "Es wurde kein Grund angegeben.",
+      "rejectedNext": "Nichts aus dieser Änderung wurde übernommen. Um es erneut zu versuchen, korrigieren Sie in der Ressource, was der Grund nennt, und speichern Sie sie: Das schlägt eine neue Änderung vor."
+    },
     "rejectCancel": "Abbrechen",
     "rejectReasonHint": "Die Autorin oder der Autor liest es an der Änderung und braucht es, um sie zu korrigieren.",
     "filterMine": "Nur meine",
@@ -7195,7 +7204,7 @@
   "permissions": {
     "unchecked": "Ihre Berechtigungen konnten gerade nicht geprüft werden. Sie können das Formular trotzdem ausfüllen: Der Server prüft Ihre Rechte erneut, wenn Sie die Änderung vorschlagen.",
     "checking": "Ihr Zugriff wird geprüft…",
-    "denied": "Deaktiviert: Ihre Rolle erlaubt ''{verb}'' auf ''{kind}'' in diesem Projekt nicht",
+    "denied": "Ihre Rolle in {project} kann {kinds} nicht {action}. Wer das Projekt verwaltet, kann es freigeben.",
     "deniedOrganization": "Nur die Organisationsadministration kann {kinds} {action}.",
     "action": {
       "read": "sehen",
@@ -8257,6 +8266,7 @@
         "localeHelp": "Die Sprache der Anmeldeseiten und der E-Mails der Domäne für diese Person.",
         "localeRealm": "Standard der Domäne",
         "emailInvalid": "Geben Sie eine E-Mail-Adresse ein, etwa jana.novakova@example.org.",
+        "emailTakenNext": "Suchen Sie diese Person in der Liste Personen und geben Sie ihr auf ihrer Seite eine Rolle.",
         "required": "Pflichtfeld."
       },
       "language": {

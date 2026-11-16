@@ -33,6 +33,9 @@ pub enum Bound {
 pub enum Who {
     /// Any person.
     Person,
+    /// Any person, on any Organization they reach: their own notifications and preferences,
+    /// which belong to no Organization.
+    Own,
     /// A holder of `Person` with this verb at the Organization (a people administrator).
     People(jc_core::kinds::Verb),
     /// The Organization's administrator.
@@ -182,7 +185,7 @@ pub static DOORS: [Door; 31] = [
         Method::GET,
         "/notifications",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_notification_read",
@@ -190,7 +193,7 @@ pub static DOORS: [Door; 31] = [
         Method::POST,
         "/notifications/{notification}/read",
         &[("notification", Place::Path)],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_preferences_get",
@@ -198,7 +201,7 @@ pub static DOORS: [Door; 31] = [
         Method::GET,
         "/preferences",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_preferences_set",
@@ -206,7 +209,7 @@ pub static DOORS: [Door; 31] = [
         Method::PUT,
         "/preferences",
         &[BODY],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_preferences_recent",
@@ -214,7 +217,7 @@ pub static DOORS: [Door; 31] = [
         Method::POST,
         "/preferences/recent",
         &[BODY],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_visualization_template",
@@ -402,8 +405,8 @@ pub fn bearer_refusal() -> Refusal {
 }
 
 /// The doors `$metadata` lists for the caller in `org`: none outside a person's session; the
-/// Organization's on the installation's Organization (`people`) by [`Who`]; a project's when
-/// the person reads one.
+/// person's own ([`Who::Own`]) on any Organization; the Organization's on the installation's
+/// Organization (`people`) by [`Who`]; a project's when the person reads one.
 pub(crate) fn offered(
     state: &AppState,
     user: &CurrentUser,
@@ -420,6 +423,7 @@ pub(crate) fn offered(
         .iter()
         .filter(|door| match (door.bound, door.who) {
             (Bound::Project, _) | (_, Who::ProjectReader) => reads_a_project,
+            (_, Who::Own) => true,
             (Bound::Organization, _) if !people => false,
             (_, Who::Person) => true,
             (_, Who::People(verb)) => {

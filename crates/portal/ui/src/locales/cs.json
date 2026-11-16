@@ -287,6 +287,15 @@
     "withdrawn": "Tuto změnu jste stáhli. Zavřela se bez sloučení a váš důvod je v jejím záznamu.",
     "withdrawReason": "Proč ji stahujete?",
     "withdrawReasonHint": "Zapíše se u změny, například: navrhl jsem špatnou verzi modelu.",
+    "decision": {
+      "rejectedTitle": "Zamítnuto",
+      "approvedTitle": "Schváleno",
+      "by": "Rozhodl(a) {by}.",
+      "byAt": "Rozhodl(a) {by} dne {at}.",
+      "reason": "Důvod: {reason}",
+      "noReason": "Důvod nebyl uveden.",
+      "rejectedNext": "Nic z této změny se nepoužilo. Chcete-li to zkusit znovu, opravte ve zdroji to, co uvádí důvod, a uložte jej: tím navrhnete novou změnu."
+    },
     "rejectCancel": "Zrušit",
     "rejectReasonHint": "Autor si to přečte u změny a potřebuje to k její opravě.",
     "filterMine": "Jen moje",
@@ -7195,7 +7204,7 @@
   "permissions": {
     "unchecked": "Vaše oprávnění se teď nepodařilo ověřit. Formulář můžete vyplnit i tak: server vaše práva ověří znovu, když změnu navrhnete.",
     "checking": "Ověřuje se váš přístup…",
-    "denied": "Vypnuto: vaše role nedovoluje ''{verb}'' na ''{kind}'' v tomto projektu",
+    "denied": "Vaše role v projektu {project} nemůže {action}: {kinds}. Udělit to může ten, kdo spravuje projekt.",
     "deniedOrganization": "Jen administrátor organizace může {action}: {kinds}.",
     "action": {
       "read": "vidět",
@@ -8257,6 +8266,7 @@
         "localeHelp": "Jazyk přihlašovacích stránek a e-mailů domény pro tuto osobu.",
         "localeRealm": "Výchozí jazyk domény",
         "emailInvalid": "Zadejte e-mailovou adresu, například jana.novakova@example.org.",
+        "emailTakenNext": "Najděte tuto osobu v seznamu Lidé a přidejte jí roli na její stránce.",
         "required": "Povinné."
       },
       "language": {

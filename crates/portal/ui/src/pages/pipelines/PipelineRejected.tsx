@@ -21,6 +21,7 @@ import { RecordView,
   TableRow,
   TableSkeleton,
 } from "../../components/ui";
+import { deniedReason } from "../../components/ui/PermissionGuard";
 
 type Rejected = components["schemas"]["Rejected"];
 type RejectedGroup = components["schemas"]["RejectedGroupView"];
@@ -128,7 +129,7 @@ export function PipelineRejectedDialog({
   const listed = page.isSuccess && (items.length > 0 || before !== undefined);
   const mayRetry = permissions.can("Pipeline", "propose");
   const retryRefusal = !mayRetry
-    ? t("permissions.denied", { verb: "propose", kind: "Pipeline" })
+    ? deniedReason(t, project, "propose", "Pipeline")
     : selected.size === 0
       ? t("pipelines.rejected.pickFirst")
       : selected.size > 100
