@@ -159,6 +159,13 @@
           "PUT /api/v1/organization/opendata/pages/{page}/{lang}",
           "DELETE /api/v1/organization/opendata/pages/{page}/{lang}"
         ]
+      },
+      "edit-opendata-pages": {
+        "live": {
+          "spec": "opendata-pages-publish.spec.ts",
+          "test": "an administrator edits the connector page in sk and en, publishes, approves, and the open data portal shows it"
+        },
+        "assistant": "jc_resource_propose"
       }
     },
     "people": {

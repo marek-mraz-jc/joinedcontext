@@ -125,7 +125,7 @@ fn s<'a>(map: &'a serde_json::Map<String, JsonValue>, key: &str) -> &'a str {
 }
 
 /// The DER certificates of a PEM text.
-pub(crate) fn pem_certificates(pem: &str) -> Result<Vec<Vec<u8>>, CoreError> {
+pub fn pem_certificates(pem: &str) -> Result<Vec<Vec<u8>>, CoreError> {
     const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
     const END: &str = "-----END CERTIFICATE-----";
     let mut out = Vec::new();

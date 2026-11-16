@@ -32,10 +32,11 @@ describe("runner lists (T-6825)", () => {
     expect(offered).toContain("http_client");
     expect(offered).toContain("nats");
     expect(offered).toContain("sql_select");
-    // T-7090: the runner builds amqp_0_9 and sftp; kafka_franz is not built yet.
+    // T-7090: the runner builds amqp_0_9 and sftp; T-7093: kafka_franz (Bento's older kafka input is not built).
     expect(offered).toContain("amqp_0_9");
     expect(offered).toContain("sftp");
-    for (const name of ["kafka", "kafka_franz", "mongodb", "stdin", "http_server"]) {
+    expect(offered).toContain("kafka_franz");
+    for (const name of ["kafka", "mongodb", "stdin", "http_server"]) {
       expect(offered).not.toContain(name);
     }
   });

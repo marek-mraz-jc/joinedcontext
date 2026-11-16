@@ -5274,7 +5274,7 @@
      "advanced": false,
      "optional": false,
      "default": null,
-     "description": "A list of broker addresses to connect to in order to establish connections. If an item of the list contains commas it will be expanded into multiple addresses."
+     "description": "The Kafka brokers to start from, as host:port; the runner reaches them, and every broker they advertise, only through the organization's outbound rule, e.g. kafka-1.example.org:9092."
     },
     {
      "path": "topics",
@@ -5284,7 +5284,7 @@
      "advanced": false,
      "optional": false,
      "default": null,
-     "description": ""
+     "description": "The topics to read. With regexp_topics each one is a regular expression the whole topic name must match, e.g. vehicle-positions."
     },
     {
      "path": "regexp_topics",
@@ -5304,7 +5304,7 @@
      "advanced": false,
      "optional": true,
      "default": null,
-     "description": "An optional consumer group to consume as."
+     "description": "The consumer group to read and commit offsets as; the runner joins it under the organization's id, as <organization id>.<name>, so grant that group to the SASL user, e.g. traffic-ingest."
     },
     {
      "path": "client_id",
@@ -5546,7 +5546,7 @@
      "advanced": true,
      "optional": true,
      "default": null,
-     "description": "Specify one or more methods of SASL authentication. SASL is tried in order; if the broker supports the first mechanism, all connections will use that mechanism."
+     "description": "The login, as a YAML list with one mechanism: SCRAM-SHA-512, SCRAM-SHA-256, or PLAIN over TLS; the password only from a secret, e.g. - {mechanism: SCRAM-SHA-512, username: city-ingest, password: ${KAFKA_PASSWORD}}"
     },
     {
      "path": "multi_header",

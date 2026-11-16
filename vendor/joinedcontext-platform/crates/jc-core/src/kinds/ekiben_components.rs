@@ -16,6 +16,7 @@ pub const INPUTS: &[&str] = &[
     "http_server",
     "imap",
     "inproc",
+    "kafka_franz",
     "mqtt",
     "nats",
     "nats_jetstream",

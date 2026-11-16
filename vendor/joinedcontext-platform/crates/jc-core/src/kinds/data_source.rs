@@ -2685,20 +2685,18 @@ mod runner_registry_tests {
             err.contains("spec.type") && err.contains("`kafka`"),
             "{err}"
         );
-        assert!(
-            err.contains("nats") && !err.contains("kafka_franz"),
-            "{err}"
-        );
+        // the hint names the brokers the runner builds, kafka_franz among them (T-7093)
+        assert!(err.contains("nats") && err.contains("kafka_franz"), "{err}");
 
         let nested = source(
-            "  type: broker\n  input:\n    inputs:\n      - nats: { urls: [\"nats://broker.example.fi:4222\"], subject: a }\n      - kafka_franz: { seed_brokers: [\"broker.example.fi:9092\"], topics: [a] }\n",
+            "  type: broker\n  input:\n    inputs:\n      - nats: { urls: [\"nats://broker.example.fi:4222\"], subject: a }\n      - kafka: { addresses: [\"broker.example.fi:9092\"], topics: [a] }\n",
         );
         let err = crate::registry::validate_yaml("DataSource", &nested)
             .expect("a kind")
-            .expect_err("kafka_franz is not built by the runner")
+            .expect_err("kafka is not built by the runner")
             .to_string();
         assert!(
-            err.contains("spec.input") && err.contains("`kafka_franz`"),
+            err.contains("spec.input") && err.contains("`kafka`"),
             "{err}"
         );
 
@@ -2716,6 +2714,14 @@ mod runner_registry_tests {
         crate::registry::validate_yaml("DataSource", &amqp)
             .expect("a kind")
             .expect("amqp_0_9 is built by the runner");
+
+        // T-7093: the runner builds kafka_franz.
+        let kafka_franz = source(
+            "  type: kafka_franz\n  input:\n    seed_brokers: [\"broker.example.fi:9093\"]\n    topics: [vehicles]\n    consumer_group: traffic\n",
+        );
+        crate::registry::validate_yaml("DataSource", &kafka_franz)
+            .expect("a kind")
+            .expect("kafka_franz is built by the runner");
     }
 
     /// Every input offered is one the Bento catalog draws a form for and the runner builds.

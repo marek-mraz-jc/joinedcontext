@@ -8126,6 +8126,7 @@
     "lead": "What is the same in every project: the organization's settings, its members, roles, groups and service accounts, and its projects. Every change here is proposed and approved.",
     "tab": {
       "settings": "Settings",
+      "opendata-pages": "Open data pages",
       "people": "People",
       "members": "Members",
       "roles": "Roles",
@@ -13305,6 +13306,61 @@
       "already": "Already on {version}.",
       "moved": "Proposed one Change moving {names} to {version}.",
       "onTarget": "On the target"
+    }
+  },
+  "opendataPages": {
+    "title": "Open data portal pages",
+    "lead": "The texts {organization}'s open data portal shows on its connector, privacy, terms, support and accessibility pages, per language. A page shows the built-in text until you publish your own; publishing proposes a change an administrator approves.",
+    "noneOwn": "Every page shows the built-in text. Choose Edit beside a page and language to write your own.",
+    "builtIn": "Built-in",
+    "own": "Your text",
+    "pending": "Waits for approval",
+    "edit": "Edit",
+    "editLabel": "Edit {title} ({lang})",
+    "page": {
+      "connector": "AI connector",
+      "privacy": "Privacy",
+      "terms": "Terms of use",
+      "support": "Support",
+      "accessibility": "Accessibility",
+      "other": "{page}"
+    },
+    "openChange": "A change to the organization waits for approval. Approve or reject it before you publish another text:",
+    "editing": "{title} ({lang})",
+    "back": "Back to the pages",
+    "pendingHere": "A text for this page waits for approval in an open change.",
+    "toolbar": "Formatting",
+    "format": {
+      "bold": "Bold",
+      "heading": "Heading",
+      "list": "List",
+      "link": "Link",
+      "code": "Code"
+    },
+    "markdown": "Page text in Markdown",
+    "markdownHint": "The first line starting with # is the page title, e.g. \"# Support\", then \"Write to **support@city.sk**\". Raw HTML shows as text, images are left out; at most {max} KiB.",
+    "size": "{bytes} of {max} bytes",
+    "sizeOver": "{bytes} of {max} bytes: {over} over the limit. Shorten the text to publish it.",
+    "write": "Write",
+    "preview": "Preview",
+    "views": "Text or preview",
+    "previewEmpty": "Write something to see the page as the portal shows it.",
+    "publish": "Publish",
+    "revert": "Use the built-in text",
+    "revertTitle": "Use the built-in text again?",
+    "revertBody": "Your text of {title} ({lang}) is removed in a proposed change; once approved the portal shows the built-in text.",
+    "waits": "The portal shows the new text once an administrator approves the change.",
+    "refused": {
+      "403": "You may not change the open data portal's pages: {detail}",
+      "409": "A change to the organization waits for approval. Approve or reject it, then publish again. {detail}",
+      "list": "Only the Organization's administrators edit its open data portal's pages. Ask one of them on the Members page to change a text, or to give you that role."
+    },
+    "history": "Earlier edits",
+    "historyEmpty": "No page text was changed yet.",
+    "historyRow": "{who}, {at}: {phase}",
+    "phase": {
+      "merged": "published",
+      "rejected": "rejected"
     }
   }
 }

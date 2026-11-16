@@ -1,9 +1,11 @@
 //! The Portal doors of the Organization's OData service (API/13 §2b, ADR-N-070 item 11, T-7100):
 //! the REST doors no tool may answer (route_coverage_tests.rs names each reason: a temporary
-//! password, a secret, a consent, a person's connector or access request, an agent's grant) and
-//! the Portal's own per-person readings. None is a registry operation, so no MCP `tools/list` and
-//! no assistant names one; each `portal_*` function or action runs its REST door's handler through
-//! the API router, for a person in a browser session only.
+//! password, a secret, a consent, a person's connector or access request, an agent's grant),
+//! the Portal's own per-person readings, the open data pages editor's (T-7041) and the `org`
+//! namespace's own Changes, which the service's `changes` set (the projects' Changes) leaves out.
+//! None is a registry operation, so no MCP `tools/list` and no assistant names one; each
+//! `portal_*` function or action runs its REST door's handler through the API router, for a
+//! person in a browser session only.
 
 use axum::http::{Method, StatusCode};
 use serde_json::{json, Map, Value};
@@ -67,6 +69,9 @@ const BODY: (&str, Place) = ("body", Place::Body);
 const PERSON: (&str, Place) = ("person", Place::Path);
 const ENDPOINT: (&str, Place) = ("endpoint", Place::Path);
 const ACCOUNT: (&str, Place) = ("account", Place::Path);
+const PAGE: (&str, Place) = ("page", Place::Path);
+const LANG: (&str, Place) = ("lang", Place::Path);
+const CHANGE: (&str, Place) = ("id", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -90,7 +95,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 23] = [
+pub static DOORS: [Door; 31] = [
     door(
         "portal_people_remove",
         Org,
@@ -223,6 +228,74 @@ pub static DOORS: [Door; 23] = [
             ("color", Place::Query("Edm.String")),
             ("facet", Place::Query("Edm.String")),
         ],
+        Who::Person,
+    ),
+    door(
+        "portal_opendata_pages",
+        Org,
+        Method::GET,
+        "/organization/opendata/pages",
+        &[],
+        Who::Person,
+    ),
+    door(
+        "portal_opendata_page_preview",
+        Org,
+        Method::POST,
+        "/organization/opendata/pages/preview",
+        &[BODY],
+        Who::Person,
+    ),
+    door(
+        "portal_opendata_page_set",
+        Org,
+        Method::PUT,
+        "/organization/opendata/pages/{page}/{lang}",
+        &[PAGE, LANG, BODY],
+        Who::Person,
+    ),
+    door(
+        "portal_opendata_page_revert",
+        Org,
+        Method::DELETE,
+        "/organization/opendata/pages/{page}/{lang}",
+        &[PAGE, LANG],
+        Who::Person,
+    ),
+    door(
+        "portal_organization_change_list",
+        Org,
+        Method::GET,
+        "/projects/org/changes",
+        &[],
+        Who::Person,
+    ),
+    door(
+        "portal_organization_change_history",
+        Org,
+        Method::GET,
+        "/projects/org/changes/history",
+        &[
+            ("page", Place::Query("Edm.Int32")),
+            ("kind", Place::Query("Edm.String")),
+            ("name", Place::Query("Edm.String")),
+        ],
+        Who::Person,
+    ),
+    door(
+        "portal_organization_change_get",
+        Org,
+        Method::GET,
+        "/projects/org/changes/{id}",
+        &[CHANGE],
+        Who::Person,
+    ),
+    door(
+        "portal_organization_change_manifests",
+        Org,
+        Method::GET,
+        "/projects/org/changes/{id}/manifests",
+        &[CHANGE],
         Who::Person,
     ),
     door(

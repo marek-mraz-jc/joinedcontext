@@ -265,6 +265,20 @@ const DOORS: Record<string, Door> = {
     "GET",
     "/projects/{project}/endpoints/{endpoint}/quality",
   ],
+  portal_opendata_pages: ["GET", "/organization/opendata/pages"],
+  portal_opendata_page_preview: ["POST", "/organization/opendata/pages/preview"],
+  portal_opendata_page_set: ["PUT", "/organization/opendata/pages/{page}/{lang}"],
+  portal_opendata_page_revert: [
+    "DELETE",
+    "/organization/opendata/pages/{page}/{lang}",
+  ],
+  portal_organization_change_list: ["GET", "/projects/org/changes"],
+  portal_organization_change_history: ["GET", "/projects/org/changes/history"],
+  portal_organization_change_get: ["GET", "/projects/org/changes/{id}"],
+  portal_organization_change_manifests: [
+    "GET",
+    "/projects/org/changes/{id}/manifests",
+  ],
 };
 
 const DOOR =
