@@ -2758,11 +2758,11 @@
     "title": "Pipelines",
     "empty": "This project has no pipeline yet.",
     "class": {
-      "resident": "resident",
+      "resident": "Always running",
       "residentHelp": "Runs continuously in the project's Bento runner.",
-      "scheduled": "scheduled",
+      "scheduled": "On a schedule",
       "scheduledHelp": "Runs on a schedule and stops between runs.",
-      "auto": "auto",
+      "auto": "Automatic",
       "autoHelp": "The reconciler picks: resident under 30 seconds or push-based, scheduled otherwise."
     },
     "field": {
@@ -6078,6 +6078,7 @@
     "intro": "A sync source keeps this project aligned with something outside the repository: another Git repository, a published bundle, or another instance's public API. Every run is an import, and every run that changes something opens one merge request.",
     "empty": "This project syncs from nothing yet.",
     "origin": "Origin",
+    "addFrom": "Add a source from",
     "revision": "Source revision",
     "status": "Status",
     "mergeRequest": "Open merge request",
@@ -6674,6 +6675,7 @@
     "noMatch": "Nothing matches this query; change or remove a filter.",
     "technical": "Technical details (JSON-LD)",
     "copyJson": "Copy JSON-LD",
+    "backToRow": "Back to the entity you came from",
     "endpointApps": "Applications",
     "unknownType": "There is no type {type} in this space",
     "unknownTypeHint": "The address names a type this space does not have. Pick one of its types:"

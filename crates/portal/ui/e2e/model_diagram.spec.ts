@@ -6,6 +6,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 const LINKML = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../tests/fixtures/models/helsinki.linkml.yaml"), "utf8");
 const IDENTITY = { subject: "s", username: "jana", name: "Jana", email: "jana@hel.fi", roles: ["portal-editor"] };

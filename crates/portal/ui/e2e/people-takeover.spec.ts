@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // PF-93 (S-5-03): a people administrator acting on a person who holds a Policy, App or Endpoint
 // grant they could not change may only reset the password by e-mail and remove the second factor

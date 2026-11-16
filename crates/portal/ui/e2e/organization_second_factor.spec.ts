@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // An Organization's administrator asks every member for a second factor (T-6895): Settings shows
 // the rule in force in the Sign-in section, Edit → Policies → Sign-in offers Required or Optional,

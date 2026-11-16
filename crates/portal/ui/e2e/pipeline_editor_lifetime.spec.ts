@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4842: the pipeline editor's Target card (the space's model and what the Endpoint lets the
 // pipeline write), the Mapped output as each record's attributes with their verdicts, and the

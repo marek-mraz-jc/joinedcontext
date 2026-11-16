@@ -2758,11 +2758,11 @@
     "title": "Pipeliny",
     "empty": "Tento projekt zatím nemá žádnou pipelinu.",
     "class": {
-      "resident": "rezidentní",
+      "resident": "Stále běží",
       "residentHelp": "Běží nepřetržitě v Bento runneru projektu.",
-      "scheduled": "plánovaná",
+      "scheduled": "Podle rozvrhu",
       "scheduledHelp": "Běží podle plánu a mezi běhy se zastaví.",
-      "auto": "auto",
+      "auto": "Automaticky",
       "autoHelp": "Vybere reconciler: rezidentní pod 30 sekund nebo push, jinak plánovaná."
     },
     "field": {
@@ -6078,6 +6078,7 @@
     "intro": "Zdroj synchronizace udržuje tento projekt v souladu s něčím mimo repozitář: jiným Git repozitářem, publikovaným balíkem nebo veřejným API jiné instance. Každý běh je import a každý běh, který něco změní, otevře jednu žádost o sloučení.",
     "empty": "Tento projekt zatím odnikud nesynchronizuje.",
     "origin": "Původ",
+    "addFrom": "Přidat zdroj z",
     "revision": "Revize zdroje",
     "status": "Stav",
     "mergeRequest": "Otevřená žádost o sloučení",
@@ -6674,6 +6675,7 @@
     "noMatch": "Dotazu nic neodpovídá; změňte nebo odstraňte filtr.",
     "technical": "Technické podrobnosti (JSON-LD)",
     "copyJson": "Kopírovat JSON-LD",
+    "backToRow": "Zpět na entitu, ze které jste přišli",
     "endpointApps": "Aplikace",
     "unknownType": "Typ {type} v tomto prostoru neexistuje",
     "unknownTypeHint": "Adresa uvádí typ, který tento prostor nemá. Vyberte jeden z jeho typů:"

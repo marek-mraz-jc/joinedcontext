@@ -212,7 +212,7 @@ describe("the DataAgreements page", () => {
     page(["read"]);
     const buttons = await screen.findAllByRole("button", { name: newLabel });
     await waitFor(() => expect(buttons[0]).toHaveAttribute("aria-disabled", "true"));
-    expect(buttons[0]).toHaveAccessibleDescription(/cannot add or change /);
+    expect(buttons[0]).toHaveAccessibleDescription(/cannot add or change data agreements\./);
   });
 
   // T-2488: a kind with no create form offers no create action, and says so in its hint.

@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4845: the History column of the pipeline editor's Target card. A person picks per attribute
 // keep every reading, keep only changes or keep the latest value only, and the time of a row from

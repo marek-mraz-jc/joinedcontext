@@ -199,6 +199,80 @@ async fn a_runner_that_refuses_is_unavailable_not_an_internal_error() {
     );
 }
 
+/// A runner on a raw socket: each of the first `cut` connections gets the headers and half the
+/// body before the socket closes, as a stream restart or a read past the timeout does (T-7114);
+/// later ones get the whole answer. Returns its base URL and the count of connections taken.
+fn runner_cutting_the_body(cut: usize) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::{Read, Write};
+    use std::sync::atomic::Ordering;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let taken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = taken.clone();
+    std::thread::spawn(move || {
+        for mut socket in listener.incoming().flatten() {
+            let n = count.fetch_add(1, Ordering::SeqCst);
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                RUNNER_BODY.len()
+            );
+            let body = if n < cut {
+                &RUNNER_BODY[..RUNNER_BODY.len() / 2]
+            } else {
+                RUNNER_BODY
+            };
+            let _ = socket.write_all(head.as_bytes());
+            let _ = socket.write_all(body.as_bytes());
+            let _ = socket.shutdown(std::net::Shutdown::Both);
+        }
+    });
+    (base, taken)
+}
+
+#[tokio::test]
+async fn a_body_cut_once_is_read_again_and_answered() {
+    let (runner, taken) = runner_cutting_the_body(1);
+    let mut config = Config::for_tests();
+    config.pipeline_runner_url = Some(runner);
+
+    let (status, body) = get(
+        config,
+        "/api/v1/projects/ovzdusie/pipelines/aq-mqtt-ingest/metrics",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["received"], 128401);
+    assert_eq!(taken.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn a_body_cut_twice_is_503_after_one_retry_and_no_more() {
+    let (runner, taken) = runner_cutting_the_body(usize::MAX);
+    let mut config = Config::for_tests();
+    config.pipeline_runner_url = Some(runner.clone());
+
+    let (status, body) = get(
+        config,
+        "/api/v1/projects/ovzdusie/pipelines/aq-mqtt-ingest/metrics",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["detail"], "the pipeline runner did not answer");
+    assert!(
+        !body.to_string().contains(&runner),
+        "the runner URL stays internal"
+    );
+    assert_eq!(
+        taken.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "the retry is bounded to one"
+    );
+}
+
 #[tokio::test]
 async fn a_pipeline_that_is_not_mirrored_is_404_before_any_scrape() {
     let runner = MockServer::start().await;

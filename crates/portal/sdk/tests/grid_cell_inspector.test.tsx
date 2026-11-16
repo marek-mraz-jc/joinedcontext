@@ -171,7 +171,7 @@ describe("the grid's inspector", () => {
     render(<EntityGrid config={config()} source={source(async () => table)} />);
     const cell = (await screen.findByText("21")).closest('[role="gridcell"]') as HTMLElement;
     fireEvent.click(cell);
-    expect(await screen.findByRole("tab", { name: "no2", selected: true })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "No2", selected: true })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: `${L.title}: no2` })).toBeNull();
   });
 

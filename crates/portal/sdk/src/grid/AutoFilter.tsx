@@ -37,7 +37,8 @@ function conditionOps(column: FilterColumn): FilterOp[] {
 
 export function AutoFilter({ column, label, labels, filter, load, formatValue, onApply, onClose }: AutoFilterProps): React.JSX.Element {
   const id = useId();
-  const box = usePlaceAtCell();
+  // Beside its column, so the values it filters stay in sight while a person picks (T-7112).
+  const box = usePlaceAtCell(true);
   const search = useRef<HTMLInputElement>(null);
   const lists = Boolean(load) && listsValues(column.kind);
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
@@ -301,7 +302,9 @@ export function HeaderFilter({
           label={label}
           labels={labels}
           filter={filter}
-          load={column.attr && listsValues(column.kind) ? load : undefined}
+          // A metadata column (an observedAt, a unit) is filtered by its condition: the value list reads
+          // the attribute's own values, which a person would tick as dates (T-7072).
+          load={column.attr && !column.meta && listsValues(column.kind) ? load : undefined}
           formatValue={(value) => valueText(column, value, locale, labels)}
           onApply={onApply}
           onClose={onClose}

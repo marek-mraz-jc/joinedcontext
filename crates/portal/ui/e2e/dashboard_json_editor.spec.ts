@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6791: the Dashboard JSON editor in a real browser (Monaco and its JSON worker, the preview's
 // Vega-Lite canvas) at desktop and phone width, each state shot to test-results/T-6791 for the

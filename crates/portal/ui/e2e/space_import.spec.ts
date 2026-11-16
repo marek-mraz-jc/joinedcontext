@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // "Import rows" on a space type (T-4867): a GeoJSON file's points map to the location NGSI-LD gives
 // every entity of a class that specialises ngsi-ld-core's Entity, a file over the limit is refused

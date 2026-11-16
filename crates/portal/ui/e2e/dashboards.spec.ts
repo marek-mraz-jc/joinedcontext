@@ -1,5 +1,9 @@
 import { chromium, expect, test } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The basemap style is stubbed as well as the API: a journey must not depend on a tile
 // service being up, and an empty style renders a real MapLibre canvas all the same.

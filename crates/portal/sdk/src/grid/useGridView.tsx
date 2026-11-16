@@ -29,12 +29,18 @@ const EMPTY_IDS: readonly string[] = [];
  * phone they say nothing a row does not, so they leave the columns for the line above the table. A
  * field empty on every row (value "") leaves too, so the next field with data sits beside the label.
  */
-function sharedValues(rows: readonly RichRow[], skip: ReadonlySet<string>): { attr: string; value: string }[] {
+function sharedValues(rows: readonly RichRow[], skip: ReadonlySet<string>): { attr: string; value: string; place?: true }[] {
   if (rows.length < 2) return [];
+  const isPlace = (cell: RichRow["cells"][string]) => (Array.isArray(cell) ? cell[0] : cell)?.kind === "geo";
   return Object.keys(rows[0].cells)
     .filter((attr) => !skip.has(attr))
-    .map((attr) => ({ attr, value: cellText(rows[0].cells[attr]) }))
-    .filter(({ attr, value }) => rows.every((row) => cellText(row.cells[attr]) === value));
+    .flatMap((attr): { attr: string; value: string; place?: true }[] => {
+      // A place reads as its shape ("Point") on every row, never as one shared value: it leaves the
+      // table for the line above as the way to filter by area (T-7072).
+      if (rows.every((row) => isPlace(row.cells[attr]))) return [{ attr, value: "", place: true }];
+      const value = cellText(rows[0].cells[attr]);
+      return rows.every((row) => cellText(row.cells[attr]) === value) ? [{ attr, value }] : [];
+    });
 }
 
 function withoutAttrs(config: ResolvedGridConfig, gone: readonly string[]): ResolvedGridConfig {
@@ -124,7 +130,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   // row, and a Type every row shares (one type asked) or a value every loaded row shares moves to
   // the line above the table. The shared values come from the last rows read, one render behind.
   const oneType = !options.config.type.includes(",");
-  const [shared, setShared] = useState<{ attr: string; value: string }[]>([]);
+  const [shared, setShared] = useState<{ attr: string; value: string; place?: true }[]>([]);
   const gridHidden = useMemo(() => {
     const narrow = compact ? ["id", ...(oneType ? ["entity:type"] : []), ...shared.map((each) => each.attr)] : [];
     const gone = [...narrow, ...unreadable];

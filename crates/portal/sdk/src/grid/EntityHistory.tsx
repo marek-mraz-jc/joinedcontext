@@ -380,7 +380,8 @@ export function EntityHistory(props: EntityHistoryProps): React.JSX.Element {
         )}
       </header>
 
-      <fieldset>
+      {/* The window as one segmented control, in the row's History tab as in an attribute's own (T-7112). */}
+      <fieldset className="jc-grid-history-windows">
         {WINDOWS.map((each) => (
           <label key={each}>
             <input

@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The secret form (T-5971, T-6048): a viewer the secrets door refuses keeps the page's one h1 and
 // its purpose line above the refusal, the walker's one-h1 rule; a steward gets the form under the

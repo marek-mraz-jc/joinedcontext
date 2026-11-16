@@ -3,7 +3,7 @@
  * caller's own answer carries (DM-102): a slot the Endpoint does not give this person never
  * becomes a column or a label, because the rows read with their session are the projection.
  */
-import { readableName } from "@joinedcontext/sdk";
+import { readable } from "@joinedcontext/sdk";
 import type { LinkmlSlot } from "../../pages/models/linkml";
 // A byte copy of jc-core's data/field-order.json at the pinned platform rev (T-4661, T-5192): the one
 // label table the assistant widget, the CKAN map popup and the publisher already read;
@@ -49,15 +49,8 @@ export function displayOrder(slots: readonly Pick<LinkmlSlot, "name" | "rank">[]
   return [...new Set([...ranked, ...own, ...system, ...rest])];
 }
 
-/** `availableBikeNumber` and `ngsi-ld:route_color` as a person reads them: "Available bike number". */
-export function readable(attr: string): string {
-  const words = readableName(attr)
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[_-]+/g, " ")
-    .trim()
-    .toLowerCase();
-  return words === "" ? attr : words.charAt(0).toUpperCase() + words.slice(1);
-}
+/** `availableBikeNumber` and `ngsi-ld:route_color` as a person reads them: the grid's own words (T-7112). */
+export { readable };
 
 /**
  * An attribute's label (DM-100, T-5192): the slot's `annotations.label` in the language, in the

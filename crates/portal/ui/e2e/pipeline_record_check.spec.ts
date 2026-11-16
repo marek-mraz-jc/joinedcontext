@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4840: the workbench's validation judges each mapped record where its write is judged (the
 // space's model, the target Endpoint's Policies and view, the lifetime) and shows the expiresAt it

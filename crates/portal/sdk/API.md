@@ -60,9 +60,10 @@ Asks the model the platform chooses; the App names no model and holds no key. At
 odata(root: string, options?: { transport?: Transport }): ODataClient
 class ODataClient { from(set): ODataQuery<Row>; under(project, nav): ODataQuery<Row>; get(set, key): Promise<Row>; singleton("me" | "Organization"): Promise<unknown>; call(fn, project, params): Promise<unknown>; act(action, bound: string, params, ifMatch?: string): Promise<unknown> }
 class ODataQuery<Row> { filter(expr: string); select(...members); orderBy(member, "asc" | "desc"); top(n); skip(n); count(); expand(...navs); url(): string; page(): Promise<ODataPage<Row>>; all(): AsyncGenerator<Row> }
-class ODataError extends Error { status: number; type: string; code: string; title: string; etag?: string; stale: boolean; preconditionRequired: boolean }
+class ODataError extends Error { status: number; type: string; code: string; title: string; etag?: string; stale: boolean; preconditionRequired: boolean; described: boolean }
+const ODATA_ENTITY_KEYS: { readonly [set: string]: readonly string[] }
 ```
-The Portal's management API of one Organization (`"/api/v1/"` on its host, `"/bbsk/api/v1/"` on a shared one); the set, function and action names and their row and parameter types are generated from its `$metadata` (`ODataModel`). `all()` follows `@odata.nextLink` on the same service only. A bound write sends the entity's `@odata.etag` as `ifMatch`: none is `428`, a stale one `412` with the current `etag`. Every refusal is an `ODataError` carrying the API/09 problem type.
+The Portal's management API of one Organization (`"/api/v1/"` on its host, `"/bbsk/api/v1/"` on a shared one); the set, function and action names and their row and parameter types are generated from its `$metadata` (`ODataModel`). `all()` follows `@odata.nextLink` on the same service only. A bound write sends the entity's `@odata.etag` as `ifMatch`: none is `428`, a stale one `412` with the current `etag`. Every refusal is an `ODataError` carrying the API/09 problem type; `described` is false when the service answered with no problem body. `ODATA_ENTITY_KEYS` names each set's key members in order (`apps`: `["project", "name"]`); `get` writes each key value percent-encoded.
 <!-- /portal-only -->
 
 ### Hooks

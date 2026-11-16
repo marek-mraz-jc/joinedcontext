@@ -44,12 +44,41 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(heads(container)[0]).toMatch(/^Title/);
   });
 
+  it("offers the area picker on the line above, since a phone's table has no filter row (T-7072)", async () => {
+    const placed = entities.map((each, i) => ({ ...each, location: { type: "GeoProperty", value: { type: "Point", coordinates: [24.93 + i / 100, 60.17] } } }));
+    const located = parseGridConfig({
+      source: { kind: "fixture", name: "t" },
+      type: "PointOfInterest",
+      columns: [{ attr: "title", label: "Title", pinned: true }, { attr: "location", label: "Location" }],
+      pageSize: 10,
+    }).config!;
+    const { container } = render(<EntityGrid config={located} source={fixtureSource(placed)} compact filterRow={false} />);
+    const pick = await screen.findByRole("button", { name: "Pick area on map" });
+    expect(container.querySelector(".jc-grid-typeline")).toContainElement(pick);
+    expect(container.querySelector(".jc-grid-typeline")).toHaveTextContent("Location");
+    expect(pick).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("drops a field empty on every row, without a word on the line above", async () => {
     const blank = entities.map((each) => ({ ...each, category: { type: "Property", value: "" } }));
     const { container } = render(<EntityGrid config={config} source={fixtureSource(blank)} compact filterRow={false} />);
     await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
     await waitFor(() => expect(heads(container).some((name) => /^Category/.test(name))).toBe(false));
     expect(container.querySelector(".jc-grid-typeline")).not.toHaveTextContent("Category");
+  });
+
+  it("labels a row's fields the phone's table leaves out by the grid's own labels, not their raw names (T-7112)", async () => {
+    HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    const same = entities.map((each) => ({ ...each, category: { type: "Property", value: "socialService" }, dataProvider: { type: "Property", value: "City" } }));
+    render(<EntityGrid config={config} source={fixtureSource(same)} compact filterRow={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open: Kallio" }));
+    const dialog = await screen.findByRole("dialog", { hidden: true });
+    // Category left the table for the line above; the model labels it, and an unlabelled field reads in words.
+    await waitFor(() => expect(dialog).toHaveTextContent("Category"));
+    expect(dialog).not.toHaveTextContent("category");
+    expect(dialog).toHaveTextContent("Data provider");
   });
 
   it("reads the source once when the labels prop is an inline literal (T-6781)", async () => {

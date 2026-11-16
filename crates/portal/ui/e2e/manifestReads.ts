@@ -20,70 +20,101 @@ async function asService(route: Route, options: Fulfil, one: boolean, organizati
 
 type Handler = (route: Route, request: Request) => unknown;
 
-/** The stub's answer to the REST door, as the service answers the operation (`asOData`) or as it is. */
-async function asDoor(route: Route, options: Fulfil, wrapped: boolean, shape?: (body: unknown) => unknown): Promise<void> {
-  const status = options?.status ?? 200;
-  const body = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
-  // A `204` holds no body: the Response constructor refuses one, even `null`.
-  const sent = () => new Response(status === 204 ? null : body, { status });
-  const answer = wrapped ? await asOData(sent(), shape) : sent();
-  await route.fulfill({
-    status: answer.status,
-    contentType: "application/json",
-    headers: options?.headers,
-    body: await answer.text(),
-  });
+/** The REST request a stub meets instead of the service's, and how its answer goes back. */
+interface AsRest {
+  url: string;
+  method?: string;
+  body?: string | null;
+  fulfil: (route: Route, options: Fulfil) => Promise<void>;
 }
+type Translate = (request: Request) => Promise<AsRest | undefined>;
 
-/**
- * T-7073: a `propose_*` action, or a registry operation whose handler is a REST door's, met as
- * that REST write or door (tests/odata.ts proposalAsRest, doorAsRest).
- */
-async function asRestDoor(route: Route, request: Request, handler: Handler): Promise<unknown> {
-  const sent = new globalThis.Request(request.url(), {
+const manifestRead: Translate = async (request) => {
+  const read = manifestAsRest(request.url());
+  return read && { url: read.rest.href, fulfil: (route, options) => asService(route, options, read.one, read.organization, read.row) };
+};
+
+/** A Portal door (api/odata.ts `door`, `doorAction`) as its REST door, its answer as the service wraps it. */
+const portalDoor: Translate = async (request) => {
+  const body = request.postData();
+  const asked = new Request(request.url(), { method: request.method(), body: body ?? undefined });
+  const rest = await doorAsRest(asked);
+  if (!rest) return undefined;
+  // An operation whose answer is not its REST door's (tests/odata.ts ANSWERS), e.g. jc_workspace_propose.
+  const shape = answerShape(asked);
+  const text = rest.body ? await rest.text() : null;
+  return {
+    url: rest.url,
+    method: rest.method,
+    body: text,
+    fulfil: async (route, options) => {
+      const status = options?.status ?? 200;
+      const sent = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
+      const answer = await asOData(new Response(status === 204 ? null : String(sent), { status }), shape);
+      await route.fulfill({ status: answer.status, contentType: "application/json", body: await answer.text() });
+    },
+  };
+};
+
+/** The request as the fetch API holds it, for the translations in tests/odata.ts. */
+async function sent(request: Request): Promise<globalThis.Request> {
+  return new globalThis.Request(request.url(), {
     method: request.method(),
     headers: await request.allHeaders(),
     body: request.method() === "POST" ? (request.postData() ?? undefined) : undefined,
   });
-  const proposal = await proposalAsRest(sent);
-  const rest = proposal ?? (callsOperation(sent) ? await doorAsRest(sent) : undefined);
-  if (!rest) return handler(route, request);
-  const text = rest.body ? await rest.text() : null;
-  const asked = new Proxy(request, {
-    get: (target, name) => {
-      if (name === "url") return () => rest.url;
-      if (name === "method") return () => rest.method;
-      if (name === "postData") return () => text;
-      if (name === "postDataJSON") return () => (text ? (JSON.parse(text) as unknown) : null);
-      return Reflect.get(target, name) as unknown;
-    },
-  });
-  const facade = new Proxy(route, {
-    get: (target, name) => {
-      if (name === "request") return () => asked;
-      if (name === "fulfill")
-        return (options: Fulfil) =>
-          asDoor(target, options, proposal === undefined || (options?.status ?? 200) >= 300, answerShape(sent));
-      const member = Reflect.get(target, name) as unknown;
-      return typeof member === "function" ? (member as (...a: unknown[]) => unknown).bind(target) : member;
-    },
-  });
-  return handler(facade, asked);
 }
 
-function wrap(handler: Handler): Handler {
-  return (route, request) => {
-    if (request.url().includes("/JoinedContext.Portal.")) return asRestDoor(route, request, handler);
-    const read = manifestAsRest(request.url());
+/**
+ * T-7073: a `propose_*` action as the REST write it stands for (POST, PUT, PATCH or DELETE with
+ * dryRun and confirm as the door's query); a success goes back as the door's body, a refusal as the
+ * service's error.
+ */
+const proposal: Translate = async (request) => {
+  if (!request.url().includes("/JoinedContext.Portal.propose_")) return undefined;
+  const rest = await proposalAsRest(await sent(request));
+  if (!rest) return undefined;
+  const text = rest.body ? await rest.text() : null;
+  return {
+    url: rest.url,
+    method: rest.method,
+    body: text,
+    fulfil: async (route, options) => {
+      const status = options?.status ?? 200;
+      const body = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
+      const answer = status >= 300 ? await asOData(new Response(body, { status })) : new Response(body, { status });
+      await route.fulfill({ status: answer.status, contentType: "application/json", headers: options?.headers, body: await answer.text() });
+    },
+  };
+};
+
+/** T-7073: a registry operation bound to a project (jc_syncsource_*, jc_ckan_status, ...) as its REST door. */
+const operation: Translate = async (request) => {
+  const asked = await sent(request);
+  return callsOperation(asked) ? portalDoor(request) : undefined;
+};
+
+/** A manifest read, a proposal or a registry operation, whichever the request is. */
+const manifestCall: Translate = async (request) =>
+  (await manifestRead(request)) ?? (await proposal(request)) ?? (await operation(request));
+
+function wrap(handler: Handler, translate: Translate): Handler {
+  return async (route, request) => {
+    const read = await translate(request);
     if (!read) return handler(route, request);
-    const rest = read.rest.href;
+    const members: Record<string, () => unknown> = { url: () => read.url };
+    if (read.method) members.method = () => read.method;
+    if (read.body !== undefined) {
+      members.postData = () => read.body;
+      members.postDataJSON = () => (read.body ? (JSON.parse(read.body) as unknown) : null);
+    }
     const asked = new Proxy(request, {
-      get: (target, name) => (name === "url" ? () => rest : (Reflect.get(target, name) as unknown)),
+      get: (target, name) => (typeof name === "string" && name in members ? members[name] : (Reflect.get(target, name) as unknown)),
     });
     const facade = new Proxy(route, {
       get: (target, name) => {
         if (name === "request") return () => asked;
-        if (name === "fulfill") return (options: Fulfil) => asService(target, options, read.one, read.organization, read.row);
+        if (name === "fulfill") return (options: Fulfil) => read.fulfil(target, options);
         const member = Reflect.get(target, name) as unknown;
         return typeof member === "function" ? (member as (...a: unknown[]) => unknown).bind(target) : member;
       },
@@ -93,15 +124,29 @@ function wrap(handler: Handler): Handler {
 }
 
 /**
- * Each `page.route` handler registered after this call meets a manifest read as its REST read;
+ * Each `page.route` handler registered after this call meets a manifest read as its REST read, and
+ * a proposal or a registry operation as its REST write or door (T-7073);
  * `page.unroute` with the handler a spec registered takes its wrapper away.
  */
 export function manifestReadsAsRest(page: Page): void {
+  asRest(page, manifestCall);
+}
+
+/**
+ * The same for the Portal doors `tests/odata.ts` DOORS names (T-7110): a spec whose stub answers
+ * a door's REST address calls this before its `page.route`; a spec answering the service itself
+ * does not.
+ */
+export function doorsAsRest(page: Page): void {
+  asRest(page, portalDoor);
+}
+
+function asRest(page: Page, translate: Translate): void {
   const wrapped = new WeakMap<Handler, Handler>();
   const route = page.route.bind(page);
   const unroute = page.unroute.bind(page);
   page.route = ((url: Parameters<Page["route"]>[0], handler: Handler, options?: Parameters<Page["route"]>[2]) => {
-    const own = wrapped.get(handler) ?? wrap(handler);
+    const own = wrapped.get(handler) ?? wrap(handler, translate);
     wrapped.set(handler, own);
     return route(url, own, options);
   }) as Page["route"];
