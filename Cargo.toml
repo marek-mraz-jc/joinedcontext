@@ -54,7 +54,7 @@ members = [
 ]
 # Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc
 # depends on their crates by path. Making them members is a later step (bins/jc/STATUS.md).
-exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl", "vendor/paste", "vendor/jaq-core", "vendor/jaq-json", "vendor/sqlx-sqlite"]
+exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl", "vendor/paste", "vendor/jaq-core", "vendor/jaq-json", "vendor/sqlx-sqlite", "vendor/ml-kem", "vendor/kem"]
 
 # Antares pins rumqttc 0.25.1 with rustls-webpki 0.103 (crates/antares/vendor/rumqttc/README.md); a
 # patch only takes effect from the root manifest.
@@ -77,6 +77,9 @@ jaq-json = { path = "vendor/jaq-json" }
 # sqlx-sqlite 0.9.0 admitting libsqlite3-sys 0.39: it is locked, never compiled (no sqlite feature),
 # and its <0.38 range collided by `links` with ekiben-io-sql's rusqlite 0.41 (vendor/SOURCES.md).
 sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
+# ml-kem 0.2.3 (age 0.12) on its own copy of kem 0.3.0-pre.0: russh 0.65 takes ml-kem 0.3 and kem
+# 0.3.0, and one lockfile holds one kem 0.3 per source (vendor/SOURCES.md).
+ml-kem = { path = "vendor/ml-kem" }
 
 [workspace.package]
 edition = "2024"

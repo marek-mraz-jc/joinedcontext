@@ -40,3 +40,7 @@ ngsild-ql = { path = "../../crates/antares/crates/antares-ql" }
 ngsild-jsonld = { path = "../../crates/antares/crates/antares-jsonld" }
 ngsild-matcher = { path = "../../crates/antares/crates/antares-matcher" }
 ngsild-model = { path = "../../crates/antares/crates/antares-model" }
+
+# ml-kem 0.2.3 on jc's own copy of kem 0.3.0-pre.0, as the root patches it (vendor/SOURCES.md).
+[patch.crates-io]
+ml-kem = { path = "../ml-kem" }
