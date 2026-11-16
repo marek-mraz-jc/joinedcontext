@@ -8,7 +8,11 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
 import { workbook } from "../tests/xlsxFixture";
+
+// The shared drafts and a run's turns go through the OData service (T-7119): its doors reach these REST stubs.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 const API = "joinedcontext.com/v1alpha1";
 const PROJECT = "helsinki";

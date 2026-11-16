@@ -1,4 +1,6 @@
-import { api, unwrap } from "./client";
+import { ApiError } from "./client";
+import { act, call, projectBound } from "./odata";
+import { activeWorkspace } from "../components/layout/WorkspaceContext";
 import type { components } from "./schema";
 export { canonicalizeJson, digestOf } from "./digest";
 
@@ -6,11 +8,33 @@ export { canonicalizeJson, digestOf } from "./digest";
 export type Verdict = components["schemas"]["Verdict"];
 export type Draft = components["schemas"]["Draft"];
 export type DraftEvent = components["schemas"]["DraftEvent"];
+export type DraftList = components["schemas"]["DraftList"];
+
+/** The copy the person works in, as the REST doors read it from `?workspace=` (CC-76). */
+function inWorkspace(): { workspace?: string } {
+  const workspace = activeWorkspace();
+  return workspace ? { workspace } : {};
+}
+
+/** The problem's own sentence of a refusal, which names a refused field and never its value (MF-24). */
+function detailOf(error: unknown): string | undefined {
+  const detail = error instanceof ApiError ? error.problem?.detail : undefined;
+  return typeof detail === "string" ? detail : undefined;
+}
+
+function statusOf(error: unknown): number | undefined {
+  return error instanceof ApiError ? error.status : undefined;
+}
+
+/** The shared drafts of `project` the person may read, a line each, with `jc_draft_list` (T-7119). */
+export async function listDrafts(project: string): Promise<DraftList> {
+  return (await call("jc_draft_list", project, inWorkspace())) as DraftList;
+}
 
 /**
- * One draft, or null when there is none (404, or an answer that is not a draft). Through the typed
- * client, so the workspace the person is in reaches the call (CC-76) and an ended session goes to
- * the login. Any other failure throws with its status and detail: read as "no draft", it would let
+ * One draft, or null when there is none (404, or an answer that is not a draft), read with the
+ * registry's `jc_draft_get` through the OData service (T-7119) in the workspace the person is in
+ * (CC-76). Any other failure throws with its status and detail: read as "no draft", it would let
  * the form write with no expected version over another window's draft (F-UI1-013).
  */
 export async function getDraft(
@@ -18,22 +42,22 @@ export async function getDraft(
   kind: string,
   name: string,
 ): Promise<Draft | null> {
-  const { data, error, response } = await api.GET("/api/v1/projects/{project}/drafts/{kind}/{name}", {
-    params: { path: { project, kind, name } },
-  });
-  if (data !== undefined) {
-    try {
-      return asDraft(data);
-    } catch {
-      return null;
-    }
+  let answer: unknown;
+  try {
+    answer = await call("jc_draft_get", project, { kind, name, ...inWorkspace() });
+  } catch (error) {
+    if (statusOf(error) === 404) return null;
+    const detail = detailOf(error);
+    throw Object.assign(new Error(detail ?? (error instanceof Error ? error.message : String(error))), {
+      status: statusOf(error),
+      detail,
+    });
   }
-  if (response.status === 404) return null;
-  const detail = (error as { detail?: unknown } | undefined)?.detail;
-  throw Object.assign(new Error(typeof detail === "string" ? detail : `HTTP ${response.status}`), {
-    status: response.status,
-    detail: typeof detail === "string" ? detail : undefined,
-  });
+  try {
+    return asDraft(answer);
+  } catch {
+    return null;
+  }
 }
 
 /** A draft answer carries a version; anything else is not a draft (a mocked or proxied 200). */
@@ -44,6 +68,7 @@ function asDraft(body: unknown): Draft {
   return body as Draft;
 }
 
+/** Writes the shared draft with `jc_draft_put`; another window's newer version throws 409. */
 export async function putDraft(
   project: string,
   kind: string,
@@ -51,41 +76,40 @@ export async function putDraft(
   manifest: unknown,
   expectedVersion?: number,
 ): Promise<Draft> {
-  const body: components["schemas"]["PutDraftRequest"] = { manifest };
-  if (typeof expectedVersion === "number") {
-    body.expectedVersion = expectedVersion;
-  }
-  const { data, error, response } = await api.PUT(
-    "/api/v1/projects/{project}/drafts/{kind}/{name}",
-    { params: { path: { project, kind, name } }, body },
-  );
-  if (response.status === 409) {
-    const current = (error as { current?: unknown } | undefined)?.current;
-    throw Object.assign(new Error("draft conflict"), {
-      status: 409,
-      current: typeof current === "number" ? current : undefined,
-    });
-  }
-  if (data === undefined) {
-    const detail = (error as { detail?: unknown } | undefined)?.detail;
-    // `detail` is the server's own sentence, which names a refused field and never its value
-    // (MF-24); the dialog shows it where the person is typing.
+  let answer: unknown;
+  try {
+    answer = await act(
+      "jc_draft_put",
+      projectBound(project),
+      {
+        kind,
+        name,
+        manifest,
+        ...(typeof expectedVersion === "number" ? { expectedVersion } : {}),
+        ...inWorkspace(),
+      },
+    );
+  } catch (error) {
+    const status = statusOf(error);
+    if (status === 409) {
+      throw Object.assign(new Error("draft conflict"), { status: 409 });
+    }
+    // `detail` is the server's own sentence; the dialog shows it where the person is typing.
+    const detail = detailOf(error);
     throw Object.assign(
-      new Error(`failed to put draft (${response.status})${typeof detail === "string" ? `: ${detail}` : ""}`),
-      { status: response.status, detail: typeof detail === "string" ? detail : undefined },
+      new Error(`failed to put draft (${status ?? "no answer"})${detail ? `: ${detail}` : ""}`),
+      { status, detail },
     );
   }
-  return asDraft(data);
+  return asDraft(answer);
 }
 
 /**
- * Throws away one shared draft (AG-61), the call `jc_draft_drop` makes. The server checks the
- * person may write drafts of the project; a refusal throws with its detail.
+ * Throws away one shared draft (AG-61) with `jc_draft_drop`. The server checks the person may
+ * write drafts of the project; a refusal throws with its detail.
  */
 export async function dropDraft(project: string, kind: string, name: string): Promise<void> {
-  await unwrap(
-    await api.DELETE("/api/v1/projects/{project}/drafts/{kind}/{name}", { params: { path: { project, kind, name } } }),
-  );
+  await act("jc_draft_drop", projectBound(project), { kind, name, ...inWorkspace() });
 }
 
 const DRAFT_EVENTS = ["message", "draft", "put", "verdict", "drop"] as const;

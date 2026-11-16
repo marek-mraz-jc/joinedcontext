@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The shared drafts and a run's turns go through the OData service (T-7119): its doors reach these REST stubs.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6105 (owner): a create form opens on its first field. No paragraph on the kind, no User Guide
 // sentence and no "Approved as soon as you propose it" line above it; the guide is a "?" beside

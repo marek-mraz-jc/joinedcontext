@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The shared drafts and a run's turns go through the OData service (T-7119): its doors reach these REST stubs.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6545 (PF-48): a registration of a public address elsewhere can forward as nobody, so no token
 // or account leaves the platform. The choice is offered only for an address, and an anonymous

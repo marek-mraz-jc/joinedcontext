@@ -3,6 +3,7 @@ import { inputOf } from "./QuestionData";
 import type { QuestionInput } from "./QuestionData";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "../../api/client";
+import { act, doorAction, projectBound } from "../../api/odata";
 import type { components } from "../../api/schema";
 
 /** The states of Architecture/19 §5, in the order a run walks them (AG-43). */
@@ -305,14 +306,13 @@ export function useAgentRun(project: string, runId: string | null) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, runId]);
 
+  // The answer and the next message go through their Portal doors, which run the REST handlers:
+  // those hand the person's token to the run again on their turn (T-6483) and keep the page and
+  // the capabilities a message carries, which the registry's jc_run_answer and jc_run_message
+  // take no part of (T-7119).
   const answer = useMutation({
     mutationFn: async (body: { questionId: string; answers: unknown }) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/agent-runs/{id}/answers", {
-          params: { path: { project, id: runId ?? "" } },
-          body: body,
-        }),
-      ),
+      doorAction("portal_run_answer", { id: runId ?? "", body }, project),
   });
 
   const send = useMutation({
@@ -328,12 +328,10 @@ export function useAgentRun(project: string, runId: string | null) {
             scope?: string;
           },
     ) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/agent-runs/{id}/messages", {
-          params: { path: { project, id: runId ?? "" } },
-          // `endpointNames` is AG-75; the generated body type catches up with the next API render.
-          body: (typeof message === "string" ? { text: message } : message) as { text: string },
-        }),
+      doorAction(
+        "portal_run_message",
+        { id: runId ?? "", body: typeof message === "string" ? { text: message } : message },
+        project,
       ),
   });
 
@@ -341,21 +339,14 @@ export function useAgentRun(project: string, runId: string | null) {
     // A caller that moves on from the run in the same click names it: the mutation runs with the
     // newest render's `runId`, which by then is the next conversation's or none (T-2463).
     mutationFn: async (id?: string) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/agent-runs/{id}/cancel", {
-          params: { path: { project, id: id ?? runId ?? "" } },
-        }),
-      ),
+      act("jc_run_cancel", projectBound(project), { id: id ?? runId ?? "" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: key }),
   });
 
   const publish = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/agent-runs/{id}/publish", {
-          params: { path: { project, id: runId ?? "" } },
-        }),
-      ),
+      // A proposing operation answers the Change it opened under `change` (mutate.rs).
+      ((await act("jc_run_publish", projectBound(project), { id: runId ?? "" })) as { change?: unknown }).change,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: key }),
   });
 
