@@ -149,7 +149,10 @@ const POLICIES = {
 };
 const AIR_READ = "urn:ngsi-ld:Policy:hel.fi:banskabystrica-ovzdusie:air-read";
 
-function setupTest(endpoints: unknown = { apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] }) {
+function setupTest(
+  endpoints: unknown = { apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] },
+  organizationsAnswered: Promise<void> = Promise.resolve(),
+) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const request = input as Request;
     const url = typeof input === "string" ? new URL(input) : new URL(request.url);
@@ -162,7 +165,7 @@ function setupTest(endpoints: unknown = { apiVersion: "joinedcontext.com/v1alpha
       );
 
     if (url.pathname.endsWith("/auth/me")) return json(IDENTITY);
-    if (url.pathname.endsWith("/organizations")) return json(ORG);
+    if (url.pathname.endsWith("/organizations")) return organizationsAnswered.then(() => json(ORG));
     if (url.pathname.endsWith("/spaces")) return json(SPACES);
     if (url.pathname.endsWith("/datamodels")) return json(DATAMODELS);
     if (url.pathname.endsWith("/policies")) return json(POLICIES);
@@ -527,6 +530,25 @@ describe("endpoint form with ModelPicker (T-0564)", () => {
     await waitFor(() => expect(writes(fetchMock)).toHaveLength(2));
     expect(writes(fetchMock)[1].line).toBe("PUT /api/v1/projects/banskabystrica/endpoints/vehicles-live");
     expect(writes(fetchMock).some((write) => write.line.includes("/import"))).toBe(false);
+  });
+
+  it("ticks the space's Policies under the Organization's domain even when the Organization answers last (T-7122)", async () => {
+    let answer = () => {};
+    const organizations = new Promise<void>((resolve) => (answer = resolve));
+    setupTest(EXISTING, organizations);
+    await userEvent.click(await screen.findByRole("button", { name: /More actions/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: en.endpoints.edit }));
+    const dialog = await findFormPage();
+    // The person edits before the Organization answers: the form keeps what it shows.
+    await userEvent.click(within(dialog).getByRole("checkbox", { name: "CSV" }));
+    answer();
+    await organizations;
+    // Long enough for the answer to render: the space's Policy is ticked only once it has.
+    await new Promise((settle) => setTimeout(settle, 200));
+    await waitFor(() => expect(within(dialog).getByRole("checkbox", { name: "air-read" })).toBeChecked());
+    // A reference minted under the project's name before the domain was known matches no
+    // Policy and would show as a bare URN beside it.
+    expect(within(dialog).queryByRole("checkbox", { name: /^urn:ngsi-ld:Policy:/ })).toBeNull();
   });
 
   it("proposes a rate limit typed in the YAML view outside the classes, as the REST route would (T-0890)", async () => {
