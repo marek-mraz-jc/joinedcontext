@@ -1,7 +1,12 @@
 // T-6812 (ADR-N-070, API/13 §2a, §2b): the Portal UI's one client of its Organization's OData
 // service. Reads of sets, the functions and the actions go through here; the REST doors in
 // client.ts shrink page group by page group under tests/odata_ratchet.test.ts.
-import { odata, ODataError, originTransport, type ODataModel } from "@joinedcontext/sdk";
+import {
+  odata,
+  ODataError,
+  originTransport,
+  type ODataModel,
+} from "@joinedcontext/sdk";
 import { ApiError, loginRedirectUrl, type WireProblem } from "./client";
 import type { operations } from "./schema";
 import { announceSessionEnded } from "./sessionEnded";
@@ -24,9 +29,15 @@ function typeOf(body: unknown): unknown {
  * decision that needs a second factor opens the step-up dialog (T-2747, T-5567), as api/client.ts
  * does for the REST doors.
  */
-async function portalFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function portalFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
   // One `Request` with an absolute address, as the REST client sends: jsdom has no base for a path.
-  const request = input instanceof Request ? input : new Request(new URL(String(input), window.location.origin), init);
+  const request =
+    input instanceof Request
+      ? input
+      : new Request(new URL(String(input), window.location.origin), init);
   const response = await globalThis.fetch(request);
   const here = `${window.location.pathname}${window.location.search}`;
   if (response.status === 401 && window.location.pathname !== "/login") {
@@ -55,6 +66,16 @@ export function toApiError(error: unknown): unknown {
     title: error.title,
     status: error.status,
     detail: error.message,
+    // The fields a refusal names, as the REST problem's `errors` a page marks them by.
+    ...(error.details.length
+      ? {
+          errors: error.details.map(({ target, message }) => ({
+            path: target,
+            message,
+          })),
+        }
+      : {}),
+    ...(error.hint ? { hint: error.hint } : {}),
   };
   return new ApiError(error.status, error.message, problem, error.requestId);
 }
@@ -95,7 +116,9 @@ export function call<F extends keyof Functions & string>(
   project: string,
   params: Functions[F],
 ): Promise<F extends keyof Answers ? Answers[F] : unknown> {
-  return refusedAs(client.call(name, project, params)) as Promise<F extends keyof Answers ? Answers[F] : unknown>;
+  return refusedAs(client.call(name, project, params)) as Promise<
+    F extends keyof Answers ? Answers[F] : unknown
+  >;
 }
 
 /** Each Administration page's reading of `jc_organization_read` and its answer (T-7098). */
@@ -118,19 +141,90 @@ type ReadingParams = Omit<Functions["jc_organization_read"], "aspect">;
  * One reading of the Organization's Administration pages, bound to its `Organization` singleton,
  * e.g. `organizationReading("costs", { month: "2026-09" })`: the same handler serves its REST door.
  */
-export function organizationReading<A extends keyof Readings>(aspect: A, params: ReadingParams = {}): Promise<Readings[A]> {
-  return refusedAs(client.organizationCall("jc_organization_read", { ...params, aspect })) as Promise<Readings[A]>;
+export function organizationReading<A extends keyof Readings>(
+  aspect: A,
+  params: ReadingParams = {},
+): Promise<Readings[A]> {
+  return refusedAs(
+    client.organizationCall("jc_organization_read", { ...params, aspect }),
+  ) as Promise<Readings[A]>;
 }
 
 /**
  * A bound action on `bound` (`projects('air')`, an entity, a Change), with `ifMatch` the entity's
  * `@odata.etag` where the action changes it.
  */
-export function act<A extends keyof Actions & string>(name: A, bound: string, params: Actions[A], ifMatch?: string): Promise<unknown> {
+export function act<A extends keyof Actions & string>(
+  name: A,
+  bound: string,
+  params: Actions[A],
+  ifMatch?: string,
+): Promise<unknown> {
   return refusedAs(client.act(name, bound, params, ifMatch));
 }
 
 /** The address an action of project `project` is bound to. */
 export function projectBound(project: string): string {
   return `projects('${project.replaceAll("'", "''")}')`;
+}
+
+/** The `Organization` singleton the people's operations and the Organization's Portal doors are bound to. */
+export const ORGANIZATION = "Organization";
+
+/** The success body a REST operation documents, until T-7075 retires the REST types. */
+type Success<R> = R extends {
+  200: { content: { "application/json": infer T } };
+}
+  ? T
+  : R extends { 201: { content: { "application/json": infer T } } }
+    ? T
+    : R extends { 202: { content: { "application/json": infer T } } }
+      ? T
+      : null;
+
+/** What the REST operation `O` answers: the same handler answers its Portal door. */
+export type RestAnswer<O extends keyof operations> = operations[O] extends {
+  responses: infer R;
+}
+  ? Success<R>
+  : never;
+
+type Door<K> = K extends `portal_${string}` ? K : never;
+
+/**
+ * A Portal door's function (API/13 §2b, T-7100): a REST door no tool may answer, which the service
+ * runs for a person's session only, bound to the Organization or, with `project`, to that project:
+ * `door("portal_secret_list", {}, "air")`. A `204` of its REST door answers `null`.
+ */
+export function door<F extends Door<keyof Functions & string>>(
+  name: F,
+  params: Functions[F],
+  project?: string,
+): Promise<unknown> {
+  return refusedAs(
+    project === undefined
+      ? client.organizationCall(name, params)
+      : client.call(name, project, params),
+  );
+}
+
+/** A Portal door's action, e.g. `doorAction("portal_person_reset_password", { person: id })`. */
+export async function doorAction<A extends Door<keyof Actions & string>>(
+  name: A,
+  params: Actions[A],
+  project?: string,
+): Promise<unknown> {
+  const value = await refusedAs(
+    client.act(
+      name,
+      project === undefined ? ORGANIZATION : projectBound(project),
+      params,
+    ),
+  );
+  // The client reads a missing value as the whole body; a door's `null` stays `null`.
+  return typeof value === "object" &&
+    value !== null &&
+    "@odata.context" in value
+    ? null
+    : value;
 }

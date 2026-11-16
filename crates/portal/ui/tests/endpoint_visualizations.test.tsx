@@ -11,10 +11,16 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import type { Manifest } from "../src/api/manifest";
 import { VisualizationsSection } from "../src/pages/endpoints/VisualizationsSection";
-import { defaultData, withVisualizations } from "../src/pages/endpoints/visualizations";
+import {
+  defaultData,
+  withVisualizations,
+} from "../src/pages/endpoints/visualizations";
+import { doorsAsRest } from "./odata";
 
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children }: { children: React.ReactNode }) => <a href="/changes">{children}</a>,
+  Link: ({ children }: { children: React.ReactNode }) => (
+    <a href="/changes">{children}</a>
+  ),
 }));
 
 const V = en.endpoints.page.visualizations;
@@ -22,7 +28,10 @@ const LINE = {
   $schema: "https://vega.github.io/schema/vega-lite/v5.json",
   data: { name: "source" },
   mark: "line",
-  encoding: { x: { field: "dateObserved", type: "temporal" }, y: { field: "no2", type: "quantitative" } },
+  encoding: {
+    x: { field: "dateObserved", type: "temporal" },
+    y: { field: "no2", type: "quantitative" },
+  },
 };
 const BAR = {
   name: "no2-now",
@@ -37,13 +46,21 @@ function endpoint(catalog?: Record<string, unknown>): Manifest {
     apiVersion: "joinedcontext.com/v1alpha1",
     kind: "Endpoint",
     metadata: { name: "air", namespace: "ovzdusie" },
-    spec: { contextSpaceRef: "ovzdusie", slug: "zt4qm7ge2xdv6ksb3ncf5arw2y", audience: "public", ...(catalog ? { catalog } : {}) },
+    spec: {
+      contextSpaceRef: "ovzdusie",
+      slug: "zt4qm7ge2xdv6ksb3ncf5arw2y",
+      audience: "public",
+      ...(catalog ? { catalog } : {}),
+    },
     status: { phase: "Ready" },
   } as unknown as Manifest;
 }
 
 function respond(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 describe("VisualizationsSection", () => {
@@ -60,17 +77,34 @@ describe("VisualizationsSection", () => {
   });
 
   function mount(manifest: Manifest, canEdit: boolean) {
-    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const request = input instanceof Request ? input : new Request(new URL(String(input), window.location.origin), init);
-      const url = new URL(request.url);
-      sent.push({ method: request.method, url, body: request.method === "GET" ? "" : await request.clone().text() });
-      if (url.pathname.startsWith("/api/v1/visualization-templates/")) return respond(LINE);
-      if (url.searchParams.get("dryRun")) return respond({ valid: true });
-      return respond({ metadata: { name: "chg-1" }, status: { phase: "Proposed" } }, 202);
-    }) as typeof fetch;
+    global.fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request =
+          input instanceof Request
+            ? input
+            : new Request(new URL(String(input), window.location.origin), init);
+        const url = new URL(request.url);
+        sent.push({
+          method: request.method,
+          url,
+          body: request.method === "GET" ? "" : await request.clone().text(),
+        });
+        if (url.pathname.startsWith("/api/v1/visualization-templates/"))
+          return respond(LINE);
+        if (url.searchParams.get("dryRun")) return respond({ valid: true });
+        return respond(
+          { metadata: { name: "chg-1" }, status: { phase: "Proposed" } },
+          202,
+        );
+      },
+    ) as typeof fetch;
     render(
       <I18nextProvider i18n={i18n}>
-        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <QueryClientProvider
+          client={
+            new QueryClient({ defaultOptions: { queries: { retry: false } } })
+          }
+        >
           <VisualizationsSection
             project="ovzdusie"
             manifest={manifest}
@@ -86,23 +120,36 @@ describe("VisualizationsSection", () => {
 
   it("fills the template with the columns picked and proposes the chart after a green check", async () => {
     mount(endpoint({ license: "cc-by-4.0", visualizations: [BAR] }), true);
+    doorsAsRest();
     await userEvent.click(screen.getByText(V.add));
     const fill = screen.getByRole("button", { name: V.fill });
     expect(fill).toHaveAttribute("aria-disabled", "true");
-    await userEvent.selectOptions(screen.getByLabelText(V.roles.x), "dateObserved");
+    await userEvent.selectOptions(
+      screen.getByLabelText(V.roles.x),
+      "dateObserved",
+    );
     await userEvent.selectOptions(screen.getByLabelText(V.roles.y), "no2");
     await userEvent.click(fill);
     const get = sent.find((r) => r.method === "GET")!;
     expect(get.url.pathname).toBe("/api/v1/visualization-templates/line");
-    expect(Object.fromEntries(get.url.searchParams)).toEqual({ x: "dateObserved", y: "no2" });
-    await waitFor(() => expect((screen.getByLabelText(V.spec) as HTMLTextAreaElement).value).toContain("dateObserved"));
+    expect(Object.fromEntries(get.url.searchParams)).toEqual({
+      x: "dateObserved",
+      y: "no2",
+    });
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText(V.spec) as HTMLTextAreaElement).value,
+      ).toContain("dateObserved"),
+    );
 
     await userEvent.type(screen.getByLabelText(V.name), "no2-day");
     await userEvent.type(screen.getByLabelText(V.chartTitle), "NO2 today");
     await userEvent.type(screen.getByLabelText(V.description), "Hourly mean.");
     await userEvent.click(screen.getByRole("button", { name: V.propose }));
 
-    await waitFor(() => expect(sent.filter((r) => r.method === "PUT")).toHaveLength(2));
+    await waitFor(() =>
+      expect(sent.filter((r) => r.method === "PUT")).toHaveLength(2),
+    );
     const [check, put] = sent.filter((r) => r.method === "PUT");
     expect(check.url.searchParams.get("dryRun")).toBe("All");
     expect(put.url.pathname).toBe("/api/v1/projects/ovzdusie/endpoints/air");
@@ -115,7 +162,14 @@ describe("VisualizationsSection", () => {
         name: "no2-day",
         title: { en: "NO2 today" },
         description: { en: "Hourly mean." },
-        data: { source: "temporal", type: "AirQualityObserved", attrs: ["no2"], last: "PT24H", aggrMethod: "avg", aggrPeriod: "PT1H" },
+        data: {
+          source: "temporal",
+          type: "AirQualityObserved",
+          attrs: ["no2"],
+          last: "PT24H",
+          aggrMethod: "avg",
+          aggrPeriod: "PT1H",
+        },
         spec: LINE,
       },
     ]);
@@ -128,7 +182,10 @@ describe("VisualizationsSection", () => {
     await userEvent.type(screen.getByLabelText(V.chartTitle), "T");
     await userEvent.type(screen.getByLabelText(V.description), "D");
     await userEvent.type(screen.getByLabelText(V.spec), "not json");
-    expect(screen.getByRole("button", { name: V.propose })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: V.propose })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     await userEvent.clear(screen.getByLabelText(V.name));
     await userEvent.type(screen.getByLabelText(V.name), "other");
     await userEvent.click(screen.getByRole("button", { name: V.propose }));
@@ -146,20 +203,33 @@ describe("VisualizationsSection", () => {
   it("removes a chart, and the catalogue block with it when nothing else is left", async () => {
     mount(endpoint({ visualizations: [BAR] }), true);
     await userEvent.click(screen.getByRole("button", { name: V.remove }));
-    await waitFor(() => expect(sent.filter((r) => r.method === "PUT")).toHaveLength(2));
+    await waitFor(() =>
+      expect(sent.filter((r) => r.method === "PUT")).toHaveLength(2),
+    );
     expect(JSON.parse(sent[1].body).spec.catalog).toBeUndefined();
   });
 });
 
 describe("visualization data", () => {
   it("reads the history where the Endpoint serves NGSI-LD, else the CSV, else nothing", () => {
-    expect(defaultData("bar", "T", "v", ["odata", "csv"])).toEqual({ source: "odata", entitySet: "T" });
-    expect(defaultData("line", "T", "v", ["csv"])).toEqual({ source: "csv", type: "T" });
+    expect(defaultData("bar", "T", "v", ["odata", "csv"])).toEqual({
+      source: "odata",
+      entitySet: "T",
+    });
+    expect(defaultData("line", "T", "v", ["csv"])).toEqual({
+      source: "csv",
+      type: "T",
+    });
     expect(defaultData("heatmap", "T", "v", ["ogc-features"])).toBeUndefined();
   });
 
   it("keeps the rest of the catalogue when the list empties", () => {
-    const next = withVisualizations(endpoint({ license: "cc0", visualizations: [BAR] }), []);
-    expect((next.spec as { catalog: unknown }).catalog).toEqual({ license: "cc0" });
+    const next = withVisualizations(
+      endpoint({ license: "cc0", visualizations: [BAR] }),
+      [],
+    );
+    expect((next.spec as { catalog: unknown }).catalog).toEqual({
+      license: "cc0",
+    });
   });
 });

@@ -2,16 +2,31 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
-import { call } from "../../api/odata";
+import { queryKeys } from "../../api/client";
+import { call, doorAction } from "../../api/odata";
 import type { components } from "../../api/schema";
-import { Alert, Button, ConfirmDialog, Icon, InlineError, Input } from "../../components/ui";
+import {
+  Alert,
+  Button,
+  ConfirmDialog,
+  Icon,
+  InlineError,
+  Input,
+} from "../../components/ui";
 
 type AccountAccessAnswer = components["schemas"]["AccountAccess"];
 type IssuedSecret = components["schemas"]["IssuedSecret"];
 
 /** One read-only value of the issued secret with its copy button. */
-function CopyField({ id, label, value }: { id: string; label: string; value: string }): JSX.Element {
+function CopyField({
+  id,
+  label,
+  value,
+}: {
+  id: string;
+  label: string;
+  value: string;
+}): JSX.Element {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   return (
@@ -20,7 +35,13 @@ function CopyField({ id, label, value }: { id: string; label: string; value: str
         {label}
       </label>
       <div className="flex flex-wrap items-center gap-2">
-        <Input id={id} readOnly value={value} className="min-w-0 flex-1 font-mono" onFocus={(e) => e.currentTarget.select()} />
+        <Input
+          id={id}
+          readOnly
+          value={value}
+          className="min-w-0 flex-1 font-mono"
+          onFocus={(e) => e.currentTarget.select()}
+        />
         <Button
           variant="secondary"
           size="sm"
@@ -45,21 +66,32 @@ function CopyField({ id, label, value }: { id: string; label: string; value: str
  * may approve ServiceAccounts issues a new one, which this panel shows once and forgets on Hide;
  * the Portal keeps no copy. An account with a workload or a key pair has no secret, and says why.
  */
-export function AccountSecret({ project, account }: { project: string; account: string }): JSX.Element | null {
+export function AccountSecret({
+  project,
+  account,
+}: {
+  project: string;
+  account: string;
+}): JSX.Element | null {
   const { t } = useTranslation();
   const [asking, setAsking] = useState(false);
   // The same answer the Access section reads: one request for both.
   const access = useQuery({
-    queryKey: [...queryKeys.list(project, "serviceaccounts"), account, "access"],
-    queryFn: (): Promise<AccountAccessAnswer> => call("jc_serviceaccount_access", project, { name: account }),
+    queryKey: [
+      ...queryKeys.list(project, "serviceaccounts"),
+      account,
+      "access",
+    ],
+    queryFn: (): Promise<AccountAccessAnswer> =>
+      call("jc_serviceaccount_access", project, { name: account }),
   });
   const issue = useMutation({
     mutationFn: async (): Promise<IssuedSecret> =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/serviceaccounts/{name}/secret", {
-          params: { path: { project, name: account } },
-        }),
-      ),
+      (await doorAction(
+        "portal_serviceaccount_secret_issue",
+        { account },
+        project,
+      )) as IssuedSecret,
     // The secret lives only in this mutation: Done resets it, and an unmounted panel's copy is
     // dropped from the cache at once rather than after react-query's five minutes.
     gcTime: 0,
@@ -78,28 +110,52 @@ export function AccountSecret({ project, account }: { project: string; account: 
         {t("access.secret.title")}
       </h4>
       {noSecret ? (
-        <p className="text-body text-fg-muted">{t(`access.secret.none.${noSecret}`)}</p>
+        <p className="text-body text-fg-muted">
+          {t(`access.secret.none.${noSecret}`)}
+        </p>
       ) : (
         <>
-          <p className="text-body text-fg-muted">{t("access.secret.hint", { clientId })}</p>
+          <p className="text-body text-fg-muted">
+            {t("access.secret.hint", { clientId })}
+          </p>
           {issue.isError ? (
-            <InlineError>{issue.error instanceof Error ? issue.error.message : t("access.secret.failed")}</InlineError>
+            <InlineError>
+              {issue.error instanceof Error
+                ? issue.error.message
+                : t("access.secret.failed")}
+            </InlineError>
           ) : null}
           {issued ? (
             <Alert
               tone="warning"
               title={t("access.secret.onceTitle")}
               actions={
-                <Button variant="secondary" size="sm" onClick={() => issue.reset()}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => issue.reset()}
+                >
                   {t("access.secret.done")}
                 </Button>
               }
             >
               <p className="mb-3">{t("access.secret.once")}</p>
               <div className="space-y-3">
-                <CopyField id={`${heading}-client`} label={t("access.secret.clientId")} value={issued.clientId} />
-                <CopyField id={`${heading}-value`} label={t("access.secret.secret")} value={issued.clientSecret} />
-                <CopyField id={`${heading}-url`} label={t("access.secret.tokenUrl")} value={issued.tokenUrl} />
+                <CopyField
+                  id={`${heading}-client`}
+                  label={t("access.secret.clientId")}
+                  value={issued.clientId}
+                />
+                <CopyField
+                  id={`${heading}-value`}
+                  label={t("access.secret.secret")}
+                  value={issued.clientSecret}
+                />
+                <CopyField
+                  id={`${heading}-url`}
+                  label={t("access.secret.tokenUrl")}
+                  value={issued.tokenUrl}
+                />
               </div>
             </Alert>
           ) : null}
@@ -108,7 +164,9 @@ export function AccountSecret({ project, account }: { project: string; account: 
               {t("access.secret.issue")}
             </Button>
           ) : (
-            <p className="text-caption text-fg-muted">{t("access.secret.whoIssues")}</p>
+            <p className="text-caption text-fg-muted">
+              {t("access.secret.whoIssues")}
+            </p>
           )}
         </>
       )}

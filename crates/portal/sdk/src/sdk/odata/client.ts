@@ -28,6 +28,10 @@ export class ODataError extends Error {
   readonly etag?: string;
   /** The edge's `X-Request-Id` of the answer, the reference a person quotes when reporting it. */
   readonly requestId?: string;
+  /** Each field the refusal names: its `target` (`spec.name`) and what is wrong with it. */
+  readonly details: { target: string; message: string }[];
+  /** What the person can do next, when the service says. */
+  readonly hint?: string;
 
   constructor(status: number, body: unknown, etag?: string, requestId?: string) {
     const error = (body as { error?: Record<string, unknown> } | null)?.error ?? {};
@@ -43,6 +47,11 @@ export class ODataError extends Error {
     this.title = text(error.title) ?? text(problem.title) ?? "Error";
     this.etag = etag;
     this.requestId = requestId;
+    this.details = (Array.isArray(error.details) ? error.details : []).flatMap((d: unknown) => {
+      const { target, message } = (d ?? {}) as Record<string, unknown>;
+      return typeof target === "string" && typeof message === "string" ? [{ target, message }] : [];
+    });
+    this.hint = text(error.hint) ?? text(problem.hint);
   }
 
   /** `412`: the entity changed since it was read. */

@@ -31,9 +31,13 @@ import { arrangeRows, EMPTY_QUERY } from "@joinedcontext/sdk/grid";
 import type { DataQuery } from "@joinedcontext/sdk/grid";
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { AskAdmins } from "./AskAdmins";
-import { DeniedNote, PermissionGuard } from "../../components/ui/PermissionGuard";
+import {
+  DeniedNote,
+  PermissionGuard,
+} from "../../components/ui/PermissionGuard";
 import { asUser } from "../apps/members";
 import { proposeChecked } from "../../api/proposal";
+import { doorAction, type RestAnswer } from "../../api/odata";
 import type { ResourceProposal } from "../../api/manifest";
 import { useProjects } from "../../api/projects";
 import { RadioGroup } from "../../components/ui/RadioGroup";
@@ -58,7 +62,10 @@ function when(iso: string | null | undefined, locale: string): string | null {
   const at = new Date(iso);
   return Number.isNaN(at.getTime())
     ? null
-    : new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(at);
+    : new Intl.DateTimeFormat(locale, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(at);
 }
 
 /**
@@ -86,7 +93,11 @@ export function OneTimePassword({
         }
       }}
       title={t("organization.people.password.title")}
-      description={secret ? t("organization.people.password.lead", { email: secret.email }) : undefined}
+      description={
+        secret
+          ? t("organization.people.password.lead", { email: secret.email })
+          : undefined
+      }
       closeLabel={t("app.close")}
       footer={
         <Button
@@ -101,7 +112,9 @@ export function OneTimePassword({
     >
       {secret ? (
         <div className="space-y-3">
-          <Alert tone="warning">{t("organization.people.password.warning")}</Alert>
+          <Alert tone="warning">
+            {t("organization.people.password.warning")}
+          </Alert>
           <Field id={field} label={t("organization.people.password.label")}>
             <Input
               id={field}
@@ -117,7 +130,10 @@ export function OneTimePassword({
             variant="secondary"
             size="sm"
             onClick={() => {
-              void navigator.clipboard?.writeText(secret.password).then(() => setCopied(true), () => setCopied(false));
+              void navigator.clipboard?.writeText(secret.password).then(
+                () => setCopied(true),
+                () => setCopied(false),
+              );
             }}
           >
             {t("organization.people.password.copy")}
@@ -142,9 +158,12 @@ type FormErrors = Partial<Record<keyof PersonForm, string>>;
 
 function validate(form: PersonForm, t: (key: string) => string): FormErrors {
   const errors: FormErrors = {};
-  if (asUser(form.email) === null) errors.email = t("organization.people.form.emailInvalid");
-  if (form.firstName.trim() === "") errors.firstName = t("organization.people.form.required");
-  if (form.lastName.trim() === "") errors.lastName = t("organization.people.form.required");
+  if (asUser(form.email) === null)
+    errors.email = t("organization.people.form.emailInvalid");
+  if (form.firstName.trim() === "")
+    errors.firstName = t("organization.people.form.required");
+  if (form.lastName.trim() === "")
+    errors.lastName = t("organization.people.form.required");
   return errors;
 }
 
@@ -160,7 +179,12 @@ function PersonFields({
 }): JSX.Element {
   const { t } = useTranslation();
   const id = useId();
-  const text = (key: "email" | "firstName" | "lastName", type: string, example: string | undefined, auto: string) => (
+  const text = (
+    key: "email" | "firstName" | "lastName",
+    type: string,
+    example: string | undefined,
+    auto: string,
+  ) => (
     <Field
       id={`${id}-${key}`}
       label={t(`organization.people.form.${key}`)}
@@ -191,7 +215,9 @@ function PersonFields({
         <Select
           id={`${id}-locale`}
           value={form.locale}
-          onChange={(event) => onChange({ ...form, locale: event.target.value })}
+          onChange={(event) =>
+            onChange({ ...form, locale: event.target.value })
+          }
         >
           <option value="">{t("organization.people.form.localeRealm")}</option>
           {LOCALES.map((locale) => (
@@ -205,7 +231,12 @@ function PersonFields({
   );
 }
 
-const EMPTY: PersonForm = { email: "", firstName: "", lastName: "", locale: "" };
+const EMPTY: PersonForm = {
+  email: "",
+  firstName: "",
+  lastName: "",
+  locale: "",
+};
 
 /** What an invitation did: the person, and the Change proposing their role or why it failed. */
 export interface Invitation {
@@ -267,12 +298,20 @@ function NewPersonForm({
         return { created, project, role, change };
       } catch (error) {
         // The person exists and the e-mail went: the role is what is left to give.
-        return { created, project, role, grantError: reasonOf(error, t("app.error.generic")) };
+        return {
+          created,
+          project,
+          role,
+          grantError: reasonOf(error, t("app.error.generic")),
+        };
       }
     },
     onSuccess: (invitation) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.people() });
-      if (invitation.change) void queryClient.invalidateQueries({ queryKey: queryKeys.changes(ORG_NAMESPACE) });
+      if (invitation.change)
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.changes(ORG_NAMESPACE),
+        });
       close(false);
       onCreated(invitation);
     },
@@ -301,7 +340,12 @@ function NewPersonForm({
           <Button variant="secondary" onClick={() => close(false)}>
             {t("app.cancel")}
           </Button>
-          <Button type="submit" form={formId} disabled={create.isPending} disabledReason={t("app.busyReason")}>
+          <Button
+            type="submit"
+            form={formId}
+            disabled={create.isPending}
+            disabledReason={t("app.busyReason")}
+          >
             {t("organization.people.create")}
           </Button>
         </>
@@ -323,8 +367,14 @@ function NewPersonForm({
           label={t("organization.people.invite.project")}
           description={t("organization.people.invite.projectHelp")}
         >
-          <Select id={projectField} value={project} onChange={(event) => setProject(event.target.value)}>
-            <option value="">{t("organization.people.invite.noProject")}</option>
+          <Select
+            id={projectField}
+            value={project}
+            onChange={(event) => setProject(event.target.value)}
+          >
+            <option value="">
+              {t("organization.people.invite.noProject")}
+            </option>
             {(projects.data ?? []).map((name) => (
               <option key={name} value={name}>
                 {name}
@@ -372,12 +422,18 @@ export function People(): JSX.Element {
   const [search, setSearch] = useState("");
   const [first, setFirst] = useState(0);
   const [writing, setWriting] = useCreateForm();
-  const [secret, setSecret] = useState<{ email: string; password: string } | null>(null);
+  const [secret, setSecret] = useState<{
+    email: string;
+    password: string;
+  } | null>(null);
   const [invited, setInvited] = useState<Invitation | null>(null);
   // The people ticked on this page; a new search or page starts with nobody ticked.
   const [selected, setSelected] = useState<Person[]>([]);
   // The grid's filters and sort, held here so ticking and the bulk actions reach only the rows it shows.
-  const [view, setView] = useState<DataQuery>({ ...EMPTY_QUERY, pageSize: PAGE });
+  const [view, setView] = useState<DataQuery>({
+    ...EMPTY_QUERY,
+    pageSize: PAGE,
+  });
 
   const people = useQuery({
     queryKey: queryKeys.peoplePage(search, first),
@@ -385,7 +441,9 @@ export function People(): JSX.Element {
     queryFn: async () =>
       unwrap(
         await api.GET("/api/v1/organization/people", {
-          params: { query: { ...(search ? { search } : {}), first, max: PAGE } },
+          params: {
+            query: { ...(search ? { search } : {}), first, max: PAGE },
+          },
         }),
       ),
   });
@@ -399,10 +457,20 @@ export function People(): JSX.Element {
       cell: (person) => (
         <span className="inline-flex items-center gap-2">
           <Checkbox
-            label={<span className="sr-only">{t("organization.people.bulk.select", { name: fullName(person) })}</span>}
+            label={
+              <span className="sr-only">
+                {t("organization.people.bulk.select", {
+                  name: fullName(person),
+                })}
+              </span>
+            }
             checked={ticked.some((one) => one.id === person.id)}
             onChange={(event) =>
-              setSelected((now) => (event.target.checked ? [...now, person] : now.filter((one) => one.id !== person.id)))
+              setSelected((now) =>
+                event.target.checked
+                  ? [...now, person]
+                  : now.filter((one) => one.id !== person.id),
+              )
             }
           />
           <Link
@@ -420,15 +488,21 @@ export function People(): JSX.Element {
       key: "email",
       label: t("organization.people.email"),
       text: (person) => person.email,
-      cell: (person) => <span className="font-mono text-caption">{person.email}</span>,
+      cell: (person) => (
+        <span className="font-mono text-caption">{person.email}</span>
+      ),
     },
     {
       key: "state",
       label: t("organization.people.state"),
       text: (person) =>
         [
-          person.enabled ? t("organization.people.enabled") : t("organization.people.disabled"),
-          person.emailVerified ? t("organization.people.verified") : t("organization.people.unverified"),
+          person.enabled
+            ? t("organization.people.enabled")
+            : t("organization.people.disabled"),
+          person.emailVerified
+            ? t("organization.people.verified")
+            : t("organization.people.unverified"),
           person.pendingDeletion ? t("organization.people.removalPending") : "",
         ]
           .filter(Boolean)
@@ -441,12 +515,18 @@ export function People(): JSX.Element {
       kind: "date",
       text: (person) => person.lastSeen ?? "",
       cell: (person) =>
-        when(person.lastSeen, locale) ?? <span className="text-fg-subtle">{t("organization.people.noSession")}</span>,
+        when(person.lastSeen, locale) ?? (
+          <span className="text-fg-subtle">
+            {t("organization.people.noSession")}
+          </span>
+        ),
     },
   ];
   // What the grid shows after its filters: a person filtered out is never ticked, so a bulk action never reaches them.
   const shown = arrangeRows(items, columns, view).rows;
-  const ticked = selected.filter((person) => shown.some((one) => one.id === person.id));
+  const ticked = selected.filter((person) =>
+    shown.some((one) => one.id === person.id),
+  );
   columns[0] = {
     ...columns[0],
     heading: (
@@ -472,10 +552,14 @@ export function People(): JSX.Element {
           <h2 id="people-heading" className="text-title font-semibold text-fg">
             {t("organization.people.title")}
           </h2>
-          <p className="text-body text-fg-muted">{t("organization.people.lead")}</p>
+          <p className="text-body text-fg-muted">
+            {t("organization.people.lead")}
+          </p>
         </div>
         <PermissionGuard project={ORG_NAMESPACE} kind="Person" verb="create">
-          <Button onClick={() => setWriting(true)}>{t("organization.people.new")}</Button>
+          <Button onClick={() => setWriting(true)}>
+            {t("organization.people.new")}
+          </Button>
         </PermissionGuard>
       </div>
 
@@ -533,14 +617,23 @@ export function People(): JSX.Element {
             empty={
               <EmptyState
                 bare
-                title={search ? t("organization.people.noMatch", { search }) : t("organization.people.empty")}
-                description={search ? undefined : t("organization.people.emptyHint")}
+                title={
+                  search
+                    ? t("organization.people.noMatch", { search })
+                    : t("organization.people.empty")
+                }
+                description={
+                  search ? undefined : t("organization.people.emptyHint")
+                }
               />
             }
           />
 
           {first > 0 || people.data?.next != null ? (
-            <nav aria-label={t("organization.people.pages")} className="flex gap-2">
+            <nav
+              aria-label={t("organization.people.pages")}
+              className="flex gap-2"
+            >
               <Button
                 variant="secondary"
                 size="sm"
@@ -577,7 +670,10 @@ export function People(): JSX.Element {
           const { created } = invitation;
           setInvited(invitation);
           if (created.temporaryPassword) {
-            setSecret({ email: created.person.email, password: created.temporaryPassword });
+            setSecret({
+              email: created.person.email,
+              password: created.temporaryPassword,
+            });
           }
         }}
       />
@@ -599,10 +695,16 @@ function SelectAll({
 }): JSX.Element | null {
   const { t } = useTranslation();
   if (items.length === 0) return null;
-  const all = items.every((person) => selected.some((one) => one.id === person.id));
+  const all = items.every((person) =>
+    selected.some((one) => one.id === person.id),
+  );
   return (
     <Checkbox
-      label={<span className="sr-only">{t("organization.people.bulk.selectAll")}</span>}
+      label={
+        <span className="sr-only">
+          {t("organization.people.bulk.selectAll")}
+        </span>
+      }
       checked={all}
       onChange={() => onChange(all ? [] : items)}
     />
@@ -618,7 +720,13 @@ type BulkOutcome = { text: string; failed?: boolean } | { change: Change };
  * naming the count, and a deletion is ONE Change taking all of them out of every Group and
  * RoleBinding. The server holds each person to the single route's rules and says who it refused.
  */
-function BulkActions({ selected, onDone }: { selected: Person[]; onDone: () => void }): JSX.Element {
+function BulkActions({
+  selected,
+  onDone,
+}: {
+  selected: Person[];
+  onDone: () => void;
+}): JSX.Element {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [asking, setAsking] = useState<Bulk | null>(null);
@@ -627,11 +735,10 @@ function BulkActions({ selected, onDone }: { selected: Person[]; onDone: () => v
   const act = useMutation({
     mutationFn: async (bulk: Bulk): Promise<BulkOutcome> => {
       if (bulk === "delete") {
-        const result = await api.POST("/api/v1/organization/people/remove", {
+        const change = await doorAction("portal_people_remove", {
           body: { ids: selected.map((person) => person.id) },
         });
-        const change = await unwrap(result);
-        return result.response.status === 204
+        return change === null
           ? { text: t("organization.people.bulk.deleted", { count }) }
           : { change: change as Change };
       }
@@ -641,13 +748,19 @@ function BulkActions({ selected, onDone }: { selected: Person[]; onDone: () => v
         try {
           await perform(person.id, "disable");
         } catch (error) {
-          failed.push(`${person.email} (${reasonOf(error, t("app.error.generic"))})`);
+          failed.push(
+            `${person.email} (${reasonOf(error, t("app.error.generic"))})`,
+          );
         }
       }
       return failed.length === 0
         ? { text: t("organization.people.bulk.disabled", { count }) }
         : {
-            text: t("organization.people.bulk.partly", { done: count - failed.length, count, failed: failed.join(", ") }),
+            text: t("organization.people.bulk.partly", {
+              done: count - failed.length,
+              count,
+              failed: failed.join(", "),
+            }),
             failed: true,
           };
     },
@@ -663,8 +776,12 @@ function BulkActions({ selected, onDone }: { selected: Person[]; onDone: () => v
   });
   return (
     <div className="space-y-2">
-      <p className="text-caption text-fg-muted">{t("organization.people.bulk.hint")}</p>
-      {outcome && "change" in outcome ? <ChangeNotice change={outcome.change} project={ORG_NAMESPACE} /> : null}
+      <p className="text-caption text-fg-muted">
+        {t("organization.people.bulk.hint")}
+      </p>
+      {outcome && "change" in outcome ? (
+        <ChangeNotice change={outcome.change} project={ORG_NAMESPACE} />
+      ) : null}
       {outcome && "text" in outcome ? (
         <Alert tone={outcome.failed ? "warning" : "success"} role="status">
           {outcome.text}
@@ -676,15 +793,33 @@ function BulkActions({ selected, onDone }: { selected: Person[]; onDone: () => v
         </Alert>
       ) : null}
       {count === 0 ? null : (
-        <div role="toolbar" aria-label={t("organization.people.bulk.selected", { count })} className="flex flex-wrap items-center gap-2">
-          <span className="text-body text-fg">{t("organization.people.bulk.selected", { count })}</span>
+        <div
+          role="toolbar"
+          aria-label={t("organization.people.bulk.selected", { count })}
+          className="flex flex-wrap items-center gap-2"
+        >
+          <span className="text-body text-fg">
+            {t("organization.people.bulk.selected", { count })}
+          </span>
           <PermissionGuard project={ORG_NAMESPACE} kind="Person" verb="disable">
-            <Button variant="secondary" size="sm" disabled={act.isPending} disabledReason={t("app.busyReason")} onClick={() => setAsking("disable")}>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={act.isPending}
+              disabledReason={t("app.busyReason")}
+              onClick={() => setAsking("disable")}
+            >
               {t("organization.people.bulk.disable")}
             </Button>
           </PermissionGuard>
           <PermissionGuard project={ORG_NAMESPACE} kind="Person" verb="delete">
-            <Button variant="danger" size="sm" disabled={act.isPending} disabledReason={t("app.busyReason")} onClick={() => setAsking("delete")}>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={act.isPending}
+              disabledReason={t("app.busyReason")}
+              onClick={() => setAsking("delete")}
+            >
               {t("organization.people.bulk.delete")}
             </Button>
           </PermissionGuard>
@@ -698,9 +833,21 @@ function BulkActions({ selected, onDone }: { selected: Person[]; onDone: () => v
         onOpenChange={(open) => {
           if (!open) setAsking(null);
         }}
-        title={asking === "delete" ? t("organization.people.bulk.confirmDelete.title", { count }) : t("organization.people.bulk.confirmDisable.title", { count })}
-        description={asking === "delete" ? t("organization.people.bulk.confirmDelete.body") : t("organization.people.bulk.confirmDisable.body")}
-        confirmLabel={asking === "delete" ? t("organization.people.bulk.delete") : t("organization.people.bulk.disable")}
+        title={
+          asking === "delete"
+            ? t("organization.people.bulk.confirmDelete.title", { count })
+            : t("organization.people.bulk.confirmDisable.title", { count })
+        }
+        description={
+          asking === "delete"
+            ? t("organization.people.bulk.confirmDelete.body")
+            : t("organization.people.bulk.confirmDisable.body")
+        }
+        confirmLabel={
+          asking === "delete"
+            ? t("organization.people.bulk.delete")
+            : t("organization.people.bulk.disable")
+        }
         tone={asking === "delete" ? "danger" : "primary"}
         pending={act.isPending}
         onConfirm={() => {
@@ -712,11 +859,17 @@ function BulkActions({ selected, onDone }: { selected: Person[]; onDone: () => v
 }
 
 /** What an invitation did, said once above the list: the e-mail, the role proposed, or why not. */
-function InvitedNotice({ invitation }: { invitation: Invitation }): JSX.Element {
+function InvitedNotice({
+  invitation,
+}: {
+  invitation: Invitation;
+}): JSX.Element {
   const { t } = useTranslation();
   const { created, project, role } = invitation;
   const email = created.person.email;
-  const roleName = role ? t(`organization.people.invite.roles.${role}.label`) : "";
+  const roleName = role
+    ? t(`organization.people.invite.roles.${role}.label`)
+    : "";
   return (
     <div className="space-y-2">
       {created.emailSent ? (
@@ -724,19 +877,32 @@ function InvitedNotice({ invitation }: { invitation: Invitation }): JSX.Element 
           {project
             ? t("organization.people.invitedInto", { email, project })
             : created.memberOf
-              ? t("organization.people.invitedMember", { email, organization: created.memberOf })
+              ? t("organization.people.invitedMember", {
+                  email,
+                  organization: created.memberOf,
+                })
               : t("organization.people.invited", { email })}
         </Alert>
       ) : null}
       {invitation.change ? (
         <>
-          <Alert tone="info">{t("organization.people.invite.roleProposed", { email, role: roleName, project })}</Alert>
+          <Alert tone="info">
+            {t("organization.people.invite.roleProposed", {
+              email,
+              role: roleName,
+              project,
+            })}
+          </Alert>
           <ChangeNotice change={invitation.change} project={ORG_NAMESPACE} />
         </>
       ) : null}
       {invitation.grantError ? (
         <Alert tone="danger" role="alert">
-          {t("organization.people.invite.roleFailed", { role: roleName, project, reason: invitation.grantError })}
+          {t("organization.people.invite.roleFailed", {
+            role: roleName,
+            project,
+            reason: invitation.grantError,
+          })}
         </Alert>
       ) : null}
     </div>
@@ -748,37 +914,70 @@ function InvitedNotice({ invitation }: { invitation: Invitation }): JSX.Element 
  * sending it again or revoking it. Revoking deletes the person, which a person no manifest
  * names yet undergoes at once; one a binding already names gets the removal Change instead.
  */
-function PendingInvitations({ people, locale }: { people: Person[]; locale: string }): JSX.Element | null {
+function PendingInvitations({
+  people,
+  locale,
+}: {
+  people: Person[];
+  locale: string;
+}): JSX.Element | null {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [asking, setAsking] = useState<{ person: Person; action: "resend-invitation" | "delete" } | null>(null);
-  const [done, setDone] = useState<{ text?: string; change?: Change } | null>(null);
-  const [secret, setSecret] = useState<{ email: string; password: string } | null>(null);
+  const [asking, setAsking] = useState<{
+    person: Person;
+    action: "resend-invitation" | "delete";
+  } | null>(null);
+  const [done, setDone] = useState<{ text?: string; change?: Change } | null>(
+    null,
+  );
+  const [secret, setSecret] = useState<{
+    email: string;
+    password: string;
+  } | null>(null);
   const act = useMutation({
     // A resend's answer may carry the temporary password: it is not kept in the mutation cache.
     gcTime: 0,
-    mutationFn: ({ person, action }: { person: Person; action: "resend-invitation" | "delete" }) => perform(person.id, action),
+    mutationFn: ({
+      person,
+      action,
+    }: {
+      person: Person;
+      action: "resend-invitation" | "delete";
+    }) => perform(person.id, action),
     onMutate: () => setDone(null),
     onSuccess: (outcome, { person }) => {
       setAsking(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.people() });
       if (outcome.action === "deleted") {
-        setDone({ text: t("organization.people.pending.revoked", { email: person.email }) });
+        setDone({
+          text: t("organization.people.pending.revoked", {
+            email: person.email,
+          }),
+        });
       } else if (outcome.password) {
         setSecret({ email: person.email, password: outcome.password });
       } else if (outcome.change) {
         setDone({ change: outcome.change });
       } else {
-        setDone({ text: t("organization.people.pending.resent", { email: person.email }) });
+        setDone({
+          text: t("organization.people.pending.resent", {
+            email: person.email,
+          }),
+        });
       }
       act.reset();
     },
   });
-  const waiting = people.filter((person) => person.requiredActions.length > 0 && !person.pendingDeletion);
+  const waiting = people.filter(
+    (person) => person.requiredActions.length > 0 && !person.pendingDeletion,
+  );
   if (waiting.length === 0 && !done) return null;
   const now = new Date();
   return (
-    <section aria-labelledby="pending-invitations" className="space-y-3 rounded border border-border p-4">
+    <section
+      aria-labelledby="pending-invitations"
+      className="space-y-3 rounded border border-border p-4"
+    >
       <h3 id="pending-invitations" className="text-body font-semibold text-fg">
         {t("organization.people.pending.title")}
       </h3>
@@ -787,7 +986,9 @@ function PendingInvitations({ people, locale }: { people: Person[]; locale: stri
           {done.text}
         </Alert>
       ) : null}
-      {done?.change ? <ChangeNotice change={done.change} project={ORG_NAMESPACE} /> : null}
+      {done?.change ? (
+        <ChangeNotice change={done.change} project={ORG_NAMESPACE} />
+      ) : null}
       {act.error ? (
         <Alert tone="danger" role="alert">
           {reasonOf(act.error, t("app.error.generic"))}
@@ -797,13 +998,29 @@ function PendingInvitations({ people, locale }: { people: Person[]; locale: stri
         <ul className="divide-y divide-border">
           {waiting.map((person) => {
             const standing = invitationState(person, now);
-            const at = standing.state === "accepted" ? null : when(standing.expires?.toISOString(), locale);
+            const at =
+              standing.state === "accepted"
+                ? null
+                : when(standing.expires?.toISOString(), locale);
             return (
-              <li key={person.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <li
+                key={person.id}
+                className="flex flex-wrap items-center justify-between gap-2 py-2"
+              >
                 <span className="min-w-0">
-                  <span className="block text-body text-fg">{fullName(person)}</span>
-                  <span className="block font-mono text-caption text-fg-muted">{person.email}</span>
-                  <span className={standing.state === "expired" ? "block text-caption text-danger" : "block text-caption text-fg-muted"}>
+                  <span className="block text-body text-fg">
+                    {fullName(person)}
+                  </span>
+                  <span className="block font-mono text-caption text-fg-muted">
+                    {person.email}
+                  </span>
+                  <span
+                    className={
+                      standing.state === "expired"
+                        ? "block text-caption text-danger"
+                        : "block text-caption text-fg-muted"
+                    }
+                  >
                     {standing.state === "expired"
                       ? t("organization.people.pending.expired", { at })
                       : at
@@ -812,25 +1029,39 @@ function PendingInvitations({ people, locale }: { people: Person[]; locale: stri
                   </span>
                 </span>
                 <span className="flex flex-wrap gap-2">
-                  <PermissionGuard project={ORG_NAMESPACE} kind="Person" verb="create">
+                  <PermissionGuard
+                    project={ORG_NAMESPACE}
+                    kind="Person"
+                    verb="create"
+                  >
                     <Button
                       variant="secondary"
                       size="sm"
                       disabled={act.isPending}
                       disabledReason={t("app.busyReason")}
-                      aria-label={t("organization.people.pending.resendFor", { email: person.email })}
-                      onClick={() => setAsking({ person, action: "resend-invitation" })}
+                      aria-label={t("organization.people.pending.resendFor", {
+                        email: person.email,
+                      })}
+                      onClick={() =>
+                        setAsking({ person, action: "resend-invitation" })
+                      }
                     >
                       {t("organization.people.action.resend-invitation")}
                     </Button>
                   </PermissionGuard>
-                  <PermissionGuard project={ORG_NAMESPACE} kind="Person" verb="delete">
+                  <PermissionGuard
+                    project={ORG_NAMESPACE}
+                    kind="Person"
+                    verb="delete"
+                  >
                     <Button
                       variant="danger"
                       size="sm"
                       disabled={act.isPending}
                       disabledReason={t("app.busyReason")}
-                      aria-label={t("organization.people.pending.revokeFor", { email: person.email })}
+                      aria-label={t("organization.people.pending.revokeFor", {
+                        email: person.email,
+                      })}
                       onClick={() => setAsking({ person, action: "delete" })}
                     >
                       {t("organization.people.pending.revoke")}
@@ -850,15 +1081,21 @@ function PendingInvitations({ people, locale }: { people: Person[]; locale: stri
         title={
           asking
             ? asking.action === "delete"
-              ? t("organization.people.pending.confirmRevoke.title", { email: asking.person.email })
-              : t("organization.people.confirm.resend-invitation.title", { name: fullName(asking.person) })
+              ? t("organization.people.pending.confirmRevoke.title", {
+                  email: asking.person.email,
+                })
+              : t("organization.people.confirm.resend-invitation.title", {
+                  name: fullName(asking.person),
+                })
             : ""
         }
         description={
           asking
             ? asking.action === "delete"
               ? t("organization.people.pending.confirmRevoke.body")
-              : t("organization.people.confirm.resend-invitation.body", { name: fullName(asking.person) })
+              : t("organization.people.confirm.resend-invitation.body", {
+                  name: fullName(asking.person),
+                })
             : undefined
         }
         confirmLabel={
@@ -884,10 +1121,14 @@ function PersonState({ person }: { person: Person }): JSX.Element {
   return (
     <span className="inline-flex flex-wrap gap-1">
       <Badge tone={person.enabled ? "success" : "danger"}>
-        {person.enabled ? t("organization.people.enabled") : t("organization.people.disabled")}
+        {person.enabled
+          ? t("organization.people.enabled")
+          : t("organization.people.disabled")}
       </Badge>
       <Badge tone={person.emailVerified ? "neutral" : "warning"}>
-        {person.emailVerified ? t("organization.people.verified") : t("organization.people.unverified")}
+        {person.emailVerified
+          ? t("organization.people.verified")
+          : t("organization.people.unverified")}
       </Badge>
       {person.pendingDeletion ? (
         <Badge tone="warning">{t("organization.people.removalPending")}</Badge>
@@ -897,7 +1138,14 @@ function PersonState({ person }: { person: Person }): JSX.Element {
 }
 
 /** The lifecycle actions of a person's page, each with the verb on `Person` it needs (PF-91). */
-type Action = "disable" | "enable" | "reset-password" | "resend-invitation" | "remove-second-factor" | "sign-out" | "delete";
+type Action =
+  | "disable"
+  | "enable"
+  | "reset-password"
+  | "resend-invitation"
+  | "remove-second-factor"
+  | "sign-out"
+  | "delete";
 
 const NEEDS: Record<Action, Verb> = {
   disable: "disable",
@@ -917,29 +1165,51 @@ async function perform(id: string, action: Action): Promise<Outcome> {
   const path = { params: { path: { id } } };
   switch (action) {
     case "disable":
-      await unwrap(await api.POST("/api/v1/organization/people/{id}/disable", path));
+      await unwrap(
+        await api.POST("/api/v1/organization/people/{id}/disable", path),
+      );
       return { action };
     case "enable":
-      await unwrap(await api.POST("/api/v1/organization/people/{id}/enable", path));
+      await unwrap(
+        await api.POST("/api/v1/organization/people/{id}/enable", path),
+      );
       return { action };
     case "reset-password": {
-      const reset = await unwrap(await api.POST("/api/v1/organization/people/{id}/reset-password", path));
-      return { action, emailSent: reset.emailSent, password: reset.temporaryPassword ?? undefined };
+      const reset = (await doorAction("portal_person_reset_password", {
+        person: path.params.path.id,
+      })) as RestAnswer<"reset_password">;
+      return {
+        action,
+        emailSent: reset.emailSent,
+        password: reset.temporaryPassword ?? undefined,
+      };
     }
     case "resend-invitation": {
-      const sent = await unwrap(await api.POST("/api/v1/organization/people/{id}/resend-invitation", path));
-      return { action, emailSent: sent.emailSent, password: sent.temporaryPassword ?? undefined };
+      const sent = (await doorAction("portal_person_resend_invitation", {
+        person: path.params.path.id,
+      })) as RestAnswer<"resend_invitation">;
+      return {
+        action,
+        emailSent: sent.emailSent,
+        password: sent.temporaryPassword ?? undefined,
+      };
     }
     case "remove-second-factor":
-      await unwrap(await api.POST("/api/v1/organization/people/{id}/remove-second-factor", path));
+      await doorAction("portal_person_remove_second_factor", {
+        person: path.params.path.id,
+      });
       return { action };
     case "sign-out":
-      await unwrap(await api.POST("/api/v1/organization/people/{id}/sign-out", path));
+      await unwrap(
+        await api.POST("/api/v1/organization/people/{id}/sign-out", path),
+      );
       return { action };
     case "delete": {
       const result = await api.DELETE("/api/v1/organization/people/{id}", path);
       const change = await unwrap(result);
-      return result.response.status === 204 ? { action: "deleted" } : { action, change: change as Change };
+      return result.response.status === 204
+        ? { action: "deleted" }
+        : { action, change: change as Change };
     }
   }
 }
@@ -963,7 +1233,10 @@ export function PersonFailed({
   if (error instanceof ApiError && error.status === 403) {
     return (
       <div className="flex flex-col gap-4">
-        <PageHeader title={t("organization.people.title")} description={t("organization.people.lead")} />
+        <PageHeader
+          title={t("organization.people.title")}
+          description={t("organization.people.lead")}
+        />
         <AskAdmins message={t("organization.adminOnly")} back={anchor} />
       </div>
     );
@@ -975,12 +1248,18 @@ export function PersonFailed({
       error={error}
       onRetry={onRetry}
       back={
-        <Link to="/organization/$tab" params={{ tab: "people" }} className="text-body underline">
+        <Link
+          to="/organization/$tab"
+          params={{ tab: "people" }}
+          className="text-body underline"
+        >
           {t("organization.people.back")}
         </Link>
       }
     >
-      {error instanceof ApiError && error.status === 404 ? t("organization.people.notFound") : undefined}
+      {error instanceof ApiError && error.status === 404
+        ? t("organization.people.notFound")
+        : undefined}
     </ResourcePageFailed>
   );
 }
@@ -991,21 +1270,36 @@ export function PersonFailed({
  * what it does, and is disabled with the reason when the caller's role does not allow it; the
  * server still refuses anything the caller may not do to this person, and says why.
  */
-export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX.Element {
+export function PersonPage({
+  id,
+  anchor,
+}: {
+  id: string;
+  anchor?: string;
+}): JSX.Element {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language ?? "en";
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [asking, setAsking] = useState<Action | null>(null);
   const [editing, setEditing] = useState(false);
-  const [done, setDone] = useState<{ text?: string; change?: Change } | null>(null);
-  const [secret, setSecret] = useState<{ email: string; password: string } | null>(null);
+  const [done, setDone] = useState<{ text?: string; change?: Change } | null>(
+    null,
+  );
+  const [secret, setSecret] = useState<{
+    email: string;
+    password: string;
+  } | null>(null);
 
   const detail = useQuery({
     queryKey: queryKeys.person(id),
     retry: false,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/organization/people/{id}", { params: { path: { id } } })),
+      unwrap(
+        await api.GET("/api/v1/organization/people/{id}", {
+          params: { path: { id } },
+        }),
+      ),
   });
 
   const act = useMutation({
@@ -1023,10 +1317,15 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
         return;
       }
       if (outcome.password && detail.data) {
-        setSecret({ email: detail.data.person.email, password: outcome.password });
+        setSecret({
+          email: detail.data.person.email,
+          password: outcome.password,
+        });
       } else if (outcome.change) {
         setDone({ change: outcome.change });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.changes(ORG_NAMESPACE) });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.changes(ORG_NAMESPACE),
+        });
       } else {
         setDone({ text: t(`organization.people.done.${outcome.action}`) });
       }
@@ -1042,14 +1341,24 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
     );
   }
   if (detail.error || !detail.data) {
-    return <PersonFailed id={id} anchor={anchor} error={detail.error} onRetry={() => void detail.refetch()} />;
+    return (
+      <PersonFailed
+        id={id}
+        anchor={anchor}
+        error={detail.error}
+        onRetry={() => void detail.refetch()}
+      />
+    );
   }
 
-  const { person, groups, platformRoles, appRoles } = detail.data as PersonDetail;
+  const { person, groups, platformRoles, appRoles } =
+    detail.data as PersonDetail;
   const name = fullName(person);
   const actions: Action[] = [
     person.enabled ? "disable" : "enable",
-    ...(person.requiredActions.length > 0 ? (["resend-invitation"] as const) : []),
+    ...(person.requiredActions.length > 0
+      ? (["resend-invitation"] as const)
+      : []),
     "reset-password",
     "remove-second-factor",
     "sign-out",
@@ -1062,12 +1371,18 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
         title={name}
         description={person.email}
         actions={
-          <Link to="/organization/$tab" params={{ tab: "people" }} className="text-body underline">
+          <Link
+            to="/organization/$tab"
+            params={{ tab: "people" }}
+            className="text-body underline"
+          >
             {t("organization.people.back")}
           </Link>
         }
       />
-      {done?.change ? <ChangeNotice change={done.change} project={ORG_NAMESPACE} /> : null}
+      {done?.change ? (
+        <ChangeNotice change={done.change} project={ORG_NAMESPACE} />
+      ) : null}
       {done?.text ? (
         <Alert tone="success" role="status">
           {done.text}
@@ -1079,33 +1394,61 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
         </Alert>
       ) : null}
 
-      <Card as="section" padding="md" aria-labelledby="person-account" className="space-y-3">
+      <Card
+        as="section"
+        padding="md"
+        aria-labelledby="person-account"
+        className="space-y-3"
+      >
         <h2 id="person-account" className="text-title font-semibold text-fg">
           {t("organization.people.account")}
         </h2>
         <PersonState person={person} />
         <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-body">
-          <dt className="text-fg-muted">{t("organization.people.form.locale")}</dt>
-          <dd>{person.locale ? t(`organization.people.language.${person.locale}`) : t("organization.people.form.localeRealm")}</dd>
+          <dt className="text-fg-muted">
+            {t("organization.people.form.locale")}
+          </dt>
+          <dd>
+            {person.locale
+              ? t(`organization.people.language.${person.locale}`)
+              : t("organization.people.form.localeRealm")}
+          </dd>
           <dt className="text-fg-muted">{t("organization.people.created")}</dt>
           <dd>{when(person.createdAt, locale) ?? "—"}</dd>
           <dt className="text-fg-muted">{t("organization.people.lastSeen")}</dt>
-          <dd>{when(person.lastSeen, locale) ?? t("organization.people.noSession")}</dd>
+          <dd>
+            {when(person.lastSeen, locale) ??
+              t("organization.people.noSession")}
+          </dd>
           {person.requiredActions.length > 0 ? (
             <>
-              <dt className="text-fg-muted">{t("organization.people.pendingSteps")}</dt>
+              <dt className="text-fg-muted">
+                {t("organization.people.pendingSteps")}
+              </dt>
               <dd>
                 {person.requiredActions
-                  .map((step) => t(`organization.people.step.${step}`, { defaultValue: step }))
+                  .map((step) =>
+                    t(`organization.people.step.${step}`, {
+                      defaultValue: step,
+                    }),
+                  )
                   .join(", ")}
               </dd>
-              <dt className="text-fg-muted">{t("organization.people.pending.link")}</dt>
+              <dt className="text-fg-muted">
+                {t("organization.people.pending.link")}
+              </dt>
               <dd>
                 {(() => {
                   const standing = invitationState(person, new Date());
-                  const at = standing.state === "accepted" ? null : when(standing.expires?.toISOString(), locale);
-                  if (standing.state === "expired") return t("organization.people.pending.expired", { at });
-                  return at ? t("organization.people.pending.expires", { at }) : t("organization.people.pending.expiryUnknown");
+                  const at =
+                    standing.state === "accepted"
+                      ? null
+                      : when(standing.expires?.toISOString(), locale);
+                  if (standing.state === "expired")
+                    return t("organization.people.pending.expired", { at });
+                  return at
+                    ? t("organization.people.pending.expires", { at })
+                    : t("organization.people.pending.expiryUnknown");
                 })()}
               </dd>
             </>
@@ -1113,24 +1456,41 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
         </dl>
         {/* The id manifests name the person by, folded away: people read the name (T-6423). */}
         <details className="text-caption text-fg-muted">
-          <summary className="focus-ring w-fit cursor-pointer rounded-sm">{t("organization.people.id")}</summary>
+          <summary className="focus-ring w-fit cursor-pointer rounded-sm">
+            {t("organization.people.id")}
+          </summary>
           <p className="pt-1">
-            {t("organization.people.idHint")} <code className="font-mono text-fg [overflow-wrap:anywhere]">{person.id}</code>
+            {t("organization.people.idHint")}{" "}
+            <code className="font-mono text-fg [overflow-wrap:anywhere]">
+              {person.id}
+            </code>
           </p>
         </details>
         <DeniedNote project={ORG_NAMESPACE} kind="Person" verb="update" />
         <div className="flex flex-wrap gap-2">
           <PermissionGuard project={ORG_NAMESPACE} kind="Person" verb="update">
-            <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setEditing(true)}
+            >
               {t("organization.people.edit")}
             </Button>
           </PermissionGuard>
           {actions.map((action) => (
-            <PermissionGuard key={action} project={ORG_NAMESPACE} kind="Person" verb={NEEDS[action]}>
+            <PermissionGuard
+              key={action}
+              project={ORG_NAMESPACE}
+              kind="Person"
+              verb={NEEDS[action]}
+            >
               <Button
                 variant={action === "delete" ? "danger" : "secondary"}
                 size="sm"
-                disabled={act.isPending || (action === "delete" && Boolean(person.pendingDeletion))}
+                disabled={
+                  act.isPending ||
+                  (action === "delete" && Boolean(person.pendingDeletion))
+                }
                 disabledReason={
                   action === "delete" && person.pendingDeletion
                     ? t("organization.people.removalPending")
@@ -1148,19 +1508,29 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
       {/* The catalogue as this person would see it, names only (ADR-N-067 §2.5, T-6412). */}
       <PersonReadable id={person.id} name={name} />
 
-      <Card as="section" padding="md" aria-labelledby="person-groups" className="space-y-3">
+      <Card
+        as="section"
+        padding="md"
+        aria-labelledby="person-groups"
+        className="space-y-3"
+      >
         <h2 id="person-groups" className="text-title font-semibold text-fg">
           {t("organization.people.groups")}
         </h2>
         {groups.length === 0 ? (
-          <p className="text-body text-fg-muted">{t("organization.people.noGroups")}</p>
+          <p className="text-body text-fg-muted">
+            {t("organization.people.noGroups")}
+          </p>
         ) : (
           <ul className="space-y-1">
             {groups.map((group) => (
               <li key={group.name}>
                 <Link
                   to="/organization/$tab/$"
-                  params={{ tab: "groups", _splat: encodeURIComponent(group.name) }}
+                  params={{
+                    tab: "groups",
+                    _splat: encodeURIComponent(group.name),
+                  }}
                   className="underline"
                 >
                   {group.name}
@@ -1171,21 +1541,33 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
         )}
       </Card>
 
-      <Card as="section" padding="md" aria-labelledby="person-platform" className="space-y-3">
+      <Card
+        as="section"
+        padding="md"
+        aria-labelledby="person-platform"
+        className="space-y-3"
+      >
         <h2 id="person-platform" className="text-title font-semibold text-fg">
           {t("organization.people.platformRoles")}
         </h2>
         {platformRoles.length === 0 ? (
-          <p className="text-body text-fg-muted">{t("organization.people.noRoles")}</p>
+          <p className="text-body text-fg-muted">
+            {t("organization.people.noRoles")}
+          </p>
         ) : (
           <ul className="space-y-1">
             {platformRoles.map((role) => (
               <li key={`${role.binding}/${role.role}`} className="text-body">
-                <Link to="/organization/$tab" params={{ tab: "roles" }} className="font-semibold underline">
+                <Link
+                  to="/organization/$tab"
+                  params={{ tab: "roles" }}
+                  className="font-semibold underline"
+                >
                   {role.role}
                 </Link>{" "}
                 <span className="text-fg-muted">
-                  {scopeText(role.scope as Scope, t)} · {viaText(role.via as Via, t)}
+                  {scopeText(role.scope as Scope, t)} ·{" "}
+                  {viaText(role.via as Via, t)}
                 </span>
               </li>
             ))}
@@ -1193,26 +1575,41 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
         )}
       </Card>
 
-      <Card as="section" padding="md" aria-labelledby="person-apps" className="space-y-3">
+      <Card
+        as="section"
+        padding="md"
+        aria-labelledby="person-apps"
+        className="space-y-3"
+      >
         <h2 id="person-apps" className="text-title font-semibold text-fg">
           {t("organization.people.appRoles")}
         </h2>
         {appRoles.length === 0 ? (
-          <p className="text-body text-fg-muted">{t("organization.people.noRoles")}</p>
+          <p className="text-body text-fg-muted">
+            {t("organization.people.noRoles")}
+          </p>
         ) : (
           <ul className="space-y-1">
             {appRoles.map((role) => (
-              <li key={`${role.project}/${role.app}/${role.role}`} className="text-body">
+              <li
+                key={`${role.project}/${role.app}/${role.role}`}
+                className="text-body"
+              >
                 <Link
                   to="/projects/$project/$plural/$name"
-                  params={{ project: role.project, plural: "apps", name: role.app }}
+                  params={{
+                    project: role.project,
+                    plural: "apps",
+                    name: role.app,
+                  }}
                   className="font-semibold underline"
                 >
                   {role.app}
                 </Link>{" "}
                 <span>{role.role}</span>{" "}
                 <span className="text-fg-muted">
-                  {t("access.roles.project", { name: role.project })} · {viaText(role.via as Via, t)}
+                  {t("access.roles.project", { name: role.project })} ·{" "}
+                  {viaText(role.via as Via, t)}
                 </span>
               </li>
             ))}
@@ -1225,17 +1622,29 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
         onOpenChange={(open) => {
           if (!open) setAsking(null);
         }}
-        title={asking ? t(`organization.people.confirm.${asking}.title`, { name }) : ""}
-        description={asking ? t(`organization.people.confirm.${asking}.body`, { name }) : undefined}
+        title={
+          asking
+            ? t(`organization.people.confirm.${asking}.title`, { name })
+            : ""
+        }
+        description={
+          asking
+            ? t(`organization.people.confirm.${asking}.body`, { name })
+            : undefined
+        }
         confirmLabel={asking ? t(`organization.people.action.${asking}`) : ""}
-        tone={asking === "delete" || asking === "disable" ? "danger" : "primary"}
+        tone={
+          asking === "delete" || asking === "disable" ? "danger" : "primary"
+        }
         pending={act.isPending}
         onConfirm={() => {
           if (asking) act.mutate(asking);
         }}
       />
       {/* Mounted while open, so it starts from the person as they are now. */}
-      {editing ? <EditPersonDialog person={person} open onOpenChange={setEditing} /> : null}
+      {editing ? (
+        <EditPersonDialog person={person} open onOpenChange={setEditing} />
+      ) : null}
       <OneTimePassword secret={secret} onClose={() => setSecret(null)} />
     </div>
   );
@@ -1252,13 +1661,20 @@ interface Via {
   group?: string;
 }
 
-function scopeText(scope: Scope | undefined, t: (key: string, options?: Record<string, unknown>) => string): string {
-  if (scope?.contextSpace) return t("access.roles.space", { name: scope.contextSpace });
+function scopeText(
+  scope: Scope | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (scope?.contextSpace)
+    return t("access.roles.space", { name: scope.contextSpace });
   if (scope?.project) return t("access.roles.project", { name: scope.project });
   return t("access.groupPage.organization");
 }
 
-function viaText(via: Via | undefined, t: (key: string, options?: Record<string, unknown>) => string): string {
+function viaText(
+  via: Via | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
   return via?.group
     ? t("organization.people.viaGroup", { group: via.group })
     : t("organization.people.direct");
@@ -1266,12 +1682,19 @@ function viaText(via: Via | undefined, t: (key: string, options?: Record<string,
 
 /** Edit a person's name, e-mail and language; a changed e-mail is verified again (PF-92). */
 /** What an edit changes, and nothing else: an address differing only in case is the same one, so it asks for no new verification. */
-export function changedFields(person: Person, next: PersonForm): components["schemas"]["EditPerson"] {
+export function changedFields(
+  person: Person,
+  next: PersonForm,
+): components["schemas"]["EditPerson"] {
   const body: components["schemas"]["EditPerson"] = {};
-  if (next.email.trim().toLowerCase() !== person.email.toLowerCase()) body.email = next.email.trim();
-  if (next.firstName.trim() !== person.firstName) body.firstName = next.firstName.trim();
-  if (next.lastName.trim() !== person.lastName) body.lastName = next.lastName.trim();
-  if (next.locale && next.locale !== (person.locale ?? "")) body.locale = next.locale;
+  if (next.email.trim().toLowerCase() !== person.email.toLowerCase())
+    body.email = next.email.trim();
+  if (next.firstName.trim() !== person.firstName)
+    body.firstName = next.firstName.trim();
+  if (next.lastName.trim() !== person.lastName)
+    body.lastName = next.lastName.trim();
+  if (next.locale && next.locale !== (person.locale ?? ""))
+    body.locale = next.locale;
   return body;
 }
 
@@ -1300,7 +1723,10 @@ function EditPersonDialog({
     mutationFn: async (next: PersonForm) => {
       const body = changedFields(person, next);
       return unwrap(
-        await api.PATCH("/api/v1/organization/people/{id}", { params: { path: { id: person.id } }, body }),
+        await api.PATCH("/api/v1/organization/people/{id}", {
+          params: { path: { id: person.id } },
+          body,
+        }),
       );
     },
     onSuccess: () => {
@@ -1326,7 +1752,12 @@ function EditPersonDialog({
           <Button variant="secondary" onClick={() => close(false)}>
             {t("app.cancel")}
           </Button>
-          <Button type="submit" form={formId} disabled={edit.isPending} disabledReason={t("app.busyReason")}>
+          <Button
+            type="submit"
+            form={formId}
+            disabled={edit.isPending}
+            disabledReason={t("app.busyReason")}
+          >
             {t("organization.people.save")}
           </Button>
         </>

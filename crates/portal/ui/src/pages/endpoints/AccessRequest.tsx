@@ -2,7 +2,8 @@ import { useId, useState } from "react";
 import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { Combobox } from "../../components/pickers/Combobox";
 import { Alert, Button, Field, Input, Textarea } from "../../components/ui";
@@ -96,20 +97,18 @@ export function EndpointAccessRequest({
     queryKey: key,
     retry: false,
     queryFn: async () =>
-      (await unwrap(
-        await api.GET(
-          "/api/v1/projects/{project}/endpoints/{name}/access-requests",
-          { params: { path: { project, name } } },
-        ),
+      (await door(
+        "portal_access_request_list",
+        { endpoint: name },
+        project,
       )) as MyAccess,
   });
   const file = useMutation({
     mutationFn: async (body: PersonRequest) =>
-      unwrap(
-        await api.POST(
-          "/api/v1/projects/{project}/endpoints/{name}/access-requests",
-          { params: { path: { project, name } }, body },
-        ),
+      doorAction(
+        "portal_access_request_file",
+        { endpoint: name, body },
+        project,
       ),
     onSuccess: () => {
       setTypes([]);
