@@ -3,6 +3,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { attributeTable } from "./attributeAccess";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read manifests through the service's OData doors: they reach these REST stubs (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-7072: two findings of the grid review on Explore. A condition set in the grid's own filter row
 // travels in the shared link, and a relationship followed from a row's detail can be walked back.
