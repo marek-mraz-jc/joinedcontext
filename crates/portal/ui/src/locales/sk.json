@@ -70,10 +70,6 @@
   "nav": {
     "grafana": "Grafana",
     "approvalsPending": "{count, plural, one {# zmena čaká na vaše schválenie} few {# zmeny čakajú na vaše schválenie} other {# zmien čaká na vaše schválenie}}",
-    "organizationSwitch": "Prepnúť organizáciu, teraz {organization}",
-    "organizationLabel": "Organizácie",
-    "organizationChoose": "Vyberte organizáciu",
-    "organizationHint": "Organizácia, v ktorej projektoch pracujete, napríklad Mesto Žilina",
     "menu": "Menu",
     "projects": "Projekty",
     "spaces": "Kontextové priestory",

@@ -70,10 +70,6 @@
   "nav": {
     "grafana": "Grafana",
     "approvalsPending": "{count, plural, one {# change waits for your approval} other {# changes wait for your approval}}",
-    "organizationSwitch": "Switch organization, now {organization}",
-    "organizationLabel": "Organizations",
-    "organizationChoose": "Choose an organization",
-    "organizationHint": "The organization whose projects you work in, for example Mesto Žilina",
     "menu": "Menu",
     "projects": "Projects",
     "spaces": "Context Spaces",

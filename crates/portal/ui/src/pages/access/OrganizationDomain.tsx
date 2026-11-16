@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
 import { asManifests } from "../../api/manifest";
-import { useChosenOrganizationName, useOrganizationManifests } from "../../api/projects";
+import { useOrganizationManifests } from "../../api/projects";
 import type { components } from "../../api/schema";
 import { Alert, Badge, Button, Icon } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui";
@@ -57,11 +57,7 @@ function RecordToPublish({ record }: { record: string }): JSX.Element {
 export function OrganizationDomain(): JSX.Element | null {
   const { t, i18n } = useTranslation();
   const organizations = useOrganizations();
-  // With several Organizations, the one `?org=` chooses (ADR-N-058 section 2.7, T-5248).
-  const chosen = useChosenOrganizationName();
-  const items = asManifests(organizations.data?.items ?? []).filter(
-    (item) => chosen === undefined || item.metadata.name === chosen,
-  );
+  const items = asManifests(organizations.data?.items ?? []);
   if (organizations.isPending || (!organizations.error && items.length === 0)) {
     return null;
   }
