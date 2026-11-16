@@ -1,6 +1,7 @@
 //! viz (the chart renderer and live-data explorer of joinedcontext-deployment `components/viz`)
-//! inside `jc`: the files of `vendor/viz` (vendor/SOURCES.md, `vendor/viz/SHA256SUMS`) with the
-//! headers its `nginx.conf` sends. The catalogue's dataset page frames `/explore.html` for the
+//! inside `jc`: the files of `vendor/viz` (vendor/SOURCES.md, `vendor/viz/SHA256SUMS`) and the
+//! explorer bundle `build.rs` embeds from the Portal UI build, with the headers its `nginx.conf`
+//! sends. The catalogue's dataset page frames `/explore.html` for the
 //! "Živé dáta" grid and map (G1); `/embed.html` is the same page for any site, `/` the chart host
 //! and `/render.html` its sandboxed renderer.
 //!
@@ -94,11 +95,11 @@ const FILES: &[(&str, &[u8])] = &[
     ),
     (
         "explorer/explorer.css",
-        include_bytes!("../../../../vendor/viz/explorer/explorer.css"),
+        include_bytes!(env!("JC_EXPLORER_CSS")),
     ),
     (
         "explorer/explorer.js",
-        include_bytes!("../../../../vendor/viz/explorer/explorer.js"),
+        include_bytes!(env!("JC_EXPLORER_JS")),
     ),
     (
         "vendor/maplibre-gl-6.14.0.css",
@@ -225,8 +226,19 @@ impl Site {
     }
 }
 
+/// The explorer bundle's SHA-256 per file, taken by `build.rs` from the bytes it embedded (T-7102):
+/// the bundle is the Portal UI's own build, never a committed copy. Empty when jc was built
+/// without the UI, and then the files are empty too and not served.
+const EXPLORER_SUMS: [(&str, &str); 2] = [
+    ("explorer/explorer.css", env!("JC_EXPLORER_CSS_SHA256")),
+    ("explorer/explorer.js", env!("JC_EXPLORER_JS_SHA256")),
+];
+
 fn file(path: &str) -> Option<&'static [u8]> {
-    FILES.iter().find(|(p, _)| *p == path).map(|(_, b)| *b)
+    FILES
+        .iter()
+        .find(|(p, b)| *p == path && !b.is_empty())
+        .map(|(_, b)| *b)
 }
 
 /// A static file as served: its strong ETag (the `SHA256SUMS` sum of its bytes) and, when gzip
@@ -246,11 +258,16 @@ static PACKED: LazyLock<Vec<Option<Packed>>> = LazyLock::new(|| {
             if path.ends_with(".html") || path.ends_with(".gz") {
                 return None;
             }
-            let sum = sums
-                .lines()
-                .filter_map(|l| l.split_once("  "))
-                .find(|(_, p)| p == path)?
-                .0;
+            let sum = match EXPLORER_SUMS.iter().find(|(p, _)| p == path) {
+                Some((_, sum)) if !sum.is_empty() => *sum,
+                Some(_) => return None,
+                None => {
+                    sums.lines()
+                        .filter_map(|l| l.split_once("  "))
+                        .find(|(_, p)| p == path)?
+                        .0
+                }
+            };
             let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
             let gzip = gz
                 .write_all(bytes)
@@ -465,6 +482,17 @@ fn serve(site: &Site, method: &Method, path: &str, req: &header::HeaderMap) -> R
 pub fn build(live: &LiveAddresses, mount: &Mount) -> Router {
     let site = Arc::new(Site::new(&mount.public_base(), live));
     LazyLock::force(&PACKED);
+    for (path, sum) in EXPLORER_SUMS {
+        if sum.is_empty() {
+            tracing::warn!(
+                file = path,
+                "viz: this jc was built without the explorer bundle, so /explorer/ answers 404 and \
+                 the live-data grid does not start; run `pnpm build` in crates/portal/ui and rebuild jc"
+            );
+        } else {
+            tracing::info!(file = path, sha256 = sum, "viz: explorer bundle");
+        }
+    }
     Router::new().fallback(
         move |method: Method, uri: axum::http::Uri, headers: header::HeaderMap| {
             let site = site.clone();
@@ -477,6 +505,7 @@ pub fn build(live: &LiveAddresses, mount: &Mount) -> Router {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+    use std::path::Path;
 
     fn live() -> LiveAddresses {
         LiveAddresses {
@@ -518,7 +547,8 @@ mod tests {
         String::from_utf8_lossy(&b).into_owned()
     }
 
-    /// Every served file is the one `vendor/viz/SHA256SUMS` names, and every listed file is served.
+    /// Every served file is the one `vendor/viz/SHA256SUMS` names, and every listed file is served;
+    /// the explorer bundle is not vendored and has its own test below.
     #[test]
     fn every_file_matches_its_sum() {
         let sums = include_str!("../../../../vendor/viz/SHA256SUMS");
@@ -527,8 +557,12 @@ mod tests {
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
             .map(|l| l.split_once("  ").expect("sum  path"))
             .collect();
-        assert_eq!(listed.len(), FILES.len());
-        for (path, bytes) in FILES {
+        let vendored: Vec<_> = FILES
+            .iter()
+            .filter(|(p, _)| !p.starts_with("explorer/"))
+            .collect();
+        assert_eq!(listed.len(), vendored.len());
+        for (path, bytes) in vendored {
             let want = listed
                 .iter()
                 .find(|(_, p)| p == path)
@@ -555,20 +589,13 @@ mod tests {
         assert_eq!(body, format!("{};\n", theme.trim_end()));
     }
 
-    /// The releases are the deployment's byte for byte and the explorer bundle is the one built
-    /// from crates/portal/ui: the sums beside each hold.
+    /// The releases are the deployment's byte for byte: the sums beside them hold.
     #[test]
-    fn the_deployment_sums_of_vendor_and_explorer_hold() {
-        for (dir, sums) in [
-            (
-                "vendor",
-                include_str!("../../../../vendor/viz/vendor/SHA256SUMS"),
-            ),
-            (
-                "explorer",
-                include_str!("../../../../vendor/viz/explorer/SHA256SUMS"),
-            ),
-        ] {
+    fn the_deployment_sums_of_vendor_hold() {
+        for (dir, sums) in [(
+            "vendor",
+            include_str!("../../../../vendor/viz/vendor/SHA256SUMS"),
+        )] {
             let mut n = 0;
             for (sum, name) in sums
                 .lines()
@@ -585,6 +612,39 @@ mod tests {
                 n += 1;
             }
             assert!(n >= 2, "{dir}");
+        }
+    }
+
+    /// The explorer page loads the bundle `build.rs` embedded from crates/portal/ui's build (T-7102),
+    /// tagged with the sum build.rs took. A jc built without the UI serves no empty bundle: 404.
+    #[tokio::test]
+    async fn the_explorer_page_serves_the_built_bundle() {
+        let page = text(get("/explore.html")).await;
+        assert!(page.contains(r#"<script src="explorer/explorer.js" defer>"#));
+        assert!(page.contains(r#"<link rel="stylesheet" href="explorer/explorer.css">"#));
+        let dist =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/portal/ui/dist-explorer");
+        for (path, sum) in EXPLORER_SUMS {
+            let res = get(&format!("/{path}"));
+            if sum.is_empty() {
+                assert_eq!(res.status(), StatusCode::NOT_FOUND, "{path}");
+                continue;
+            }
+            assert_eq!(res.status(), StatusCode::OK, "{path}");
+            assert_eq!(header(&res, "etag"), format!("\"{sum}\""), "{path}");
+            let served = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let got: String = Sha256::digest(&served)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            assert_eq!(got, sum, "{path}");
+            let name = path.trim_start_matches("explorer/");
+            assert!(
+                std::fs::read(dist.join(name)).unwrap() == served,
+                "{path} is not crates/portal/ui/dist-explorer/{name}"
+            );
         }
     }
 
@@ -762,22 +822,22 @@ mod tests {
         }
     }
 
-    /// The explorer bundle goes out gzipped to a client that takes gzip and plain to one that
-    /// does not, each with its own strong ETag from `SHA256SUMS`, and a reload is a 304.
+    /// A static script goes out gzipped to a client that takes gzip and plain to one that does
+    /// not, each with its own strong ETag from `SHA256SUMS`, and a reload is a 304.
     #[tokio::test]
-    async fn the_explorer_bundle_is_gzipped_and_revalidates_to_304() {
+    async fn a_static_script_is_gzipped_and_revalidates_to_304() {
         use std::io::Read;
-        let plain = file("explorer/explorer.js").unwrap();
+        let plain = file("vendor/vega-lite-6.5.0.min.js").unwrap();
         let sum = include_str!("../../../../vendor/viz/SHA256SUMS")
             .lines()
-            .find(|l| l.ends_with("  explorer/explorer.js"))
+            .find(|l| l.ends_with("  vendor/vega-lite-6.5.0.min.js"))
             .unwrap()
             .split_once("  ")
             .unwrap()
             .0;
 
         let res = get_with(
-            "/explorer/explorer.js",
+            "/vendor/vega-lite-6.5.0.min.js",
             &[(header::ACCEPT_ENCODING, "gzip, deflate, br, zstd")],
         );
         assert_eq!(res.status(), StatusCode::OK);
@@ -805,7 +865,7 @@ mod tests {
 
         for accept in ["", "identity", "gzip;q=0", "br", "*;q=0"] {
             let res = get_with(
-                "/explorer/explorer.js",
+                "/vendor/vega-lite-6.5.0.min.js",
                 &[(header::ACCEPT_ENCODING, accept)],
             );
             assert!(res.headers().get("content-encoding").is_none(), "{accept}");
@@ -817,7 +877,7 @@ mod tests {
         }
 
         let again = get_with(
-            "/explorer/explorer.js",
+            "/vendor/vega-lite-6.5.0.min.js",
             &[
                 (header::ACCEPT_ENCODING, "gzip"),
                 (header::IF_NONE_MATCH, &format!("W/\"x\", {etag}")),
@@ -835,7 +895,7 @@ mod tests {
         // The gzip ETag never revalidates the plain body, nor a stale sum either.
         for (accept, tag) in [("identity", etag.as_str()), ("gzip", "\"0000\"")] {
             let res = get_with(
-                "/explorer/explorer.js",
+                "/vendor/vega-lite-6.5.0.min.js",
                 &[
                     (header::ACCEPT_ENCODING, accept),
                     (header::IF_NONE_MATCH, tag),
@@ -844,10 +904,7 @@ mod tests {
             assert_eq!(res.status(), StatusCode::OK, "{accept} {tag}");
         }
 
-        let css = get_with(
-            "/explorer/explorer.css",
-            &[(header::ACCEPT_ENCODING, "gzip")],
-        );
+        let css = get_with("/explore.css", &[(header::ACCEPT_ENCODING, "gzip")]);
         assert_eq!(header(&css, "content-encoding"), "gzip");
         assert!(header(&css, "etag").ends_with("-gzip\""));
         // The pages carry the per-site meta: neither gzipped nor tagged here.
@@ -882,11 +939,7 @@ mod tests {
     async fn the_renderer_connects_nowhere_and_the_rest_is_inert() {
         let res = get("/render.html");
         assert!(header(&res, "content-security-policy").contains("connect-src 'none'"));
-        for path in [
-            "/explore.js",
-            "/explorer/explorer.js",
-            "/vendor/vega-6.4.0.min.js",
-        ] {
+        for path in ["/explore.js", "/vendor/vega-6.4.0.min.js"] {
             let res = get(path);
             assert_eq!(res.status(), StatusCode::OK, "{path}");
             assert_eq!(header(&res, "content-security-policy"), INERT, "{path}");

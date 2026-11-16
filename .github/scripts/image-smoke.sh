@@ -61,6 +61,8 @@ check /streams/ping pong
 check /broker/ngsi-ld/v1/info/sourceIdentity antares
 check /git/api/healthz '"status":"ok"'
 check /api/v1/health '"status":"ok"'
+# The open-data explorer bundle jc embeds from the Portal UI build (bins/jc/build.rs, T-7102).
+check /embed/explorer/explorer.js jcExplorer
 # The gateway checked out shako's organization repository over shako's HTTP API (jc stops at start
 # when that fails, bins/jc/src/modules/gateway.rs sync_forge): the tree lies in the state volume
 # under gateway/org-cache, behind the link gateway/repo/current. The volume is mounted where jc

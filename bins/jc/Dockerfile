@@ -24,7 +24,9 @@ COPY crates/portal/tests/fixtures/grafana-builder/ ./tests/fixtures/grafana-buil
 # which resolves to /shared from /work/ui.
 COPY crates/shared/jc-chart/src/theme.json /shared/jc-chart/src/theme.json
 # An empty dist embeds as nothing and the Portal serves its placeholder page silently: fail here.
-RUN cd ui && pnpm build && test -s dist/index.html && ls dist/assets/*.js >/dev/null
+# `pnpm build` also writes the open-data explorer (dist-explorer), which jc embeds (bins/jc/build.rs).
+RUN cd ui && pnpm build && test -s dist/index.html && ls dist/assets/*.js >/dev/null \
+    && test -s dist-explorer/explorer.js && test -s dist-explorer/explorer.css
 RUN cd sdk && pnpm build && test -s dist/kit.js && test -s dist/kit.css && test -s dist/kit-worker.js \
     && test -s dist/runtime/runtime.json && test -s dist/functions-server.js \
     && test -s dist/demos/index.html
@@ -261,16 +263,17 @@ RUN --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
  && if [ -n "${RUSTC_WRAPPER:-}" ]; then sccache --stop-server; fi
 COPY . .
 COPY --from=ui /work/ui/dist ./crates/portal/ui/dist
+COPY --from=ui /work/ui/dist-explorer ./crates/portal/ui/dist-explorer
 COPY --from=ui /work/sdk/dist ./crates/portal/sdk/dist
 # COPY keeps the context's mtimes, which can be older than the stub build: touch every Rust source
 # so cargo rebuilds the path packages over the real code. The target dir goes in the same step, so
-# the layer holds only the binary.
+# the layer holds only the binary. JC_REQUIRE_EXPLORER: no image without the explorer bundle.
 RUN --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
     --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=SCCACHE_GHA_RW_MODE,env=SCCACHE_GHA_RW_MODE \
     . /usr/local/bin/sccache-env \
  && find bins crates vendor -name '*.rs' -not -path '*/node_modules/*' -exec touch {} + \
- && cargo build --release --locked -p jc -p kaisatsu-server \
+ && JC_REQUIRE_EXPLORER=1 cargo build --release --locked -p jc -p kaisatsu-server \
  && if [ -n "${RUSTC_WRAPPER:-}" ]; then sccache --stop-server; fi \
  && strip -o /jc target/release/jc \
  && strip -o /kaisatsu target/release/kaisatsu \

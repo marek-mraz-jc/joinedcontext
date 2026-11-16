@@ -141,6 +141,10 @@ shako-core = { path = "../../crates/shako/core", optional = true }
 shako-store-memory = { path = "../../crates/shako/store-memory", optional = true }
 shako-store-pg = { path = "../../crates/shako/store-pg", optional = true }
 
+[build-dependencies]
+# build.rs sums the embedded explorer bundle (T-7102).
+sha2 = "0.10"
+
 [dev-dependencies]
 sha2 = "0.10"
 jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", features = ["outbound"] }
