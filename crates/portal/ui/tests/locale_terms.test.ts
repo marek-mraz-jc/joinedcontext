@@ -37,7 +37,7 @@ const TERMS: Record<string, Term[]> = {
     { concept: "data source", nav: ["nav.datasources", "Zdroje údajov"], banned: /zdroj\p{L}*\s+dát|dátov\p{L}*\s+zdroj/iu },
     {
       concept: "dashboard",
-      nav: ["nav.dashboards", "Dashboardy"],
+      nav: ["nav.grafana", "Dashboardy"],
       banned: /nástenk/iu,
       elsewhere: /^(spaces\.views\.|whatsNew\.entries\.dataViews\.)/,
     },

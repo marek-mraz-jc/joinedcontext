@@ -245,10 +245,16 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
       actions={
         <>
           {mayEdit ? (
-            <Link to="/projects/$project/grafana/dashboards/$uid/edit" params={{ project, uid }} className={buttonClass("secondary", "sm")}>
-              <Icon name="pencil" className="size-4" />
-              {t("builder.edit")}
-            </Link>
+            <>
+              <Link to="/projects/$project/grafana/dashboards/$uid/edit" params={{ project, uid }} search={{ add: true }} className={buttonClass("primary", "sm")}>
+                <Icon name="plus" className="size-4" />
+                {t("builder.addVisualization")}
+              </Link>
+              <Link to="/projects/$project/grafana/dashboards/$uid/edit" params={{ project, uid }} className={buttonClass("secondary", "sm")}>
+                <Icon name="pencil" className="size-4" />
+                {t("builder.edit")}
+              </Link>
+            </>
           ) : null}
           {safe ? (
             <a className={buttonClass("ghost", "sm")} href={safe} target="_blank" rel="noopener noreferrer">

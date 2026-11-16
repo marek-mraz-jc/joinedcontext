@@ -121,7 +121,7 @@ describe("portal shell", () => {
 
   it("navigating a section asks the API for that plural", async () => {
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
-    await userEvent.click(within(nav).getByRole("link", { name: "Dashboards" }));
+    await userEvent.click(within(nav).getByRole("link", { name: "Report pages" }));
 
     await waitFor(() => {
       const urls = fetchMock.mock.calls.map((call) => {

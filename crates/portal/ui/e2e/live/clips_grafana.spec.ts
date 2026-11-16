@@ -29,8 +29,8 @@ async function choose(page: Page, kind: string, attribute: string, title: string
 }
 
 async function save(page: Page, title: string): Promise<string> {
-  await page.getByRole("button", { name: "Save to Grafana" }).click();
-  const link = page.getByRole("link", { name: `Open ${title} in Grafana` });
+  await page.getByRole("button", { name: "Save chart" }).click();
+  const link = page.getByRole("link", { name: `Open ${title} in a new tab` });
   await expect(link).toBeVisible({ timeout: 60_000 });
   return (await link.getAttribute("href")) ?? "";
 }
@@ -69,7 +69,7 @@ test("a Grafana time series from a live Endpoint, at 1440 and 400", async ({ bro
   let href = "";
   try {
     await clip.step("Grafana in the project: pick what to draw", async () => {
-      await expect(page.getByRole("button", { name: "Save to Grafana" })).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByRole("button", { name: "Save chart" })).toBeVisible({ timeout: 60_000 });
     });
     await clip.step("Helsinki air quality, PM2.5, as a time series", async () => {
       await choose(page, "timeseries", "pm25", title);
@@ -88,8 +88,8 @@ test("a Grafana time series from a live Endpoint, at 1440 and 400", async ({ bro
   const phone = await clipOf(browser, EDITOR, "grafana-create", SIZES[1], ADDRESS);
   try {
     await phone.step("On a phone: the saved visualization, ready to open", async () => {
-      await expect(phone.page.getByRole("link", { name: `Open ${title} in Grafana` })).toBeVisible({ timeout: 60_000 });
-      await phone.page.getByRole("link", { name: `Open ${title} in Grafana` }).scrollIntoViewIfNeeded();
+      await expect(phone.page.getByRole("link", { name: `Open ${title} in a new tab` })).toBeVisible({ timeout: 60_000 });
+      await phone.page.getByRole("link", { name: `Open ${title} in a new tab` }).scrollIntoViewIfNeeded();
     });
     await phone.page.screenshot({ path: `${process.env.CLIP_DIR ?? "test-results/clips"}/page-400.png`, fullPage: true });
     await openInGrafana(phone.page, href);
@@ -111,7 +111,7 @@ test("Number, Table and Map draw in Grafana", async ({ browser }) => {
     for (const [kind, attribute] of [["stat", "pm25"], ["table", "pm25"], ["map", "location"]] as const) {
       const title = `${PREFIX}${kind} ${Date.now().toString(36)}`;
       await page.goto(ADDRESS, { waitUntil: "load" });
-      await expect(page.getByRole("button", { name: "Save to Grafana" })).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByRole("button", { name: "Save chart" })).toBeVisible({ timeout: 60_000 });
       await choose(page, kind, attribute, title);
       const href = await save(page, title);
       if (kind === "table") await page.screenshot({ path: `${process.env.CLIP_DIR ?? "test-results/clips"}/page-1440.png`, fullPage: true });
