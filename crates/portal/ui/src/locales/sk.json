@@ -7421,7 +7421,8 @@
       "openChange": "Otvoriť zmenu",
       "removed": "{count, plural, one {Odstránený # presunutý graf} few {Odstránené # presunuté grafy} other {Odstránených # presunutých grafov}}",
       "removedLead": "Sú to teraz panely dashboardu Saved charts.",
-      "running": "Presun beží; počkajte na odpoveď."
+      "running": "Presun beží; počkajte na odpoveď.",
+      "refusedTitle": "Presun neprebehol; nič sa nezmenilo"
     }
   },
   "activity": {

@@ -7421,7 +7421,8 @@
       "openChange": "Änderung öffnen",
       "removed": "{count, plural, one {# verschobenes Diagramm entfernt} other {# verschobene Diagramme entfernt}}",
       "removedLead": "Sie sind jetzt Panels des Dashboards Saved charts.",
-      "running": "Das Verschieben läuft; warten Sie auf die Antwort."
+      "running": "Das Verschieben läuft; warten Sie auf die Antwort.",
+      "refusedTitle": "Das Verschieben lief nicht; nichts wurde geändert"
     }
   },
   "activity": {

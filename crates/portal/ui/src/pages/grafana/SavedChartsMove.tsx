@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { reasonOf } from "../../api/client";
 import { doorAction, type RestAnswer } from "../../api/odata";
-import { Alert, Button, InlineError } from "../../components/ui";
+import { Alert, Button } from "../../components/ui";
 
 /**
  * Moves the project's charts saved one by one into one "Saved charts" dashboard (T-7161). A check
@@ -62,13 +62,17 @@ export function SavedChartsMove({ project }: { project: string }): JSX.Element {
           )}
         </Alert>
       ) : null}
-      {run.isError ? <InlineError>{reasonOf(run.error)}</InlineError> : null}
+      {run.isError ? (
+        <Alert tone="danger" title={t("grafana.move.refusedTitle")}>
+          {reasonOf(run.error)}
+        </Alert>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         <Button variant="secondary" size="sm" onClick={() => run.mutate(true)} disabled={run.isPending} disabledReason={run.isPending ? t("grafana.move.running") : undefined}>
           {t("grafana.move.check")}
         </Button>
         {checked && checked.moved.length > 0 ? (
-          <Button variant="primary" size="sm" onClick={() => run.mutate(false)} disabled={run.isPending} disabledReason={run.isPending ? t("grafana.move.running") : undefined}>
+          <Button variant={checked.stage === "remove" ? "danger" : "primary"} size="sm" onClick={() => run.mutate(false)} disabled={run.isPending} disabledReason={run.isPending ? t("grafana.move.running") : undefined}>
             {checked.stage === "propose" ? t("grafana.move.propose") : t("grafana.move.remove", { count: checked.moved.length })}
           </Button>
         ) : null}

@@ -7421,7 +7421,8 @@
       "openChange": "Open the change",
       "removed": "{count, plural, one {Removed # moved chart} other {Removed # moved charts}}",
       "removedLead": "They are panels of the Saved charts dashboard now.",
-      "running": "The move is running; wait for its answer."
+      "running": "The move is running; wait for its answer.",
+      "refusedTitle": "The move did not run; nothing changed"
     }
   },
   "activity": {

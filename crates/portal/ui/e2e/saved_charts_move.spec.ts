@@ -24,6 +24,7 @@ const KEPT = [{ id: "ef56", title: "Stations", reason: "a map chart: the dashboa
 type Stage = "propose" | "remove" | "refused";
 
 async function stubApi(page: Page, stage: Stage): Promise<void> {
+  let items = ITEMS;
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -32,7 +33,7 @@ async function stubApi(page: Page, stage: Stage): Promise<void> {
     const base = "/api/v1/projects/helsinki/grafana";
     if (path.endsWith("/auth/me")) return json(IDENTITY);
     if (path === "/api/v1/projects") return json({ ...list([{ name: "helsinki", sample: false, title: "Helsinki" }]), organizations: [] });
-    if (path === base) return json({ ready: true, reason: null, mayCreate: true, items: ITEMS });
+    if (path === base) return json({ ready: true, reason: null, mayCreate: true, items });
     if (path === `${base}/dashboards`) return json({ ready: true, items: [] });
     if (path === `${base}/builder`) return json({ ready: true, mayEdit: true, pending: [], refreshes: [], units: [], colors: [] });
     if (path === `${base}/options`) return json({ endpoints: [], types: [], attributes: [] });
@@ -42,6 +43,8 @@ async function stubApi(page: Page, stage: Stage): Promise<void> {
       if (stage === "propose") {
         return json({ uid: UID, stage, dryRun, before: 3, panels: 2, moved: ["ab12", "cd34"], kept: KEPT, ...(dryRun ? {} : { change: { metadata: { name: "pr-12" } } }) }, dryRun ? 200 : 202);
       }
+      // A removing run takes the moved rows away, so the list the page reads again holds the map only.
+      if (!dryRun) items = ITEMS.filter((item) => item.kind === "map");
       return json({ uid: UID, stage, dryRun, before: 3, panels: 2, moved: ["ab12", "cd34"], kept: KEPT });
     }
     return json(list([]));
@@ -82,6 +85,7 @@ test.describe("moving the saved charts", () => {
       await shot(page, `move-remove-checked-${width}`);
       await move.getByRole("button", { name: "Remove 2 moved charts" }).click();
       await expect(move.getByText("Removed 2 moved charts")).toBeVisible();
+      await expect(page.getByText("PM2.5 by station")).toHaveCount(0);
       await shot(page, `move-removed-${width}`);
     });
 
