@@ -201,7 +201,8 @@ export function NewProjectButton({ project, inSidebar = false }: { project: stri
       {/* In the sidebar a quiet action under the switcher, not a second switcher (T-7148). */}
       <Button
         variant={inSidebar ? "ghost" : "secondary"}
-        size="sm"
+        // `md` in the sidebar: a finger's height on a phone (T-7148).
+        size={inSidebar ? "md" : "sm"}
         className={inSidebar ? "w-full justify-start px-2.5 text-fg-muted" : "w-full justify-center"}
         disabled={!allowed}
         disabledReason={allowed ? undefined : reason}

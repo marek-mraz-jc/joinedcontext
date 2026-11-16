@@ -83,7 +83,7 @@ function ProjectSelector({ active }: { active: string }) {
           <span
             aria-hidden="true"
             data-testid="project-initials"
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-caption font-bold tracking-tighter text-primary-fg"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-caption font-bold tracking-tight text-primary-fg"
           >
             {initials(title)}
           </span>
@@ -113,7 +113,7 @@ function ProjectSelector({ active }: { active: string }) {
                 title={name !== project ? `${name} (${project})` : project}
                 aria-current={current ? "true" : undefined}
                 // Marked by its colour and weight too, not by the check alone (T-7148).
-                className="[&[aria-current]]:bg-primary-soft [&[aria-current]]:font-semibold [&[aria-current]]:text-primary-soft-fg"
+                className="py-2! [&[aria-current]]:bg-primary-soft [&[aria-current]]:font-semibold [&[aria-current]]:text-primary-soft-fg"
               >
                 {current ? <Icon name="check" className="size-4 shrink-0" /> : <span className="size-4 shrink-0" />}
                 {/* A long name wraps instead of being cut; the slug follows only when a title differs. */}
@@ -855,6 +855,8 @@ function ProjectFrame({
           aria-label={t("nav.main")}
           className={clsx(
             "z-40 w-sidebar shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-surface p-3",
+            // The phone drawer takes the room a phone has, so a project's name is not cut (T-7148).
+            "max-lg:w-[min(85vw,20rem)]",
             // The viewport minus the `h-14` header (the below-header token).
             // From lg only: at 768 px the open sidebar left a table 460 px and cut its actions,
             // so a tablet opens it from the menu button like a phone (T-4265, photo audit T-4160 #41).
