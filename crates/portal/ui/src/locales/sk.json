@@ -7864,10 +7864,10 @@
       "type": "Typ entity",
       "typeHelp": "Nechajte prázdne pre otázku na akýkoľvek typ.",
       "submit": "Opýtať sa brány",
-      "failed": "Bránu sa nepodarilo opýtať.",
+      "failed": "Bránu sa nepodarilo opýtať. Dôvod a Skúsiť znova nájdete nižšie.",
       "allowed": "Povolené",
       "refused": "Odmietnuté",
-      "refusedNext": "Ak to chcete povoliť, pridajte tejto osobe, skupine alebo role oprávnenie v zásade priestoru koncového bodu v zozname vyššie a opýtajte sa znova.",
+      "refusedNext": "Ak to chcete povoliť, pridajte tejto osobe, skupine alebo role oprávnenie v zásade priestoru Endpointu v zozname vyššie a opýtajte sa znova.",
       "decidedBy": "Rozhodla Policy",
       "reason": {
         "policy_grant_matched": "Túto akciu povoľuje Policy.",
