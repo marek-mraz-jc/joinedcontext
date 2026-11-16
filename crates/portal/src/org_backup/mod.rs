@@ -112,9 +112,12 @@ fn rfc3339(at: time::OffsetDateTime) -> String {
         .unwrap_or_default()
 }
 
+/// The targets by (organization, kind) and the log, when the Portal runs without a database.
+type MemoryRows = (BTreeMap<(String, String), Target>, Vec<LogEntry>);
+
 enum Inner {
     Postgres(sqlx::PgPool),
-    Memory(RwLock<(BTreeMap<(String, String), Target>, Vec<LogEntry>)>),
+    Memory(RwLock<MemoryRows>),
 }
 
 /// The targets and the audit log, in Postgres (`0058_organization_backups.sql`) or in memory.

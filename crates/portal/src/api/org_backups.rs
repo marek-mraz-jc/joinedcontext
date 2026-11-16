@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use jc_core::kinds::Verb;
 use serde::{Deserialize, Serialize};
@@ -792,18 +792,26 @@ pub async fn restore(
 }
 
 pub fn router() -> Router<AppState> {
-    let base = "/organization/backups/configuration";
     Router::new()
-        .route(base, get(overview).put(save))
-        .route(&format!("{base}/run"), post(run_now))
-        .route(&format!("{base}/versions"), get(versions))
-        .route(&format!("{base}/versions/{{version}}"), get(download))
         .route(
-            &format!("{base}/versions/{{version}}/restore"),
+            "/organization/backups/configuration",
+            get(overview).put(save),
+        )
+        .route("/organization/backups/configuration/run", post(run_now))
+        .route(
+            "/organization/backups/configuration/versions",
+            get(versions),
+        )
+        .route(
+            "/organization/backups/configuration/versions/{version}",
+            get(download),
+        )
+        .route(
+            "/organization/backups/configuration/versions/{version}/restore",
             post(restore),
         )
         .route(
-            &format!("{base}/bundle"),
-            axum::routing::delete(soft_delete),
+            "/organization/backups/configuration/bundle",
+            delete(soft_delete),
         )
 }

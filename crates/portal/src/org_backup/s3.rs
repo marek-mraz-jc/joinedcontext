@@ -154,7 +154,7 @@ impl std::fmt::Display for S3Error {
 }
 
 /// The text of the first `<tag>…</tag>` in `xml`, entities decoded.
-fn tag<'a>(xml: &'a str, name: &str) -> Option<String> {
+fn tag(xml: &str, name: &str) -> Option<String> {
     let open = format!("<{name}>");
     let close = format!("</{name}>");
     let start = xml.find(&open)? + open.len();

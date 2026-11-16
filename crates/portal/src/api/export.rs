@@ -1120,7 +1120,7 @@ async fn zip_archive(
         entries.push((
             "bundle.yaml".to_owned(),
             bundle_index(
-                &header,
+                header,
                 items,
                 native_files,
                 bundle_files(&archived),
