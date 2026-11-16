@@ -3,6 +3,9 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4849, AG-126…AG-129: Administration → Agents in a real browser at 1440 and 400, the API
 // answered in the browser as the other mocked specs do: the filled list, an agent's page and its

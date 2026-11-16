@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6750: the sidebar's manifest lists (ManifestGrid) draw their table through the SDK DataGrid.
 // Endpoints, Context Spaces, Pipelines and Subscriptions walked in the built bundle with the API

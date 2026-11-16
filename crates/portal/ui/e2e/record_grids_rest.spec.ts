@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6206: the rest of the record lists on the shared data grid (all endpoints, workspaces,
 // knowledge sources, conversations, CKAN catalogues, roles, health log), filled, empty and

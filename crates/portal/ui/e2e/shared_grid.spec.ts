@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6739: Policies, Approvals and Registrations on the shared data grid (the SDK's DataGrid),
 // walked in the built bundle with the API answered from the browser. Each state is shot at

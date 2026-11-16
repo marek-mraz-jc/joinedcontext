@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4989: the endpoint lists (a project's endpoints, what other projects share with it, and the
 // Organization's Endpoints tab) read as one line a row at 1440 px: the surfaces in one summary,

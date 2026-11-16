@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5699, AG-63: the page behind an AI client's MCP question. The person reads what the call
 // would do, opens what it changes, and accepts or declines with their session; the decision is

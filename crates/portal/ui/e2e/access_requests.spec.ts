@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // PL-90..PL-93, T-4863: a pipeline asks for access to another space's Endpoint from its overview,
 // and the owners of that space decide it on the Endpoint's page. `vite preview` has no Portal

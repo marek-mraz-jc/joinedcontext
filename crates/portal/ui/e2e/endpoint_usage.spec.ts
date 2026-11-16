@@ -2,6 +2,9 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5118: a publisher reads how an Endpoint is used, per day and per way of reading, on the
 // Endpoint's page; and every Endpoint of the project on the Endpoints page, with a month as CSV.

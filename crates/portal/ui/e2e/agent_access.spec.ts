@@ -3,6 +3,9 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // An agent account's Access view (T-4850, API/01 §52, AG-130…AG-132): its grants with their state,
 // the kind × verb matrix with the grant behind each cell, and Revoke now behind a confirmation.

@@ -1,6 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The permission-aware grid in the explorer (T-5530): locked columns say why, an attribute the
 // person may not read is not drawn at all and no value of it is fetched, the review reads
