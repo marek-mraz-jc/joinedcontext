@@ -591,10 +591,7 @@ pub(crate) mod tests {
         assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://idm.smartcity.test");
         // The issuer stays the public name: a token names it, and kaisatsu names it the same
         // for a request on the listener under its host.
-        assert_eq!(
-            v["JC_OIDC_ISSUER"],
-            "https://idm.smartcity.test/realms/jc"
-        );
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://idm.smartcity.test/realms/jc");
         // An operator's own sibling URL keeps its address and is not reached.
         let own = |k: &str| (k == "JC_PORTAL_GATEWAY_URL").then(|| "http://g.svc:8080".to_owned());
         let v = portal_vars(&siblings, &setup, own);
