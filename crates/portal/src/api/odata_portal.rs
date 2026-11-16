@@ -979,14 +979,15 @@ pub static DOORS: [Door; 162] = [
         &[],
         Who::Own,
     ),
-    // The Organization's Blueprints the caller may run, for the flow gallery (T-7143).
+    // The installation's Blueprints (the `org` namespace) the caller may run, for the flow
+    // gallery and the App generator: every signed-in person read them on REST (T-7143).
     door(
         "portal_blueprint_list",
         Org,
         Method::GET,
         "/blueprints",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_access_request_incoming",

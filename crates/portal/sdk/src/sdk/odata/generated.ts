@@ -981,6 +981,7 @@ export interface Functions {
   portal_app_checks: Record<string, never>;
   portal_app_dashboard: { name: string };
   portal_app_templates: Record<string, never>;
+  portal_blueprint_list: Record<string, never>;
   portal_change_manifests: { id: string };
   portal_change_outside: Record<string, never>;
   portal_comment_list: { space: string; urn?: string };
@@ -1114,6 +1115,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_app_checks: ["Project"],
   portal_app_dashboard: ["Project"],
   portal_app_templates: ["Organization"],
+  portal_blueprint_list: ["Organization"],
   portal_change_manifests: ["Project"],
   portal_change_outside: ["Project"],
   portal_comment_list: ["Project"],
@@ -1219,7 +1221,7 @@ export interface Actions {
   jc_pipeline_test: { draft?: unknown; pipeline?: unknown; sample: unknown; steps?: boolean };
   jc_pipeline_try_mapping: { draft?: unknown; messages?: unknown; pipeline?: unknown; sample?: unknown; steps?: boolean };
   jc_project_delete: { name: string };
-  jc_project_import: { bundle: string; conflictPolicy?: string; dryRun?: boolean; orgDomain?: string };
+  jc_project_import: { bundle?: string; conflictPolicy?: string; dryRun?: boolean; manifests?: unknown; orgDomain?: string; spaceMapping?: unknown };
   jc_run_answer: { answers: unknown; id: string; questionId: string };
   jc_run_cancel: { id: string };
   jc_run_create: { appClass: string; appName: string; dataNeeds: unknown; endpointName?: string; endpointNames?: unknown; kind?: string; profile?: string; prompt: string; unattended?: boolean; visibility?: string };

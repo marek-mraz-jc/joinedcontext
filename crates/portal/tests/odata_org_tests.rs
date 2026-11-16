@@ -792,13 +792,14 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
     assert_eq!(odata.status, rest.status, "{} / {}", odata.text, rest.text);
     // A person of another Organization (ba) reads their own notifications and preferences on
     // the Organization they reach, as the shell asks on every page (T-6812, viewer smoke 404),
-    // and the installation's App and chart templates every signed-in person reads (T-7130,
-    // viewer smoke 404 on the Apps page).
+    // and the installation's App and chart templates and Blueprints every signed-in person
+    // reads (T-7130, viewer smoke 404 on the Apps page; T-7143).
     let metadata = get(&state, Mode::Shared, "ba-only", "/api/v1/$metadata").await;
     for (name, call, rest_uri) in [
         ("portal_notification_list", "()", "/api/v1/notifications"),
         ("portal_preferences_get", "()", "/api/v1/preferences"),
         ("portal_app_templates", "()", "/api/v1/app-templates"),
+        ("portal_blueprint_list", "()", "/api/v1/blueprints"),
         (
             "portal_visualization_template",
             "(template='bar',x='day',y='pm10')",

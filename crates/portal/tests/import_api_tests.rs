@@ -980,11 +980,18 @@ async fn a_dry_run_asked_for_in_the_query_writes_nothing_either() {
 
 /// T-7143: the pages import JSON manifests through the service's `jc_project_import` action with
 /// the project's `If-Match`, and it answers the REST door's plan, then its Change; `bundle` and
-/// `manifests` together are refused before anything is read.
+/// `manifests` together are a 422 naming `bundle` before anything is read.
 #[tokio::test]
 async fn manifests_import_through_the_odata_action_as_through_the_rest_door() {
     let server = forge().await;
-    let (state, cookie) = state(&server, vec![]);
+    // The service lists a project its Organization's registry holds.
+    let registered = json!({
+        "apiVersion": API_VERSION,
+        "kind": "Project",
+        "metadata": { "name": PROJECT, "namespace": ORG_NAMESPACE },
+        "spec": { "organizationRef": "bb" },
+    });
+    let (state, cookie) = state_as(&server, vec![], &["portal-approver"], vec![registered]);
     let manifest: Value = serde_norway::from_str(SPACE).expect("the space parses");
     let action = format!("/api/v1/projects('{PROJECT}')/JoinedContext.Portal.jc_project_import");
     let call = |body: Value, if_match: Option<String>| {
@@ -1005,8 +1012,17 @@ async fn manifests_import_through_the_odata_action_as_through_the_rest_door() {
                 .expect("response");
             let status = response.status();
             let headers = response.headers().clone();
-            let bytes = response.into_body().collect().await.expect("body").to_bytes();
-            (status, headers, serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+            let bytes = response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
+            (
+                status,
+                headers,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
         }
     };
     let input = json!({ "manifests": [manifest], "dryRun": true });
@@ -1025,10 +1041,10 @@ async fn manifests_import_through_the_odata_action_as_through_the_rest_door() {
 
     let both = json!({ "manifests": [manifest], "bundle": "kind: List" });
     let (status, _, refused) = call(both, Some(etag.clone())).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["error"]["target"], "bundle", "{refused}");
 
-    let (status, _, change) =
-        call(json!({ "manifests": [manifest] }), Some(etag)).await;
+    let (status, _, change) = call(json!({ "manifests": [manifest] }), Some(etag)).await;
     assert!(status.is_success(), "{status}: {change}");
     assert!(change["value"]["metadata"]["name"].is_string(), "{change}");
     assert_eq!(written(&server).await.len(), 1);
