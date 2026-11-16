@@ -51,6 +51,9 @@ pub struct Config {
     /// `[[organizations]]`). A request on one of those hosts is pinned to its Organization
     /// (`organization_host`); empty, every host is the one Portal it was before.
     pub organization_hosts: Vec<crate::organization_host::OrganizationHost>,
+    /// The realms of the Organizations that sign in on a host of their own
+    /// (`JC_PORTAL_ORGANIZATION_REALMS`, `auth::realms`, T-7133); jc fills it from `hosts.idm`.
+    pub organization_realms: Vec<crate::auth::realms::RealmSetting>,
     /// The hosts the operator lists for each Organization's portals and the deployment's
     /// `portals.max` (`JC_PORTAL_PORTAL_HOSTS`, `JC_PORTAL_PORTALS_MAX`; ODP-08, ODP-09).
     pub portal_settings: crate::portals::PortalSettings,
@@ -2041,6 +2044,15 @@ impl Config {
         })?;
 
         let oidc = oidc_config(&lookup)?;
+        let organization_realms = crate::auth::realms::parse(
+            &lookup("JC_PORTAL_ORGANIZATION_REALMS").unwrap_or_default(),
+            oidc.as_ref(),
+            &organization_hosts,
+        )
+        .map_err(|reason| ConfigError::Invalid {
+            var: "JC_PORTAL_ORGANIZATION_REALMS",
+            reason,
+        })?;
 
         let (cookie_key, cookie_keys_previous) = cookie_keys(&lookup, oidc.is_some())?;
 
@@ -2264,6 +2276,7 @@ impl Config {
             internal_bind,
             public_base_url,
             organization_hosts,
+            organization_realms,
             portal_settings,
             organization_catalogues,
             organization_addresses,
@@ -2356,6 +2369,7 @@ impl Config {
             public_base_url: Url::parse("http://localhost:8080")
                 .unwrap_or_else(|_| unreachable!("valid test url")),
             organization_hosts: Vec::new(),
+            organization_realms: Vec::new(),
             portal_settings: crate::portals::PortalSettings::default(),
             organization_catalogues: Vec::new(),
             organization_addresses: Vec::new(),

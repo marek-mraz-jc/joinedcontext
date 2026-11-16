@@ -14,6 +14,7 @@ pub mod csrf;
 pub mod endpoint_token;
 pub mod internal;
 pub mod oidc;
+pub mod realms;
 pub mod refresh;
 pub mod session;
 

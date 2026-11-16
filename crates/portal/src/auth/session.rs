@@ -240,6 +240,17 @@ pub fn secure_cookie(name: &'static str, value: String, max_age_secs: i64) -> Co
 /// as the ID token always does: the caller hands both to `AppState::keep_session_claims`, and
 /// [`load_with`] joins the groups back.
 pub fn store(jar: PrivateCookieJar, session: &Session) -> Result<PrivateCookieJar, ApiError> {
+    store_in(jar, session, None)
+}
+
+/// [`store`] for a session `realm` issued: the Organization whose own realm it came from
+/// (`auth::realms`), none for the installation realm. Refresh and logout go back to that realm,
+/// and [`open`] refuses the session off that Organization's host (T-7133).
+pub fn store_in(
+    jar: PrivateCookieJar,
+    session: &Session,
+    realm: Option<&str>,
+) -> Result<PrivateCookieJar, ApiError> {
     let serialize = |sealed: &Sealed| {
         serde_json::to_string(sealed)
             .map_err(|e| ApiError::Internal(format!("serialize session: {e}")))
@@ -249,6 +260,7 @@ pub fn store(jar: PrivateCookieJar, session: &Session) -> Result<PrivateCookieJa
         session: session.clone(),
         groups_kept: false,
         organization: organization.clone(),
+        realm: realm.map(str::to_owned),
     })?;
     if value.len() > GROUPS_INLINE_MAX {
         let mut session = session.clone();
@@ -257,6 +269,7 @@ pub fn store(jar: PrivateCookieJar, session: &Session) -> Result<PrivateCookieJa
             session,
             groups_kept: true,
             organization,
+            realm: realm.map(str::to_owned),
         })?;
     }
     let ttl = (session.expires_at - now_unix()).max(0);
@@ -285,6 +298,10 @@ struct Sealed {
     /// Organization the request is pinned to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     organization: Option<String>,
+    /// The Organization whose own realm issued the session (`auth::realms`); none: the
+    /// installation realm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    realm: Option<String>,
 }
 
 /// Reads the session from the headers, with the active key or any key a rotation still lets in
@@ -310,9 +327,15 @@ fn open_from(headers: &HeaderMap, config: &crate::config::Config) -> Option<Seal
 /// it kept none (a restart, another replica), the access token counts as spent: the refresh
 /// middleware then fetches a fresh ID token, which carries the groups, or ends the session.
 pub fn load_with(headers: &HeaderMap, state: &AppState) -> Option<Session> {
+    load_with_realm(headers, state).map(|(session, _)| session)
+}
+
+/// [`load_with`] and the realm that issued the session ([`store_in`]).
+pub fn load_with_realm(headers: &HeaderMap, state: &AppState) -> Option<(Session, Option<String>)> {
     let Sealed {
         mut session,
         groups_kept,
+        realm,
         ..
     } = open_from(headers, &state.config)?;
     if groups_kept {
@@ -321,7 +344,7 @@ pub fn load_with(headers: &HeaderMap, state: &AppState) -> Option<Session> {
             None => session.access_expires_at = 0,
         }
     }
-    Some(session)
+    Some((session, realm))
 }
 
 /// The person this Portal's own cookie session names, for a request without `Authorization`,
@@ -338,13 +361,22 @@ pub fn cookie_person(headers: &HeaderMap, state: &AppState) -> Option<Session> {
 /// Reads the session, ignoring an expired or unparseable one. The access token may already be
 /// past its time: that is for the refresh middleware and `CurrentUser` to decide.
 pub fn load(jar: &PrivateCookieJar) -> Option<Session> {
-    open(jar).map(|sealed| sealed.session)
+    load_in(jar).map(|(session, _)| session)
+}
+
+/// [`load`] and the realm that issued the session ([`store_in`]).
+pub fn load_in(jar: &PrivateCookieJar) -> Option<(Session, Option<String>)> {
+    open(jar).map(|sealed| (sealed.session, sealed.realm))
 }
 
 fn open(jar: &PrivateCookieJar) -> Option<Sealed> {
     let cookie = jar.get(SESSION_COOKIE)?;
     let mut sealed: Sealed = serde_json::from_str(cookie.value()).ok()?;
     if sealed.organization != crate::organization_host::organization() {
+        return None;
+    }
+    // An Organization realm's session belongs on that Organization's host alone.
+    if sealed.realm.is_some() && sealed.realm != sealed.organization {
         return None;
     }
     sealed.session.refresh_token = jar
@@ -405,8 +437,22 @@ impl FromRequestParts<AppState> for CurrentUser {
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .ok_or(ApiError::Unauthorized)?;
-            let verifier = state.bearer.as_ref().ok_or(ApiError::Unauthorized)?;
-            let (mut session, client) = verifier.verify_with_client(token).await?;
+            // On an Organization's host with a realm of its own, a token of that realm is checked
+            // there (T-7133); any other token, there and everywhere else, against the
+            // installation realm, so another Organization's realm is a foreign issuer.
+            let realm = crate::auth::realms::here(state).filter(|realm| {
+                crate::auth::realms::issuer_of(token).as_deref() == Some(realm.issuer())
+            });
+            let (mut session, client) = match &realm {
+                Some(realm) => realm.bearer.verify_with_client(token).await?,
+                None => {
+                    let verifier = state.bearer.as_ref().ok_or(ApiError::Unauthorized)?;
+                    verifier.verify_with_client(token).await?
+                }
+            };
+            if realm.is_some() {
+                crate::auth::realms::confine(&mut session.identity, &state.config.bootstrap_admins);
+            }
             // The edge's token is the person the APISIX plugin logged in through its own
             // `edge` client: its `azp` names that login, not a workload (PF-46).
             if front == Front::Edge {

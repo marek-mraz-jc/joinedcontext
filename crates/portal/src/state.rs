@@ -36,6 +36,9 @@ pub struct AppState {
     /// Verifies `Authorization: Bearer` tokens against the realm JWKS. `None` without a realm:
     /// every bearer call answers 401. Fail closed.
     pub bearer: Option<Arc<BearerVerifier>>,
+    /// The realm of each Organization that signs in on its own host, by name (`auth::realms`).
+    pub organization_realms:
+        Arc<std::collections::BTreeMap<String, Arc<crate::auth::realms::OrganizationRealm>>>,
     pub mirror: Arc<Mirror>,
     /// `None` when no forge is configured: every write answers 503. A Portal that cannot
     /// open a merge request must not fall back to a local write (CC-03).
@@ -211,6 +214,32 @@ impl AppState {
             .oidc
             .as_ref()
             .map(|o| Arc::new(BearerVerifier::new(&o.issuer, &o.client_id)));
+        let organization_realms = Arc::new(
+            config
+                .oidc
+                .as_ref()
+                .map(|installation| {
+                    config
+                        .organization_realms
+                        .iter()
+                        .filter_map(|setting| {
+                            let host = config
+                                .organization_hosts
+                                .iter()
+                                .find(|h| h.organization == setting.organization)?;
+                            Some((
+                                setting.organization.clone(),
+                                Arc::new(crate::auth::realms::OrganizationRealm::new(
+                                    setting,
+                                    installation,
+                                    &host.base,
+                                )),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        );
         let draft_events = DraftHub::new();
         let drafts = DraftStore::new(None).with_hub(draft_events.clone());
         let space_usage = Arc::new(
@@ -230,6 +259,7 @@ impl AppState {
         ));
         Self {
             bearer,
+            organization_realms,
             catalogue_http: crate::api::catalogue::CKAN_HTTP.clone(),
             config: Arc::new(config),
             oidc: oidc.map(Arc::new),

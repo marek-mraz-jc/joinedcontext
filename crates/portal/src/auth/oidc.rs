@@ -3,6 +3,7 @@
 //! The portal is a confidential client: the code exchange happens server side and only an
 //! encrypted session cookie reaches the browser. No token is ever written to a log.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Query, State};
@@ -704,11 +705,32 @@ fn safe_redirect(candidate: Option<String>) -> String {
     path
 }
 
-fn oidc(state: &AppState) -> Result<&OidcClient, ApiError> {
+fn oidc(state: &AppState) -> Result<Arc<OidcClient>, ApiError> {
     state
         .oidc
-        .as_deref()
+        .clone()
         .ok_or_else(|| ApiError::Unavailable("no identity provider is configured".into()))
+}
+
+/// The Organization whose own realm a sign-in on this request goes through (`auth::realms`):
+/// the request's, on its host, when it has one; none: the installation realm.
+fn realm_here(state: &AppState) -> Option<String> {
+    crate::auth::realms::here(state).map(|realm| realm.organization.clone())
+}
+
+/// The sign-in client of `realm` (an Organization's, [`realm_here`]), else the installation's.
+pub(crate) async fn realm_client(
+    state: &AppState,
+    realm: Option<&str>,
+) -> Result<Arc<OidcClient>, ApiError> {
+    match realm {
+        None => oidc(state),
+        Some(name) => match state.organization_realms.get(name) {
+            Some(realm) => realm.client().await,
+            // A session of a realm this Portal no longer signs in through is over.
+            None => Err(ApiError::Unauthorized),
+        },
+    }
 }
 
 /// `GET /api/v1/auth/login` — starts the authorization code flow with PKCE.
@@ -735,7 +757,7 @@ pub async fn login(
     Query(query): Query<LoginQuery>,
     jar: PrivateCookieJar,
 ) -> Result<Response, ApiError> {
-    let client = oidc(&state)?;
+    let client = realm_client(&state, realm_here(&state).as_deref()).await?;
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let realm = client.verifying();
     let mut request = realm
@@ -804,7 +826,7 @@ pub const SSO_CHECK_DONE: &str = "/api/v1/auth/sso-check/done";
     )
 )]
 pub async fn sso_check(State(state): State<AppState>) -> Result<Response, ApiError> {
-    let client = oidc(&state)?;
+    let client = realm_client(&state, realm_here(&state).as_deref()).await?;
     let url = client.sso_check_url(&crate::organization_host::public_base(&state.config));
     Ok((
         [(axum::http::header::CACHE_CONTROL, "no-store")],
@@ -858,7 +880,9 @@ pub async fn callback(
     jar: PrivateCookieJar,
     cookies: CookieJar,
 ) -> Result<Response, ApiError> {
-    let client = oidc(&state)?;
+    // The realm of this host, as at login: a flow ends on the host it began on (checked below).
+    let realm = realm_here(&state);
+    let client = realm_client(&state, realm.as_deref()).await?;
 
     if let Some(error) = query.error {
         // The provider's text is echoed only to the login it answers: the state of the flow
@@ -947,7 +971,7 @@ pub async fn callback(
         })?;
 
     let issued_at = session::now_unix();
-    let identity = Identity {
+    let mut identity = Identity {
         client: None,
         subject: claims.subject().to_string(),
         username: claims
@@ -966,10 +990,13 @@ pub async fn callback(
         groups: token_groups(id_token.to_string().as_str()),
         second_factor: second_factor(id_token.to_string().as_str()),
     };
+    if realm.is_some() {
+        crate::auth::realms::confine(&mut identity, &state.config.bootstrap_admins);
+    }
     let session = mint_session(identity, id_token.to_string(), issued_at, &token_response);
-    tracing::info!(subject = %session.identity.subject, "portal login");
+    tracing::info!(subject = %session.identity.subject, realm = realm.as_deref().unwrap_or(""), "portal login");
 
-    let jar = session::store(jar, &session)?;
+    let jar = session::store_in(jar, &session, realm.as_deref())?;
     state.keep_session_claims(&session);
     state.keep_access_token(&session, token_response.access_token().secret().clone());
     let (cookies, _token) = csrf::issue(cookies);
@@ -1122,7 +1149,7 @@ pub async fn logout(
     // All three cookies go, whether or not a session was loadable: behind the edge this is
     // the first half of a single logout, and the edge's own `/logout` clears none of them
     // (ADR-N-019, AP-29).
-    let session = session::load(&jar);
+    let (session, realm) = session::load_in(&jar).map_or((None, None), |(s, r)| (Some(s), r));
     // Clearing the cookies tells *this* browser to forget the session; a copy taken off the
     // wire or out of a backup would otherwise keep working until the cookie's own expiry,
     // because a portal session is an encrypted cookie and nothing server-side (T-1678, PF-46).
@@ -1139,8 +1166,10 @@ pub async fn logout(
     let jar = session::clear(jar);
     let cookies = cookies.add(csrf::removal());
 
-    let target = state
-        .oidc
+    // The realm that issued the session ends it there; a realm that does not answer leaves the
+    // person at home, signed out of the Portal.
+    let client = realm_client(&state, realm.as_deref()).await.ok();
+    let target = client
         .as_deref()
         .and_then(|client| client.end_session_endpoint.clone())
         .map(|mut url| {
@@ -1230,7 +1259,17 @@ pub async fn backchannel_logout(
     State(state): State<AppState>,
     Form(form): Form<BackChannelLogoutForm>,
 ) -> Result<Response, ApiError> {
-    let client = oidc(&state)?;
+    // An Organization's realm ends its own sessions (T-7133): the token's `iss` picks the realm,
+    // whose keys and issuer then verify it.
+    let issuer = crate::auth::realms::issuer_of(&form.logout_token);
+    let realm = state
+        .organization_realms
+        .values()
+        .find(|realm| issuer.as_deref() == Some(realm.issuer()));
+    let client = match realm {
+        Some(realm) => realm.client().await?,
+        None => oidc(&state)?,
+    };
     if !ends_a_session(&form.logout_token) {
         return Err(ApiError::BadRequest(
             "the token carries no back-channel logout event, or carries a nonce".into(),
