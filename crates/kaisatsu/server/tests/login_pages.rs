@@ -339,7 +339,9 @@ async fn two_sign_ins_in_one_browser_both_finish() {
     let second = start_in(&app, "", Some(&first.cookie)).await;
     assert_ne!(first.session, second.session);
     assert!(
-        second.cookie.contains(&first.cookie["__Host-wk_auth=".len()..]),
+        second
+            .cookie
+            .contains(&first.cookie["__Host-wk_auth=".len()..]),
         "the second start keeps the first tab's handle"
     );
     let jar = second.cookie.clone();

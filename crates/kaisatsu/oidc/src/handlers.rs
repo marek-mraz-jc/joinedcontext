@@ -719,11 +719,9 @@ pub fn auth_cookie_handles(headers: &HeaderMap) -> Vec<String> {
 /// K1: whether this browser holds the auth session whose handle hashes to `handle_hash`. Every
 /// presented handle is compared in constant time, with no early exit.
 pub fn auth_cookie_holds(headers: &HeaderMap, handle_hash: &str) -> bool {
-    auth_cookie_handles(headers)
-        .iter()
-        .fold(false, |held, h| {
-            held | constant_time_str_eq(&sha256_hex(h), handle_hash)
-        })
+    auth_cookie_handles(headers).iter().fold(false, |held, h| {
+        held | constant_time_str_eq(&sha256_hex(h), handle_hash)
+    })
 }
 
 /// The `Set-Cookie` that adds `handle` to this browser's auth cookie, newest first, keeping at
@@ -4185,5 +4183,41 @@ mod replay_marker_tests {
         assert!(soon >= now + Duration::minutes(10) - Duration::seconds(1));
         let without = replay_marker_until(&json!({}), Duration::hours(1));
         assert!(without >= now + Duration::hours(1) - Duration::seconds(1));
+    }
+}
+
+#[cfg(test)]
+mod auth_cookie_tests {
+    use super::*;
+
+    fn jar(set_cookie: &str) -> HeaderMap {
+        let pair = set_cookie.split(';').next().unwrap_or_default();
+        let mut h = HeaderMap::new();
+        h.insert(header::COOKIE, pair.parse().expect("cookie header"));
+        h
+    }
+
+    /// T-7147: the set stays host-only, HttpOnly, Secure, SameSite=Lax, bounded, newest first,
+    /// and a value that is no handle is dropped, never hashed.
+    #[test]
+    fn auth_cookie_set_is_bounded_and_keeps_its_flags() {
+        let first = random_handle_256();
+        let mut set = add_auth_cookie(&HeaderMap::new(), &first, 900);
+        assert!(
+            set.ends_with("; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=1800"),
+            "{set}"
+        );
+        assert!(set.starts_with("__Host-wk_auth=") && !set.contains("Domain"));
+        for _ in 0..AUTH_COOKIE_HANDLES {
+            set = add_auth_cookie(&jar(&set), &random_handle_256(), 1800);
+        }
+        let handles = auth_cookie_handles(&jar(&set));
+        assert_eq!(handles.len(), AUTH_COOKIE_HANDLES);
+        assert!(!auth_cookie_holds(&jar(&set), &sha256_hex(&first)));
+        assert!(auth_cookie_holds(&jar(&set), &sha256_hex(&handles[0])));
+
+        let planted = jar(&format!("__Host-wk_auth=x.{}..{first}", "a".repeat(44)));
+        assert_eq!(auth_cookie_handles(&planted), vec![first.clone()]);
+        assert!(!auth_cookie_holds(&HeaderMap::new(), &sha256_hex(&first)));
     }
 }
