@@ -1139,7 +1139,7 @@ pub struct FileConfig {
     pub organizations: Vec<OrganizationSection>,
     #[serde(default)]
     pub hosts: Vec<HostSection>,
-    /// The installation's sign-in host (T-6991 §5); `login.{base_host}` when unset.
+    /// The installation's sign-in host (T-6991 §5); `idm.{base_host}` when unset (T-7001).
     pub login_host: Option<String>,
 }
 
