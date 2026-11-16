@@ -58,7 +58,7 @@ export function AdminGrid<T>({
       searchRows: t("dataGrid.searchRows"),
       searchRowsHint: t("dataGrid.searchRowsHint"),
       noMatch: t("dataGrid.noMatch"),
-      rowCount: t("dataGrid.rowCount", { n: "{n}" }),
+      rowCount: (n: number) => t("dataGrid.rowCount", { n }),
     }),
     [t],
   );

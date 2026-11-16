@@ -28,8 +28,8 @@ export interface DataGridLabels extends GridLabels {
   searchRows: string;
   searchRowsHint: string;
   noMatch: string;
-  /** "{n} rows", the size of the whole list the query keeps. */
-  rowCount: string;
+  /** The size of the whole list the query keeps: "{n} rows", or a function that picks the plural form. */
+  rowCount: string | ((n: number) => string);
 }
 
 export const DEFAULT_DATA_LABELS: DataGridLabels = {
@@ -39,6 +39,10 @@ export const DEFAULT_DATA_LABELS: DataGridLabels = {
   noMatch: "No rows match the search or the filters.",
   rowCount: "{n} rows",
 };
+
+function rowCountOf(labels: DataGridLabels, n: number): string {
+  return typeof labels.rowCount === "function" ? labels.rowCount(n) : labels.rowCount.replace("{n}", String(n));
+}
 
 /** What a person arranged, kept per `storageKey` in this browser: never data, only the view. */
 interface DataLayout {
@@ -355,7 +359,7 @@ export function DataGrid<T>({
         // One fixed page size and one page: nothing to step or choose (a list the server pages brings its own pager);
         // a short local list shows only its count.
         <div className="jc-grid-pager">
-          <span className="jc-grid-total" role="status">{labels.rowCount.replace("{n}", String(page.total))}</span>
+          <span className="jc-grid-total" role="status">{rowCountOf(labels, page.total)}</span>
         </div>
       ) : (
         <div className="jc-grid-pager">
@@ -379,7 +383,7 @@ export function DataGrid<T>({
               )}
             </span>
           )}
-          <span className="jc-grid-total" role="status">{labels.rowCount.replace("{n}", String(page.total))}</span>
+          <span className="jc-grid-total" role="status">{rowCountOf(labels, page.total)}</span>
           <button type="button" className="jc-grid-pager-step" disabled={current >= pages} onClick={() => setQuery({ ...query, offset: current * query.pageSize })}>
             <span className="jc-grid-pager-word">{labels.next}</span> <span aria-hidden="true">›</span>
           </button>

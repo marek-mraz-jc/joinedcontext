@@ -246,7 +246,7 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
       searchRows: t("dataGrid.searchRows"),
       searchRowsHint: t("dataGrid.searchRowsHint"),
       noMatch: t("dataGrid.noMatch"),
-      rowCount: t("dataGrid.rowCount", { n: "{n}" }),
+      rowCount: (n: number) => t("dataGrid.rowCount", { n }),
       loading: t("app.loading"),
     }),
     [t],

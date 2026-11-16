@@ -13026,7 +13026,7 @@
     "searchRows": "Liste durchsuchen",
     "searchRowsHint": "Geben Sie einen Teil eines Werts ein, z. B. einen Namen oder einen Bereich.",
     "noMatch": "Keine Zeile passt zur Suche oder zu den Filtern.",
-    "rowCount": "{n} Zeilen"
+    "rowCount": "{n, plural, one {# Zeile} other {# Zeilen}}"
   },
   "portals": {
     "nav": {
