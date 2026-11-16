@@ -7701,6 +7701,7 @@
     "compareAction": "Vergleichen",
     "discard": "Verwerfen",
     "discardConfirm": "Die Kopie {name} verwerfen? Ihr Inhalt geht mit; das Projekt bleibt unberührt.",
+    "discardWaiting": "Über die wartende Änderung entscheiden",
     "empty": "Keine Kopien. Starten Sie eine, um mehrere Ressourcen gemeinsam zu ändern.",
     "open": {
       "action": "An einer Kopie arbeiten",

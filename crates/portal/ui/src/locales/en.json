@@ -7701,6 +7701,7 @@
     "compareAction": "Compare",
     "discard": "Discard",
     "discardConfirm": "Discard the copy {name}? What it holds goes with it; the project is not touched.",
+    "discardWaiting": "Decide the change waiting for approval",
     "empty": "No copies. Start one to change several resources and bring them back together.",
     "open": {
       "action": "Work on a copy",

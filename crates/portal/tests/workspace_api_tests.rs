@@ -308,6 +308,11 @@ async fn the_workspaces_set_answers_scope_and_changes_as_the_rest_doors() {
     assert_eq!(plain["value"][0]["name"], "air-v2");
     assert!(plain["value"][0].get("scope").is_none(), "{plain}");
     assert!(plain["value"][0].get("changes").is_none(), "{plain}");
+    // The detail does not move the ETag a write's If-Match sends.
+    assert_eq!(
+        body(&keyed.text)["@odata.etag"],
+        plain["value"][0]["@odata.etag"]
+    );
 }
 
 #[tokio::test]

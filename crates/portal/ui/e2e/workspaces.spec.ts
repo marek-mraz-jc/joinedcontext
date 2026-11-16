@@ -152,6 +152,10 @@ for (const width of [1440, 400]) {
     const dialog = page.getByRole("alertdialog");
     await dialog.getByRole("button", { name: "Discard" }).click();
     await expect(dialog.getByRole("alert")).toContainText("decide it first");
+    await expect(dialog.getByRole("link", { name: "Decide the change waiting for approval" })).toHaveAttribute(
+      "href",
+      `/projects/${PROJECT}/approvals`,
+    );
     await expect(dialog).toBeVisible();
     expect(await axeViolations(page)).toEqual([]);
     if (shots) await page.screenshot({ path: `${shots}/workspaces-discard-refused-${width}.png`, fullPage: false });

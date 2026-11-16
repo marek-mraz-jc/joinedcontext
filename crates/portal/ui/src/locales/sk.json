@@ -7701,6 +7701,7 @@
     "compareAction": "Porovnať",
     "discard": "Zahodiť",
     "discardConfirm": "Zahodiť kópiu {name}? Jej obsah zanikne; projekt ostane nedotknutý.",
+    "discardWaiting": "Rozhodnite o zmene, ktorá čaká na schválenie",
     "empty": "Žiadne kópie. Začnite jednu, ak chcete zmeniť viac zdrojov naraz.",
     "open": {
       "action": "Pracovať na kópii",

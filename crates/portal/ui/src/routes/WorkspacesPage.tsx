@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ManifestGrid } from "../components/grid/ManifestGrid";
-import { queryKeys } from "../api/client";
+import { ApiError, queryKeys } from "../api/client";
 import { act, listWorkspaces, projectBound } from "../api/odata";
 import { useAuth } from "../auth/AuthProvider";
 import { WorkOnCopyAction } from "../components/WorkOnCopyDialog";
@@ -91,6 +91,12 @@ export function WorkspacesPage({
       {discard.error ? (
         <Alert tone="danger" role="alert">
           {discard.error.message}
+          {/* 409: a Change of the copy waits; the way on is to decide it, then discard again. */}
+          {discard.error instanceof ApiError && discard.error.status === 409 ? (
+            <Link to="/projects/$project/approvals" params={{ project }} className="mt-2 block underline">
+              {t("workspaces.discardWaiting")}
+            </Link>
+          ) : null}
         </Alert>
       ) : null}
     </ConfirmDialog>
