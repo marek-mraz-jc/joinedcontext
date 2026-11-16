@@ -34,8 +34,9 @@ pub enum Bound {
 pub enum Who {
     /// Any person.
     Person,
-    /// Any person, on any Organization they reach: their own notifications and preferences,
-    /// and alerts, which belong to no Organization.
+    /// Any person, on any Organization they reach: what belongs to no Organization, their own
+    /// notifications, preferences and alerts, and the installation's App and chart templates
+    /// (T-7130).
     Own,
     /// A holder of `Person` with this verb at the Organization (a people administrator).
     People(jc_core::kinds::Verb),
@@ -282,7 +283,7 @@ pub static DOORS: [Door; 161] = [
             ("color", Place::Query("Edm.String")),
             ("facet", Place::Query("Edm.String")),
         ],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_opendata_pages",
@@ -976,7 +977,7 @@ pub static DOORS: [Door; 161] = [
         Method::GET,
         "/app-templates",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_access_request_incoming",

@@ -791,11 +791,19 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
     .await;
     assert_eq!(odata.status, rest.status, "{} / {}", odata.text, rest.text);
     // A person of another Organization (ba) reads their own notifications and preferences on
-    // the Organization they reach, as the shell asks on every page (T-6812, viewer smoke 404).
+    // the Organization they reach, as the shell asks on every page (T-6812, viewer smoke 404),
+    // and the installation's App and chart templates every signed-in person reads (T-7130,
+    // viewer smoke 404 on the Apps page).
     let metadata = get(&state, Mode::Shared, "ba-only", "/api/v1/$metadata").await;
-    for (name, rest_uri) in [
-        ("portal_notification_list", "/api/v1/notifications"),
-        ("portal_preferences_get", "/api/v1/preferences"),
+    for (name, call, rest_uri) in [
+        ("portal_notification_list", "()", "/api/v1/notifications"),
+        ("portal_preferences_get", "()", "/api/v1/preferences"),
+        ("portal_app_templates", "()", "/api/v1/app-templates"),
+        (
+            "portal_visualization_template",
+            "(template='bar',x='day',y='pm10')",
+            "/api/v1/visualization-templates/bar?x=day&y=pm10",
+        ),
     ] {
         assert!(
             metadata
@@ -809,7 +817,7 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
             &state,
             Mode::Shared,
             "ba-only",
-            &format!("/api/v1/Organization/JoinedContext.Portal.{name}()"),
+            &format!("/api/v1/Organization/JoinedContext.Portal.{name}{call}"),
         )
         .await;
         assert_ne!(
