@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
-import { api, unwrap } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import { isSeq, parseDocument } from "yaml";
 import { edit, parseModel } from "./linkml";
 import type { Artifacts } from "./LinkmlPreviewPanel";
@@ -194,11 +194,7 @@ export function SmartDataModelsImport({
     queryKey: ["tools", "sdm-catalog", refreshes],
     retry: false,
     queryFn: async (): Promise<Catalogue> =>
-      unwrap(
-        await api.GET("/api/v1/tools/sdm-catalog", {
-          params: { query: refreshes > 0 ? { refresh: true } : {} },
-        }),
-      ) as Catalogue,
+      (await door("portal_model_catalogue", refreshes > 0 ? { refresh: true } : {})) as Catalogue,
   });
 
   const preview = useQuery({
@@ -207,9 +203,7 @@ export function SmartDataModelsImport({
     retry: false,
     staleTime: Infinity,
     queryFn: async (): Promise<Artifacts> =>
-      unwrap(
-        await api.POST("/api/v1/tools/import-sdm", { body: { model: selected?.id ?? "" } }),
-      ) as Artifacts,
+      (await doorAction("portal_model_import", { body: { model: selected?.id ?? "" } })) as Artifacts,
   });
 
   const subjects = useMemo(() => catalogue.data?.subjects ?? [], [catalogue.data]);

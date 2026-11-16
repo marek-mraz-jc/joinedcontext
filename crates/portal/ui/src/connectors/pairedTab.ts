@@ -9,7 +9,7 @@
  * an action only opens a page, fills a form or points at a field. Nothing submits. A `refresh`
  * says only that the connector's client made a call: the open page reads its data again (T-6501).
  */
-import { api, unwrap } from "../api/client";
+import { doorAction, type RestAnswer } from "../api/odata";
 import { handPrefill, isPortalRoute } from "../assistant/state";
 import { runUiAction, uiActionOf } from "../assistant/uiActions";
 
@@ -172,7 +172,7 @@ export function onPairingChange(listener: () => void): () => void {
 
 /** Pairs this tab with the person's connector; a tab paired before stops hearing it. */
 export async function connectTab(connector: string): Promise<Pairing> {
-  const paired = await unwrap(await api.POST("/api/v1/connectors/{id}/tab", { params: { path: { id: connector } } }));
+  const paired = (await doorAction("portal_connector_tab_pair", { id: connector })) as RestAnswer<"pair_tab">;
   const value = { connector: paired.connector, name: paired.name, tab: paired.tab };
   log = [];
   ended = false;
@@ -184,7 +184,7 @@ export async function connectTab(connector: string): Promise<Pairing> {
 export async function disconnectTab(): Promise<void> {
   const current = pairing();
   if (current) {
-    await unwrap(await api.DELETE("/api/v1/connectors/{id}/tab", { params: { path: { id: current.connector } } }));
+    await doorAction("portal_connector_tab_unpair", { id: current.connector });
   }
   log = [];
   ended = false;

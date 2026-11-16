@@ -1,11 +1,11 @@
 import { RowActions } from "../../components/ui/RowActions";
-import { call } from "../../api/odata";
+import { call, door, type RestAnswer } from "../../api/odata";
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ManifestGrid } from "../../components/grid/ManifestGrid";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
 import { proposeChecked } from "../../api/proposal";
 import { isChange } from "../../api/manifest";
 import type { Change, ResourceProposal } from "../../api/manifest";
@@ -64,11 +64,11 @@ export function CkanPage({ project }: { project: string }): JSX.Element {
     queryKey: ["projects", project, "activity", "catalogue.published"],
     retry: false,
     queryFn: async () => {
-      const page = await unwrap(
-        await api.GET("/api/v1/projects/{project}/activity", {
-          params: { path: { project }, query: { kind: "catalogue.published", limit: 200 } },
-        }),
-      );
+      const page = (await door(
+        "portal_activity_list",
+        { kind: "catalogue.published", limit: 200 },
+        project,
+      )) as RestAnswer<"list_activity">;
       return lastRunByEndpoint(page.items);
     },
   });

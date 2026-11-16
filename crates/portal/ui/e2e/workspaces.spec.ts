@@ -20,6 +20,7 @@ import { manifestAsRest } from "../tests/odata";
 // The pages read the copies from the OData service (T-7116): each stub meets the REST door whose
 // handler answers it, and a glob on a REST path is a predicate on both addresses.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
+
 const rest = (path: string) => (url: URL) => url.pathname === path || manifestAsRest(url)?.rest.pathname === path;
 
 const API = "joinedcontext.com/v1alpha1";

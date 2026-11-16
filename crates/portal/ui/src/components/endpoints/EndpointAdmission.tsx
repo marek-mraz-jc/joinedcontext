@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { Alert } from "../ui/Alert";
 
 /** Where the Endpoint page holds the person's own ask for a read (EP-55). */
@@ -21,11 +21,7 @@ export function useEndpointAdmission(project: string, name: string | undefined) 
     // One person's standing never outlives their page (R17).
     gcTime: 0,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/endpoints/{name}/admission", {
-          params: { path: { project, name: name ?? "" } },
-        }),
-      ),
+      (await door("portal_endpoint_admission", { endpoint: name ?? "" }, project)) as RestAnswer<"endpoint_admission">,
   });
 }
 

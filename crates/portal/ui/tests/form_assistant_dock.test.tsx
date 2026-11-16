@@ -268,7 +268,15 @@ describe("the dock meets the UI contract", () => {
         refusal: REFUSAL,
         answer: (url) => reads(url),
         open: async (user) => {
-          await user.click(await screen.findByRole("button", { name: en.assistant.open }));
+          // A rule that proposed leaves the dock open on its next mount, as a started run does.
+          await waitFor(() =>
+            expect(
+              screen.queryByRole("button", { name: en.assistant.open }) ??
+                screen.queryByLabelText(en.assistant.empty.composer),
+            ).not.toBeNull(),
+          );
+          const closed = screen.queryByRole("button", { name: en.assistant.open });
+          if (closed) await user.click(closed);
           await screen.findByLabelText(en.assistant.empty.composer);
         },
       },

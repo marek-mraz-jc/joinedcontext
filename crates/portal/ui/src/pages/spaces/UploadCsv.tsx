@@ -7,7 +7,7 @@
 import { useEffect, useEffectEvent, useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import { callOperation } from "../../api/operations";
 import type { Change } from "../../api/manifest";
 import { ResourceNamePicker } from "../../components/pickers/ResourceNamePicker";
@@ -52,7 +52,7 @@ function draftedSource(out: Completed): string | undefined {
 
 /** A Smart Data Models type as LinkML, the model a chosen match proposes. */
 async function sdmLinkml(model: string): Promise<string | undefined> {
-  return ((await unwrap(await api.POST("/api/v1/tools/import-sdm", { body: { model } }))) as { linkml?: string }).linkml;
+  return ((await doorAction("portal_model_import", { body: { model } })) as { linkml?: string }).linkml;
 }
 
 /** What the page does with the file, before one is chosen (T-6567). */
@@ -105,9 +105,7 @@ export function UploadCsv({ project, space: given = "" }: { project: string; spa
       // The catalogue is a help, not a gate: unreachable, the file still gets its own model.
       let models: CatalogueModel[] = [];
       try {
-        const catalogue = await unwrap(
-          await api.GET("/api/v1/tools/sdm-catalog", { params: { query: { subject: CITY_SUBJECTS.join(",") } } }),
-        );
+        const catalogue = await door("portal_model_catalogue", { subject: CITY_SUBJECTS.join(",") });
         models = modelsOf(catalogue as Parameters<typeof modelsOf>[0]);
       } catch {
         models = [];

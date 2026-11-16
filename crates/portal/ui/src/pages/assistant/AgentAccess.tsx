@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { api, ApiError, unwrap, reasonOf } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { proposeChecked } from "../../api/proposal";
 import { isChange, ORG_NAMESPACE } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
@@ -32,12 +33,7 @@ export function AgentAccess({ project }: { project: string }): JSX.Element {
   const { t } = useTranslation();
   const access = useQuery({
     queryKey: ["projects", project, "assistant", "access"],
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/assistant/access", {
-          params: { path: { project } },
-        }),
-      ),
+    queryFn: async () => (await door("portal_assistant_access", {}, project)) as RestAnswer<"get_access">,
   });
 
   return (

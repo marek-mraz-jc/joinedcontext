@@ -1,4 +1,5 @@
 import { api, unwrap } from "./client";
+import { door, type RestAnswer } from "./odata";
 import type { components } from "./schema";
 
 /**
@@ -32,14 +33,9 @@ export function endpointUsageQuery(project: string, name: string, days: UsageWin
   return {
     queryKey: ["endpoint-usage", project, name, days] as const,
     staleTime: FIVE_MINUTES,
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<EndpointUsage> =>
+    queryFn: async (): Promise<EndpointUsage> =>
       checked<EndpointUsage>(
-        await unwrap(
-          await api.GET("/api/v1/projects/{project}/endpoints/{name}/usage", {
-            params: { path: { project, name }, query: { days } },
-            signal,
-          }),
-        ),
+        (await door("portal_endpoint_usage", { endpoint: name, days }, project)) as RestAnswer<"get_endpoint_usage">,
         "days",
       ),
   };
@@ -49,14 +45,9 @@ export function projectUsageQuery(project: string, days: UsageWindow) {
   return {
     queryKey: ["project-usage", project, days] as const,
     staleTime: FIVE_MINUTES,
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<ProjectUsage> =>
+    queryFn: async (): Promise<ProjectUsage> =>
       checked<ProjectUsage>(
-        await unwrap(
-          await api.GET("/api/v1/projects/{project}/usage/endpoints", {
-            params: { path: { project }, query: { days } },
-            signal,
-          }),
-        ),
+        (await door("portal_project_usage", { days }, project)) as RestAnswer<"list_project_usage">,
         "endpoints",
       ),
   };
