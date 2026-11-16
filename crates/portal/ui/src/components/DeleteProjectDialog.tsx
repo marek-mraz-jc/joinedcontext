@@ -2,7 +2,8 @@ import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../api/client";
+import { ApiError, queryKeys } from "../api/client";
+import { doorAction, type RestAnswer } from "../api/odata";
 import { projectDetailQuery, useProjectOrganization } from "../api/projects";
 import type { Change } from "../api/manifest";
 import { ChangeNotice } from "./ChangeNotice";
@@ -33,7 +34,7 @@ function useCascade(project: string, enabled: boolean) {
 
 /**
  * Deleting a project (PF-77, PF-78, T-2605, T-2606): what goes with it listed first, the name
- * typed back, then one `DELETE /api/v1/projects/{project}` that opens the red-lane change an
+ * typed back, then one `portal_project_delete` that opens the red-lane change an
  * administrator approves. Nothing is removed here, and it is never one click.
  */
 export function DeleteProjectDialog({
@@ -54,7 +55,7 @@ export function DeleteProjectDialog({
 
   const remove = useMutation({
     mutationFn: async () =>
-      unwrap(await api.DELETE("/api/v1/projects/{project}", { params: { path: { project } } })),
+      (await doorAction("portal_project_delete", {}, project)) as RestAnswer<"delete_project">,
     onSuccess: (result) => {
       setChange(result);
       void queryClient.invalidateQueries({ queryKey: queryKeys.changes(project) });

@@ -14,6 +14,7 @@ import sk from "../src/locales/sk.json";
 import type { components } from "../src/api/schema";
 import { CHECKS as CHECK_NAMES, LABEL, SAID } from "../src/pages/health/HealthLog";
 import { expectAxeClean, jsonResponse, problem, renderRoute } from "./pageHarness";
+import { asOData, readingAsRest } from "./odata";
 
 /** Every server kind once: a kind added to the API without a key here is a type error. */
 const KINDS = Object.keys({ pipeline: 1, space: 1, endpoint: 1, model: 1, datasource: 1 } satisfies Record<components["schemas"]["HealthCheckKind"], 1>) as components["schemas"]["HealthCheckKind"][];
@@ -132,15 +133,17 @@ describe("the health log", () => {
   it("shows_the_server_s_refusal_in_words", async () => {
     const said = "project 'bbsk' not found";
     await renderRoute({ path: "/projects/bbsk/health", answer: answering(() => problem(404, said)) });
-    expect(await screen.findByRole("alert")).toHaveTextContent(said);
+    // The usage section beside the log may say its own alert first: the log's is the one with the refusal.
+    expect((await screen.findByText(said)).closest('[role="alert"]')).not.toBeNull();
   });
 
   it("gives_the_administrator_every_project_with_a_project_column", async () => {
     const { calls } = await renderRoute({
       path: "/organization/health",
-      answer: (path: string) =>
-        path.endsWith("/organization/health-checks")
-          ? jsonResponse({ items: [CHECKS[0], { ...CHECKS[1], project: "helsinki" }] })
+      // The Organization's health log is its `healthChecks` reading, whose handler is the REST door's (T-7167).
+      answer: (path: string, request: Request) =>
+        readingAsRest(request.url)?.pathname === "/api/v1/organization/health-checks"
+          ? asOData(jsonResponse({ items: [CHECKS[0], { ...CHECKS[1], project: "helsinki" }] }))
           : path.endsWith("/organization/health")
             ? jsonResponse({ checks: [] })
             : undefined,
@@ -148,7 +151,7 @@ describe("the health log", () => {
     await screen.findByRole("columnheader", { name: (name) => name.startsWith(en.health.found) });
     const table = screen.getByRole("table", { name: en.health.caption });
     expect(within(table).getByText(`${en.health.project}: helsinki`)).toBeInTheDocument();
-    expect(calls()).toContain("GET /api/v1/organization/health-checks");
+    expect(calls().some((call) => call.includes("jc_organization_read"))).toBe(true);
   });
 
   it("names_every_kind_check_and_status_in_every_locale", () => {

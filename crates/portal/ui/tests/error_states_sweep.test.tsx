@@ -110,7 +110,8 @@ describe("an object page or organization tab whose API fails", () => {
       await renderRoute({
         path,
         answer: (asked) =>
-          (asked.startsWith("/api/v1/projects") || asked.startsWith("/api/v1/organization")) &&
+          // The Organization's readings and doors are the service's, bound to `Organization` (T-7167).
+          (asked.startsWith("/api/v1/projects") || asked.toLowerCase().startsWith("/api/v1/organization")) &&
           !asked.endsWith("/permissions/me")
             ? problem(503, FAILURE)
             : undefined,

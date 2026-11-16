@@ -1,7 +1,7 @@
 /**
  * Release on the project's General settings (PF-86, CC-88, T-3432): what the registry entry runs
  * and its values, and "Pin a release", which offers the repository's tags and the declared
- * parameters and proposes one `PUT …/registry`. A person who may not propose is told why.
+ * parameters and proposes one `portal_project_repoint` (the REST `PUT …/registry`). A person who may not propose is told why.
  */
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -12,6 +12,7 @@ import i18n from "../src/i18n";
 import { App } from "../src/App";
 import { ProjectRelease } from "../src/components/ProjectRelease";
 import { expectDenied, expectNoViolations, expectOpen } from "./checks";
+import { doorsAsRest } from "./odata";
 
 const IDENTITY = { subject: "b7c1e0f4", username: "jana.kovacova", name: "Jana Kováčová", roles: [] };
 const list = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
@@ -75,6 +76,7 @@ function renderAt(verbs: string[], answer: (body: unknown) => Response) {
     return json(list([]));
   });
   vi.stubGlobal("fetch", fetchMock);
+  doorsAsRest();
   window.history.pushState({}, "", "/projects/ovzdusie/settings/general");
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -169,6 +171,7 @@ describe("Release on the project's settings", () => {
         return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
       }),
     );
+    doorsAsRest();
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <I18nextProvider i18n={i18n}>

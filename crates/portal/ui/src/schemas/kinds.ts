@@ -3195,7 +3195,7 @@ export const APP_SERVICES_UI = { "ui:widget": "checkboxes" } as const;
  * PF-73, PF-78), field for field jc-core's `OrganizationSpec`. `gitRepositoryUrl` is the
  * installation's and not offered; the form keeps it from the stored manifest.
  */
-/** A Dashboard a home page may show, as `GET /api/v1/organization/widgets/options` offers it. */
+/** A Dashboard a home page may show, as the Organization reading `widgetOptions` offers it. */
 export interface WidgetOption {
   reference: string;
   label: string;

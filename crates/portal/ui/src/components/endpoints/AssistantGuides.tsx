@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { organizationReading } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { ExternalLink } from "../ui";
 
@@ -47,7 +47,7 @@ export function guideUrl(opendata: string, id: GuideId): string | undefined {
 export function useOpendataHost(): string | undefined {
   const addresses = useQuery({
     queryKey: ["organizationAddresses"],
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/addresses")),
+    queryFn: () => organizationReading("addresses"),
     retry: false,
     staleTime: 5 * 60_000,
   });

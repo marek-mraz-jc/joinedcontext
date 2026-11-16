@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, unwrap } from "../../api/client";
+import { door } from "../../api/odata";
 import type { components } from "../../api/schema";
 
 export type OrganizationModel = components["schemas"]["OrganizationModel"];
@@ -14,11 +14,7 @@ export function organizationModelsQuery(search: string) {
   return {
     queryKey: organizationModelsKey(search),
     queryFn: async (): Promise<OrganizationModels> =>
-      unwrap(
-        await api.GET("/api/v1/organization/datamodels", {
-          params: { query: search === "" ? {} : { search } },
-        }),
-      ),
+      (await door("portal_organization_model_list", search === "" ? {} : { search })) as OrganizationModels,
     staleTime: 30_000,
   };
 }
