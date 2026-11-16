@@ -1,9 +1,9 @@
-import { listManifests } from "../../api/odata";
+import { doorAction, listManifests } from "../../api/odata";
 import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { asManifests, isChange, localized } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
 import { ChangeNotice } from "../../components/ChangeNotice";
@@ -38,11 +38,10 @@ export function UseTemplate({ project, template }: { project: string; template: 
   const choices = asManifests(endpoints.data?.items ?? []);
   const create = useMutation({
     mutationFn: async (): Promise<Change | null> => {
-      const answered: unknown = await unwrap(
-        await api.POST("/api/v1/projects/{project}/app-templates/{name}/apps", {
-          params: { path: { project, name: template.name } },
-          body: { name: name.trim(), endpointName },
-        }),
+      const answered = await doorAction(
+        "portal_app_from_template",
+        { name: template.name, body: { name: name.trim(), endpointName } },
+        project,
       );
       return isChange(answered) ? answered : null;
     },
