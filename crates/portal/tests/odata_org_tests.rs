@@ -2139,6 +2139,7 @@ fn door_sample(member: &str) -> Value {
         "notification" => json!("1"),
         "template" => json!("bar"),
         "limit" => json!(5),
+        "offset" => json!(0),
         "before" => json!(1),
         "parent" | "document" | "turn" | "panel" => json!(1),
         "from" => json!("now-6h"),

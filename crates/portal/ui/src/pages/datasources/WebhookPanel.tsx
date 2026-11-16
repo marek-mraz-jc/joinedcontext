@@ -1,8 +1,10 @@
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
+import { door, doorAction } from "../../api/odata";
+import type { RestAnswer } from "../../api/odata";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
 import { Alert, Button, Card, CodeBlock, Field, Select, Textarea } from "../../components/ui";
 
 const failureOf = (error: unknown, fallback: string): string | null =>
@@ -26,8 +28,14 @@ function Address({ pipeline, url }: { pipeline: string; url: string }): JSX.Elem
     <li className="flex min-w-0 flex-col gap-1">
       <span className="text-caption font-medium text-fg">{pipeline}</span>
       <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row">
-        <CodeBlock ref={block} label={pipeline} className="w-full min-w-0 flex-1 whitespace-pre-wrap break-all rounded border border-border bg-surface-subtle px-2 py-1 font-mono text-caption">
-          {url}
+        <CodeBlock ref={block} label={pipeline} className="w-full min-w-0 flex-1 whitespace-pre-wrap break-normal rounded border border-border bg-surface-subtle px-2 py-1 font-mono text-caption [overflow-wrap:anywhere]">
+          {/* A phone breaks the address after a slash, never inside a name (T-7117 judge). */}
+          {url.split(/(?<=\/)/).map((part, at) => (
+            <Fragment key={at}>
+              {at > 0 ? <wbr /> : null}
+              {part}
+            </Fragment>
+          ))}
         </CodeBlock>
         <Button type="button" variant="secondary" size="sm" onClick={() => void copy()}>
           {copied ? t("datasources.webhook.copied") : t("datasources.webhook.copy")}
@@ -47,22 +55,13 @@ export function WebhookPanel({ project, name }: { project: string; name: string 
   const info = useQuery({
     queryKey: ["datasource-webhook", project, name],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/datasources/{name}/webhook", {
-          params: { path: { project, name } },
-        }),
-      ),
+      (await door("portal_datasource_webhook", { name }, project)) as RestAnswer<"webhook_info">,
   });
   const [pipeline, setPipeline] = useState("");
   const [body, setBody] = useState("");
   const send = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/datasources/{name}/test-event", {
-          params: { path: { project, name } },
-          body: { pipeline: chosen, body },
-        }),
-      ),
+      (await doorAction("portal_datasource_test_event", { name, body: { pipeline: chosen, body } }, project)) as RestAnswer<"test_event">,
   });
   const data = info.data;
   const addresses = data?.addresses ?? [];

@@ -309,6 +309,18 @@ const OPERATIONS: Record<string, Door> = {
   portal_grafana_builder_get: ["GET", "/projects/{project}/grafana/builder/{uid}"],
   portal_grafana_builder_update: ["PUT", "/projects/{project}/grafana/builder/{uid}"],
   portal_kpi_check: ["POST", "/projects/{project}/kpis/check"],
+  // The publish flow's draft (T-7117): the registry read whose handler is the REST door's.
+  jc_catalogue_draft: ["POST", "/projects/{project}/catalogue/drafts", ["endpoint"]],
+  // A DataSource's connection test, webhook address, test event and paging guess (T-7117).
+  portal_datasource_test: ["POST", "/projects/{project}/datasources/{name}/test"],
+  portal_datasource_webhook: ["GET", "/projects/{project}/datasources/{name}/webhook"],
+  portal_datasource_test_event: ["POST", "/projects/{project}/datasources/{name}/test-event"],
+  portal_datasource_paging: ["POST", "/projects/{project}/datasource-paging"],
+  // An open data portal's harvest sources and datasets (T-7117), bound to the Organization.
+  portal_portal_source_test: ["POST", "/projects/org/portals/{name}/sources/{source}/test"],
+  portal_portal_source_run: ["POST", "/projects/org/portals/{name}/sources/{source}/runs"],
+  portal_portal_source_runs: ["GET", "/projects/org/portals/{name}/sources/{source}/runs"],
+  portal_portal_datasets: ["GET", "/projects/org/portals/{name}/datasets"],
   // A project's copies (T-7116): the registry's workspace operations, run by the REST doors' handlers.
   jc_workspace_open: ["POST", "/projects/{project}/workspaces", ["name", "title", "ttlDays", "scope"]],
   jc_workspace_compare: ["GET", "/projects/{project}/workspaces/{name}/compare"],

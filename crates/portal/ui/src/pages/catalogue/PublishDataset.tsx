@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, unwrap } from "../../api/client";
+import { call, readManifest } from "../../api/odata";
 import { isChange, localized } from "../../api/manifest";
 import type { Change, ResourceProposal } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -108,10 +109,8 @@ function Flow({
     mutationFn: async (name: string): Promise<Drafted> => {
       // Neither read waits for the other: one round trip before the form opens, not two.
       const [draft, { apiVersion, kind, metadata, spec }] = await Promise.all([
-        api
-          .POST("/api/v1/projects/{project}/catalogue/drafts", { params: { path: { project } }, body: { endpoint: name } })
-          .then(unwrap),
-        api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path: { project, plural: "endpoints", name } } }).then(unwrap),
+        call("jc_catalogue_draft", project, { endpoint: name }),
+        readManifest(project, "endpoints", name),
       ]);
       // What the Change carries back is the manifest, never the status the Portal computed.
       const manifest: ResourceProposal = { apiVersion, kind, metadata, spec };

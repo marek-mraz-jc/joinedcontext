@@ -943,6 +943,7 @@ export interface Functions {
   portal_alert_notice_list: Record<string, never>;
   portal_comment_list: { space: string; urn?: string };
   portal_connector_list: Record<string, never>;
+  portal_datasource_webhook: { name: string };
   portal_drift_list: Record<string, never>;
   portal_endpoint_quality: { endpoint: string };
   portal_erasure_get: { space: string; id: string };
@@ -994,6 +995,8 @@ export interface Functions {
   portal_pipeline_samples: { pipeline: string };
   portal_pipeline_source_deletes: { pipeline: string };
   portal_pipeline_stats: { pipeline: string };
+  portal_portal_datasets: { name: string; offset?: number; limit?: number };
+  portal_portal_source_runs: { name: string; source: string };
   portal_preferences_get: Record<string, never>;
   portal_secret_list: Record<string, never>;
   portal_space_quality: { space: string };
@@ -1059,6 +1062,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_alert_notice_list: ["Organization"],
   portal_comment_list: ["Project"],
   portal_connector_list: ["Organization"],
+  portal_datasource_webhook: ["Project"],
   portal_drift_list: ["Project"],
   portal_endpoint_quality: ["Project"],
   portal_erasure_get: ["Project"],
@@ -1110,6 +1114,8 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_pipeline_samples: ["Project"],
   portal_pipeline_source_deletes: ["Project"],
   portal_pipeline_stats: ["Project"],
+  portal_portal_datasets: ["Organization"],
+  portal_portal_source_runs: ["Organization"],
   portal_preferences_get: ["Organization"],
   portal_secret_list: ["Project"],
   portal_space_quality: ["Project"],
@@ -1179,6 +1185,9 @@ export interface Actions {
   portal_comment_add: { space: string; body?: unknown };
   portal_comment_remove: { space: string; id: string };
   portal_connector_revoke: { connector: string };
+  portal_datasource_paging: { body?: unknown };
+  portal_datasource_test: { name: string };
+  portal_datasource_test_event: { name: string; body?: unknown };
   portal_drift_adopt: { space: string; id: string };
   portal_drift_revert: { space: string; id: string };
   portal_erasure_approve: { space: string; id: string; body?: unknown };
@@ -1215,6 +1224,8 @@ export interface Actions {
   portal_pipeline_run_start: { pipeline: string };
   portal_pipeline_source_check: { pipeline: string };
   portal_pipeline_source_decide: { pipeline: string; body?: unknown };
+  portal_portal_source_run: { name: string; source: string };
+  portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
   portal_preferences_set: { body?: unknown };
   portal_secret_set: { body?: unknown };
@@ -1288,6 +1299,9 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_comment_add: ["Project"],
   portal_comment_remove: ["Project"],
   portal_connector_revoke: ["Organization"],
+  portal_datasource_paging: ["Project"],
+  portal_datasource_test: ["Project"],
+  portal_datasource_test_event: ["Project"],
   portal_drift_adopt: ["Project"],
   portal_drift_revert: ["Project"],
   portal_erasure_approve: ["Project"],
@@ -1324,6 +1338,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_pipeline_run_start: ["Project"],
   portal_pipeline_source_check: ["Project"],
   portal_pipeline_source_decide: ["Project"],
+  portal_portal_source_run: ["Organization"],
+  portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],
   portal_preferences_set: ["Organization"],
   portal_secret_set: ["Project"],

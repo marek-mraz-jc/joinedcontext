@@ -6,11 +6,12 @@
  * before anything is proposed. A source the wizard does not walk through (a stream, a server, a
  * database) opens its own form below, which stays there for everything as the advanced way.
  */
+import { doorAction } from "../../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
 import { Button, Checkbox, Field, Input, Select } from "../../components/ui";
 import type { DataSourceType, TypedDataSourceType } from "../../schemas/kinds";
 import { PresetDiscovery } from "./PresetDiscovery";
@@ -73,12 +74,7 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
 
   const guess = useMutation({
     mutationFn: async (asked: string) =>
-      (await unwrap(
-        await api.POST("/api/v1/projects/{project}/datasource-paging", {
-          params: { path: { project } },
-          body: { url: asked },
-        }),
-      )) as PagingGuess,
+      (await doorAction("portal_datasource_paging", { body: { url: asked } }, project)) as PagingGuess,
     onSuccess: (answer) => {
       // The records path the first answer names, unless the person already typed one.
       if (answer.records && records.trim() === "") setRecords(answer.records);
