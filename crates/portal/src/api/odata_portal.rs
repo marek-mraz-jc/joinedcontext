@@ -35,7 +35,7 @@ pub enum Who {
     /// Any person.
     Person,
     /// Any person, on any Organization they reach: their own notifications and preferences,
-    /// which belong to no Organization.
+    /// and alerts, which belong to no Organization.
     Own,
     /// A holder of `Person` with this verb at the Organization (a people administrator).
     People(jc_core::kinds::Verb),
@@ -525,7 +525,7 @@ pub static DOORS: [Door; 57] = [
         Method::GET,
         "/alerts",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_alert_subscribe",
@@ -533,7 +533,7 @@ pub static DOORS: [Door; 57] = [
         Method::PUT,
         "/alerts",
         &[BODY],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_alert_unsubscribe",
@@ -541,7 +541,7 @@ pub static DOORS: [Door; 57] = [
         Method::DELETE,
         "/alerts/{id}",
         &[CHANGE],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_alert_mute",
@@ -549,7 +549,7 @@ pub static DOORS: [Door; 57] = [
         Method::POST,
         "/alerts/{id}/mute",
         &[CHANGE, BODY],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_alert_notice_list",
@@ -557,7 +557,7 @@ pub static DOORS: [Door; 57] = [
         Method::GET,
         "/alerts/notices",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_alert_notice_read",
@@ -565,7 +565,7 @@ pub static DOORS: [Door; 57] = [
         Method::POST,
         "/alerts/notices/{id}/read",
         &[CHANGE],
-        Who::Person,
+        Who::Own,
     ),
 ];
 
