@@ -478,6 +478,10 @@
         "$Nullable": true
       },
       "project": {},
+      "scope": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "title": {
         "$Nullable": true
       }

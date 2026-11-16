@@ -122,6 +122,8 @@ interface Answers {
   jc_serviceaccount_access: Answer<"account_access">;
   jc_syncsource_status: Answer<"status">;
   jc_ckan_status: Answer<"get_status">;
+  jc_workspace_compare: Answer<"compare_workspace">;
+  jc_workspace_preview_get: Answer<"get_workspace_preview">;
 }
 
 /** Each action the UI calls whose answer is its REST door's, and that answer's shape. */
@@ -129,6 +131,11 @@ interface ActionAnswers {
   jc_syncsource_sync: RestAnswer<"sync_now">;
   jc_syncsource_pause: RestAnswer<"pause">;
   jc_datasource_discover: RestAnswer<"discover_datasource">;
+  jc_workspace_open: RestAnswer<"open_workspace">;
+  jc_workspace_update_from_main: RestAnswer<"update_workspace">;
+  jc_workspace_preview_start: RestAnswer<"start_workspace_preview">;
+  /** The Change it opened, under `change`, as every proposing operation answers (mutate.rs). */
+  jc_workspace_propose: { changeId: string; lane: string; url?: string };
 }
 
 /**
@@ -289,6 +296,7 @@ export type ManifestSet = Exclude<
   | "repositories"
   | "revisions"
   | "runs"
+  | "workspaces"
 >;
 
 /**
@@ -345,6 +353,7 @@ const NOT_MANIFESTS: readonly string[] = [
   "repositories",
   "revisions",
   "runs",
+  "workspaces",
 ];
 
 /** Whether `plural` names a set whose rows are manifests, e.g. a kind page's plural. */
@@ -508,6 +517,52 @@ export async function listOrganizations(several = false): Promise<{ items: Manif
 }
 
 
+
+type WorkspaceView = components["schemas"]["WorkspaceView"];
+
+/**
+ * The members of a Workspace row the pages read; `scope` and `changes` are its detail, answered
+ * only when `$select` names them, and a list's `changes` stays null as the REST list's does.
+ */
+const WORKSPACE_MEMBERS = [
+  "name",
+  "title",
+  "project",
+  "owner",
+  "branch",
+  "baseRevision",
+  "scope",
+  "previewState",
+  "createdAt",
+  "expiresAt",
+] as const;
+
+/** Every copy of `project` the caller sees, as the REST door's `GET …/workspaces` lists them. */
+export async function listWorkspaces(project: string): Promise<{ items: WorkspaceView[] }> {
+  // `$select` names `scope`, a member the generated row type leaves out.
+  const query: { select(...members: string[]): { all(): AsyncIterable<unknown> } } = client.under(
+    project,
+    "workspaces",
+  );
+  const items: WorkspaceView[] = [];
+  const rows = query.select(...WORKSPACE_MEMBERS).all();
+  await refusedAs(
+    (async () => {
+      for await (const row of rows) items.push(row as WorkspaceView);
+    })(),
+  );
+  return { items };
+}
+
+/**
+ * The copy `name` of `project` with how many files it changes, as the REST door's
+ * `GET …/workspaces/{name}` answers it.
+ */
+export async function readWorkspace(project: string, name: string): Promise<WorkspaceView> {
+  return (await refusedAs(
+    client.get("workspaces", { project, name }, [...WORKSPACE_MEMBERS, "changes"]),
+  )) as WorkspaceView;
+}
 
 /** The address of manifest `name` of `plural` in `project`, the entity its write actions are bound to. */
 export function manifestBound(project: string, plural: ManifestSet, name: string): string {

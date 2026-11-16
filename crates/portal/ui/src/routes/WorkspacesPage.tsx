@@ -5,7 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ManifestGrid } from "../components/grid/ManifestGrid";
-import { api, queryKeys, unwrap } from "../api/client";
+import { queryKeys } from "../api/client";
+import { act, listWorkspaces, projectBound } from "../api/odata";
 import { useAuth } from "../auth/AuthProvider";
 import { WorkOnCopyAction } from "../components/WorkOnCopyDialog";
 import {
@@ -49,21 +50,11 @@ export function WorkspacesPage({
 
   const list = useQuery({
     queryKey: queryKeys.list(project, "workspaces"),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/workspaces", {
-          params: { path: { project } },
-        }),
-      ),
+    queryFn: () => listWorkspaces(project),
   });
 
   const discard = useMutation({
-    mutationFn: async (name: string) =>
-      unwrap(
-        await api.DELETE("/api/v1/projects/{project}/workspaces/{name}", {
-          params: { path: { project, name } },
-        }),
-      ),
+    mutationFn: (name: string) => act("jc_workspace_discard", projectBound(project), { name }),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.list(project, "workspaces"),

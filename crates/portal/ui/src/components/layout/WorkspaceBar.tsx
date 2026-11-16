@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { ApiError, api, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { readWorkspace } from "../../api/odata";
 import { useAuth } from "../../auth/AuthProvider";
 import { Badge, Button } from "../ui";
 import { useWorkspace } from "./WorkspaceContext";
@@ -24,12 +25,7 @@ export function WorkspaceBar({ project }: { project: string }): React.JSX.Elemen
   const workspace = useQuery({
     queryKey: [...queryKeys.list(project, "workspaces"), name],
     enabled: !!name,
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/workspaces/{name}", {
-          params: { path: { project, name: name! } },
-        }),
-      ),
+    queryFn: () => readWorkspace(project, name!),
     retry: false,
   });
 

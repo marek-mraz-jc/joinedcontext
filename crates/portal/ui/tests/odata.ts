@@ -83,18 +83,18 @@ export function odataError(
  * A REST door's answer as the service gives the same operation's: a success's body under `value`,
  * a problem document as the OData error object carrying its members.
  */
-export async function asOData(rest: Response): Promise<Response> {
-  const answer = await asODataBody(rest);
+export async function asOData(rest: Response, shape?: (body: unknown) => unknown): Promise<Response> {
+  const answer = await asODataBody(rest, shape);
   // The edge's reference of the answer, which a failure page shows (T-2747).
   const id = rest.headers.get("x-request-id");
   if (id) answer.headers.set("x-request-id", id);
   return answer;
 }
 
-async function asODataBody(rest: Response): Promise<Response> {
+async function asODataBody(rest: Response, shape?: (body: unknown) => unknown): Promise<Response> {
   const body: unknown = await rest.json().catch(() => null);
   // A `204` of the REST door is the service's `200` with `null` (API/13 §2b).
-  if (rest.ok) return odataValue(body, rest.status === 204 ? 200 : rest.status);
+  if (rest.ok) return odataValue(shape ? shape(body) : body, rest.status === 204 ? 200 : rest.status);
   // A bare failure stays bare: the service passes on a door's answer that said nothing.
   if (body === null) return new Response(null, { status: rest.status });
   const problem = (body ?? {}) as {
@@ -309,7 +309,34 @@ const OPERATIONS: Record<string, Door> = {
   portal_grafana_builder_get: ["GET", "/projects/{project}/grafana/builder/{uid}"],
   portal_grafana_builder_update: ["PUT", "/projects/{project}/grafana/builder/{uid}"],
   portal_kpi_check: ["POST", "/projects/{project}/kpis/check"],
+  // A project's copies (T-7116): the registry's workspace operations, run by the REST doors' handlers.
+  jc_workspace_open: ["POST", "/projects/{project}/workspaces", ["name", "title", "ttlDays", "scope"]],
+  jc_workspace_compare: ["GET", "/projects/{project}/workspaces/{name}/compare"],
+  jc_workspace_update_from_main: ["POST", "/projects/{project}/workspaces/{name}/update", ["resolutions"]],
+  jc_workspace_propose: ["POST", "/projects/{project}/workspaces/{name}/propose"],
+  jc_workspace_discard: ["DELETE", "/projects/{project}/workspaces/{name}"],
+  jc_workspace_preview_get: ["GET", "/projects/{project}/workspaces/{name}/preview"],
+  jc_workspace_preview_start: ["POST", "/projects/{project}/workspaces/{name}/preview"],
+  jc_workspace_preview_stop: ["DELETE", "/projects/{project}/workspaces/{name}/preview"],
 };
+
+/**
+ * An operation whose answer is not its REST door's, and the service's answer of the door's: a
+ * workspace brought back answers the Change as every proposing operation does (api/mutate.rs
+ * `ProposeOutcome::Change`).
+ */
+const ANSWERS: Record<string, (body: unknown) => unknown> = {
+  jc_workspace_propose: (body) => {
+    const change = body as { metadata?: { name?: string }; status?: { lane?: string; mergeRequest?: string } } | null;
+    return { changeId: change?.metadata?.name, lane: change?.status?.lane, url: change?.status?.mergeRequest, change };
+  },
+};
+
+/** The answer {@link ANSWERS} makes of the REST door's for the operation `request` calls, if any. */
+export function answerShape(request: Request): ((body: unknown) => unknown) | undefined {
+  const name = DOOR.exec(decodeURIComponent(new URL(request.url).pathname))?.[2];
+  return name === undefined ? undefined : ANSWERS[name];
+}
 
 /** Whether `request` calls one of {@link OPERATIONS}. */
 export function callsOperation(request: Request): boolean {
@@ -447,6 +474,8 @@ export async function doorAsRest(
 
 const UNDER = /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/(\w+)$/;
 const ORG_SET = /^\/api\/v1\/(\w+)$/;
+const WORKSPACES =
+  /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)\/workspaces|workspaces\(project='((?:[^']|'')*)',name='((?:[^']|'')*)'\))$/;
 const KEYED =
   /^\/api\/v1\/(\w+)\((?:project='((?:[^']|'')*)',name='((?:[^']|'')*)'|'((?:[^']|'')*)')\)$/;
 
@@ -458,12 +487,20 @@ const KEYED =
  */
 export function manifestAsRest(
   url: string | URL,
-): { rest: URL; one: boolean; organization?: boolean } | undefined {
+): { rest: URL; one: boolean; organization?: boolean; row?: boolean } | undefined {
   const at = new URL(String(url), "http://localhost");
-  if (!(at.searchParams.get("$select") ?? "").split(",").includes("spec"))
-    return undefined;
   const path = decodeURIComponent(at.pathname);
   const unquote = (text: string) => text.replaceAll("''", "'");
+  // A project's copies (api/odata.ts listWorkspaces, readWorkspace): the REST rows are the
+  // service's (workspace_api_tests `the_workspaces_set_answers_scope_and_changes_as_the_rest_doors`).
+  const copies = WORKSPACES.exec(path);
+  if (copies) {
+    const project = encodeURIComponent(unquote(copies[1] ?? copies[2]));
+    const name = copies[3] === undefined ? "" : `/${encodeURIComponent(unquote(copies[3]))}`;
+    return { rest: new URL(`/api/v1/projects/${project}/workspaces${name}`, at.origin), one: name !== "", row: true };
+  }
+  if (!(at.searchParams.get("$select") ?? "").split(",").includes("spec"))
+    return undefined;
   const rest = (project: string, set: string, name?: string): URL => {
     // The `org` namespace's own Roles are the Organization set `organizationRoles`.
     const plural = set === "organizationRoles" ? "roles" : set;
@@ -511,9 +548,16 @@ export async function manifestAnswer(
   rest: Response,
   one: boolean,
   organization = false,
+  row = false,
 ): Promise<Response> {
   if (!rest.ok) return asOData(rest);
   const body = (await rest.json()) as Record<string, unknown>;
+  // A REST row that is the service's row as it is: a list's `items` are the set's `value`.
+  if (row)
+    return new Response(JSON.stringify(one ? body : { value: body.items ?? [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "OData-Version": "4.01" },
+    });
   const items = (body.items ?? []) as Record<string, unknown>[];
   // A list of several is the installation's address, which serves no one Organization's service.
   if (organization && items.length > 1)

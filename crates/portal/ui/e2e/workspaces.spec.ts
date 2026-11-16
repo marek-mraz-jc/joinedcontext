@@ -14,6 +14,13 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+import { manifestAsRest } from "../tests/odata";
+
+// The pages read the copies from the OData service (T-7116): each stub meets the REST door whose
+// handler answers it, and a glob on a REST path is a predicate on both addresses.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
+const rest = (path: string) => (url: URL) => url.pathname === path || manifestAsRest(url)?.rest.pathname === path;
 
 const API = "joinedcontext.com/v1alpha1";
 const PROJECT = "helsinki";
@@ -105,7 +112,7 @@ for (const width of [1440, 400]) {
   test(`the page description stays open under the pointer at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await stubApi(page);
-    await page.route("**/api/v1/projects/helsinki/workspaces", (route) =>
+    await page.route(rest("/api/v1/projects/helsinki/workspaces"), (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: API, kind: "List", items: [WORKSPACE] }) }),
     );
     const shots = process.env.JC_SHOTS_DIR;
@@ -124,10 +131,11 @@ for (const width of [1440, 400]) {
   test(`a refused discard says why in its dialog at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await stubApi(page);
-    await page.route("**/api/v1/projects/helsinki/workspaces", (route) =>
+    await page.route(rest("/api/v1/projects/helsinki/workspaces"), (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: API, kind: "List", items: [WORKSPACE] }) }),
     );
-    await page.route(`**/api/v1/projects/helsinki/workspaces/${COPY}`, (route) =>
+    // Discard is the action jc_workspace_discard, met here as its REST door's DELETE.
+    await page.route("**/JoinedContext.Portal.jc_workspace_discard", (route) =>
       route.request().method() === "DELETE"
         ? route.fulfill({
             status: 409,
@@ -186,6 +194,8 @@ test.describe("the copy bar and the conflict chooser", () => {
         await expect(update).toBeVisible();
         await expect(update).not.toHaveAttribute("aria-disabled", "true");
         expect(await sidewaysOverflow(page)).toBe(0);
+        if (process.env.JC_SHOTS_DIR)
+          await page.screenshot({ path: `${process.env.JC_SHOTS_DIR}/workspace-bring-back-${size.viewport.width}.png`, fullPage: true });
       });
     });
   }
@@ -364,6 +374,31 @@ test.describe("the copies, what a copy changes, and trying it", () => {
       `DELETE /api/v1/projects/${PROJECT}/workspaces/${COPY}/preview`,
     ]);
   });
+
+  // T-7116: each page of a copy over the OData service, as a person sees it at both widths.
+  for (const width of [1440, 400]) {
+    test(`the copies, a comparison, a bring back and a running preview read whole at ${width} px`, async ({ page }) => {
+      const shots = process.env.JC_SHOTS_DIR;
+      const shot = async (name: string) => {
+        if (shots) await page.screenshot({ path: `${shots}/${name}-${width}.png`, fullPage: true });
+      };
+      await page.setViewportSize({ width, height: 900 });
+      const world = { ...fresh(), workspaces: [] };
+      await stubCopies(page, world);
+      await page.goto(`/projects/${PROJECT}/workspaces?lang=en`);
+      await expect(page.getByText(/No copies/).first()).toBeVisible();
+      await shot("workspaces-empty");
+      world.workspaces = [WORKSPACE];
+      await page.goto(`/projects/${PROJECT}/workspaces/${COPY}/compare?lang=en`);
+      await expect(page.getByRole("link", { name: "Resolve on the bring back page" })).toBeVisible();
+      await shot("workspace-compare");
+      await page.goto(`/projects/${PROJECT}/workspaces/${COPY}/try-it?lang=en`);
+      await page.getByRole("button", { name: "Start the preview" }).click();
+      await expect(page.getByTestId("preview-state")).toHaveText("Running");
+      await shot("workspace-try-it-running");
+      expect(await sidewaysOverflow(page)).toBe(0);
+    });
+  }
 
   test("someone else's copy offers no preview to start and says whose it is to run", async ({ page }) => {
     const world = fresh();

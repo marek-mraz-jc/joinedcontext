@@ -1,5 +1,5 @@
 import type { Page, Request, Route } from "@playwright/test";
-import { asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "../tests/odata";
+import { answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "../tests/odata";
 
 // T-7103: the pages read a kind's manifests through the Organization's OData service ($select of
 // spec, status, metadata: api/odata.ts listManifests, readManifest). The server proves each answers
@@ -11,20 +11,22 @@ import { asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, pr
 type Fulfil = Parameters<Route["fulfill"]>[0];
 
 /** The stub's answer to the REST read, as the service answers the manifest read. */
-async function asService(route: Route, options: Fulfil, one: boolean, organization?: boolean): Promise<void> {
+async function asService(route: Route, options: Fulfil, one: boolean, organization?: boolean, row?: boolean): Promise<void> {
   const status = options?.status ?? 200;
   const body = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
-  const answer = await manifestAnswer(new Response(body, { status }), one, organization);
+  const answer = await manifestAnswer(new Response(body, { status }), one, organization, row);
   await route.fulfill({ status: answer.status, contentType: "application/json", body: await answer.text() });
 }
 
 type Handler = (route: Route, request: Request) => unknown;
 
 /** The stub's answer to the REST door, as the service answers the operation (`asOData`) or as it is. */
-async function asDoor(route: Route, options: Fulfil, wrapped: boolean): Promise<void> {
+async function asDoor(route: Route, options: Fulfil, wrapped: boolean, shape?: (body: unknown) => unknown): Promise<void> {
   const status = options?.status ?? 200;
   const body = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
-  const answer = wrapped ? await asOData(new Response(body, { status })) : new Response(body, { status });
+  // A `204` holds no body: the Response constructor refuses one, even `null`.
+  const sent = () => new Response(status === 204 ? null : body, { status });
+  const answer = wrapped ? await asOData(sent(), shape) : sent();
   await route.fulfill({
     status: answer.status,
     contentType: "application/json",
@@ -60,7 +62,8 @@ async function asRestDoor(route: Route, request: Request, handler: Handler): Pro
     get: (target, name) => {
       if (name === "request") return () => asked;
       if (name === "fulfill")
-        return (options: Fulfil) => asDoor(target, options, proposal === undefined || (options?.status ?? 200) >= 300);
+        return (options: Fulfil) =>
+          asDoor(target, options, proposal === undefined || (options?.status ?? 200) >= 300, answerShape(sent));
       const member = Reflect.get(target, name) as unknown;
       return typeof member === "function" ? (member as (...a: unknown[]) => unknown).bind(target) : member;
     },
@@ -80,7 +83,7 @@ function wrap(handler: Handler): Handler {
     const facade = new Proxy(route, {
       get: (target, name) => {
         if (name === "request") return () => asked;
-        if (name === "fulfill") return (options: Fulfil) => asService(target, options, read.one, read.organization);
+        if (name === "fulfill") return (options: Fulfil) => asService(target, options, read.one, read.organization, read.row);
         const member = Reflect.get(target, name) as unknown;
         return typeof member === "function" ? (member as (...a: unknown[]) => unknown).bind(target) : member;
       },

@@ -384,6 +384,9 @@ describe("bring back", () => {
       if (url.pathname.endsWith("/propose"))
         return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "Change", metadata: { name: "chg-00000009", namespace: "helsinki" }, status: { lane: "red", phase: "PendingApproval" } }, 202);
       if (url.pathname.endsWith("/workspaces/air-v2") && req.method === "GET") return json(WORKSPACE);
+      // Bringing back proposes a Change on the project: its If-Match is the project row's ETag.
+      if (decodeURIComponent(url.pathname) === "/api/v1/projects('helsinki')")
+        return json({ "@odata.etag": 'W/"helsinki-1"', name: "helsinki" });
       return undefined;
     };
   });

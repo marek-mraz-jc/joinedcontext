@@ -776,6 +776,7 @@ export interface Workspace {
   owner?: string | null;
   previewState?: string | null;
   project: string;
+  scope?: unknown | null;
   title?: string | null;
   "@odata.etag"?: string;
 }
