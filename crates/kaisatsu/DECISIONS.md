@@ -41,6 +41,8 @@
   - `view-clients` is read-only on `Role` and `ClientScope` and cannot create/delete client roles or client scopes (K3).
   - `view-clients` writes, and reads the secret of, only clients marked `managed-by: joinedcontext`; an unmarked
     client is not adopted, its secret is left out of the client and the list, and an edit cannot drop the mark.
+    A client the realm file marks `audiences-managed-by: joinedcontext` takes from it one new audience mapper and
+    nothing else (T-6972, `view_clients_adds_only_an_audience_to_an_imported_client_marked_for_it`).
   - Cross-organization lookups on People, Groups, Applications, Domains, WebAuthnCredentials, and EmailOutbox return `404 NotFound` (`visible: false`).
 - **Section D (Injection & parsing of untrusted input)**:
   - `PgScopedTable` uses `sqlx::QueryBuilder::push_bind` for all filter literals and JSON paths, preventing SQL injection in OData `$filter` (K15).

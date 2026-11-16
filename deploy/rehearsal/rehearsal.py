@@ -688,6 +688,28 @@ def add_portal_audience(realm: dict) -> tuple[dict, bool]:
     return (dict(realm, clients=clients), True) if changed else (realm, False)
 
 
+# The attribute by which kaisatsu lets the Portal (view-clients) add an Endpoint audience to a client
+# it did not create (crates/kaisatsu/admin/src/compat.rs AUDIENCES_MANAGED_BY, T-6972): a Pipeline
+# re-aimed at an open-data Endpoint's write door after the import needs the door in its token.
+AUDIENCES_MANAGED_BY = "audiences-managed-by"
+
+
+def mark_pipeline_audiences(realm: dict) -> tuple[dict, list[str]]:
+    """Each `<project>-pipelines` client and each Pipeline's own client (`pipeline_own_client`)
+    marked AUDIENCES_MANAGED_BY: joinedcontext, so the Portal's workload-client wave may add the
+    audiences of the Endpoints its Pipelines write to and nothing else. Answers the realm and the
+    clientIds that gained the mark."""
+    marked, clients = [], []
+    for c in realm.get("clients") or []:
+        attrs = c.get("attributes") or {}
+        cid = str(c.get("clientId", ""))
+        if (cid.endswith("-pipelines") or pipeline_own_client(c)) and attrs.get(AUDIENCES_MANAGED_BY) != "joinedcontext":
+            c = dict(c, attributes={**attrs, AUDIENCES_MANAGED_BY: "joinedcontext"})
+            marked.append(cid)
+        clients.append(c)
+    return (dict(realm, clients=clients), marked) if marked else (realm, [])
+
+
 # jc's in-process model proxy introspects the assistant's tokens as `agent-proxy` and admits only a
 # token naming it in its audience (bins/jc/src/setup.rs PROXY_CLIENT, assistant_realm_file). Prod's
 # realm has none: its proxy is `<project>-agent-proxy`, federated-jwt with token exchange.
@@ -1128,6 +1150,9 @@ def cmd_realms(a):
         clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
         if accounts:
             print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")
+        clean, marked = mark_pipeline_audiences(clean)
+        if marked:
+            print(f"realm {name}: the Portal may add Endpoint audiences to {len(marked)} pipeline clients ({AUDIENCES_MANAGED_BY})")
         clean, portal_aud = add_portal_audience(clean)
         if portal_aud:
             print(f"realm {name}: portal-api's sign-in token names portal-api (Endpoint reads exchange it)")
