@@ -445,7 +445,7 @@ function LiveNow({
     <Section id="live">
       {measured && !measured.measured ? (
         <Alert
-          tone="info"
+          tone="neutral"
           title={t("mqttbrokers.measured.not")}
           data-measured="no"
         >
@@ -453,7 +453,7 @@ function LiveNow({
         </Alert>
       ) : failed ? (
         <Alert
-          tone="info"
+          tone="neutral"
           title={t("mqttbrokers.measured.not")}
           data-measured="no"
         >

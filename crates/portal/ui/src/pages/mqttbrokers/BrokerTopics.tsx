@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -124,7 +124,7 @@ function TopicsTable({ project, broker, messages }: { project: string; broker: s
       label: t("mqttbrokers.topics.filter"),
       text: (row) => row.topicFilter ?? hopText(row.dataSource),
       cell: (row) =>
-        row.topicFilter ? <code className="font-mono text-caption">{row.topicFilter}</code> : <HopCell project={project} hop={row.dataSource} />,
+        row.topicFilter ? <TopicFilter filter={row.topicFilter} /> : <HopCell project={project} hop={row.dataSource} />,
     },
     {
       key: "via",
@@ -132,7 +132,8 @@ function TopicsTable({ project, broker, messages }: { project: string; broker: s
       text: (row) => (row.topicFilter ? `${hopText(row.dataSource)} ${row.pipeline ? hopText(row.pipeline) : t("mqttbrokers.topics.noPipeline")}` : ""),
       cell: (row) => <Via project={project} row={row} />,
     },
-    { key: "type", label: t("mqttbrokers.topics.type"), text: (row) => row.type ?? "" , cell: (row) => row.type ?? "—" },
+    // A type is one word: it never breaks inside (WeatherObserved, not WeatherObserv|ed).
+    { key: "type", label: t("mqttbrokers.topics.type"), text: (row) => row.type ?? "", cell: (row) => <span className="whitespace-nowrap">{row.type ?? "—"}</span> },
     {
       key: "attributes",
       label: t("mqttbrokers.topics.attributes"),
@@ -321,5 +322,24 @@ export function CapturedList({ project, broker, captured, heading }: { project: 
         onConfirm={() => clear.mutate()}
       />
     </div>
+  );
+}
+
+/** A topic filter that wraps only after a `/`, never inside a level (`devices/*/status`). */
+function TopicFilter({ filter }: { filter: string }): JSX.Element {
+  const levels = filter.split("/");
+  return (
+    <code className="font-mono text-caption [overflow-wrap:normal] [word-break:keep-all]" data-topic-filter>
+      {levels.map((level, index) => (
+        <Fragment key={index}>
+          {index > 0 ? (
+            <>
+              /<wbr />
+            </>
+          ) : null}
+          <span className="whitespace-nowrap">{level}</span>
+        </Fragment>
+      ))}
+    </code>
   );
 }

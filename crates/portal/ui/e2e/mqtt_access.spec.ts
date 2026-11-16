@@ -69,7 +69,7 @@ async function stubApi(page: Page, refused = false): Promise<void> {
       return json({ project: PROJECT, bootstrap: false, grants: [{ rule: { kinds: ["MqttBroker", "ServiceAccount", "Role"], verbs: ["read", "propose"] } }] });
     }
     if (path.endsWith("/air/access")) {
-      if (refused) return json({ status: 403, title: "Forbidden", detail: "you may not read the MQTT brokers of project 'helsinki'; ask a project admin for a role that reads MqttBroker" }, 403);
+      if (refused) return json({ status: 403, title: "Forbidden", detail: "you may not read the MQTT brokers of project 'helsinki'; ask a project admin for a role that may read MQTT brokers" }, 403);
       return json(ANSWERS[url.searchParams.get("account") ?? ""]);
     }
     if (path.endsWith("/air/bindings")) return json({ broker: "air", bindings: [] });

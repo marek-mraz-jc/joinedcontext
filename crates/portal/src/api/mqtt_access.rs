@@ -174,7 +174,7 @@ fn explain(
     if !effective.may_read("MqttBroker") {
         return Err(ApiError::Denied(format!(
             "you may not read the MQTT brokers of project '{project}'; ask a project admin for a \
-             role that reads MqttBroker"
+             role that may read MQTT brokers"
         )));
     }
     let broker = state

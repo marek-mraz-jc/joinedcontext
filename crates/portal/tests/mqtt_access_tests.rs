@@ -122,6 +122,10 @@ async fn a_member_who_reads_no_broker_is_403_and_a_stranger_404() {
     let state = state().await;
     let (member, body) = explain(&state, "aino", "air", "?account=fleet").await;
     assert_eq!(member, StatusCode::FORBIDDEN, "{body}");
+    // The refusal names the kind in words a person reads, never its manifest kind.
+    let detail = body["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("a role that may read MQTT brokers"), "{body}");
+    assert!(!detail.contains("MqttBroker"), "{body}");
     let (stranger, body) = explain(&state, "olli", "air", "?account=fleet").await;
     assert_eq!(stranger, StatusCode::NOT_FOUND, "{body}");
 }
