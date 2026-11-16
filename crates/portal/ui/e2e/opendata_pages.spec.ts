@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { asOData, doorAsRest } from "../tests/odata";
 
 // Administration → Open data pages (T-7041): every page per language, the editor with its toolbar
 // beside the preview at 1440 and as a tab at 400, publish as a Change, and the empty, error (422),
@@ -63,13 +64,21 @@ async function stubApi(page: Page, stub: Stub = {}): Promise<void> {
   let published = false;
   await page.route("**/api/**", async (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname;
-    const json = (body: unknown, status = 200) =>
-      route.fulfill({
-        status,
-        contentType: status >= 400 ? "application/problem+json" : "application/json",
-        body: JSON.stringify(body),
+    // A Portal door over OData (T-7100) is answered by its REST door's stub, wrapped as the service does.
+    const door = await doorAsRest(
+      new Request(request.url(), { method: request.method(), body: request.postData() ?? undefined }),
+    );
+    const path = new URL(door?.url ?? request.url()).pathname;
+    const sent = door ? ((await door.clone().json().catch(() => undefined)) as unknown) : request.postDataJSON();
+    const json = async (body: unknown, status = 200) => {
+      const rest = new Response(JSON.stringify(body), { status });
+      const answer = door ? await asOData(rest) : rest;
+      return route.fulfill({
+        status: answer.status,
+        contentType: answer.status >= 400 && !door ? "application/problem+json" : "application/json",
+        body: await answer.text(),
       });
+    };
     if (path.endsWith("/auth/me")) return json(IDENTITY);
     if (path === "/api/v1/projects") return json({ kind: "ProjectList", items: [{ name: "doprava" }] });
     if (path.endsWith("/permissions/me")) {
@@ -112,7 +121,7 @@ async function stubApi(page: Page, stub: Stub = {}): Promise<void> {
       return json({ organization: "bbsk", languages: ["sk", "en"], maxBytes: 16384, pages });
     }
     if (path === "/api/v1/organization/opendata/pages/preview") {
-      return json(render((request.postDataJSON() as { markdown: string }).markdown));
+      return json(render((sent as { markdown: string }).markdown));
     }
     if (path.startsWith("/api/v1/organization/opendata/pages/")) {
       if (stub.write) return json({ type: "about:blank", title: "Refused", ...stub.write }, stub.write.status);

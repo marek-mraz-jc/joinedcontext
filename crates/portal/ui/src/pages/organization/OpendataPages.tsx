@@ -3,7 +3,9 @@ import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
+import type { RestAnswer } from "../../api/odata";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
 import type { components } from "../../api/schema";
@@ -54,7 +56,7 @@ function usePending(data: Pages | undefined): { changes: ChangeProposal[]; pendi
     queryKey: queryKeys.changes(ORG_NAMESPACE),
     enabled: data !== undefined,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/changes", { params: { path: { project: ORG_NAMESPACE } } })),
+      (await door("portal_organization_change_list", {})) as RestAnswer<"list_changes">,
   });
   const changes = (list.data?.items ?? []).filter((change) => {
     const params = change.summary.params as Record<string, unknown>;
@@ -64,11 +66,9 @@ function usePending(data: Pages | undefined): { changes: ChangeProposal[]; pendi
     queries: changes.map((change) => ({
       queryKey: [...queryKeys.change(ORG_NAMESPACE, change.metadata.name), "manifests"],
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/changes/{id}/manifests", {
-            params: { path: { project: ORG_NAMESPACE, id: change.metadata.name } },
-          }),
-        ),
+        (await door("portal_organization_change_manifests", {
+          id: change.metadata.name,
+        })) as RestAnswer<"change_manifests">,
     })),
   });
   const pending = new Map<string, string>();
@@ -96,7 +96,7 @@ export function OpendataPages(): JSX.Element {
   const { t } = useTranslation();
   const pages = useQuery({
     queryKey: QUERY,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/opendata/pages")),
+    queryFn: async () => (await door("portal_opendata_pages", {})) as RestAnswer<"list_opendata_pages">,
     retry: false,
   });
   const { changes, pending } = usePending(pages.data);
@@ -227,7 +227,9 @@ function usePreview(markdown: string) {
     enabled: asked.trim() !== "",
     retry: false,
     queryFn: async () =>
-      unwrap(await api.POST("/api/v1/organization/opendata/pages/preview", { body: { markdown: asked } })),
+      (await doorAction("portal_opendata_page_preview", {
+        body: { markdown: asked },
+      })) as RestAnswer<"preview_opendata_page">,
   });
 }
 
@@ -313,9 +315,7 @@ function PageEditor({
   };
   const publish = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.PUT("/api/v1/organization/opendata/pages/{page}/{lang}", { params: { path }, body: { markdown } }),
-      ),
+      (await doorAction("portal_opendata_page_set", { ...path, body: { markdown } })) as RestAnswer<"publish_opendata_page">,
     onSuccess: settle,
     // A refused text goes back to the field, on a phone from the preview tab too.
     onError: (failure) => {
@@ -326,7 +326,7 @@ function PageEditor({
   });
   const revert = useMutation({
     mutationFn: async () =>
-      unwrap(await api.DELETE("/api/v1/organization/opendata/pages/{page}/{lang}", { params: { path } })),
+      (await doorAction("portal_opendata_page_revert", path)) as RestAnswer<"revert_opendata_page">,
     onSuccess: settle,
   });
   const write = publish.isSuccess ? publish : revert;
@@ -487,11 +487,11 @@ function PagesHistory({ organization }: { organization: string }): JSX.Element {
   const history = useQuery({
     queryKey: [...queryKeys.changes(ORG_NAMESPACE), "opendataPagesHistory", organization],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/history", {
-          params: { path: { project: ORG_NAMESPACE }, query: { page: 1, kind: "Organization", name: organization } },
-        }),
-      ),
+      (await door("portal_organization_change_history", {
+        page: 1,
+        kind: "Organization",
+        name: organization,
+      })) as RestAnswer<"list_change_history">,
   });
   const closed = (history.data?.items ?? []).filter(
     (change) => (change.summary.params as Record<string, unknown>).name === organization,
@@ -500,11 +500,9 @@ function PagesHistory({ organization }: { organization: string }): JSX.Element {
     queries: closed.map((change) => ({
       queryKey: queryKeys.change(ORG_NAMESPACE, change.metadata.name),
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/changes/{id}", {
-            params: { path: { project: ORG_NAMESPACE, id: change.metadata.name } },
-          }),
-        ),
+        (await door("portal_organization_change_get", {
+          id: change.metadata.name,
+        })) as RestAnswer<"get_change">,
     })),
   });
   const shown = closed.filter((_, at) => touchesPages(details[at]?.data?.planFields));
