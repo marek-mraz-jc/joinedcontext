@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4935, PL-105: a person builds a KPI over two sources from the KPI recipe without writing
 // Bloblang: endpoints, types and numbers from the space models, a join per area, a plain formula,

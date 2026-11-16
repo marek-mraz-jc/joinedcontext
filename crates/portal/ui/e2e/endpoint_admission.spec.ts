@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { attributeTable } from "./attributeAccess";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6802: an administrator outside an Endpoint's project groups opens its page and
 // settings/access; the Portal's admission answer says the gateway refuses them, the pages show the

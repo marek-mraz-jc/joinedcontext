@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-7062 (G-18, G-23): a Barcelona tree register mapped with no Bloblang typed. The workbench
 // samples the CSV, the mapper links each tree to its District by code, writes a bilingual name

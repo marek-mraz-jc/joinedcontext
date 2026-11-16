@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { greenVerdict, isCheck } from "./verdict";
 import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // `vite preview` has no portal API behind it, so the API is answered in the browser and
 // everything above it — routing, polling, the pause button — is the real thing.

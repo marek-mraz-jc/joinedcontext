@@ -3,6 +3,10 @@ import { expect, test } from "@playwright/test";
 import { attributeTable } from "./attributeAccess";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // DM-113 (T-5341): the explorer's delete asks why, and the gateway gets the person's words
 // percent-encoded as JC-Reason. `vite preview` has no API and no gateway, so both are answered

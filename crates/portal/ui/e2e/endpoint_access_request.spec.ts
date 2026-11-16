@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // PL-115, EP-55, T-5615: a person refused by an Endpoint asks its space's owners for a read on
 // the Endpoint's page; an owner approves it there; the person reads the answer. `vite preview`

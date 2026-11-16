@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-3919 (PL-52, PL-56, PL-68): the three pipelines of the CIVITAS/CORE comparison
 // (docs/analysis/pipeline-studio-vs-nifi.md), built from nothing on the canvas with the palette

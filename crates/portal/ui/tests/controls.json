@@ -1064,7 +1064,7 @@
     },
     "src/pages/apps/AppsCatalog.tsx": {
       "controls": {
-        "Button": 5
+        "Button": 6
       },
       "tests": [
         "apps_catalog.test.tsx"

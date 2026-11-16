@@ -8,6 +8,10 @@
 import { expect, test } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { zip } from "../tests/xlsxFixture";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 const API = "joinedcontext.com/v1alpha1";
 const PROJECT = "banskabystrica";
