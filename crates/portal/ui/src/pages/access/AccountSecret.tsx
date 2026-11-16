@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap } from "../../api/client";
+import { call } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { Alert, Button, ConfirmDialog, Icon, InlineError, Input } from "../../components/ui";
 
@@ -50,12 +51,7 @@ export function AccountSecret({ project, account }: { project: string; account: 
   // The same answer the Access section reads: one request for both.
   const access = useQuery({
     queryKey: [...queryKeys.list(project, "serviceaccounts"), account, "access"],
-    queryFn: async (): Promise<AccountAccessAnswer> =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/serviceaccounts/{name}/access", {
-          params: { path: { project, name: account } },
-        }),
-      ),
+    queryFn: (): Promise<AccountAccessAnswer> => call("jc_serviceaccount_access", project, { name: account }),
   });
   const issue = useMutation({
     mutationFn: async (): Promise<IssuedSecret> =>

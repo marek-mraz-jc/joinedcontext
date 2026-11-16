@@ -2,7 +2,8 @@ import { useId, useState } from "react";
 import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { api, queryKeys, unwrap } from "../../api/client";
+import { call } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { asManifests, ORG_NAMESPACE, type Manifest } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
@@ -18,6 +19,7 @@ import {
   CardHeader,
   Field,
   Input,
+  PageFailed,
   Select,
 } from "../../components/ui";
 import { ResourceNamePicker } from "../../components/pickers/ResourceNamePicker";
@@ -142,16 +144,8 @@ function Panel({ project }: { project: string }): JSX.Element {
   };
 
   const ask = useMutation({
-    mutationFn: async (body: components["schemas"]["SimulateRequest"]) =>
-      unwrap(
-        await api.POST(
-          "/api/v1/projects/{project}/endpoints/{name}/access/simulate",
-          {
-            params: { path: { project, name: chosenEndpoint } },
-            body,
-          },
-        ),
-      ),
+    mutationFn: (body: components["schemas"]["SimulateRequest"]) =>
+      call("jc_access_simulate", project, { ...body, type: body.type ?? undefined, endpoint: chosenEndpoint }),
   });
 
   const who = subject();
@@ -353,11 +347,11 @@ function Panel({ project }: { project: string }): JSX.Element {
       </form>
       <div aria-live="polite" className="mt-4">
         {ask.isError ? (
-          <Alert tone="danger" title={t("policies.try.failed")}>
-            {ask.error instanceof ApiError
-              ? (ask.error.problem?.detail ?? ask.error.message)
-              : t("app.error.generic")}
-          </Alert>
+          <>
+            <p className="mb-2 font-medium text-fg">{t("policies.try.failed")}</p>
+            {/* The server's sentence, its reference and Try again, as every failed read says it. */}
+            <PageFailed error={ask.error} onRetry={ask.variables ? () => ask.mutate(ask.variables) : undefined} />
+          </>
         ) : null}
         {ask.data ? <Verdict project={project} answer={ask.data} /> : null}
       </div>
@@ -386,6 +380,7 @@ function Verdict({
           defaultValue: answer.reason,
         })}
       </p>
+      {answer.decision ? null : <p>{t("policies.try.refusedNext")}</p>}
       {answer.policy ? (
         <p>
           {t("policies.try.decidedBy")}{" "}

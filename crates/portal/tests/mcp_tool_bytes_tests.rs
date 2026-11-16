@@ -74,8 +74,11 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// `jc_person_edit` says an e-mail change needs a Portal session (T-6966, 49 bytes): an agent's
 /// token gets 403 there, and the model reads why before it tries; 86,509 with
 /// `jc_datasource_discover` (T-7076, 597 bytes): the preset's organizations, layers or feature
-/// types an agent otherwise guesses before its DataSource check goes red.
-const RATCHET: usize = 86_510;
+/// types an agent otherwise guesses before its DataSource check goes red; 87,280 once
+/// `jc_organization_read` took the costs, addresses, dataAccess, widgetOptions and personReadable
+/// aspects (T-7098, 770 bytes): the Administration pages' other readings in the same tool, by
+/// `aspect`, and no tool of their own.
+const RATCHET: usize = 87_281;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

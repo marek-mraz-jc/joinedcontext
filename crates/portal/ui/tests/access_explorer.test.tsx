@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { App } from "../src/App";
 import { AccessExplorer, GeoPreview } from "../src/pages/access/AccessExplorer";
+import { odataCall, odataValue } from "./odata";
 
 const LIST = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
 const ROLE = (name: string, namespace: string) => ({
@@ -75,7 +76,9 @@ function stub(administrator: boolean, explored: unknown): Sent[] {
       const request = input as Request;
       const url = new URL(request.url);
       const text = request.method === "POST" ? await request.text() : "";
-      sent.push({ method: request.method, path: url.pathname, body: text ? JSON.parse(text) : undefined });
+      // A function of the OData service is recorded by its name, its arguments as the body.
+      const called = odataCall(url);
+      sent.push(called ? { method: request.method, path: called.name, body: called.params } : { method: request.method, path: url.pathname, body: text ? JSON.parse(text) : undefined });
       const json = (body: unknown, status = 200) =>
         new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
       if (url.pathname.endsWith("/auth/me")) return json({ subject: "s", username: "anna", roles: [] });
@@ -87,7 +90,7 @@ function stub(administrator: boolean, explored: unknown): Sent[] {
       if (url.pathname === "/api/v1/organization/people") return json({ items: [JANA], total: 1 });
       if (url.pathname === "/api/v1/projects/helsinki/roles") return json(LIST([ROLE("reader", "helsinki")]));
       if (url.pathname === "/api/v1/projects/org/roles") return json(LIST([ROLE("steward", "org")]));
-      if (url.pathname.endsWith("/access/explore")) return json(explored);
+      if (called?.name === "jc_access_explore") return odataValue(explored);
       if (request.method === "DELETE" && url.pathname.includes("/consents/")) return new Response(null, { status: 204 });
       return json(LIST([]));
     }),
@@ -120,7 +123,7 @@ describe("Access explorer (T-3792)", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Show access" }));
     expect(await screen.findByText("5 Endpoints reached")).toBeInTheDocument();
-    const asked = sent.find((s) => s.path.endsWith("/access/explore"));
+    const asked = sent.find((s) => s.path === "jc_access_explore");
     expect(asked?.body).toEqual({ subject: { kind: "serviceAccount", name: "etl" } });
     expect(screen.getAllByRole("listitem").filter((li) => li.querySelector("details"))).toHaveLength(5);
     expect(screen.getByText("city-air")).toBeInTheDocument();
@@ -140,7 +143,7 @@ describe("Access explorer (T-3792)", () => {
     await user.click(screen.getByRole("option", { name: /reader/ }));
     await user.click(show);
     await waitFor(() =>
-      expect(sent.find((s) => s.path.endsWith("/access/explore"))?.body).toEqual({ subject: { kind: "role", name: "reader" } }),
+      expect(sent.find((s) => s.path === "jc_access_explore")?.body).toEqual({ subject: { kind: "role", name: "reader" } }),
     );
   });
 
@@ -222,7 +225,7 @@ describe("Access explorer (T-3792)", () => {
     renderAt("/projects/helsinki/settings/general");
     await screen.findByRole("tab", { name: "General" });
     expect(screen.queryByRole("tab", { name: "Access explorer" })).not.toBeInTheDocument();
-    expect(sent.some((s) => s.path.endsWith("/access/explore"))).toBe(false);
+    expect(sent.some((s) => s.path === "jc_access_explore")).toBe(false);
   });
 
   it("renders nothing for someone else, even on a direct link", async () => {
@@ -237,6 +240,6 @@ describe("Access explorer (T-3792)", () => {
     );
     await waitFor(() => expect(sent.some((s) => s.path.endsWith("/permissions/me"))).toBe(true));
     expect(container).toBeEmptyDOMElement();
-    expect(sent.some((s) => s.path.endsWith("/access/explore"))).toBe(false);
+    expect(sent.some((s) => s.path === "jc_access_explore")).toBe(false);
   });
 });

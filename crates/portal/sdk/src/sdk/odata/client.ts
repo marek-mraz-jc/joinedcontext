@@ -26,8 +26,10 @@ export class ODataError extends Error {
   readonly title: string;
   /** The current `ETag` a `412` answers, to read the entity again with. */
   readonly etag?: string;
+  /** The edge's `X-Request-Id` of the answer, the reference a person quotes when reporting it. */
+  readonly requestId?: string;
 
-  constructor(status: number, body: unknown, etag?: string) {
+  constructor(status: number, body: unknown, etag?: string, requestId?: string) {
     const error = (body as { error?: Record<string, unknown> } | null)?.error ?? {};
     const problem = (body ?? {}) as Record<string, unknown>;
     const text = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -40,6 +42,7 @@ export class ODataError extends Error {
     this.type = text(error.type) ?? text(problem.type) ?? `https://joinedcontext.com/errors/${this.code}`;
     this.title = text(error.title) ?? text(problem.title) ?? "Error";
     this.etag = etag;
+    this.requestId = requestId;
   }
 
   /** `412`: the entity changed since it was read. */
@@ -208,10 +211,22 @@ export class ODataClient {
    * JSON object passes: `call("jc_schema_get", "air", { kind: "Endpoint" })`.
    */
   async call<F extends keyof Functions & string>(name: F, project: string, params: Functions[F]): Promise<unknown> {
+    return this.invoke(`projects${keyPredicate(project)}`, name, params);
+  }
+
+  /**
+   * A function bound to the `Organization` singleton, the people's:
+   * `organizationCall("jc_person_list", { search: "ana" })`.
+   */
+  async organizationCall<F extends keyof Functions & string>(name: F, params: Functions[F]): Promise<unknown> {
+    return this.invoke("Organization", name, params);
+  }
+
+  private async invoke(bound: string, name: string, params: unknown): Promise<unknown> {
     const entries = Object.entries(params as Record<string, unknown>).filter(([, v]) => v !== undefined);
     const args = entries.map(([n]) => `${n}=@${n}`).join(",");
     const aliases = entries.map(([n, v]) => `@${n}=${encodeURIComponent(literal(v))}`).join("&");
-    const address = `projects${keyPredicate(project)}/${NAMESPACE}.${name}(${args})${aliases ? `?${aliases}` : ""}`;
+    const address = `${bound}/${NAMESPACE}.${name}(${args})${aliases ? `?${aliases}` : ""}`;
     const { body } = await this.send("GET", address);
     return (body as { value?: unknown })?.value;
   }
@@ -237,7 +252,7 @@ export class ODataClient {
     if (ifMatch) headers["If-Match"] = ifMatch;
     const response = await this.transport({ method, path, body: method === "POST" ? (body ?? {}) : undefined, headers });
     if (response.status < 200 || response.status >= 300) {
-      throw new ODataError(response.status, response.body, response.headers?.etag);
+      throw new ODataError(response.status, response.body, response.headers?.etag, response.headers?.["x-request-id"]);
     }
     return response;
   }

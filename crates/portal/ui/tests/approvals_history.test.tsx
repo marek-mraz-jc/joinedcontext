@@ -10,7 +10,8 @@ import { download } from "../src/pages/models/diagramExport";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { ApprovalsHistory } from "../src/routes/ApprovalsHistory";
-import { json, renderPage } from "./page_contract";
+import { renderPage } from "./page_contract";
+import { odataCall, odataError, odataValue } from "./odata";
 import {
   expectAxeClean,
   jsonResponse,
@@ -62,15 +63,15 @@ const REJECTED = closed("chg-00000002", {
   },
 });
 
-/** The history pages by `page`, recording each query the API was asked. */
+/** The history pages by `page`, recording the arguments of each call, as a query string. */
 function historyOf(pages: Record<string, { items: unknown[]; next?: number }>) {
   const asked: string[] = [];
-  const answer = (path: string, request: Request) => {
-    if (!path.endsWith("/changes/history")) return undefined;
-    const url = new URL(request.url);
-    asked.push(url.search);
-    const page = pages[url.searchParams.get("page") ?? "1"] ?? { items: [] };
-    return jsonResponse({
+  const answer = (_path: string, request: Request) => {
+    const call = odataCall(request.url);
+    if (call?.name !== "jc_change_history") return undefined;
+    asked.push(`?${new URLSearchParams(Object.entries(call.params).map(([k, v]) => [k, String(v)])).toString()}`);
+    const page = pages[String(call.params.page ?? 1)] ?? { items: [] };
+    return odataValue({
       apiVersion: "joinedcontext.com/v1alpha1",
       kind: "ChangeList",
       ...page,
@@ -238,9 +239,9 @@ describe("the change history", () => {
   it("says_why_the_history_could_not_be_read", async () => {
     await renderRoute({
       path: PATH,
-      answer: (path) =>
-        path.endsWith("/changes/history")
-          ? problem(503, "The forge does not answer.")
+      answer: (_path, request) =>
+        odataCall(request.url)?.name === "jc_change_history"
+          ? odataError(503, "internal-error", "The forge does not answer.")
           : undefined,
     });
     await userEvent.click(
@@ -377,8 +378,8 @@ describe("the change history", () => {
   it("mounted_on_its_own_it_asks_for_the_first_page_and_shows_who_decided", async () => {
     renderPage(<ApprovalsHistory project="helsinki" />, {
       answer: (url) =>
-        url.pathname.endsWith("/changes/history")
-          ? json({
+        odataCall(url)?.name === "jc_change_history"
+          ? odataValue({
               apiVersion: "joinedcontext.com/v1alpha1",
               kind: "ChangeList",
               items: [REJECTED],
