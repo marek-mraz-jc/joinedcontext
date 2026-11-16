@@ -308,7 +308,8 @@ export function requiredProgress(
         held === undefined ||
         held === null ||
         held === "" ||
-        (Array.isArray(held) && held.length === 0);
+        // a list whose items are all blank (a required list opens with one) holds nothing yet
+        (Array.isArray(held) && held.every((item) => item === undefined || item === null || item === ""));
       if (!empty) {
         filled += 1;
       }

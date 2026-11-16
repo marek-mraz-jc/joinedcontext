@@ -41,6 +41,7 @@ pub fn build_full_registry() -> Arc<Registry> {
     ekiben_io_s3::register_all(&reg);
     ekiben_io_remote::register_all(&reg);
     ekiben_io_amqp::register_all(&reg);
+    ekiben_io_kafka::register_all(&reg);
     ekiben_io_sftp::register_all(&reg);
     ekiben_text::register(&reg);
     ekiben_js::register(&reg);

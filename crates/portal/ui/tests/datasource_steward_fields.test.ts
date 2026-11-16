@@ -43,6 +43,16 @@ describe("the fields a steward fills, per type", () => {
     expect(folded).toEqual(expect.arrayContaining(["qos", "keepalive", "will", "auto_replay_nacks"]));
   });
 
+  it("Kafka (kafka_franz): the brokers, the topics, the group and the credential, each with an example", () => {
+    const { open, folded } = split("kafka_franz");
+    expect(open).toEqual(["seed_brokers", "topics", "consumer_group", "tls", "sasl"]);
+    expect(folded).toEqual(expect.arrayContaining(["checkpoint_limit", "commit_period", "group_balancers"]));
+    for (const path of ["seed_brokers", "topics", "consumer_group", "sasl"]) {
+      const help = input("kafka_franz").fields.find((field) => field.path === path)?.description ?? "";
+      expect(help, path).toMatch(/e\.g\. \S/);
+    }
+  });
+
   it("names only fields the runner has, and never folds one the runner requires", () => {
     for (const [name, fields] of Object.entries(STEWARD_FIELDS)) {
       const top = new Set(input(name).fields.map((field) => field.path));

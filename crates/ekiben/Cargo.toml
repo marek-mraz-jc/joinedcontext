@@ -17,6 +17,7 @@ members = [
     "crates/ekiben-io-remote",
     "crates/ekiben-io-amqp",
     "crates/ekiben-io-sftp",
+    "crates/ekiben-io-kafka",
     "crates/ekiben-server",
     "crates/ekiben-testkit",
 ]
@@ -38,7 +39,6 @@ members = [
 # - crates/assistant        (AI knowledge assistant, crawler, hybrid pgvector + FTS RRF retrieval, scoped MCP connectors, LLM proxy)
 # - crates/embedder         (shared stateless mmap int8 text/multimodal embedding service)
 # - crates/bill             (real-time spend-cap admission counters, usage outbox ingester, Parquet rollup rater, invoicing)
-# - crates/ekiben-io-kafka  (optional Kafka Franz-semantics input/output plugin crate behind a cargo feature)
 
 [workspace.package]
 version = "0.1.0"
@@ -63,6 +63,7 @@ ekiben-io-s3 = { path = "crates/ekiben-io-s3" }
 ekiben-io-remote = { path = "crates/ekiben-io-remote" }
 ekiben-io-amqp = { path = "crates/ekiben-io-amqp" }
 ekiben-io-sftp = { path = "crates/ekiben-io-sftp" }
+ekiben-io-kafka = { path = "crates/ekiben-io-kafka" }
 ekiben-testkit = { path = "crates/ekiben-testkit" }
 
 tokio = { version = "1.54", features = ["full", "test-util"] }
