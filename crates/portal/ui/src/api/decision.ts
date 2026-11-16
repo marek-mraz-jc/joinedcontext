@@ -58,11 +58,18 @@ export function useDecision(project: string, id: string) {
   return { approve, reject, error, refused, pending: approve.isPending || reject.isPending };
 }
 
-/** The project's change list, read once for every hook below (one query key). */
+/**
+ * The project's change list, read once for every hook below (one query key). Asked once the
+ * permissions have answered and only of a project the person reads: the shell's badge asked a
+ * person who reads nothing in the `org` namespace on every page, and the door's 404 was a
+ * console error there (T-7126, outsider smoke).
+ */
 function useChangeList(project: string) {
+  const permissions = usePermissions(project);
   return useQuery({
     queryKey: queryKeys.changes(project),
     queryFn: () => listChanges(project),
+    enabled: !permissions.checking && !permissions.denied,
     refetchInterval: 30_000,
   });
 }
