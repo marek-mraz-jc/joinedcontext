@@ -76,6 +76,8 @@ pub const GATEWAY_CLIENT: &str = "context-gateway";
 pub const ASSISTANT_CLIENT: &str = "jc-assistant";
 /// The assistant's model proxy's client: it introspects the assistant's tokens.
 pub const PROXY_CLIENT: &str = "agent-proxy";
+/// The audience the Portal's internal listener admits (`auth::internal::INTERNAL_AUDIENCE`).
+const PORTAL_INTERNAL_AUDIENCE: &str = "portal-internal";
 /// The scope (and audience) the assistant's client asks the shared embedder service with.
 pub const EMBEDDER_SCOPE: &str = "embedder";
 /// The first person, a member of the Portal's bootstrap group.
@@ -617,13 +619,12 @@ pub fn gateway_realm_file(realm: &Realm) -> (String, Value) {
 /// The assistant's two clients, client_credentials only, no realm role, no person's scope:
 /// `jc-assistant`, whose tokens name `agent-proxy` in their audience (the proxy admits a model
 /// call only from this client's service account with that audience, AG-109), and `agent-proxy`,
-/// which introspects them. As on dev (deployment components/assistant/keycloak-clients.yaml).
+/// which introspects them and reads a run's context on the Portal's internal listener (audience
+/// `portal-internal`: without it the Portal answered every run lookup 401, T-7149). As on dev (deployment components/assistant/keycloak-clients.yaml).
 #[must_use]
 pub fn assistant_realm_file(realm: &Realm) -> (String, Value) {
-    let client = |id: &str, name: &str, secret: &str, audience: Option<&str>| {
-        let mappers: Vec<Value> = audience.map(audience_mapper).into_iter().collect();
-        // The assistant asks the shared embedder with scope `embedder` (its audience).
-        let scopes: Vec<&str> = audience.map(|_| EMBEDDER_SCOPE).into_iter().collect();
+    let client = |id: &str, name: &str, secret: &str, audience: &str, scopes: &[&str]| {
+        let mappers = [audience_mapper(audience)];
         json!({
             "clientId": id,
             "name": name,
@@ -657,9 +658,17 @@ pub fn assistant_realm_file(realm: &Realm) -> (String, Value) {
                 ASSISTANT_CLIENT,
                 "Knowledge assistant",
                 "CLIENT_SECRET_JC_ASSISTANT",
-                Some(PROXY_CLIENT),
+                PROXY_CLIENT,
+                // It asks the shared embedder with scope `embedder` (its audience).
+                &[EMBEDDER_SCOPE],
             ),
-            client(PROXY_CLIENT, "Model proxy", "CLIENT_SECRET_AGENT_PROXY", None),
+            client(
+                PROXY_CLIENT,
+                "Model proxy",
+                "CLIENT_SECRET_AGENT_PROXY",
+                PORTAL_INTERNAL_AUDIENCE,
+                &[],
+            ),
         ]
     });
     ("40-jc-assistant.json".to_owned(), file)
