@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5533: a broker card's topics (which topic fills which attribute) and a capture broker's kept
 // messages, for a steward who may approve brokers and for an editor who may not. `vite preview`

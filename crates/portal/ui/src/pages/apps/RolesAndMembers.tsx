@@ -1,8 +1,9 @@
+import { readManifest } from "../../api/odata";
 import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { queryKeys, reasonOf } from "../../api/client";
 import { isChange, ORG_NAMESPACE, storedMetadata } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -60,11 +61,7 @@ export function RolesAndMembers({ project, name }: { project: string; name: stri
   const app = useQuery({
     queryKey: queryKeys.resource(project, "apps", name),
     queryFn: async () =>
-      unwrap<unknown>(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "apps", name } },
-        }),
-      ),
+      (await readManifest(project, "apps", name)),
     retry: false,
   });
   const propose = useMutation({
@@ -175,11 +172,7 @@ function RoleRow({
   const stored = useQuery({
     queryKey: queryKeys.resource(ORG_NAMESPACE, "groups", group),
     queryFn: async () =>
-      unwrap<unknown>(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "groups", name: group } },
-        }),
-      ),
+      (await readManifest(ORG_NAMESPACE, "groups", group)),
     retry: false,
   });
   const groups = useGroups();

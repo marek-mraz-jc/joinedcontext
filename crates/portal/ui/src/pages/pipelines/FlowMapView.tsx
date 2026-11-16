@@ -1,3 +1,4 @@
+import { readManifest } from "../../api/odata";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -500,11 +501,7 @@ export function PipelineActions({ project, node }: { project: string; node: Flow
   const toggle = useMutation({
     mutationFn: async () => {
       setError(null);
-      const manifest = (await unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "pipelines", name: node.name } },
-        }),
-      )) as Manifest;
+      const manifest = (await (await readManifest(project, "pipelines", node.name))) as Manifest;
       return proposeEnabled(project, manifest, !running);
     },
     onSuccess: (result) => {

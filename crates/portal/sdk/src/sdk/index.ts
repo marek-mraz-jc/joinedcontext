@@ -119,4 +119,5 @@ export type { Unit } from "./units";
 export { odata, ODataClient, ODataError, Query as ODataQuery } from "./odata/client";
 export type { KeyOf, ODataOptions, Page as ODataPage } from "./odata/client";
 export type * as ODataModel from "./odata/generated";
+export { ENTITY_KEYS as ODATA_ENTITY_KEYS } from "./odata/generated";
 // /portal-only

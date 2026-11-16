@@ -258,6 +258,7 @@
     "NGSI_LD_NULL",
     "NO_BASEMAP",
     "NO_LOCATIONS",
+    "ODATA_ENTITY_KEYS",
     "ODataClient",
     "ODataError",
     "ODataQuery",

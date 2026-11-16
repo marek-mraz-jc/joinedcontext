@@ -1,9 +1,10 @@
+import { listManifests } from "../../api/odata";
 import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { queryKeys, reasonOf } from "../../api/client";
 import { asManifests, isChange, ORG_NAMESPACE } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { usePermissions } from "../../api/permissions";
@@ -22,11 +23,7 @@ function useList(project: string, plural: string, enabled = true) {
     queryKey: queryKeys.list(project, plural),
     enabled,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural } },
-        }),
-      ),
+      (await listManifests(project, plural)),
   });
 }
 

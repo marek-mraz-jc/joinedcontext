@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 /**
  * The Data models page: every DataModel of the project, one row each (DM-61, DM-62, T-2765), and
  * apart from them the organization's models, read-only, each with the name a model imports it
@@ -15,18 +16,13 @@ import { useQuery } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, whilePending } from "../../api/client";
+import { queryKeys, whilePending } from "../../api/client";
 import { asManifests, localized } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { ManifestGrid } from "../../components/grid/ManifestGrid";
 import { usePermissions } from "../../api/permissions";
-import {
-  EmptyState,
-  Button,
-  PageHeader,
-  buttonClass,
-} from "../../components/ui";
+import { EmptyState, Button, PageHeader, buttonClass } from "../../components/ui";
 import type { ButtonVariant } from "../../components/ui";
 import { OrganizationModels } from "./OrganizationModels";
 import { entityTypesOf } from "../spaces/spaceFacts";
@@ -51,7 +47,7 @@ export function useProjectList(project: string, plural: string): UseQueryResult<
     refetchInterval: whilePending,
     retry: false,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural } } })),
+      (await listManifests(project, plural)),
     select: manifestsOf,
   });
 }

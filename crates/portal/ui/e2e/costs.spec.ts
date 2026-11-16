@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // Administration → Costs (T-5126) as an administrator meets it: a month split per project, a
 // partial month, no price table yet, an organization with no project, and a member refused, in

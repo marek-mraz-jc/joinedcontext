@@ -1,3 +1,4 @@
+import { readManifest } from "../api/odata";
 import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -519,11 +520,7 @@ function PublicationOnApproval({ project, file }: { project: string; file: Chang
     enabled: file.operation === "Update" && name !== "",
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "endpoints", name } },
-        }),
-      ),
+      (await readManifest(project, "endpoints", name)),
   });
   if (file.operation === "Update" && live.isPending) return null;
   const base = live.data ? { metadata: live.data.metadata, spec: live.data.spec } : {};

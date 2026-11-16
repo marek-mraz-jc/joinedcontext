@@ -1,8 +1,9 @@
+import { readManifest } from "../../api/odata";
 import { useId } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 import { ManifestGrid } from "../../components/grid/ManifestGrid";
 import { Badge, Card } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui/Badge";
@@ -65,11 +66,7 @@ export function AppJobRuns({ project, name }: { project: string; name: string })
   const app = useQuery({
     queryKey: queryKeys.resource(project, "apps", name),
     queryFn: async () =>
-      unwrap<unknown>(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "apps", name } },
-        }),
-      ),
+      (await readManifest(project, "apps", name)),
     retry: false,
   });
   const { jobs, runs } = jobsOf(app.data);

@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The Metadata tab of a row's attribute (T-5529): created and changed from sysAttrs, and the last
 // writer's kind, organization, channel and reason from one `versions=all&lastN=1` read. The editor

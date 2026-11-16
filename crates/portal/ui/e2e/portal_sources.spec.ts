@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6876 (ODP-15): a portal's Sources and Datasets tabs on stubbed routes. Every state at 1440
 // and 400 px (empty, filled, error, refusal), and one journey that adds a dcat-ap source, tests it,

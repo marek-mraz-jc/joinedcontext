@@ -139,7 +139,8 @@ export function PageHeader({
             {description ? <DescriptionHint>{description}</DescriptionHint> : null}
             {titleAction}
           </div>
-          <div className="ms-auto flex flex-wrap items-center gap-2">
+          {/* Below `sm` the slot spans its row, so a control that fills its parent has a width to fill. */}
+          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:ms-auto sm:w-auto">
             {/* A control fills its parent: the slot gives the search its width. */}
             {search ? <div className="w-full sm:w-64">{search}</div> : null}
             {aside}

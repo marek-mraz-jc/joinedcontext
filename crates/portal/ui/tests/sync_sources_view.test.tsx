@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
+import { odataValue } from "./odata";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -53,7 +54,7 @@ const PENDING = {
 
 /** Renders the sync view with a status the test chooses, and records what was called. */
 function renderSyncSources(status: Record<string, unknown> = PENDING) {
-  const calls: { method: string; path: string; body?: string }[] = [];
+  const calls: { method: string; path: string; body?: string; ifMatch?: string }[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const request = input as Request;
     const path = new URL(request.url).pathname;
@@ -80,8 +81,13 @@ function renderSyncSources(status: Record<string, unknown> = PENDING) {
     if (path.endsWith("/pause")) {
       return json({ ...status, paused: !status.paused });
     }
-    if (path.endsWith("/detach")) {
-      return json({ mergeRequest: "https://forge.example/pulls/9", number: 9 }, 202);
+    // Detaching proposes a Change (jc_syncsource_detach), so it sends the project's ETag (T-7073).
+    if (path === "/api/v1/projects('banskabystrica')") {
+      return json({ "@odata.etag": 'W/"banskabystrica-3"', name: "banskabystrica" });
+    }
+    if (path.endsWith("/JoinedContext.Portal.jc_syncsource_detach")) {
+      calls[calls.length - 1].ifMatch = request.headers.get("If-Match") ?? undefined;
+      return odataValue({ changeId: "9", lane: "red", url: "https://forge.example/pulls/9" });
     }
     if (path.endsWith("/syncsources/regional-datamodels/sync")) {
       return json({
@@ -225,13 +231,13 @@ describe("sync sources view", () => {
     const asking = await screen.findByRole("alertdialog");
     expect(asking).toHaveAccessibleDescription(expect.stringContaining("regional-datamodels"));
     await userEvent.click(within(asking).getByTestId("confirm-cancel"));
-    expect(calls.some((call) => call.path.endsWith("/detach"))).toBe(false);
+    expect(calls.some((call) => call.path.endsWith("jc_syncsource_detach"))).toBe(false);
 
     await userEvent.click(screen.getByRole("button", { name: en.syncSources.detach }));
     await userEvent.click(within(await screen.findByRole("alertdialog")).getByTestId("confirm-accept"));
 
     await waitFor(() => {
-      expect(calls.some((call) => call.path.endsWith("/detach"))).toBe(true);
+      expect(calls.find((call) => call.path.endsWith("jc_syncsource_detach"))?.ifMatch).toBe('W/"banskabystrica-3"');
     });
     // The page's notice among the Shell's own live regions (the jobs menu, T-3245).
     const notice = (await screen.findAllByRole("status")).find((region) =>

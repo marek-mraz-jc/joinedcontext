@@ -2757,11 +2757,11 @@
     "title": "Pipelines",
     "empty": "Dieses Projekt hat noch keine Pipeline.",
     "class": {
-      "resident": "resident",
+      "resident": "Dauerhaft laufend",
       "residentHelp": "Läuft durchgehend im Bento-Runner des Projekts.",
-      "scheduled": "geplant",
+      "scheduled": "Nach Zeitplan",
       "scheduledHelp": "Läuft nach Zeitplan und pausiert zwischen den Läufen.",
-      "auto": "auto",
+      "auto": "Automatisch",
       "autoHelp": "Der Reconciler wählt: resident unter 30 Sekunden oder push-basiert, sonst geplant."
     },
     "field": {
@@ -6077,6 +6077,7 @@
     "intro": "Eine Synchronisierungsquelle hält dieses Projekt mit etwas außerhalb des Repositorys im Einklang: einem anderen Git-Repository, einem veröffentlichten Bundle oder der öffentlichen API einer anderen Instanz. Jeder Lauf ist ein Import, und jeder Lauf, der etwas ändert, öffnet einen Merge Request.",
     "empty": "Dieses Projekt synchronisiert noch von nirgendwo.",
     "origin": "Herkunft",
+    "addFrom": "Quelle hinzufügen aus",
     "revision": "Revision der Quelle",
     "status": "Status",
     "mergeRequest": "Offener Merge Request",

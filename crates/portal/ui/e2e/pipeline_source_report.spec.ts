@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4892: "Source vs space" on a snapshot pipeline's page, in a real browser. The API is answered
 // in the browser, as in pipeline_lifetime.spec.ts; JC_SHOTS=<dir> also saves each state at 1440

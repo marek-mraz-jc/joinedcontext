@@ -198,7 +198,7 @@ describe("the Portal's OData client (T-6812)", () => {
       "/api/v1/projects('air''s')/policies",
     );
     expect(first.searchParams.get("$select")).toBe(
-      "name,kind,metadata,spec,status",
+      "name,kind,metadata,spec,status,apiVersion",
     );
     expect(sent[1].url).toContain("$skiptoken=1");
     // The test's REST mapping reads the same address back to the REST door.

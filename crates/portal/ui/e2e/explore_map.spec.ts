@@ -3,6 +3,10 @@ import { expect, test } from "@playwright/test";
 import { attributeTable } from "./attributeAccess";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The explorer's map (T-3256): a type whose model gives it a location opens on a Map tab beside
 // the table, reads the view through the endpoint with the table's own filter, and draws it.

@@ -1,5 +1,6 @@
+import { listManifests, readManifest } from "../../api/odata";
 import type { QueryClient } from "@tanstack/react-query";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 
 /** One space's manifest, as its page reads it. */
 export function spaceQuery(project: string, name: string) {
@@ -7,11 +8,7 @@ export function spaceQuery(project: string, name: string) {
     queryKey: queryKeys.resource(project, "spaces", name),
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "spaces", name } },
-        }),
-      ),
+      (await readManifest(project, "spaces", name)),
   };
 }
 
@@ -21,11 +18,7 @@ export function projectListQuery(project: string, plural: string) {
     queryKey: queryKeys.list(project, plural),
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural } },
-        }),
-      ),
+      (await listManifests(project, plural)),
   };
 }
 

@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { axeViolations } from "./axe";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6096: the Flows page is gone. Its ingestion set-ups start from Data sources, and the old
 // address lands on the project's home. `vite preview` has no Portal API behind it, so the browser
@@ -10,6 +14,19 @@ import { greenVerdict, isCheck } from "./verdict";
 
 const API = "joinedcontext.com/v1alpha1";
 const PROJECT = "helsinki";
+
+/**
+ * The data sources' REST door, or the service's address for the same read or write (T-7073): the
+ * set read and a create's proposal; manifestReadsAsRest hands either to the stub as its REST call.
+ */
+const datasourceDoor = (url: URL): boolean => {
+  const path = decodeURIComponent(url.pathname);
+  return (
+    path.startsWith(`/api/v1/projects/${PROJECT}/datasources`) ||
+    path.startsWith(`/api/v1/projects('${PROJECT}')/datasources`) ||
+    path === `/api/v1/projects('${PROJECT}')/JoinedContext.Portal.propose_create`
+  );
+};
 const SHOTS = process.env.SHOTS_DIR;
 
 const FEED = {
@@ -75,7 +92,7 @@ async function stubApi(page: Page, { blueprints = BLUEPRINTS, refuse = false } =
 
 /** The Portal's answer to a template's Check: the plan of `fields` and a green verdict fresh for the draft sent. */
 async function answerCheck(page: Page, name: string, fields: { path: string; to: string }[]): Promise<void> {
-  await page.route((url) => url.pathname.startsWith(`/api/v1/projects/${PROJECT}/datasources`), async (route) => {
+  await page.route(datasourceDoor, async (route) => {
     const request = route.request();
     if (!isCheck(request.method(), request.url())) return route.fallback();
     return route.fulfill({
@@ -169,7 +186,7 @@ test.describe("ready-made set-ups on Data sources", () => {
   test("an ftp source is set up from its form, its password a secret reference", async ({ page }) => {
     await stubApi(page);
     const posted: string[] = [];
-    await page.route((url) => url.pathname.startsWith(`/api/v1/projects/${PROJECT}/datasources`), async (route) => {
+    await page.route(datasourceDoor, async (route) => {
       const request = route.request();
       if (request.method() !== "POST") return route.fallback();
       posted.push(request.postData() ?? "");

@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4265 (photo audit T-4160 #0, #41, #42): the Portal at a tablet's and a phone's width. `vite
 // preview` has no Portal API behind it, so the API is answered in the browser.
@@ -133,7 +137,8 @@ for (const width of [400, 1440]) {
       spec,
     });
     await stubApi(page);
-    await page.route(`**/api/v1/projects/${PROJECT}/datasources`, (route) =>
+    // The list reads through the service (T-7073); manifestReadsAsRest hands its read to this REST stub.
+    await page.route((url) => /^\/api\/v1\/projects(\/bbsk|\('bbsk'\))\/datasources$/.test(decodeURIComponent(url.pathname)), (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",

@@ -4,6 +4,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { digestOf } from "../src/api/digest";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5040 (PL-111, ADR-N-057 decision 5): a Pipeline aimed at an Endpoint that binds only its
 // policyRef gets a red verdict on its target field, saying what to change; aimed at the space's

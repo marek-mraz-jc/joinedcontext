@@ -1,9 +1,10 @@
+import { listManifests } from "../api/odata";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { JSX, KeyboardEvent } from "react";
 import { clsx } from "clsx";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../api/client";
+import { queryKeys } from "../api/client";
 import { asManifests, localized } from "../api/manifest";
 import { Badge, Button, Input } from "../components/ui";
 import { Icon } from "../components/ui/icons";
@@ -71,11 +72,7 @@ export function endpointsQuery(project: string) {
   return {
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   };
 }
 

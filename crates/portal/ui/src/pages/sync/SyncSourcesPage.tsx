@@ -1,11 +1,13 @@
+import { listManifests, act, call, projectBound, projectEtag } from "../../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ListFailed } from "../../components/forms/widgets/ListFailed";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { ApiError, queryKeys, reasonOf } from "../../api/client";
 import { prune } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
+import { usePermissions } from "../../api/permissions";
 import { useProposal } from "../../api/proposal";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { useCreateForm } from "../../components/forms/FormRoute";
@@ -16,19 +18,7 @@ import { LifecycleBadge } from "../../components/status/LifecycleBadge";
 import { ResourceRowActions } from "../../components/ResourceRowActions";
 import { DeniedNote, PermissionGuard } from "../../components/ui/PermissionGuard";
 import type { components } from "../../api/schema";
-import {
-  Alert,
-  Button,
-  ConfirmDialog,
-  EmptyState,
-  ExternalLink,
-  Field,
-  PageFailed,
-  PageHeader,
-  PageLoading,
-  Select,
-  recordCard,
-} from "../../components/ui";
+import { Alert, Button, ConfirmDialog, EmptyState, ExternalLink, Field, PageFailed, PageHeader, PageLoading, Select, recordCard } from "../../components/ui";
 import { RecordLink } from "../../components/RecordLink";
 
 export function syncStatusKey(project: string, name: string) {
@@ -115,11 +105,7 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
   const list = useQuery({
     queryKey: queryKeys.list(project, "syncsources"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "syncsources" } },
-        }),
-      ),
+      (await listManifests(project, "syncsources")),
   });
 
   const items = list.data?.items ?? [];
@@ -138,29 +124,42 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
     setForm(EMPTY_FORM);
   });
 
+  // The origin is the first step of adding a source: a role that may not add one is not offered it.
+  const mayAdd = usePermissions(project).can("SyncSource", "propose");
+
   return (
     <section aria-label={t("syncSources.title")} className="space-y-6">
       <PageHeader
         compact
         title={t("syncSources.title")}
         description={t("syncSources.intro")}
+        // A disabled Add source or Detach says why in words, not only in its tooltip (T-6423).
+        // Why Add is closed, and why Detach is once there is a source to detach.
+        note={
+          <>
+            <DeniedNote project={project} kind="SyncSource" verb="propose" />
+            {items.length > 0 ? <DeniedNote project={project} kind="SyncSource" verb="delete" /> : null}
+          </>
+        }
         actions={
-          <div className="flex items-end gap-2">
+          <div className="flex w-full flex-wrap items-end gap-2 sm:w-auto">
             {/* The shared Field, not a hand-made label: it ties the label to the control and
                 carries whatever a message later needs to hang off (UI-01, UI-04). */}
-            <Field id="sync-origin-kind" label={t("syncSources.origin")}>
-              <Select
-                id="sync-origin-kind"
-                value={origin}
-                onChange={(event) => setOrigin(event.target.value as SyncOriginKind)}
-              >
-                {SYNC_ORIGINS.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {t(`syncSources.originKind.${kind}`)}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+            {mayAdd ? (
+              <Field id="sync-origin-kind" label={t("syncSources.addFrom")} className="min-w-0 flex-1 sm:flex-none">
+                <Select
+                  id="sync-origin-kind"
+                  value={origin}
+                  onChange={(event) => setOrigin(event.target.value as SyncOriginKind)}
+                >
+                  {SYNC_ORIGINS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {t(`syncSources.originKind.${kind}`)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
             {/* Each button asks for the verb its route checks (UI-44): a viewer reads why it is
                 closed instead of meeting a 403 after filling the form. */}
             <PermissionGuard project={project} kind="SyncSource" verb="propose">
@@ -171,8 +170,6 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
           </div>
         }
       />
-      {/* A tooltip is out of reach on a phone: a reader is told once, in words, why Add is closed. */}
-      <DeniedNote project={project} kind="SyncSource" verb="propose" />
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
 
@@ -262,12 +259,7 @@ function SyncSourceCard({
 
   const status = useQuery({
     queryKey: syncStatusKey(project, name),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/syncsources/{name}/status", {
-          params: { path: { project, name } },
-        }),
-      ),
+    queryFn: () => call("jc_syncsource_status", project, { name }),
   });
 
   const refresh = () => {
@@ -275,35 +267,22 @@ function SyncSourceCard({
   };
 
   const syncNow = useMutation({
-    mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/syncsources/{name}/sync", {
-          params: { path: { project, name } },
-        }),
-      ),
+    mutationFn: () => act("jc_syncsource_sync", projectBound(project), { name }),
     onSuccess: refresh,
   });
 
   const pause = useMutation({
-    mutationFn: async (paused: boolean) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/syncsources/{name}/pause", {
-          params: { path: { project, name } },
-          body: { paused },
-        }),
-      ),
+    mutationFn: (paused: boolean) => act("jc_syncsource_pause", projectBound(project), { name, paused }),
     onSuccess: refresh,
   });
 
   const detach = useMutation({
+    // A Change-proposing action: its If-Match is the project's ETag (API/13 §2b).
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/syncsources/{name}/detach", {
-          params: { path: { project, name } },
-        }),
-      ),
+      act("jc_syncsource_detach", projectBound(project), { name }, await projectEtag(project)),
     onSuccess: (result) => {
-      const url = (result as { mergeRequest?: string } | undefined)?.mergeRequest;
+      // The operation answers the removal as its Change and the merge request's address (`url`).
+      const url = (result as { url?: string | null } | undefined)?.url;
       setDetached(url ?? null);
       refresh();
     },
