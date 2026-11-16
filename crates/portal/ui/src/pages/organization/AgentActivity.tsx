@@ -126,9 +126,10 @@ export function AgentActivity({
     getNextPageParam: (last: Activity) => last.nextCursor ?? undefined,
     queryFn: async ({ pageParam }): Promise<Activity> =>
       organizationReading("agentActivity", {
-        inProject: scope.project,
-        profile: scope.profile,
-        run: scope.run,
+        // A profile's scope names no project (""): no filter, not an empty one.
+        inProject: scope.project || undefined,
+        profile: scope.profile || undefined,
+        run: scope.run || undefined,
         person: filters.person || undefined,
         space: filters.space || undefined,
         verdict: filters.verdict || undefined,
