@@ -17,6 +17,9 @@ describe("the grid at a phone's width", () => {
   it("underlines an id once, across its cut head and its tail", () => {
     const id = css.match(/\.jc-grid-id\s*\{[^}]*\}/)?.[0] ?? "";
     expect(id).toMatch(/background:\s*linear-gradient\(currentColor/);
+    // The line ends with the id's text: a short id (SK0321) is not underlined to the column's floor.
+    expect(id).toMatch(/width:\s*fit-content/);
+    expect(css).toMatch(/\.jc-grid-open:has\(> \.jc-grid-id\)\s*\{\s*min-width:\s*min\(20ch, 40vw\)/);
     expect(css.match(/\.jc-grid-id > span\s*\{[^}]*\}/)?.[0]).toMatch(/text-decoration:\s*none/);
   });
 

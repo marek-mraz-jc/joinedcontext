@@ -2774,9 +2774,13 @@ a.jc-cell--link:focus-visible {
 
 /* The id cell (T-6328): the head is cut with "…", the tail that tells rows apart (`101.2012`) never is. */
 /* A floor, or a wide table squeezed the column until the tail that tells rows apart was cut (T-6454). */
+.jc-grid-open:has(> .jc-grid-id) {
+  min-width: min(20ch, 40vw);
+}
 .jc-grid-id {
   display: flex;
-  min-width: min(20ch, 40vw);
+  /* As wide as the id, so the line under it ends with its text; the floor is the button's. */
+  width: fit-content;
   max-width: 100%;
   /* One line under the whole id, across the gap the cut head leaves before its tail: each part
      underlined alone read as two links (T-7112). */
