@@ -397,6 +397,13 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
                     unchanged: group.unchanged,
                   })}
             </p>
+            {[...group.created, ...group.changed].length > 0 ? (
+              <ul className="list-disc pl-5 text-body">
+                {[...group.created, ...group.changed].map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            ) : null}
             {group.note && group.name === PEOPLE ? (
               <p className="text-body">
                 {t("backups.restore.peopleNote")}{" "}
@@ -404,13 +411,6 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
                   {t("backups.restore.invite")}
                 </Link>
               </p>
-            ) : null}
-            {[...group.created, ...group.changed].length > 0 ? (
-              <ul className="list-disc pl-5 text-body">
-                {[...group.created, ...group.changed].map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
             ) : null}
             {group.note && group.name !== PEOPLE ? (
               <p className="text-caption text-fg-muted">{t("backups.restore.organizationNote")}</p>
@@ -472,12 +472,13 @@ function PlanTable({ plan }: { plan: DataPlan }): JSX.Element {
           empty={t("backups.data.planSame")}
           noSearch
           stack
+          // A phone card shows the first three counts: refused comes before unchanged so it is never behind More details.
           columns={[
-            { key: "table", label: t("backups.data.table"), text: (row) => row.name, cell: (row) => <span className="font-mono">{row.name}</span> },
+            { key: "table", label: t("backups.data.table"), text: (row) => row.name, cell: (row) => <span className="whitespace-nowrap font-mono">{row.name}</span> },
             { key: "create", label: t("backups.data.create"), kind: "number", align: "right", text: (row) => String(row.counts.create) },
             { key: "update", label: t("backups.data.update"), kind: "number", align: "right", text: (row) => String(row.counts.update) },
-            { key: "unchanged", label: t("backups.data.unchanged"), kind: "number", align: "right", text: (row) => String(row.counts.unchanged) },
             { key: "refused", label: t("backups.data.refused"), kind: "number", align: "right", text: (row) => String(row.counts.refused) },
+            { key: "unchanged", label: t("backups.data.unchanged"), kind: "number", align: "right", text: (row) => String(row.counts.unchanged) },
           ]}
         />
       )}
