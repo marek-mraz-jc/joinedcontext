@@ -476,6 +476,8 @@ export function workbenchUiSchema(base: UiSchema): UiSchema {
   return {
     ...base,
     targetEndpoint: { "ui:widget": "hidden" },
+    // The workbench's "When it runs" step owns the schedule (G-23).
+    schedule: { "ui:widget": "hidden" },
     compute: { ...compute, bloblang: { "ui:widget": "hidden" } },
   } as UiSchema;
 }

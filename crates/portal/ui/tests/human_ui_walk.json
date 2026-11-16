@@ -1845,6 +1845,16 @@
         "evidence/worker-t4862/T-4862/flow-map-error-400.png"
       ]
     },
+    "src/pages/pipelines/MapperSources.tsx": {
+      "walkedBy": "worker-t7062",
+      "date": "2026-11-15",
+      "screenshots": [
+        "evidence/T-7062/shots/g18-mapper-ref-lang-1440.png",
+        "evidence/T-7062/shots/g18-mapper-ref-lang-400.png",
+        "evidence/T-7062/shots/g18-mapper-transforms-1440.png",
+        "evidence/T-7062/shots/g18-mapper-transforms-400.png"
+      ]
+    },
     "src/pages/pipelines/OutputMapper.tsx": {
       "walkedBy": "deployer",
       "date": "2026-10-20",
@@ -2003,6 +2013,16 @@
         "evidence/T-5369/access-request-form-phone.png",
         "evidence/T-5369/access-request-sent-desktop.png",
         "evidence/T-5369/access-request-sent-phone.png"
+      ]
+    },
+    "src/pages/pipelines/WorkbenchSchedule.tsx": {
+      "walkedBy": "worker-t7062",
+      "date": "2026-11-15",
+      "screenshots": [
+        "evidence/T-7062/shots/g23-schedule-1440.png",
+        "evidence/T-7062/shots/g23-schedule-400.png",
+        "evidence/T-7062/shots/g23-schedule-refused-1440.png",
+        "evidence/T-7062/shots/g23-schedule-refused-400.png"
       ]
     },
     "src/pages/policies/TryAPerson.tsx": {
