@@ -2275,7 +2275,7 @@ mod tests {
         assert!(err.contains("also used by another mount (daiya)"), "{err}");
         let file = format!(
             "{host_mode}{}",
-            TWO_ORGS.replace("opendata.alpha.test", "login.city.test")
+            TWO_ORGS.replace("opendata.alpha.test", "idm.city.test")
         );
         let file = Config::parse_file(std::path::Path::new("jc.toml"), &file).unwrap();
         let cli = crate::config::Cli {
