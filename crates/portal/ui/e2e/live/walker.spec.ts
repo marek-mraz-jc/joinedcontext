@@ -75,8 +75,9 @@ function expected(who: string, response: Response): boolean {
   const status = response.status();
   if (status === 403 && who === "viewer") return true;
   if (status === 404 && /\/cs\/[^/]+\/ngsi-ld\/v1\/entities\?/.test(response.url())) return true;
-  // An edit form asks for the person's draft of the item first; none yet is the 404 (T-3852).
-  if (status === 404 && response.request().method() === "GET" && /\/drafts\/[A-Za-z]+\/[^/?]+$/.test(new URL(response.url()).pathname))
+  // An edit form asks for the person's draft of the item first; none yet is the 404 (T-3852),
+  // through the REST door or the OData service's jc_draft_get (T-7119).
+  if (status === 404 && response.request().method() === "GET" && /\/drafts\/[A-Za-z]+\/[^/?]+$|\/JoinedContext\.Portal\.jc_draft_get\(/.test(new URL(response.url()).pathname))
     return true;
   return status === 410 || (status === 404 && /\/agent-runs\/[^/]+\/(preview|events)/.test(response.url()));
 }
