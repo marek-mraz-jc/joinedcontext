@@ -27114,7 +27114,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "aspect": {
-                    "description": "projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did",
+                    "description": "projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did; costs: a month's costs per project; addresses: the Organization's addresses; dataAccess: who reads which Endpoint; widgetOptions: home page Dashboards to pick; personReadable: what one person reads",
                     "enum": [
                       "projects",
                       "setup",
@@ -27123,7 +27123,12 @@
                       "limits",
                       "brokers",
                       "agents",
-                      "agentActivity"
+                      "agentActivity",
+                      "costs",
+                      "addresses",
+                      "dataAccess",
+                      "widgetOptions",
+                      "personReadable"
                     ],
                     "type": "string"
                   },
@@ -27132,11 +27137,36 @@
                     "maxLength": 128,
                     "type": "string"
                   },
+                  "endpoint": {
+                    "description": "dataAccess: one Endpoint's row, by slug",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "group": {
+                    "description": "dataAccess: one group's column",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
                   "limit": {
                     "description": "agentActivity: page size, default 20",
                     "maximum": 50,
                     "minimum": 1,
                     "type": "integer"
+                  },
+                  "month": {
+                    "description": "costs: e.g. 2026-09, default last month",
+                    "pattern": "^[0-9]{4}-[0-9]{2}$",
+                    "type": "string"
+                  },
+                  "organization": {
+                    "description": "widgetOptions: the Organization, by name",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "person": {
+                    "description": "personReadable: the Keycloak user id",
+                    "maxLength": 512,
+                    "type": "string"
                   }
                 },
                 "required": [
