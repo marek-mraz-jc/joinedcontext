@@ -15,7 +15,7 @@ import { SYNC_ORIGINS, syncSourceSchema } from "../../schemas/kinds";
 import type { SyncOriginKind } from "../../schemas/kinds";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
 import { ResourceRowActions } from "../../components/ResourceRowActions";
-import { PermissionGuard } from "../../components/ui/PermissionGuard";
+import { DeniedNote, PermissionGuard } from "../../components/ui/PermissionGuard";
 import type { components } from "../../api/schema";
 import { Alert, Button, ConfirmDialog, EmptyState, ExternalLink, Field, PageFailed, PageHeader, PageLoading, Select, recordCard } from "../../components/ui";
 import { RecordLink } from "../../components/RecordLink";
@@ -156,6 +156,9 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
           </div>
         }
       />
+
+      {/* A disabled Add source says why in words, not only in its tooltip (T-6423). */}
+      <DeniedNote project={project} kind="SyncSource" verb="propose" />
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
 

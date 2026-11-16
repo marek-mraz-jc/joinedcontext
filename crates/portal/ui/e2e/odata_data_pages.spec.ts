@@ -112,7 +112,7 @@ async function stub(
 
 /** The service's answer to a kind the person reads nothing of (PF-50): the list is hidden, not named. */
 const hidden = (plural: string): Answer => refusal(404, "resource-not-found", `plural '${plural}' not found in project 'helsinki'`);
-const failure: Answer = { status: 500, body: { error: { code: "internal-error", message: "the change store did not answer", type: "https://joinedcontext.com/errors/internal-error", title: "Error", status: 500 } } };
+const failure: Answer = { status: 500, body: { error: { code: "internal-error", message: "The Portal could not read this list just now.", type: "https://joinedcontext.com/errors/internal-error", title: "Error", status: 500 } } };
 const HIDDEN = "This list is not open to you in helsinki";
 
 const refusal = (status: number, code: string, message: string): Answer => ({
@@ -182,6 +182,7 @@ for (const width of [1440, 400]) {
       const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
       await expect(page.getByRole("button", { name: "Add source" }).first()).toBeDisabled();
+      await expect(page.getByText(/your role does not permit/i).first()).toBeVisible();
       await shoot(page, "syncsources-refused", width, refused);
     });
 

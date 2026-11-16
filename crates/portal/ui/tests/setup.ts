@@ -102,7 +102,7 @@ Object.defineProperty(globalThis, "fetch", {
   enumerable: true,
   get: () => assigned,
   set: (value: unknown) => {
-    assigned = typeof value === "function" && vi.isMockFunction(value) ? listingThePage(value as typeof fetch) : value;
+    assigned = typeof value === "function" && vi.isMockFunction(value) ? listingThePage(value as unknown as typeof fetch) : value;
   },
 });
 
