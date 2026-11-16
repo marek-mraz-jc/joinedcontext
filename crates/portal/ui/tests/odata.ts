@@ -638,7 +638,8 @@ export async function doorAsRest(
   for (const name of [...headers.keys()]) if (name.startsWith("odata-")) headers.delete(name);
   if (body) headers.set("Content-Type", text ? "text/yaml; charset=utf-8" : "application/json");
   if (ifMatch) headers.set("If-Match", ifMatch);
-  return new Request(rest, { method: door[0], body, headers });
+  // A cancelled call cancels the REST request the stub meets, as it cancels the service's.
+  return new Request(rest, { method: door[0], body, headers, signal: request.signal });
 }
 
 const CHANGE_KEY = /^\/api\/v1\/changes\(project='((?:[^']|'')*)',name='((?:[^']|'')*)'\)$/;

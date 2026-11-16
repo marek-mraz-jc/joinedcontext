@@ -1,5 +1,5 @@
 import { ApiError, type ProblemDetails } from "./client";
-import { ORG_NAMESPACE } from "./manifest";
+import { isChange, ORG_NAMESPACE } from "./manifest";
 import { door, doorAction } from "./odata";
 import type { Change } from "./manifest";
 import type { components } from "./schema";
@@ -56,8 +56,11 @@ export async function writeModelSource(options: {
     if (!(error instanceof ApiError)) throw error;
     return { kind: "refused", status: error.status, problem: error.problem ?? { detail: error.message } };
   }
-  if (answer === null || typeof answer !== "object") {
-    return { kind: "refused", status: 502, problem: { detail: `The check of ${name} came back with no verdict.` } };
+  if (options.dryRun && answer !== null && typeof answer === "object") {
+    return { kind: "checked", result: answer as SourceDryRun };
   }
-  return options.dryRun ? { kind: "checked", result: answer as SourceDryRun } : { kind: "proposed", change: answer as Change };
+  // A proposal answers its Change; a check's verdict or nothing is no proposal.
+  if (!options.dryRun && isChange(answer)) return { kind: "proposed", change: answer };
+  const detail = options.dryRun ? `The check of ${name} came back with no verdict.` : `${name} came back with no Change.`;
+  return { kind: "refused", status: 502, problem: { detail } };
 }
