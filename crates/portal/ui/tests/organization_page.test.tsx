@@ -332,7 +332,7 @@ describe("the Organization page", () => {
     await waitFor(() => {
       expectDenied(
         within(helsinki).getByRole("button", { name: "Delete project helsinki" }),
-        /permit .delete. on .Project./,
+        /cannot delete projects\./,
       );
     });
     expect(within(helsinki).getByText(en.organization.projects.peopleHidden)).toBeInTheDocument();

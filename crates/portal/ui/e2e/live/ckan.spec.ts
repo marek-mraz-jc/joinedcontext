@@ -61,7 +61,7 @@ test("a viewer meets Propose catalogue refused with the reason", async ({ browse
     await expect(propose).toBeVisible({ timeout: 60_000 });
     await expect(propose).toHaveAttribute("aria-disabled", "true");
     await expect(propose).toHaveAccessibleDescription(
-      "Disabled: your role does not permit 'propose' on 'CkanInstance' in this project",
+      `Your role in ${PROJECT} cannot add or change CKAN portals. Whoever manages the project can grant it.`,
     );
   } finally {
     await context.close();

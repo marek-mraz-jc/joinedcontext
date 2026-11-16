@@ -220,7 +220,7 @@ describe("endpoints view", () => {
     expect(edit).toHaveAttribute("aria-disabled", "true");
     expect(edit).toHaveAttribute(
       "title",
-      "Disabled: your role does not permit 'propose' on 'Endpoint' in this project",
+      "Your role in banskabystrica cannot add or change endpoints. Whoever manages the project can grant it.",
     );
     const menu = screen.getByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: new RegExp(en.resourceDelete.button) })).toHaveAttribute(

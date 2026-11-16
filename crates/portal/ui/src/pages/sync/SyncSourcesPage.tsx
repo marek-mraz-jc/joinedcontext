@@ -14,7 +14,7 @@ import { SYNC_ORIGINS, syncSourceSchema } from "../../schemas/kinds";
 import type { SyncOriginKind } from "../../schemas/kinds";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
 import { ResourceRowActions } from "../../components/ResourceRowActions";
-import { PermissionGuard } from "../../components/ui/PermissionGuard";
+import { DeniedNote, PermissionGuard } from "../../components/ui/PermissionGuard";
 import type { components } from "../../api/schema";
 import {
   Alert,
@@ -171,6 +171,8 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
           </div>
         }
       />
+      {/* A tooltip is out of reach on a phone: a reader is told once, in words, why Add is closed. */}
+      <DeniedNote project={project} kind="SyncSource" verb="propose" />
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
 

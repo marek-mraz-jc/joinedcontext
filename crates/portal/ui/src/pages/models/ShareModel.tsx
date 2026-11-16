@@ -20,6 +20,7 @@ import { ChangeNotice } from "../../components/ChangeNotice";
 import { useOrganizationModels } from "../../components/pickers/organizationModels";
 import { Alert, Button, ConfirmDialog, InlineError } from "../../components/ui";
 import { organizationImportName } from "./OrganizationModels";
+import { deniedReason } from "../../components/ui/PermissionGuard";
 
 /** The parts of a LinkML schema that define things an import can bring instead. */
 const DEFINITIONS = ["classes", "slots", "enums", "types", "subsets"] as const;
@@ -89,7 +90,7 @@ export function ShareWithOrganization({
     lifecycle !== "published"
       ? t("models.share.notPublished")
       : !can("DataModel", "propose")
-        ? t("permissions.denied", { verb: "propose", kind: "DataModel" })
+        ? deniedReason(t, project, "propose", "DataModel")
         : undefined;
   return (
     <div className="flex flex-col items-end gap-2">
@@ -157,7 +158,7 @@ export function OrganizationCopyOffer({ project, name, source }: { project: stri
     return null;
   }
   const reason = !can("DataModel", "propose")
-    ? t("permissions.denied", { verb: "propose", kind: "DataModel" })
+    ? deniedReason(t, project, "propose", "DataModel")
     : copySource.data === undefined
       ? t("models.share.copyLoading")
       : undefined;

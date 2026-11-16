@@ -16,6 +16,7 @@ import { ManifestYamlDialog } from "../../components/grid/ManifestYamlDialog";
 import { referenceTo, sharedReferenceForm } from "../../components/endpoints/sharing";
 import { RowActions } from "../../components/ui/RowActions";
 import type { RowAction } from "../../components/ui/RowActions";
+import { deniedReason } from "../../components/ui/PermissionGuard";
 
 export interface EndpointRow {
   key: string;
@@ -74,7 +75,7 @@ export function SharedRowActions({
   const [open, setOpen] = useState<"yaml" | "alias" | "stop" | null>(null);
   const deniedReference = permissions.can("SharedSpaceReference", "propose")
     ? undefined
-    : t("permissions.denied", { verb: "propose", kind: "SharedSpaceReference" });
+    : deniedReason(t, project, "propose", "SharedSpaceReference");
   const { endpoint, reference, source } = row;
   const slug = (endpoint?.spec as { slug?: string } | undefined)?.slug ?? "";
   const target: ResourceTarget | null = reference
@@ -112,7 +113,7 @@ export function SharedRowActions({
             onSelect: () => setOpen("stop"),
             disabledReason: permissions.can("SharedSpaceReference", "delete")
               ? undefined
-              : t("permissions.denied", { verb: "delete", kind: "SharedSpaceReference" }),
+              : deniedReason(t, project, "delete", "SharedSpaceReference"),
           },
         ]
       : []),
