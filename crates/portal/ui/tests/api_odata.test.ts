@@ -9,6 +9,7 @@ import {
   listOrganizations,
   manifestEtag,
   projectBound,
+  proposeManifest,
   readManifest,
 } from "../src/api/odata";
 import { announceSessionEnded } from "../src/api/sessionEnded";
@@ -214,6 +215,25 @@ describe("the Portal's OData client (T-6812)", () => {
       "/api/v1/rolebindings",
     ]);
     vi.restoreAllMocks();
+  });
+
+  it("asks no project for an Organization set: a project holds none of its manifests (T-7118)", async () => {
+    // The service has no `projects('helsinki')/groups` navigation and answers it 400; the REST
+    // door listed the project's namespace, where an Organization kind is never stored.
+    const sent = serve(() => odataValue([]));
+    await expect(listManifests("helsinki", "groups")).resolves.toEqual({ items: [] });
+    const missing = (await readManifest("helsinki", "rolebindings", "admins").catch(
+      (e: unknown) => e,
+    )) as ApiError;
+    expect([missing.status, missing.message]).toEqual([
+      404,
+      "Your roles do not let you read the settings of admins, or it no longer exists.",
+    ]);
+    const update = (await proposeManifest("helsinki", "groups", { metadata: { name: "admins" } }, { create: false }).catch(
+      (e: unknown) => e,
+    )) as ApiError;
+    expect(update.status).toBe(404);
+    expect(sent).toEqual([]);
   });
 
   it("reads one manifest by its key with its ETag, and a missing one as the ApiError a page shows", async () => {

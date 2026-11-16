@@ -108,18 +108,15 @@ interface GroupList {
 }
 
 /**
- * The Group names the organization and the project hold, or undefined while they are not known.
- * A list the caller does not read is not asked for (T-3852). The organization's then counts as
- * empty; the project's, where the Group would be proposed, is unknown: an empty Group proposed
- * over one the person cannot see would drop its members, so the share proposes none.
+ * The Group names the Organization holds, or undefined while they are not known. A Group lives in
+ * the Organization alone (users/groups/, PF-62): the share's new one is stored there. A list the
+ * caller does not read is not asked for (T-3852) and is unknown: an empty Group proposed over one
+ * the person cannot see would drop its members, so the share proposes none (T-7118).
  */
-export function knownGroupNames(organization: GroupList, project: GroupList): Set<string> | undefined {
-  if (project.hidden || project.data === undefined) return undefined;
-  if (!organization.hidden && organization.data === undefined) return undefined;
+export function knownGroupNames(organization: GroupList): Set<string> | undefined {
+  if (organization.hidden || organization.data === undefined) return undefined;
   return new Set(
-    [organization, project].flatMap((list) =>
-      asManifests((list.data as { items?: Manifest[] } | undefined)?.items ?? []).map((group) => group.metadata.name),
-    ),
+    asManifests((organization.data as { items?: Manifest[] } | undefined)?.items ?? []).map((group) => group.metadata.name),
   );
 }
 
@@ -147,7 +144,7 @@ export function ShareFlow({
   const hidden = spec.projection?.hiddenAttributes ?? [];
   const shared = spec.allowedProjects ?? [];
   const projects = (useProjects().data ?? []).filter((name) => name !== project && !shared.includes(name));
-  const groupNames = knownGroupNames(useReadableList(ORG_NAMESPACE, "groups", "Group"), useReadableList(project, "groups", "Group"));
+  const groupNames = knownGroupNames(useReadableList(ORG_NAMESPACE, "groups", "Group"));
   const [target, setTarget] = useState("");
   const [chosen, setChosen] = useState<string[]>(types);
   const [until, setUntil] = useState("");
