@@ -28,6 +28,9 @@ export interface DataGridLabels extends GridLabels {
   searchRows: string;
   searchRowsHint: string;
   noMatch: string;
+  /** A stacked phone card's button to its other fields, and back. */
+  moreFields: string;
+  fewerFields: string;
   /** The size of the whole list the query keeps: "{n} rows", or a function that picks the plural form. */
   rowCount: string | ((n: number) => string);
 }
@@ -37,6 +40,8 @@ export const DEFAULT_DATA_LABELS: DataGridLabels = {
   searchRows: "Search",
   searchRowsHint: "Type part of any value in the list, e.g. a name.",
   noMatch: "No rows match the search or the filters.",
+  moreFields: "More details",
+  fewerFields: "Fewer details",
   rowCount: "{n} rows",
 };
 
@@ -68,7 +73,10 @@ export interface DataGridProps<T> {
   /** Keys the layout a person arranged in this browser (`localStorage`). */
   storageKey?: string;
   pageSizes?: number[];
-  /** Below 640 px each row becomes a card of label and value lines. */
+  /**
+   * Below 640 px each row becomes a card: its first column as the title, the next
+   * {@link CARD_FIELDS} fields and its actions; the other fields open with the card's More details.
+   */
   stack?: boolean;
   /** Server-side mode: the host owns the query, answers it and says how many rows it matches. */
   query?: DataQuery;
@@ -107,6 +115,9 @@ function writeLayout(key: string | undefined, layout: DataLayout): void {
   }
 }
 
+/** The fields a stacked phone card shows under its title before its More details. */
+export const CARD_FIELDS = 3;
+
 export function DataGrid<T>({
   caption,
   rows,
@@ -138,6 +149,8 @@ export function DataGrid<T>({
     writeLayout(storageKey, next);
   };
   const [menu, setMenu] = useState<string | null>(null);
+  // The phone cards a person opened to all their fields.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
   const [filtering, setFiltering] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
 
@@ -295,23 +308,50 @@ export function DataGrid<T>({
       </td>
     </tr>
   ) : (
-    page.rows.map((row) => (
-      <tr key={rowKey(row)} {...rowProps?.(row)}>
-        {visible.map((col, at) => {
-          const Cell = at === 0 ? "th" : "td";
-          return (
-            <Cell
-              key={col.key}
-              scope={at === 0 ? "row" : undefined}
-              className={col.align === "right" ? "jc-grid-td jc-data-grid-end" : "jc-grid-td"}
-              data-label={at === 0 || col.actions ? undefined : labelOf(col)}
-            >
-              {col.cell ? col.cell(row) : col.text(row)}
-            </Cell>
-          );
-        })}
-      </tr>
-    ))
+    page.rows.map((row) => {
+      const key = rowKey(row);
+      const open = opened.has(key);
+      const fields = visible.filter((col, at) => at > 0 && !col.actions);
+      const more = stack && fields.length > CARD_FIELDS;
+      return (
+        <tr key={key} {...rowProps?.(row)} data-open={more && open ? "" : undefined}>
+          {visible.map((col, at) => {
+            const Cell = at === 0 ? "th" : "td";
+            const behind = more && fields.indexOf(col) >= CARD_FIELDS;
+            return (
+              <Cell
+                key={col.key}
+                scope={at === 0 ? "row" : undefined}
+                className={`jc-grid-td${col.align === "right" ? " jc-data-grid-end" : ""}${behind ? " jc-data-grid-more" : ""}`}
+                data-label={at === 0 || col.actions ? undefined : labelOf(col)}
+              >
+                {col.cell ? col.cell(row) : col.text(row)}
+              </Cell>
+            );
+          })}
+          {more ? (
+            // Drawn only on a phone card (grid.css): a table row keeps every column.
+            <td className="jc-data-grid-more-toggle">
+              <button
+                type="button"
+                className="jc-grid-arrange-btn"
+                aria-expanded={open}
+                onClick={() =>
+                  setOpened((was) => {
+                    const next = new Set(was);
+                    if (open) next.delete(key);
+                    else next.add(key);
+                    return next;
+                  })
+                }
+              >
+                {open ? labels.fewerFields : labels.moreFields}
+              </button>
+            </td>
+          ) : null}
+        </tr>
+      );
+    })
   );
 
   return (

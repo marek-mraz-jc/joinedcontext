@@ -13025,6 +13025,8 @@
   "dataGrid": {
     "searchRows": "Liste durchsuchen",
     "searchRowsHint": "Geben Sie einen Teil eines Werts ein, z. B. einen Namen oder einen Bereich.",
+    "moreFields": "Weitere Angaben",
+    "fewerFields": "Weniger Angaben",
     "noMatch": "Keine Zeile passt zur Suche oder zu den Filtern.",
     "rowCount": "{n, plural, one {# Zeile} other {# Zeilen}}"
   },

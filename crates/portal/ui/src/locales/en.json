@@ -13025,6 +13025,8 @@
   "dataGrid": {
     "searchRows": "Search this list",
     "searchRowsHint": "Type part of any value, e.g. a name or a space.",
+    "moreFields": "More details",
+    "fewerFields": "Fewer details",
     "noMatch": "No rows match the search or the filters.",
     "rowCount": "{n, plural, one {# row} other {# rows}}"
   },

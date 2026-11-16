@@ -13025,6 +13025,8 @@
   "dataGrid": {
     "searchRows": "Hľadať v zozname",
     "searchRowsHint": "Napíšte časť ľubovoľnej hodnoty, napr. názov alebo priestor.",
+    "moreFields": "Ďalšie údaje",
+    "fewerFields": "Menej údajov",
     "noMatch": "Hľadaniu ani filtrom nezodpovedá žiadny riadok.",
     "rowCount": "{n, plural, one {# riadok} few {# riadky} other {# riadkov}}"
   },

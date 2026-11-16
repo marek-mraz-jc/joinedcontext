@@ -91,7 +91,7 @@ export function ArrangePanel({ labels, items, onShow, onRename, onMove, onReset,
         onClick={() => (open ? close() : setOpen(true))}
       >
         <span className="jc-grid-menu-icon" aria-hidden="true">☰</span>
-        {labels.arrangeColumns}
+        <span className="jc-grid-arrange-word">{labels.arrangeColumns}</span>
       </button>
       {open && (
         <div
