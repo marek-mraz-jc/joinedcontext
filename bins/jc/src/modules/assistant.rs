@@ -860,7 +860,10 @@ mod tests {
         let none = |_: &str| None;
         let public = siblings.get(Module::Portal).unwrap().callable().to_owned();
         let table = proxy_lookup(&siblings, &setup::Realm::default(), &none);
-        assert_eq!(table["JC_PORTAL_BASE"], public, "no internal listener known");
+        assert_eq!(
+            table["JC_PORTAL_BASE"], public,
+            "no internal listener known"
+        );
         siblings.portal_internal = Some("0.0.0.0:40125".parse().unwrap());
         let table = proxy_lookup(&siblings, &setup::Realm::default(), &none);
         assert_eq!(table["JC_PORTAL_BASE"], "http://127.0.0.1:40125");
@@ -1180,7 +1183,10 @@ mod tests {
         assert!(proxy.starts_with("http://127.0.0.1:"), "{proxy}");
         // The Portal runs its agent runs through it (AG-33, T-7149).
         assert_eq!(portal["JC_AGENT_PROXY_BASE"], proxy);
-        assert_eq!(portal["JC_PORTAL_AGENT_PROXY_CLIENT_ID"], setup::PROXY_CLIENT);
+        assert_eq!(
+            portal["JC_PORTAL_AGENT_PROXY_CLIENT_ID"],
+            setup::PROXY_CLIENT
+        );
         let health = http.get(format!("{proxy}/healthz")).send().await.unwrap();
         assert_eq!(health.status(), StatusCode::OK);
         let refused = http
