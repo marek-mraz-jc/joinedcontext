@@ -86,6 +86,7 @@ const DEPLOYMENT: (&str, Place) = ("deployment", Place::Path);
 const CONVERSATION: (&str, Place) = ("conversation", Place::Path);
 const BROKER: (&str, Place) = ("broker", Place::Path);
 const UID: (&str, Place) = ("uid", Place::Path);
+const NAME: (&str, Place) = ("name", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -109,7 +110,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 122] = [
+pub static DOORS: [Door; 130] = [
     door(
         "portal_people_remove",
         Org,
@@ -1153,6 +1154,74 @@ pub static DOORS: [Door; 122] = [
         "/projects/{project}/kpis/check",
         &[BODY],
         Who::ProjectReader,
+    ),
+    door(
+        "portal_datasource_test",
+        Project,
+        Method::POST,
+        "/projects/{project}/datasources/{name}/test",
+        &[NAME],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_datasource_webhook",
+        Project,
+        Method::GET,
+        "/projects/{project}/datasources/{name}/webhook",
+        &[NAME],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_datasource_test_event",
+        Project,
+        Method::POST,
+        "/projects/{project}/datasources/{name}/test-event",
+        &[NAME, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_datasource_paging",
+        Project,
+        Method::POST,
+        "/projects/{project}/datasource-paging",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_portal_source_test",
+        Org,
+        Method::POST,
+        "/projects/org/portals/{name}/sources/{source}/test",
+        &[NAME, SOURCE],
+        Who::Person,
+    ),
+    door(
+        "portal_portal_source_run",
+        Org,
+        Method::POST,
+        "/projects/org/portals/{name}/sources/{source}/runs",
+        &[NAME, SOURCE],
+        Who::Person,
+    ),
+    door(
+        "portal_portal_source_runs",
+        Org,
+        Method::GET,
+        "/projects/org/portals/{name}/sources/{source}/runs",
+        &[NAME, SOURCE],
+        Who::Person,
+    ),
+    door(
+        "portal_portal_datasets",
+        Org,
+        Method::GET,
+        "/projects/org/portals/{name}/datasets",
+        &[
+            NAME,
+            ("offset", Place::Query("Edm.Int32")),
+            ("limit", Place::Query("Edm.Int32")),
+        ],
+        Who::Person,
     ),
 ];
 
