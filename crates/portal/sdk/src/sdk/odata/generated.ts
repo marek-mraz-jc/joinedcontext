@@ -986,6 +986,10 @@ export interface Functions {
   portal_backup_configuration_download: { version: string };
   portal_backup_configuration_get: Record<string, never>;
   portal_backup_configuration_versions: Record<string, never>;
+  portal_backup_data_download: { version: string };
+  portal_backup_data_get: Record<string, never>;
+  portal_backup_data_restores: Record<string, never>;
+  portal_backup_data_versions: Record<string, never>;
   portal_blueprint_list: Record<string, never>;
   portal_change_manifests: { id: string };
   portal_change_outside: Record<string, never>;
@@ -1150,6 +1154,10 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_backup_configuration_download: ["Organization"],
   portal_backup_configuration_get: ["Organization"],
   portal_backup_configuration_versions: ["Organization"],
+  portal_backup_data_download: ["Organization"],
+  portal_backup_data_get: ["Organization"],
+  portal_backup_data_restores: ["Organization"],
+  portal_backup_data_versions: ["Organization"],
   portal_blueprint_list: ["Organization"],
   portal_change_manifests: ["Project"],
   portal_change_outside: ["Project"],
@@ -1315,6 +1323,12 @@ export interface Actions {
   portal_backup_configuration_restore: { version: string; body?: unknown };
   portal_backup_configuration_run: Record<string, never>;
   portal_backup_configuration_set: { body?: unknown };
+  portal_backup_data_delete: Record<string, never>;
+  portal_backup_data_restore: { version: string; body?: unknown };
+  portal_backup_data_restore_approve: { id: string; body?: unknown };
+  portal_backup_data_restore_decline: { id: string };
+  portal_backup_data_run: Record<string, never>;
+  portal_backup_data_set: { body?: unknown };
   portal_change_restore: { id: string };
   portal_change_undo: { id: string };
   portal_comment_add: { space: string; body?: unknown };
@@ -1475,6 +1489,12 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_backup_configuration_restore: ["Organization"],
   portal_backup_configuration_run: ["Organization"],
   portal_backup_configuration_set: ["Organization"],
+  portal_backup_data_delete: ["Organization"],
+  portal_backup_data_restore: ["Organization"],
+  portal_backup_data_restore_approve: ["Organization"],
+  portal_backup_data_restore_decline: ["Organization"],
+  portal_backup_data_run: ["Organization"],
+  portal_backup_data_set: ["Organization"],
   portal_change_restore: ["Project"],
   portal_change_undo: ["Project"],
   portal_comment_add: ["Project"],

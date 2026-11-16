@@ -1113,6 +1113,190 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/backups/data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Data Backup
+         * @description The Organization's data backup target (never its secret key), the fingerprints of its two age recipients and the newest runs, deletes and restores (T-7168).
+         */
+        get: operations["data_overview"];
+        /**
+         * Set Data Backup Target
+         * @description Saves the bucket, schedule, retention and the working and recovery age recipients the archive is encrypted to (a test encryption runs first). The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7168).
+         */
+        put: operations["data_save"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Data Backup
+         * @description A soft delete: the bucket keeps every version behind a delete marker until retention removes them (T-7168).
+         */
+        delete: operations["data_soft_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/restores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Data Restore Requests
+         * @description The Organization's newest data restore requests: pending ones wait for a second administrator (T-7171).
+         */
+        get: operations["data_restores"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/restores/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Data Restore
+         * @description A second administrator approves a pending restore with the identity again: the rows are written in one transaction, re-keyed to the Organization, and its approved erasures applied again (T-7171).
+         */
+        post: operations["data_restore_approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/restores/{id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decline Data Restore
+         * @description Declines a pending restore; the person who asked may withdraw it the same way. Nothing is written (T-7171).
+         */
+        post: operations["data_restore_decline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Data Backup Now
+         * @description Exports the Organization's database rows, encrypts the archive to its two recipients and uploads it as a new version, whether the schedule is on or off (T-7168).
+         */
+        post: operations["data_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Data Backup Versions
+         * @description Every version and delete marker of the Organization's encrypted data archive in its bucket, newest first (T-7168).
+         */
+        get: operations["data_versions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Data Backup Version
+         * @description One version of the Organization's data archive, still age-encrypted: only the holder of the working or recovery identity can open it (T-7168).
+         */
+        get: operations["data_download"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/versions/{version}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Data Backup Restore
+         * @description Opens one version of the Organization's data archive with the identity given for this request only, and answers what restoring it would create, update, leave and refuse per table (the dry run). With `request` it also asks a second administrator to approve. Only a version this Organization's own backup wrote is opened (T-7171).
+         */
+        post: operations["data_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization/brokers": {
         parameters: {
             query?: never;
@@ -9032,6 +9216,8 @@ export interface components {
         };
         /** @description The page's state: the target (never its secret), the newest acts on it. */
         BackupOverview: {
+            /** @description The fingerprint of each of the target's recipients, in their order. */
+            fingerprints: string[];
             log: components["schemas"]["LogEntry"][];
             target?: null | components["schemas"]["Target"];
         };
@@ -10365,6 +10551,67 @@ export interface components {
             rows: components["schemas"]["AccessRow"][];
             /** @description Cells the gateway did not answer for. */
             unanswered: number;
+        };
+        /** @description The identity again, from the administrator who approves. */
+        DataApproveInput: {
+            /** @description The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`. */
+            identity: string;
+        };
+        /** @description The dry run of one version, or what its restore did. */
+        DataPlan: {
+            /**
+             * Format: int64
+             * @description Approved erasures applied again after the rows (zero on a dry run).
+             */
+            erasuresReplayed: number;
+            /** @description Per module, per table. */
+            modules: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["RestoreCounts"];
+                };
+            };
+            /** @description The modules the archive does not hold, with why. */
+            notInArchive: {
+                [key: string]: string;
+            };
+            /** @description The tables of the archive a restore leaves alone, with why. */
+            notRestored: {
+                [key: string]: string;
+            };
+            organization: string;
+            /** @description When the backup was taken, RFC 3339. */
+            takenAt: string;
+            versionId: string;
+        };
+        /** @description A dry run, and the request when one was asked for. */
+        DataRestoreAnswer: {
+            plan: components["schemas"]["DataPlan"];
+            request?: null | components["schemas"]["DataRestoreRequest"];
+        };
+        /**
+         * @description The identity that opens a data archive, for one request. Never stored, logged or audited;
+         *     `Debug` is not derived so no log line can print it.
+         */
+        DataRestoreInput: {
+            /** @description The working or the recovery age identity, one line, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`. */
+            identity: string;
+            /** @description `false` (the default) checks only; `true` also asks a second administrator to approve. */
+            request?: boolean;
+        };
+        /** @description One restore request: the version, the dry run it was asked on, and where it stands. */
+        DataRestoreRequest: {
+            decidedAt?: string | null;
+            decidedBy?: string | null;
+            /** Format: int64 */
+            id: number;
+            message: string;
+            plan: components["schemas"]["DataPlan"];
+            /** @description RFC 3339. */
+            requestedAt: string;
+            requestedBy: string;
+            /** @description `pending`, `applied`, `declined` or `failed`. */
+            state: string;
+            versionId: string;
         };
         /** @description A saved view as the API answers it. */
         DataView: {
@@ -12785,7 +13032,7 @@ export interface components {
             change?: unknown;
             changed: string[];
             created: string[];
-            /** @description `organization`, or a project's name. */
+            /** @description `organization`, `organization/people`, or a project's name. */
             name: string;
             /**
              * @description What this group needs done by hand: an Organization-level manifest is restored through
@@ -13623,6 +13870,21 @@ export interface components {
                 [key: string]: string;
             } | null;
         };
+        /** @description What a restore does to one table. */
+        RestoreCounts: {
+            /** Format: int64 */
+            create: number;
+            /**
+             * Format: int64
+             * @description Rows whose key is not the Organization's today, whose id another Organization's row
+             *     holds, or that would break a unique rule a row of today holds: never written.
+             */
+            refused: number;
+            /** Format: int64 */
+            unchanged: number;
+            /** Format: int64 */
+            update: number;
+        };
         RestoreInput: {
             /**
              * @description `false` (the default) plans only; `true` proposes one Change per project, which another
@@ -14371,6 +14633,11 @@ export interface components {
             organization: string;
             /** @description The folder of the bucket every object of this backup lands under, e.g. `jc/`. */
             prefix: string;
+            /**
+             * @description The age recipients (`age1…`, public keys) a data archive is encrypted to: the working
+             *     one first, then the recovery one. Empty for the configuration backup.
+             */
+            recipients: string[];
             region: string;
             /** @description RFC 3339. */
             updatedAt: string;
@@ -14390,9 +14657,13 @@ export interface components {
             keepDays: number;
             /** @description `joinedcontext/`; empty for the bucket's root. */
             prefix?: string;
+            /** @description The data backup's recovery age recipient, kept offline by another person. */
+            recoveryRecipient?: string | null;
             /** @description `eu-central-1` */
             region: string;
             secretAccessKey?: string | null;
+            /** @description The data backup's working age recipient, e.g. `age1ql3z7hjy54pw3hyw…`. */
+            workingRecipient?: string | null;
         };
         /**
          * @description One template as a person picks it (T-3263, AP-141): what it is for, for whom, and the data
@@ -17676,6 +17947,479 @@ export interface operations {
                 };
             };
             /** @description A bundle of another Organization, or of a project it no longer has */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_overview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Target, recipient fingerprints and log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupOverview"];
+                };
+            };
+            /** @description Not an administrator of the request's Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_save: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+                 *       "bucket": "bb-backups",
+                 *       "enabled": true,
+                 *       "endpoint": "https://s3.eu-central-1.amazonaws.com",
+                 *       "everyHours": 24,
+                 *       "keepDays": 90,
+                 *       "prefix": "joinedcontext/",
+                 *       "recoveryRecipient": "age1syrvza6xvtvsr9f0…",
+                 *       "region": "eu-central-1",
+                 *       "secretAccessKey": "the-key-the-bucket-owner-issued",
+                 *       "workingRecipient": "age1mmaj3l7xsa7pjqmx…"
+                 *     }
+                 */
+                "application/json": components["schemas"]["TargetInput"];
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Target"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The bucket's versioning is not on, or a restore request is pending */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A field is not valid, a recipient included; `errors` names it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No age key to seal the secret, or the bucket cannot be reached */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_soft_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delete marker written */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target, or its versioning is off */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_restores: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Requests, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataRestoreRequest"][];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_restore_approve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Restore request id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "identity": "AGE-SECRET-KEY-1…"
+                 *     }
+                 */
+                "application/json": components["schemas"]["DataApproveInput"];
+            };
+        };
+        responses: {
+            /** @description The request, applied or failed with its reason */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataRestoreRequest"];
+                };
+            };
+            /** @description Not an administrator, or the person who asked */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such pending request */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description An identity that does not open the version */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_restore_decline: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Restore request id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The declined request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataRestoreRequest"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such pending request */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run's log entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogEntry"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target or recipients, or its bucket's versioning is off */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The bucket or a database cannot be reached */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_versions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionList"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The bucket cannot be reached */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_download: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description S3 version id */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The encrypted archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description S3 version id */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "identity": "AGE-SECRET-KEY-1…",
+                 *       "request": false
+                 *     }
+                 */
+                "application/json": components["schemas"]["DataRestoreInput"];
+            };
+        };
+        responses: {
+            /** @description The dry run, and the request when asked for */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataRestoreAnswer"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target, or no database to restore into */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Another Organization's version, or an identity that does not open it; `errors` names the field */
             422: {
                 headers: {
                     [name: string]: unknown;

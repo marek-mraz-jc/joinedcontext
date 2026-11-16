@@ -1976,7 +1976,8 @@
         },
         "personOnly": "an Organization's backup holds its bucket credentials and restores its settings: an administrator does it on Administration > Backups, never an agent (T-7154)",
         "routes": [
-          "PUT /api/v1/organization/backups/configuration"
+          "PUT /api/v1/organization/backups/configuration",
+          "PUT /api/v1/organization/backups/data"
         ]
       },
       "run": {
@@ -1986,7 +1987,8 @@
         },
         "personOnly": "an Organization's backup holds its bucket credentials and restores its settings: an administrator does it on Administration > Backups, never an agent (T-7154)",
         "routes": [
-          "POST /api/v1/organization/backups/configuration/run"
+          "POST /api/v1/organization/backups/configuration/run",
+          "POST /api/v1/organization/backups/data/run"
         ]
       },
       "delete": {
@@ -1996,7 +1998,8 @@
         },
         "personOnly": "an Organization's backup holds its bucket credentials and restores its settings: an administrator does it on Administration > Backups, never an agent (T-7154)",
         "routes": [
-          "DELETE /api/v1/organization/backups/configuration/bundle"
+          "DELETE /api/v1/organization/backups/configuration/bundle",
+          "DELETE /api/v1/organization/backups/data/archive"
         ]
       },
       "restore": {
@@ -2006,7 +2009,10 @@
         },
         "personOnly": "an Organization's backup holds its bucket credentials and restores its settings: an administrator does it on Administration > Backups, never an agent (T-7154)",
         "routes": [
-          "POST /api/v1/organization/backups/configuration/versions/{version}/restore"
+          "POST /api/v1/organization/backups/configuration/versions/{version}/restore",
+          "POST /api/v1/organization/backups/data/versions/{version}/restore",
+          "POST /api/v1/organization/backups/data/restores/{id}/approve",
+          "POST /api/v1/organization/backups/data/restores/{id}/decline"
         ]
       }
     }

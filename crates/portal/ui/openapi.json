@@ -3555,6 +3555,562 @@
         }
       }
     },
+    "/api/v1/organization/backups/data": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Read Data Backup",
+        "description": "The Organization's data backup target (never its secret key), the fingerprints of its two age recipients and the newest runs, deletes and restores (T-7168).",
+        "operationId": "data_overview",
+        "responses": {
+          "200": {
+            "description": "Target, recipient fingerprints and log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupOverview"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the request's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Set Data Backup Target",
+        "description": "Saves the bucket, schedule, retention and the working and recovery age recipients the archive is encrypted to (a test encryption runs first). The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7168).",
+        "operationId": "data_save",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetInput"
+              },
+              "example": {
+                "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+                "bucket": "bb-backups",
+                "enabled": true,
+                "endpoint": "https://s3.eu-central-1.amazonaws.com",
+                "everyHours": 24,
+                "keepDays": 90,
+                "prefix": "joinedcontext/",
+                "recoveryRecipient": "age1syrvza6xvtvsr9f0…",
+                "region": "eu-central-1",
+                "secretAccessKey": "the-key-the-bucket-owner-issued",
+                "workingRecipient": "age1mmaj3l7xsa7pjqmx…"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Target"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The bucket's versioning is not on, or a restore request is pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is not valid, a recipient included; `errors` names it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No age key to seal the secret, or the bucket cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/data/archive": {
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Delete Data Backup",
+        "description": "A soft delete: the bucket keeps every version behind a delete marker until retention removes them (T-7168).",
+        "operationId": "data_soft_delete",
+        "responses": {
+          "204": {
+            "description": "Delete marker written"
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target, or its versioning is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/data/restores": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Data Restore Requests",
+        "description": "The Organization's newest data restore requests: pending ones wait for a second administrator (T-7171).",
+        "operationId": "data_restores",
+        "responses": {
+          "200": {
+            "description": "Requests, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DataRestoreRequest"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/data/restores/{id}/approve": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Approve Data Restore",
+        "description": "A second administrator approves a pending restore with the identity again: the rows are written in one transaction, re-keyed to the Organization, and its approved erasures applied again (T-7171).",
+        "operationId": "data_restore_approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Restore request id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataApproveInput"
+              },
+              "example": {
+                "identity": "AGE-SECRET-KEY-1…"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The request, applied or failed with its reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataRestoreRequest"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator, or the person who asked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "An identity that does not open the version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/data/restores/{id}/decline": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Decline Data Restore",
+        "description": "Declines a pending restore; the person who asked may withdraw it the same way. Nothing is written (T-7171).",
+        "operationId": "data_restore_decline",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Restore request id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The declined request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataRestoreRequest"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/data/run": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Run Data Backup Now",
+        "description": "Exports the Organization's database rows, encrypts the archive to its two recipients and uploads it as a new version, whether the schedule is on or off (T-7168).",
+        "operationId": "data_run",
+        "responses": {
+          "200": {
+            "description": "The run's log entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogEntry"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target or recipients, or its bucket's versioning is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The bucket or a database cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/data/versions": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Data Backup Versions",
+        "description": "Every version and delete marker of the Organization's encrypted data archive in its bucket, newest first (T-7168).",
+        "operationId": "data_versions",
+        "responses": {
+          "200": {
+            "description": "Versions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The bucket cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/data/versions/{version}": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Download Data Backup Version",
+        "description": "One version of the Organization's data archive, still age-encrypted: only the holder of the working or recovery identity can open it (T-7168).",
+        "operationId": "data_download",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "description": "S3 version id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The encrypted archive",
+            "content": {
+              "application/octet-stream": {}
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/data/versions/{version}/restore": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Check Data Backup Restore",
+        "description": "Opens one version of the Organization's data archive with the identity given for this request only, and answers what restoring it would create, update, leave and refuse per table (the dry run). With `request` it also asks a second administrator to approve. Only a version this Organization's own backup wrote is opened (T-7171).",
+        "operationId": "data_restore",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "description": "S3 version id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataRestoreInput"
+              },
+              "example": {
+                "identity": "AGE-SECRET-KEY-1…",
+                "request": false
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The dry run, and the request when asked for",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataRestoreAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target, or no database to restore into",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Another Organization's version, or an identity that does not open it; `errors` names the field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization/brokers": {
       "get": {
         "tags": [
@@ -49508,9 +50064,17 @@
         "type": "object",
         "description": "The page's state: the target (never its secret), the newest acts on it.",
         "required": [
+          "fingerprints",
           "log"
         ],
         "properties": {
+          "fingerprints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The fingerprint of each of the target's recipients, in their order."
+          },
           "log": {
             "type": "array",
             "items": {
@@ -53216,6 +53780,178 @@
             "type": "integer",
             "description": "Cells the gateway did not answer for.",
             "minimum": 0
+          }
+        }
+      },
+      "DataApproveInput": {
+        "type": "object",
+        "description": "The identity again, from the administrator who approves.",
+        "required": [
+          "identity"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "description": "The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DataPlan": {
+        "type": "object",
+        "description": "The dry run of one version, or what its restore did.",
+        "required": [
+          "organization",
+          "versionId",
+          "takenAt",
+          "modules",
+          "notRestored",
+          "notInArchive",
+          "erasuresReplayed"
+        ],
+        "properties": {
+          "erasuresReplayed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Approved erasures applied again after the rows (zero on a dry run).",
+            "minimum": 0
+          },
+          "modules": {
+            "type": "object",
+            "description": "Per module, per table.",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/components/schemas/RestoreCounts"
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "notInArchive": {
+            "type": "object",
+            "description": "The modules the archive does not hold, with why.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "notRestored": {
+            "type": "object",
+            "description": "The tables of the archive a restore leaves alone, with why.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "organization": {
+            "type": "string"
+          },
+          "takenAt": {
+            "type": "string",
+            "description": "When the backup was taken, RFC 3339."
+          },
+          "versionId": {
+            "type": "string"
+          }
+        }
+      },
+      "DataRestoreAnswer": {
+        "type": "object",
+        "description": "A dry run, and the request when one was asked for.",
+        "required": [
+          "plan"
+        ],
+        "properties": {
+          "plan": {
+            "$ref": "#/components/schemas/DataPlan"
+          },
+          "request": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DataRestoreRequest"
+              }
+            ]
+          }
+        }
+      },
+      "DataRestoreInput": {
+        "type": "object",
+        "description": "The identity that opens a data archive, for one request. Never stored, logged or audited;\n`Debug` is not derived so no log line can print it.",
+        "required": [
+          "identity"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "description": "The working or the recovery age identity, one line, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`."
+          },
+          "request": {
+            "type": "boolean",
+            "description": "`false` (the default) checks only; `true` also asks a second administrator to approve."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DataRestoreRequest": {
+        "type": "object",
+        "description": "One restore request: the version, the dry run it was asked on, and where it stands.",
+        "required": [
+          "id",
+          "versionId",
+          "requestedBy",
+          "requestedAt",
+          "state",
+          "plan",
+          "message"
+        ],
+        "properties": {
+          "decidedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decidedBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/DataPlan"
+          },
+          "requestedAt": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "requestedBy": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`pending`, `applied`, `declined` or `failed`."
+          },
+          "versionId": {
+            "type": "string"
           }
         }
       },
@@ -59649,7 +60385,7 @@
           },
           "name": {
             "type": "string",
-            "description": "`organization`, or a project's name."
+            "description": "`organization`, `organization/people`, or a project's name."
           },
           "note": {
             "type": [
@@ -61766,6 +62502,39 @@
         ],
         "description": "What a proposal of one resource sends: the manifest, and beside it the draft the form holds\n(AG-61) and the files the manifest names but cannot contain (DM-39). Both are taken out of the\nbody before it is read as an envelope; the type is what the OpenAPI document says, so the\ngenerated client sends them without a cast (T-1488)."
       },
+      "RestoreCounts": {
+        "type": "object",
+        "description": "What a restore does to one table.",
+        "required": [
+          "create",
+          "update",
+          "unchanged",
+          "refused"
+        ],
+        "properties": {
+          "create": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "refused": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows whose key is not the Organization's today, whose id another Organization's row\nholds, or that would break a unique rule a row of today holds: never written.",
+            "minimum": 0
+          },
+          "unchanged": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "update": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "RestoreInput": {
         "type": "object",
         "properties": {
@@ -63673,6 +64442,7 @@
           "enabled",
           "everyHours",
           "keepDays",
+          "recipients",
           "updatedBy",
           "updatedAt"
         ],
@@ -63714,6 +64484,13 @@
           "prefix": {
             "type": "string",
             "description": "The folder of the bucket every object of this backup lands under, e.g. `jc/`."
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The age recipients (`age1…`, public keys) a data archive is encrypted to: the working\none first, then the recovery one. Empty for the configuration backup."
           },
           "region": {
             "type": "string"
@@ -63766,6 +64543,13 @@
             "type": "string",
             "description": "`joinedcontext/`; empty for the bucket's root."
           },
+          "recoveryRecipient": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The data backup's recovery age recipient, kept offline by another person."
+          },
           "region": {
             "type": "string",
             "description": "`eu-central-1`"
@@ -63775,6 +64559,13 @@
               "string",
               "null"
             ]
+          },
+          "workingRecipient": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The data backup's working age recipient, e.g. `age1ql3z7hjy54pw3hyw…`."
           }
         },
         "additionalProperties": false
