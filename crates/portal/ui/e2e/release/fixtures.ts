@@ -64,14 +64,15 @@ export function totp(seed: Seed, step: number): string {
 }
 
 /** A code kaisatsu has not taken yet: each code is single use, so the step is claimed by an
- * exclusive file (e2e/live/totp.ts unusedCode) and the next step waited for when it is taken. */
+ * exclusive file in the run's directory (e2e/live/totp.ts unusedCode), so a rerun never meets an
+ * old claim, and the next step is waited for when all three are taken. */
 async function unusedCode(user: string, seed: Seed): Promise<string> {
   for (;;) {
     const step = Math.floor(Date.now() / 30_000);
     // kaisatsu takes the step before and after the current one too (look-ahead 1): three codes a step.
     for (const candidate of [step, step + 1, step - 1]) {
       try {
-        closeSync(openSync(join(tmpdir(), `jc-release-totp-${user}-${candidate}`), "wx"));
+        closeSync(openSync(join(dirname(process.env.RELEASE_STACKS ?? tmpdir()), `claim-${user.replace(/[^a-z0-9.-]/gi, "_")}-${candidate}`), "wx"));
         return totp(seed, candidate);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;

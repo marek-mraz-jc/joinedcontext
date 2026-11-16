@@ -57,7 +57,11 @@ test("J004 a person signs out from the account menu and the session is gone", as
   await signIn(page, person("viewer"), "/settings");
   await page.getByRole("button", { name: /^Signed in as / }).click();
   await page.getByRole("menuitem", { name: "Sign out" }).click();
-  await expect.poll(() => page.evaluate(() => fetch("/api/v1/auth/me").then((r) => r.status))).toBe(401);
+  // Sign out navigates (kaisatsu's end-session, back to the Portal): a probe that meets the page
+  // mid-navigation is read again.
+  await expect
+    .poll(() => page.evaluate(() => fetch("/api/v1/auth/me").then((r) => r.status)).catch(() => -1), { timeout: 30_000 })
+    .toBe(401);
   await page.goto("/settings");
   await expect(page.getByRole("button", { name: "Sign in" }).first()).toBeVisible();
   await context.close();

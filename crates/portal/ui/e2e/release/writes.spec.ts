@@ -8,9 +8,11 @@
 import type { Page } from "@playwright/test";
 import { expect, shoot, test, unique } from "./fixtures";
 
+const REVIEW = /^(Review it in Approvals|Open the change)$/;
+
 /** The change a form's proposal opened: its id from the notice's link (e2e/live/portal.ts proposedChange). */
 async function proposedChange(page: Page): Promise<string> {
-  const review = page.getByRole("link", { name: /^(Review it in Approvals|Open the change)$/ }).first();
+  const review = page.getByRole("link", { name: REVIEW }).first();
   await expect(review).toBeVisible({ timeout: 60_000 });
   const id = ((await review.getAttribute("href")) ?? "").split("/approvals/")[1]?.split(/[?#]/)[0];
   if (!id) throw new Error("the proposal notice links to no change");
@@ -45,6 +47,7 @@ test("J060 a person creates a personal AI connector, finds it listed, and revoke
 });
 
 test("J061 the administrator grants a person of the organization the viewer role in Helsinki, proposed for approval", async ({ as, person }, info) => {
+  test.setTimeout(300_000);
   const page = await as("admin", "/projects/helsinki/settings/members");
   await page.getByRole("main").getByRole("button", { name: "Grant a role" }).click();
   const form = page.getByRole("main");
@@ -55,9 +58,23 @@ test("J061 the administrator grants a person of the organization the viewer role
   await page.getByRole("listbox", { name: "Choices" }).getByRole("option", { name: new RegExp(who) }).first().click();
   await form.getByRole("combobox", { name: /^Role/ }).selectOption({ label: "viewer" });
   await shoot(page, info, "form");
-  await form.getByRole("button", { name: "Propose grant" }).click();
-  await proposedChange(page);
+  // One open change per RoleBinding: while another journey's grant of the same role and place
+  // waits ("already open ... approve or reject it first"), propose again once it is decided.
+  await expect(async () => {
+    await form.getByRole("button", { name: "Propose grant" }).click();
+    await expect(page.getByRole("link", { name: REVIEW }).first()).toBeVisible({ timeout: 10_000 });
+  }).toPass({ timeout: 120_000, intervals: [5_000] });
+  const href = (await page.getByRole("link", { name: REVIEW }).first().getAttribute("href")) ?? "";
   await shoot(page, info, "proposed");
+
+  // The approver reads the grant in Approvals and rejects it with a reason, so the binding is free
+  // for the next journey and the outsider stays an outsider.
+  const approver = await as("approver", href);
+  await approver.getByRole("button", { name: "Reject", exact: true }).click();
+  const dialog = approver.getByRole("dialog");
+  await dialog.getByLabel("Why are you rejecting this?").fill("Rejected by the release journey J061: proposed only to prove the form.");
+  await dialog.getByRole("button", { name: "Reject the change" }).click();
+  await expect(approver.getByText(/Rejected/).first()).toBeVisible({ timeout: 60_000 });
 });
 
 test("J062 the administrator proposes a Context Space, the approver approves it, and it is listed", async ({ as }, info) => {

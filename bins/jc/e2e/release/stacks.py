@@ -52,7 +52,9 @@ PLATFORM_IMAGE = ("ghcr.io/marek-mraz-jc/joinedcontext-platform"
                   "@sha256:76602eb8c85b6adbf9f557e5f20bf5f514dfff1f6d7534eeffc5da045edbe2be")
 # Stack i: public PORT0+10i (functions +1); Postgres PG0+2i, and up.sh's +100 (internal), +200 (admin),
 # +300/+301 (Prometheus, its proxy): even spacing keeps every stack's ports apart up to 16 stacks.
-PORT0, PG0 = 42500, 55600
+# All below 32768, the start of Linux' ephemeral range: a client socket took 55604 once and stack 2's
+# Postgres could not bind.
+PORT0, PG0 = 30500, 31000
 PERSONAS = ("admin", "approver", "viewer", "outsider")
 PREFIX = "rel"              # env names rel0..; containers rh-pg-rel<i>, rh-functions-<port>
 
@@ -241,9 +243,9 @@ def down(a) -> int:
         img = "postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6"
         subprocess.run(["docker", "run", "--rm", "-v", f"{home}:/h", "--entrypoint", "sh", img, "-c",
                         "rm -rf /h/*/pgdata"], check=False, stdout=subprocess.DEVNULL)
-    if a.keep_traces and (run / "results").is_dir():
+    if a.keep_traces:
         for p in run.iterdir():
-            if p.name not in ("results", "report", "measure.json", "up.json"):
+            if p.name not in ("results", "measure.json", "up.json") and not p.name.endswith(".import.log"):
                 shutil.rmtree(p) if p.is_dir() else p.unlink()
     else:
         shutil.rmtree(run, ignore_errors=True)
@@ -291,7 +293,13 @@ def results(report: Path) -> dict:
 def run(a) -> int:
     """up, then --runs full runs of every journey (persons reset between runs), the measurements,
     then down (--keep-traces keeps the failed journeys' traces and shots)."""
-    up(a)
+    try:
+        up(a)
+    except (RuntimeError, subprocess.CalledProcessError) as e:
+        log(f"up failed: {e}; tearing down, the import logs kept")
+        a.keep_traces = True
+        down(a)
+        return 1
     run_dir = a.run.resolve()
     workers = a.stacks * a.slots
     meas = json.loads((run_dir / "up.json").read_text())
@@ -342,7 +350,8 @@ def main(argv=None) -> int:
     p.add_argument("--image", default=os.environ.get("RELEASE_JC_IMAGE", JC_IMAGE))
     p.add_argument("--platform-image", default=os.environ.get("RELEASE_PLATFORM_IMAGE", PLATFORM_IMAGE))
     p.add_argument("--daiya-bin")
-    p.add_argument("--keep-traces", action="store_true", help="down keeps <run>/results (traces, shots)")
+    p.add_argument("--keep-traces", action="store_true",
+                   help="down keeps <run>/results (traces, shots), the measurements and the import logs")
     p.add_argument("--runs", type=int, default=1, help="run: full runs of the journeys")
     p.add_argument("--grep", help="run: only the journeys whose title matches")
     a = p.parse_args(argv)
