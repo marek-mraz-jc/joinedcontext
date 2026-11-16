@@ -249,18 +249,34 @@ describe("the data section of an endpoint", () => {
   it("opens a link's search in the search box and keeps it out of the link's query (T-7112)", async () => {
     const user = userEvent.setup();
     const links: DataLink[] = [];
-    show({ link: { type: "AirQualityObserved", search: "412" }, onLink: (next) => links.push(next) });
+    // As jc-dev's street lights: a text name and a place. The place is no text to search, which the
+    // grid only knows once a row arrived: a search asked before it put `location~=` in the query and
+    // matched nothing.
+    const light = {
+      id: "urn:ngsi-ld:Streetlight:zilina:032",
+      type: "Streetlight",
+      name: { type: "Property", value: "Street light 032.2010" },
+      location: { type: "GeoProperty", value: { type: "Point", coordinates: [18.71, 49.2] } },
+    };
+    const lights = (url: URL) => {
+      if (url.pathname.endsWith("/schema/v3/json-schema")) return json({ $defs: { Streetlight: { properties: { name: {}, location: {} } } } });
+      if (url.pathname.endsWith("/access/attributes")) return json({ type: "Streetlight", attributes: ["name", "location"].map((name) => ({ name, read: true, write: false, delete: false, reason: "not_in_grant" })) });
+      if (url.pathname.includes("/ngsi-ld/v1/entities")) return new Response(JSON.stringify([light]), { status: 200, headers: { "Content-Type": "application/json", "NGSILD-Results-Count": "1" } });
+      return answer(url);
+    };
+    show({ link: { type: "Streetlight", search: "032" }, onLink: (next) => links.push(next) }, lights);
     const box = await screen.findByRole("searchbox", { name: en.spaces.toolbar.search });
-    expect(box).toHaveValue("412");
-    // The rows are the searched ones, and the link the view writes back carries the words, not a query.
-    await waitFor(() => expect(entityReads().some((url) => (url.searchParams.get("q") ?? "").includes("(?i)412"))).toBe(true));
-    await waitFor(() => expect(links.at(-1)).toEqual({ type: "AirQualityObserved", search: "412" }));
+    expect(box).toHaveValue("032");
+    // The rows are the searched ones; the place never joins the search, and the link carries the words.
+    await waitFor(() => expect(entityReads().some((url) => url.searchParams.get("q") === 'name~="(?i)032"')).toBe(true));
+    expect(entityReads().some((url) => (url.searchParams.get("q") ?? "").includes("location"))).toBe(false);
+    await waitFor(() => expect(links.at(-1)).toEqual({ type: "Streetlight", search: "032" }));
     // A new word replaces it in the link, once typing settles.
     await user.clear(box);
-    await user.type(box, "41");
-    await waitFor(() => expect(links.at(-1)).toEqual({ type: "AirQualityObserved", search: "41" }));
+    await user.type(box, "03");
+    await waitFor(() => expect(links.at(-1)).toEqual({ type: "Streetlight", search: "03" }));
     await user.clear(box);
-    await waitFor(() => expect(links.at(-1)).toEqual({ type: "AirQualityObserved" }));
+    await waitFor(() => expect(links.at(-1)).toEqual({ type: "Streetlight" }));
   });
 
   it("sorts every row through the endpoint and writes the order into the link", async () => {

@@ -263,6 +263,12 @@ export interface FilterColumn {
   language?: boolean;
   /** A `date` column whose values carry a time: its filter picks a date and a time. */
   datetime?: boolean;
+  /**
+   * Text only as a guess: no format names the kind and no row read so far held the attribute. The
+   * search leaves it out (T-7112): a link's search asked before the first rows put a regular
+   * expression over `location`, matched nothing, and the empty answer never taught the grid its kind.
+   */
+  guessed?: boolean;
 }
 
 /** The attribute as a `q` path names it: a language map through `[*]`, NGSI-LD's "any language". */
@@ -398,7 +404,7 @@ const SEARCH_ATTRS = 8;
  */
 export function searchQuery(text: string, columns: readonly FilterColumn[]): string | undefined {
   const attrs = columns
-    .filter((column) => column.kind === "text" && column.attr && !column.meta)
+    .filter((column) => column.kind === "text" && column.attr && !column.meta && !column.guessed)
     .slice(0, SEARCH_ATTRS)
     .map((column) => qAttr(column.attr!, column));
   if (text.trim() === "" || attrs.length === 0) return undefined;

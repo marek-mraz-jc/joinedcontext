@@ -855,6 +855,14 @@ const DATE_VALUE = /^\d{4}-\d{2}-\d{2}([T ]|$)/;
  * else what the loaded rows show. Without a row and without a format a column is text, which is
  * the only guess that cannot refuse a value the endpoint would have accepted.
  */
+/** A column read as text only because nothing says otherwise yet: no format, no row holding it (T-7112). */
+function guessedText(column: VisibleColumn, config: ResolvedGridConfig, rows: RichRow[], enums?: Record<string, EnumOption[]>): boolean {
+  const attr = column.attr;
+  if (attr === null || column.meta || column.key === "id" || enums?.[attr]?.length) return false;
+  if (config.columns.find((c) => c.attr === attr)?.format) return false;
+  return !rows.some((row) => row.cells[attr] !== undefined);
+}
+
 export function filterKindOf(
   column: VisibleColumn,
   config: ResolvedGridConfig,
@@ -1096,6 +1104,7 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
             : {}),
           unit: column.attr !== null && column.meta === null ? unitSymbol(unitOfColumn(shapeRows, column.attr)) : undefined,
           ...(column.attr !== null && column.meta === null && holdsLanguage(shapeRows, column.attr) ? { language: true } : {}),
+          ...(guessedText(column, config, shapeRows, enums) ? { guessed: true } : {}),
         }))
         // A computed end is not stored, so no `q` can ask about it.
         .filter(

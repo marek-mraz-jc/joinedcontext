@@ -10,6 +10,7 @@ import { EntityGrid } from "../src/grid/EntityGrid";
 import { parseGridConfig } from "../src/grid/config";
 import { fixtureSource } from "../src/grid/source";
 import type { EntitySource } from "../src/grid/source";
+import type { FilterColumn } from "../src/grid/filters";
 import { toRichRow } from "../src/grid/model";
 import { DEFAULT_LABELS } from "../src/grid/useEntityGrid";
 import { enumOptions } from "../src/enums";
@@ -96,6 +97,20 @@ describe("relationship targets (G-R2GRID2-017)", () => {
     const heads = within(target).getAllByRole("columnheader").map((th) => th.textContent ?? "");
     expect(heads.some((head) => head.includes("Area code"))).toBe(true);
     expect(heads.some((head) => head.includes("areaCode"))).toBe(false);
+  });
+
+  it("calls a column text only as a guess until a row holds it (T-7112)", async () => {
+    const reported: FilterColumn[][] = [];
+    const config = gridOf("Area", [{ attr: "areaCode", label: "Area code" }, { attr: "location", label: "Location" }]);
+    const { unmount } = render(<EntityGrid config={config} source={fixtureSource([])} onFilterColumns={(next) => reported.push(next)} />);
+    await waitFor(() => expect(reported.at(-1)?.find((column) => column.attr === "location")?.guessed).toBe(true));
+    unmount();
+    reported.length = 0;
+    const placed = [{ id: "urn:ngsi-ld:Area:sk", type: "Area", areaCode: prop("SK"), location: { type: "GeoProperty", value: { type: "Point", coordinates: [19.7, 48.7] } } }];
+    render(<EntityGrid config={config} source={fixtureSource(placed)} onFilterColumns={(next) => reported.push(next)} />);
+    // A row told the grid what both hold: no guess is left, and the place is no text to search.
+    await waitFor(() => expect(reported.at(-1)?.some((column) => column.guessed)).toBe(false));
+    expect(reported.at(-1)?.find((column) => column.attr === "location")?.kind ?? "geo").not.toBe("text");
   });
 
   it("opens a target with none of the outer type's preset conditions or attributes", async () => {

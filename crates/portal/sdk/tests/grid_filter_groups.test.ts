@@ -93,6 +93,13 @@ describe("search", () => {
     );
   });
 
+  // T-7112: a shared link's search asked before any row put `location~=` in the query: it matched
+  // nothing on jc-dev, and the empty answer never told the grid `location` was a place.
+  it("leaves out a column that is text only as a guess", () => {
+    expect(searchQuery("032", [text("name"), { key: "location", attr: "location", kind: "text", guessed: true }])).toBe('name~="(?i)032"');
+    expect(searchQuery("032", [{ key: "location", attr: "location", kind: "text", guessed: true }])).toBeUndefined();
+  });
+
   // T-5600: `name~=` compares the whole language map and matched no row on dev; `name[*]~=` does.
   it("asks a LanguageProperty in any language", () => {
     expect(searchQuery("Herttoniemi", [{ key: "name", attr: "name", kind: "text", language: true }, text("source")])).toBe(
