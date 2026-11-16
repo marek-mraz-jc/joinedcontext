@@ -470,7 +470,7 @@ async fn an_organizations_realm_holds_its_own_apps_clients_alone() {
         .await;
     let apps: Vec<&str> = run.outcomes.iter().map(|o| o.app.as_str()).collect();
     assert_eq!(apps, ["bikes", "trams"], "{:?}", run.outcomes);
-    assert!(run.secrets.get("trams").is_none());
+    assert!(!run.secrets.contains_key("trams"));
     let calls = asked(&installation).await;
     assert!(
         calls
