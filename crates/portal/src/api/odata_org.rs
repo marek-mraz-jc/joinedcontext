@@ -801,8 +801,14 @@ const MANIFEST_DETAIL: [&str; 3] = ["spec", "status", "metadata"];
 /// `v1alpha2` (jc-core conversions), and a page writes back the version it read (T-7074).
 const MANIFEST_SET_DETAIL: [&str; 4] = ["spec", "status", "metadata", "apiVersion"];
 
-/// A Change's detail, as `jc_change_get` answers it: what the inbox and an approval read.
-const CHANGE_DETAIL: [&str; 9] = [
+/// A Change's detail, as `jc_change_get` answers it: what the inbox and an approval read, each
+/// member of the REST door's `GET …/changes/{id}` (T-7122).
+const CHANGE_DETAIL: [&str; 14] = [
+    "apiVersion",
+    "kind",
+    "ci",
+    "fileCount",
+    "workspace",
     "metadata",
     "status",
     "summary",
@@ -1013,6 +1019,9 @@ struct Read<'a> {
     page: u64,
     /// Whether the caller reads a member's [`PERSONAL`] properties.
     people: bool,
+    /// Each Change this read already holds whole from `jc_change_get`, by `project/id`, so a
+    /// key read fills its detail without reading the forge twice.
+    changes: std::sync::Mutex<HashMap<String, Value>>,
 }
 
 impl Read<'_> {
@@ -1077,16 +1086,13 @@ impl Read<'_> {
                 Some((project, name)) if !in_org => (project, name),
                 _ => (ORG_NAMESPACE, key),
             };
-            let whole = if change {
-                let Some(op) = crate::ops::find("jc_change_get") else {
-                    return Err(no(not_found("jc_change_get is not registered")));
-                };
-                match crate::ops::call(op, &self.caller, self.state, project, json!({ "id": name }))
-                    .await
-                {
-                    Ok(whole) => whole,
-                    Err(e) => return Err(Box::new(as_odata_error(e.into_response()).await)),
-                }
+            let held = change
+                .then(|| self.changes.lock().ok()?.remove(key))
+                .flatten();
+            let whole = if let Some(whole) = held {
+                whole
+            } else if change {
+                self.change(project, name).await?
             } else {
                 let mirror = &self.state.mirror;
                 mirror
@@ -1156,6 +1162,36 @@ impl Read<'_> {
     }
 
     /// The caller's rows of `set` in `projects`, at most [`MAX_ROWS`].
+    /// Change `id` of `project` whole, as `jc_change_get` answers it through the registry door
+    /// (`GET …/changes/{id}`): the caller's right on the project and the Change is its check.
+    async fn change(&self, project: &str, id: &str) -> Result<Value, Refused> {
+        let Some(op) = crate::ops::find("jc_change_get") else {
+            return Err(no(not_found("jc_change_get is not registered")));
+        };
+        match crate::ops::call(op, &self.caller, self.state, project, json!({ "id": id })).await {
+            Ok(whole) => Ok(whole),
+            Err(e) => Err(Box::new(as_odata_error(e.into_response()).await)),
+        }
+    }
+
+    /// The row of Change `id` of `project`, open or decided: the set lists the open Changes, and a
+    /// page follows its Change through the decision as the REST door `GET …/changes/{id}` does.
+    async fn change_row(&self, set: &ListSet, project: &str, id: &str) -> Result<Value, Refused> {
+        let whole = self.change(project, id).await?;
+        let key = format!("{project}/{id}");
+        let Value::Object(mut row) = crate::api::odata::flat(whole.clone()) else {
+            return Err(no(not_found(format!("no Change {id} you may read"))));
+        };
+        row.insert(PROJECT.into(), Value::String(project.to_owned()));
+        row.insert(ROW_KEY.into(), Value::String(key.clone()));
+        let tag = etag_of(self.state, set, project, id, &row);
+        row.insert(ETAG.into(), Value::String(tag));
+        if let Ok(mut held) = self.changes.lock() {
+            held.insert(key, whole);
+        }
+        Ok(Value::Object(row))
+    }
+
     async fn rows(&self, set: &ListSet, projects: &[String]) -> Result<Vec<Value>, Refused> {
         let mut all = Vec::new();
         for project in projects {
@@ -1647,7 +1683,14 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                     if !readable(read.state, read.user, &read.org, &project) {
                         return refused(not_found(format!("no {s} row you may read")));
                     }
-                    let rows = match kind_rows(set, &read.caller, read.state, &project).await {
+                    let rows = match (set.set == CHANGES, name.as_str()) {
+                        (true, Some(id)) => read
+                            .change_row(set, &project, id)
+                            .await
+                            .map(|row| vec![row]),
+                        _ => kind_rows(set, &read.caller, read.state, &project).await,
+                    };
+                    let rows = match rows {
                         Ok(rows) => rows,
                         Err(r) => return *r,
                     };
@@ -2503,6 +2546,7 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
         people: people_admin(&state, &user, &org),
         org,
         page,
+        changes: std::sync::Mutex::default(),
     };
     let target = if query.is_empty() {
         rel

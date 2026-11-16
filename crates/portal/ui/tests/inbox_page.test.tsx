@@ -142,7 +142,7 @@ describe("the inbox (T-3273)", () => {
     await userEvent.click(within(endpoint).getByRole("button", { name: en.inbox.showDiff }));
     expect(await within(endpoint).findByText("organization")).toBeInTheDocument();
     await userEvent.click(within(endpoint).getByRole("button", { name: en.approvals.approve }));
-    await waitFor(() => expect(seen.writes).toEqual([{ path: "/api/v1/projects/helsinki/changes/chg-endpoint/approve", body: undefined }]));
+    await waitFor(() => expect(seen.writes).toEqual([{ path: "/api/v1/projects/helsinki/changes/chg-endpoint/approve", body: {} }]));
     expect(await within(endpoint).findByRole("status")).toHaveTextContent(en.inbox.decided.approved);
   });
 

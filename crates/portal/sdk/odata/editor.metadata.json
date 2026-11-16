@@ -8,7 +8,15 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "author": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "ci": {
         "$Nullable": true,
         "$Type": "Edm.Untyped"
       },
@@ -20,7 +28,15 @@
         "$Nullable": true,
         "$Type": "Edm.Untyped"
       },
+      "fileCount": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "files": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "kind": {
         "$Nullable": true,
         "$Type": "Edm.Untyped"
       },
@@ -61,6 +77,10 @@
         "$Nullable": true
       },
       "waitsOn": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "workspace": {
         "$Nullable": true,
         "$Type": "Edm.Untyped"
       }
@@ -4660,6 +4680,32 @@
         }
       }
     ],
+    "portal_organization_change_approve": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_organization_change_get": [
       {
         "$IsBound": true,
@@ -4742,6 +4788,32 @@
             "$Name": "id",
             "$Nullable": false,
             "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_organization_change_reject": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
           }
         ],
         "$ReturnType": {

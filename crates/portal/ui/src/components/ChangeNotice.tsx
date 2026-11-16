@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { approvalStanding, expectedNameOf } from "../api/approval";
-import { api, queryKeys, unwrap } from "../api/client";
+import { queryKeys } from "../api/client";
+import { readChange } from "../api/odata";
 import { useDecision } from "../api/decision";
 import { usePermissions } from "../api/permissions";
 import { useAuth } from "../auth/AuthProvider";
@@ -50,7 +51,7 @@ export function ChangeDecide({ id, project }: { id: string; project: string }): 
   // The same query that follows the change beside this control, so the two never disagree.
   const { data: change } = useQuery({
     queryKey: queryKeys.change(project, id),
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/changes/{id}", { params: { path: { project, id } } })),
+    queryFn: () => readChange(project, id),
   });
   if (change?.status.phase !== "PendingApproval" || change.summary === undefined) return null;
   const standing = approvalStanding(permissions, identity?.email ?? undefined, change);

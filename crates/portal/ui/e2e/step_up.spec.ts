@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
 
 // T-5567: an approver whose right comes from a role binding signed in with a password alone.
 // The approve door answers 403 second-factor-required; the dialog sends them to the step-up
@@ -58,6 +59,9 @@ async function stubApi(page: Page, state: { factor: boolean }): Promise<string[]
   });
   return approvals;
 }
+
+// A Change read and its approve go through the OData service (T-7122): the stub answers their REST doors.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 for (const width of [1440, 400]) {
   test(`a decision refused for want of a second factor steps up and goes through at ${width} px`, async ({ page }) => {

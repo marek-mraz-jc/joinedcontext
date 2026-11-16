@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../api/client";
-import { call } from "../api/odata";
+import { call, readChange } from "../api/odata";
 import { usePermissions } from "../api/permissions";
 import { changeSentence, fieldSentence, landed } from "../routes/changeWords";
 import type { PlannedField } from "../routes/changeWords";
@@ -15,7 +15,7 @@ export function ChangedFields({ project, id }: { project: string; id: string }):
   const { t } = useTranslation();
   const detail = useQuery({
     queryKey: queryKeys.change(project, id),
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/changes/{id}", { params: { path: { project, id } } })),
+    queryFn: () => readChange(project, id),
   });
   if (detail.isPending) return <p className="text-caption text-fg-muted">{t("app.loading")}</p>;
   const fields = (detail.data?.planFields ?? []) as PlannedField[];

@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "./client";
+import { approveChange, rejectChange } from "./odata";
 import type { components } from "./schema";
 import { approvalStanding } from "./approval";
 import { usePermissions } from "./permissions";
@@ -38,12 +39,7 @@ export function useDecision(project: string, id: string) {
   const approve = useMutation({
     mutationFn: async (confirm: string | undefined) => {
       setError(null);
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/changes/{id}/approve", {
-          params: { path: { project, id } },
-          body: confirm !== undefined ? { confirm: confirm.trim() } : undefined,
-        }),
-      );
+      return approveChange(project, id, confirm?.trim());
     },
     onSuccess: settle,
     onError: failed,
@@ -52,13 +48,8 @@ export function useDecision(project: string, id: string) {
   const reject = useMutation({
     mutationFn: async (reason: string) => {
       setError(null);
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/changes/{id}/reject", {
-          params: { path: { project, id } },
-          // The reason goes into the merge request's closing comment, where the proposer reads it.
-          body: { reason: reason.trim() },
-        }),
-      );
+      // The reason goes into the merge request's closing comment, where the proposer reads it.
+      return rejectChange(project, id, reason.trim());
     },
     onSuccess: settle,
     onError: failed,

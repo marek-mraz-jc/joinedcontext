@@ -45,7 +45,8 @@ export function ProposedViaHint({
   const { t } = useTranslation();
   return (
     <>
-      <dd className="mt-1 text-xs text-fg-muted">
+      {/* The provenance an approver reads before deciding: body text, not a footnote (T-7122 judge). */}
+      <dd className="mt-1 text-sm text-fg break-words">
         {via.connectorName
           ? t("approvals.proposedVia.hintConnector", {
               client: clientName(via.client),
@@ -55,7 +56,7 @@ export function ProposedViaHint({
           : t("approvals.proposedVia.hint", { client: clientName(via.client), author })}
       </dd>
       {via.plan ? (
-        <dd className="mt-1 text-xs text-fg-muted" data-testid="change-proposed-plan">
+        <dd className="mt-1 text-sm text-fg break-words" data-testid="change-proposed-plan">
           {t("approvals.proposedVia.plan", { plan: via.plan, author })}
         </dd>
       ) : null}

@@ -459,6 +459,9 @@ const DOORS: Record<string, Door> = {
   portal_organization_change_list: ["GET", "/projects/org/changes"],
   portal_organization_change_history: ["GET", "/projects/org/changes/history"],
   portal_organization_change_get: ["GET", "/projects/org/changes/{id}"],
+  // The `org` namespace's own Changes decided (T-7122): `body` is the REST door's whole body.
+  portal_organization_change_approve: ["POST", "/projects/org/changes/{id}/approve"],
+  portal_organization_change_reject: ["POST", "/projects/org/changes/{id}/reject"],
   portal_organization_change_manifests: [
     "GET",
     "/projects/org/changes/{id}/manifests",
@@ -522,6 +525,15 @@ export async function doorAsRest(
   return new Request(rest, { method: door[0], body, headers });
 }
 
+const CHANGE_KEY = /^\/api\/v1\/changes\(project='((?:[^']|'')*)',name='((?:[^']|'')*)'\)$/;
+const DECIDE =
+  /^\/api\/v1\/changes\(project='((?:[^']|'')*)',name='((?:[^']|'')*)'\)\/JoinedContext\.Portal\.(approve|reject)$/;
+
+/** Whether `url` calls an action bound to an entity: a `propose_*`, or a Change's `approve` or `reject`. */
+export function actsOnEntity(url: string): boolean {
+  return url.includes("JoinedContext.Portal.propose_") || DECIDE.test(decodeURIComponent(new URL(url, "http://localhost").pathname));
+}
+
 const UNDER = /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/(\w+)$/;
 const ORG_SET = /^\/api\/v1\/(\w+)$/;
 const WORKSPACES =
@@ -543,6 +555,13 @@ export function manifestAsRest(
   const unquote = (text: string) => text.replaceAll("''", "'");
   // A project's copies (api/odata.ts listWorkspaces, readWorkspace): the REST rows are the
   // service's (workspace_api_tests `the_workspaces_set_answers_scope_and_changes_as_the_rest_doors`).
+  // A Change by its key (api/odata.ts readChange): its row with `$select` of every member is the
+  // REST door's answer (odata_org_tests `a_changes_detail_answers_as_the_rest_door`, T-7122).
+  const change = CHANGE_KEY.exec(path);
+  if (change) {
+    const [project, id] = [change[1], change[2]].map((text) => encodeURIComponent(unquote(text)));
+    return { rest: new URL(`/api/v1/projects/${project}/changes/${id}`, at.origin), one: true, row: true };
+  }
   const copies = WORKSPACES.exec(path);
   if (copies) {
     const project = encodeURIComponent(unquote(copies[1] ?? copies[2]));
@@ -673,6 +692,20 @@ const PROPOSE =
 export async function proposalAsRest(request: Request): Promise<Request | undefined> {
   if (request.method !== "POST") return undefined;
   const at = new URL(request.url);
+  // A Change's `approve` or `reject` (api/odata.ts approveChange, rejectChange): the REST door's
+  // POST with the action's parameters as its body (odata_org.rs `act_inner`).
+  const decided = DECIDE.exec(decodeURIComponent(at.pathname));
+  if (decided) {
+    const [project, id] = [decided[1], decided[2]].map((text) => encodeURIComponent(text.replaceAll("''", "'")));
+    const headers = new Headers(request.headers);
+    headers.delete("OData-Version");
+    headers.set("Content-Type", "application/json");
+    return new Request(new URL(`/api/v1/projects/${project}/changes/${id}/${decided[3]}`, at.origin), {
+      method: "POST",
+      headers,
+      body: await request.clone().text(),
+    });
+  }
   const found = PROPOSE.exec(decodeURIComponent(at.pathname));
   if (!found) return undefined;
   const unquote = (text: string) => text.replaceAll("''", "'");

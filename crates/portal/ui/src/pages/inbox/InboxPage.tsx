@@ -3,8 +3,8 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
-import { door } from "../../api/odata";
+import { queryKeys } from "../../api/client";
+import { door, readChange } from "../../api/odata";
 import type { components } from "../../api/schema";
 import {
   useDecision,
@@ -60,12 +60,7 @@ function Decision({
   const detail = useQuery({
     queryKey: queryKeys.change(project, change.metadata.name),
     enabled: open,
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/{id}", {
-          params: { path: { project, id: change.metadata.name } },
-        }),
-      ),
+    queryFn: () => readChange(project, change.metadata.name),
   });
   const red = change.status.lane === "red";
   const name = expectedName(change);

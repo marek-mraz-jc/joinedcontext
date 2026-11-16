@@ -1,4 +1,4 @@
-import { listManifests, readManifest } from "../../api/odata";
+import { listManifests, readChange, readManifest } from "../../api/odata";
 /**
  * The second half of a file's way into a Context Space, the Upload page's and Complete this
  * space's (DM-81, T-6445): follows the proposed Change, checks every row against the model, and
@@ -10,7 +10,7 @@ import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { download, originTransport } from "@joinedcontext/sdk";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 import { useOrgDomain } from "../../api/projects";
 import { asManifests, refName } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
@@ -42,7 +42,7 @@ export function useLoadTarget(project: string, space: string, proposed: Change |
   const followed = useQuery({
     queryKey: queryKeys.change(project, changeId),
     enabled: changeId !== "",
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/changes/{id}", { params: { path: { project, id: changeId } } })),
+    queryFn: () => readChange(project, changeId),
     refetchInterval: (query) => (phaseOf(query.state.data) === "PendingApproval" || phaseOf(query.state.data) === undefined ? 5_000 : false),
   });
   const change = followed.data ?? proposed;

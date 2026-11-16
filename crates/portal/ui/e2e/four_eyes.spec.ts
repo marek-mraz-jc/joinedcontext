@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
 
 // T-4833, PF-58: access is approved by a second person. An administrator of role bindings opens
 // the member form and reads, before the click, that their change waits for another
@@ -65,6 +66,9 @@ async function shot(page: Page, name: string): Promise<void> {
   mkdirSync(EVIDENCE, { recursive: true });
   await page.screenshot({ path: join(EVIDENCE, `${name}.png`), fullPage: true });
 }
+
+// A Change read and its approve go through the OData service (T-7122): the stub answers their REST doors.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 for (const width of [1440, 400]) {
   test.describe(`four eyes on access changes at ${width} px`, () => {

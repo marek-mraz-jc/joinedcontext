@@ -198,6 +198,8 @@ DRAFT_GET = "http://x/api/v1/projects('p')/JoinedContext.Portal.jc_draft_get(kin
     ("outsider", 404, "http://x/api/v1/projects/p/spaces", True),
     ("outsider", 404, "http://x/api/v1/projects('p')/JoinedContext.Portal.portal_secret_list()", True),
     ("viewer", 404, "http://x/api/v1/projects('p')/JoinedContext.Portal.portal_secret_list()", False),
+    ("outsider", 404, "http://x/api/v1/changes(project='p',name='chg-1')?$select=status", True),
+    ("viewer", 404, "http://x/api/v1/changes(project='p',name='chg-1')?$select=status", False),
     ("outsider", 404, "http://x/api/v1/Organization/JoinedContext.Portal.portal_person_names(ids=@ids)", False),
     ("anonymous", 401, "http://x/api/v1/auth/me", True),
     ("viewer", 401, "http://x/api/v1/auth/me", False),

@@ -2,7 +2,8 @@ import type { JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { approveChange, readChange } from "../../api/odata";
 import { approvalStanding, changedKind } from "../../api/approval";
 import { usePermissions } from "../../api/permissions";
 import { useIdentity } from "../../auth/AuthProvider";
@@ -37,24 +38,14 @@ export function RunPublication({
 
   const change = useQuery({
     queryKey: queryKeys.change(project, changeId ?? ""),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/{id}", {
-          params: { path: { project, id: changeId ?? "" } },
-        }),
-      ),
+    queryFn: () => readChange(project, changeId ?? ""),
     enabled: Boolean(changeId),
     refetchInterval: (query) =>
       query.state.data?.status.phase === "Deploying" ? 5_000 : false,
   });
 
   const approve = useMutation({
-    mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/changes/{id}/approve", {
-          params: { path: { project, id: changeId ?? "" } },
-        }),
-      ),
+    mutationFn: () => approveChange(project, changeId ?? ""),
     onSuccess: (approved) => {
       queryClient.setQueryData(queryKeys.change(project, changeId ?? ""), (prev: unknown) =>
         prev && typeof prev === "object" ? { ...prev, status: approved.status } : prev,
