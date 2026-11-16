@@ -23,7 +23,7 @@ const ADMIN = {
 /** The REST doors these pages used to call; none may be asked any more. */
 const OLD_DOORS = /\/projects\/[^/]+\/secrets$|\/organization\/connectors(\/|$)/;
 
-type Answer = { status: number; value?: unknown; message?: string; target?: string };
+type Answer = { status: number; value?: unknown; message?: string; target?: string; field?: string };
 type Asked = { path: string; method: string; body: string };
 
 /** The page's API, each Portal door answered by `doors[name]`; returns every `/api/` request. */
@@ -41,7 +41,7 @@ async function stub(page: Page, doors: Record<string, Answer>): Promise<Asked[]>
       const answer = doors[door];
       if (!answer) return json({ error: { code: "not-implemented", message: `no ${door} here`, status: 501 } }, 501);
       if (answer.status !== 200) {
-        const extra = answer.target ? { target: answer.target, details: [{ code: "unprocessable", target: answer.target, message: answer.message }] } : {};
+        const extra = answer.target ? { target: answer.target, details: [{ code: "unprocessable", target: answer.target, message: answer.field }] } : {};
         return json(
           { error: { code: "unprocessable", message: answer.message, type: "https://joinedcontext.com/errors/unprocessable", title: "Error", status: answer.status, ...extra } },
           answer.status,
@@ -106,10 +106,15 @@ for (const width of [1440, 400]) {
       await shoot(page, "secret-empty", width, empty);
       expect(await axeViolations(page)).toEqual([]);
 
-      doors.portal_secret_set = { status: 422, message: "the secret cannot be written as sent; nothing was kept", target: "values.apiKey" };
+      doors.portal_secret_set = {
+        status: 422,
+        message: "the secret cannot be written as sent; nothing was kept",
+        target: "values.apiKey",
+        field: "1 to 16384 bytes",
+      };
       await page.getByLabel(/^Value/).fill(TYPED);
       await page.getByRole("button", { name: "Encrypt and propose" }).click();
-      const refused = page.getByRole("alert").filter({ hasText: "values.apiKey" });
+      const refused = page.getByRole("alert").filter({ hasText: "values.apiKey: 1 to 16384 bytes" });
       await expect(refused).toBeVisible();
       await shoot(page, "secret-refused", width, refused);
 
