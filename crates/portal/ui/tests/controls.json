@@ -1996,11 +1996,20 @@
         "flow_map.test.tsx"
       ]
     },
+    "src/pages/pipelines/MapperSources.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "output_mapper_g18_ui.test.tsx"
+      ]
+    },
     "src/pages/pipelines/OutputMapper.tsx": {
       "controls": {
         "Button": 3
       },
       "tests": [
+        "output_mapper_g18_ui.test.tsx",
         "output_mapper_ui.test.tsx"
       ]
     },
@@ -2022,6 +2031,7 @@
         "pipeline_graph.test.ts",
         "pipeline_last_samples.test.tsx",
         "pipeline_step_form.test.tsx",
+        "processor_tiers.test.ts",
         "runner_lists.test.ts"
       ]
     },
@@ -2604,6 +2614,14 @@
         "access_requests.test.tsx",
         "pipeline_history.test.tsx",
         "workbench_target.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/WorkbenchSchedule.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "workbench_schedule.test.tsx"
       ]
     },
     "src/components/SpaceUsageInfo.tsx": {
