@@ -13550,6 +13550,11 @@ export interface components {
             /** Format: int64 */
             maxTokens: number;
             modelName: string;
+            /**
+             * @description The Organization of the run's project: the one Organization whose own realm may issue
+             *     the token of the person who started it (T-7144); absent, the installation realm's alone.
+             */
+            organization?: string | null;
             /** @description The folder the run writes, as its repository spells it. */
             pathPrefix: string;
             project: string;

@@ -180,12 +180,16 @@ fn lookup<'a>(
 fn proxy_lookup(
     siblings: &Siblings,
     realm: &setup::Realm,
+    orgs: &[crate::config::OrganizationSection],
     env: &impl Fn(&str) -> Option<String>,
 ) -> BTreeMap<&'static str, String> {
     let mut out = BTreeMap::new();
     out.insert("JC_PROXY_BIND", format!("{}:0", Ipv4Addr::LOCALHOST));
     if let Some(id) = siblings.get(Module::Kaisatsu) {
         out.insert("JC_OIDC_ISSUER", format!("{}/realms/{realm}", id.public));
+        if let Some(realms) = organization_realms(orgs, &id.public) {
+            out.insert("JC_OIDC_ORGANIZATION_REALMS", realms);
+        }
     }
     out.insert("JC_OIDC_CLIENT_ID", setup::PROXY_CLIENT.to_owned());
     out.insert("JC_ASSISTANT_CLIENT_ID", setup::ASSISTANT_CLIENT.to_owned());
@@ -218,6 +222,32 @@ fn proxy_lookup(
         env("JC_MODEL_PROVIDER").unwrap_or_else(|| DEFAULT_MODEL_PROVIDER.to_owned()),
     );
     out
+}
+
+/// `JC_OIDC_ORGANIZATION_REALMS` for the proxy (T-7144): the realm of each Organization with its
+/// own sign-in host, where a run of that Organization's person is introspected and exchanged as
+/// the realm's `agent-proxy` client (`setup::assistant_realm_file`). The proxy dials the realm at
+/// its issuer, as it dials the installation realm, on the scheme kaisatsu's public address has.
+fn organization_realms(
+    orgs: &[crate::config::OrganizationSection],
+    kaisatsu: &str,
+) -> Option<String> {
+    let scheme = kaisatsu
+        .split_once("://")
+        .map_or("https", |(scheme, _)| scheme);
+    let realms: Vec<serde_json::Value> = orgs
+        .iter()
+        .filter_map(|org| {
+            let idm = org.hosts.idm.as_deref()?;
+            let issuer = format!("{scheme}://{idm}/realms/{}", org.name);
+            Some(serde_json::json!({
+                "organization": org.name,
+                "jwks_url": format!("{issuer}/protocol/openid-connect/certs"),
+                "issuer": issuer,
+            }))
+        })
+        .collect();
+    (!realms.is_empty()).then(|| serde_json::Value::from(realms).to_string())
 }
 
 /// What the module needs before anything is built, or why it is off: the siblings, the client
@@ -306,10 +336,11 @@ struct Proxy {
 async fn proxy(
     siblings: &Siblings,
     setup: &Setup,
+    orgs: &[crate::config::OrganizationSection],
     env: &impl Fn(&str) -> Option<String>,
     key: &jc_secret::Secret,
 ) -> Result<Proxy, String> {
-    let table = proxy_lookup(siblings, &setup.realm, env);
+    let table = proxy_lookup(siblings, &setup.realm, orgs, env);
     let mut config = agent_proxy::config::Config::from_lookup(|k| table.get(k).cloned())
         .map_err(|e| format!("the model proxy is not configured: {e}"))?;
     config.oidc_client_secret = setup
@@ -397,7 +428,9 @@ async fn try_start(
     // The proxy: an operator's own (`JC_ASSISTANT_PROXY_URL`), else `jc`'s over the key file.
     let proxy = match (env("JC_ASSISTANT_PROXY_URL"), &secrets.model_key) {
         (Some(_), _) => None,
-        (None, Some(key)) => Some(proxy(siblings, setup, env, &key.secret).await?),
+        (None, Some(key)) => {
+            Some(proxy(siblings, setup, &cfg.organizations, env, &key.secret).await?)
+        }
         (None, None) => {
             return Err(
                 "no model proxy: give the model key file (JCBIN_MODEL_KEY_FILE) or JC_ASSISTANT_PROXY_URL"
@@ -832,6 +865,35 @@ mod tests {
         assert!(!vars(&slug, &setup, None, None).contains_key("JC_ASSISTANT_REACH"));
     }
 
+    /// T-7144: the proxy gets the realm of each Organization with its own sign-in host, under the
+    /// issuer kaisatsu names there, and accepts the list as the gateway's shape; one without
+    /// `hosts.idm` gets none.
+    #[test]
+    fn the_proxy_gets_the_realm_of_each_organization_with_its_own_sign_in_host() {
+        let text = "base_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            hosts = { portal = \"smartcity.bbsk.sk\", idm = \"idm.bbsk.sk\" }\n\
+            [[organizations]]\nname = \"zilina\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a2\"\n\
+            hosts = { portal = \"smartcity.zilina.sk\" }\n";
+        let file = crate::config::Config::parse_file(Path::new("jc.toml"), text).unwrap();
+        let cfg = crate::config::Config::merge(crate::config::Cli::default(), file).unwrap();
+        let json = organization_realms(&cfg.organizations, "https://city.example/login").unwrap();
+        let realms: Vec<agent_proxy::config::OrganizationRealm> =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            realms,
+            [agent_proxy::config::OrganizationRealm {
+                organization: "bbsk".into(),
+                issuer: "https://idm.bbsk.sk/realms/bbsk".into(),
+                jwks_url: "https://idm.bbsk.sk/realms/bbsk/protocol/openid-connect/certs".into(),
+            }]
+        );
+        assert_eq!(
+            organization_realms(&cfg.organizations[1..], "https://city.example"),
+            None
+        );
+    }
+
     #[test]
     fn the_proxy_table_names_no_secret_and_follows_the_models_base() {
         let (_cfg, siblings, _setup, _d) = fixture();
@@ -840,7 +902,7 @@ mod tests {
             "JC_MODEL_KEY" => Some("sk-or-v1-from-env".to_owned()),
             _ => None,
         };
-        let table = proxy_lookup(&siblings, &setup::Realm::default(), &env);
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &[], &env);
         assert_eq!(table["JC_MODEL_BASE"], "https://models.example/v1");
         assert_eq!(table["JC_PROXY_BIND"], "127.0.0.1:0");
         for key in table.keys() {

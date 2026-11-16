@@ -52,7 +52,9 @@ pub async fn internal_get_run(
             .to_owned(),
         None => run.path_prefix.clone(),
     };
+    let organization = crate::permissions::organization_of(&state.mirror, &run.project);
     Ok(Json(RunContext {
+        organization,
         id: run.id,
         project: run.project,
         app_name: run.app_name,

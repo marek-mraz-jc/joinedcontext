@@ -46,6 +46,10 @@ pub struct RunContext {
     #[serde(default)]
     pub max_egress_bytes_per_run: u64,
     pub created_by: String,
+    /// The Organization of the run's project, when it has one (T-7144): the one Organization
+    /// whose own realm may issue the token of the person who started it.
+    #[serde(default)]
+    pub organization: Option<String>,
     pub model_name: String,
     /// The profile's `model.reasoningEffort`, absent when it names none (AG-72).
     #[serde(default)]
