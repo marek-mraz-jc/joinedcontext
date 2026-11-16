@@ -273,7 +273,12 @@ mod tests {
             held.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(),
             ["b", "c"]
         );
-        // A panel edited to another attribute no longer answers for the row.
+        // A panel retitled, or edited to another attribute, no longer answers for the row.
+        merged.panels[0].title = "PM2.5 by station".into();
+        let (gone, held) = settled(&rows, &merged);
+        assert!(gone.is_empty());
+        assert_eq!(held.len(), 3);
+        merged.panels[0].title = "PM2.5".into();
         merged.panels[0].attribute = "pm10".into();
         let (gone, held) = settled(&rows, &merged);
         assert!(gone.is_empty());
