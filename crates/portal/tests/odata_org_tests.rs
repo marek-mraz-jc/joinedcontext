@@ -800,6 +800,19 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
         ("portal_preferences_get", "()", "/api/v1/preferences"),
         ("portal_app_templates", "()", "/api/v1/app-templates"),
         ("portal_blueprint_list", "()", "/api/v1/blueprints"),
+        // The home page's Dashboards, the open data portals' hosts and the data models a person
+        // may read, each answered by the REST handler for the person (T-7167).
+        ("portal_widget_list", "()", "/api/v1/organization/widgets"),
+        (
+            "portal_portal_host_list",
+            "()",
+            "/api/v1/organization/portal-hosts",
+        ),
+        (
+            "portal_organization_model_list",
+            "(search=@search)?@search='air'",
+            "/api/v1/organization/datamodels?search=air",
+        ),
         (
             "portal_visualization_template",
             "(template='bar',x='day',y='pm10')",
@@ -2265,6 +2278,7 @@ fn door_sample(member: &str) -> Value {
         "slow" => json!(true),
         "since" => json!("2026-11-16T00:00:00Z"),
         "minCostUsd" => json!(0.02),
+        "days" => json!(7),
         other => json!(format!("{other}-1")),
     }
 }

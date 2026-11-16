@@ -21,7 +21,7 @@ export function useProjectUsage(project: string) {
 
 /**
  * What the project holds of each quota (PF-73, PF-75). The numbers are the API's own
- * (`GET /api/v1/projects/{project}`), so a person sees the limit before the verdict refuses a
+ * (`portal_project_get`), so a person sees the limit before the verdict refuses a
  * change for exceeding it. A caller who may not read the project is answered `404` and the card
  * is simply not there.
  */

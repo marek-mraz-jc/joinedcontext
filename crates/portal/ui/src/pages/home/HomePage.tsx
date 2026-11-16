@@ -1,4 +1,4 @@
-import { listChanges, listManifests } from "../../api/odata";
+import { door, listChanges, listManifests, type RestAnswer } from "../../api/odata";
 /**
  * A project's home page (T-3233, T-3235): the first-run checklist while the person has not put it
  * away, and the cards of what their role can do next. Every step and every card reads the
@@ -9,10 +9,11 @@ import { Link } from "@tanstack/react-router";
 import { Suspense, lazy } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { localized } from "../../api/manifest";
 import { mayRead, usePermissions } from "../../api/permissions";
 import { spaceUsageQuery } from "../../api/spaceUsage";
+import { listDrafts } from "../../api/drafts";
 import { useSampleProjects } from "../../api/projects";
 import { useHiddenSections } from "../../branding";
 import { isHiddenSection } from "../../components/layout/navigation";
@@ -79,7 +80,7 @@ export function HomePage({
     queryKey: ["organization", "widgets"],
     enabled: dashboardsShown,
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/widgets", {})),
+    queryFn: async () => (await door("portal_widget_list", {})) as RestAnswer<"list_widgets">,
   });
   const changes = useQuery({
     queryKey: queryKeys.changes(project),
@@ -92,14 +93,14 @@ export function HomePage({
     queryKey: ["projects", project, "drafts"],
     enabled: role === "editor",
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/drafts", { params: { path: { project } } })) as unknown as Listed,
+    queryFn: async () => (await listDrafts(project)) as unknown as Listed,
   });
   // Only an organization administrator may list the people; anyone else's card is not shown.
   const people = useQuery({
     queryKey: ["organization", "people"],
     enabled: role === "steward",
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/people", {})) as unknown as Listed,
+    queryFn: async () => (await door("portal_people_list", {})) as Listed,
   });
 
   const spaceNames = (spaces.data?.items ?? []).map((item) => item.metadata?.name ?? "").filter(Boolean);
