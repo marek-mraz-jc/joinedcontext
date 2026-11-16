@@ -12,6 +12,7 @@ import urllib.parse
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -697,6 +698,48 @@ def test_the_person_realm_and_its_token_call_name_the_state_realm(tmp_path, monk
                            out=str(tmp_path / "tok"))
     assert person.cmd_token(a) == 1
     assert seen == ["/login/realms/smartcity/protocol/openid-connect/token"]
+
+
+def written_suite(answers, busy):
+    s = suite.Suite.__new__(suite.Suite)
+    s.busy, s.r = {}, suite.Results("endpoints", "http://127.0.0.1:1")
+
+    class H:
+        calls = 0
+
+        def call(self, *a, **k):
+            H.calls += 1
+            return answers.pop(0) if answers else busy
+
+    s.http = H()
+    return s, H, SimpleNamespace(slug="ep", selectors=lambda grants: None)
+
+
+def test_a_count_read_busy_past_the_gateways_deadline_is_asked_again_not_dropped(monkeypatch):
+    # smoke 43870005560 (T-7146): the restore copy answered three AirQualityObserved counts 503 after
+    # 10.4..11.8 s (READ_DEADLINE), the type's types.written row was dropped and the listing read it
+    # as extra; the fourth read, 16 s later, answered in 1 s.
+    monkeypatch.setattr(suite.time, "sleep", lambda _: None)
+    busy = (503, {"retry-after": "1"}, b'{"title":"Service Unavailable"}')
+    counted = (200, {"ngsild-results-count": "13723"}, b"[]")
+    s, H, e = written_suite([busy, busy, busy, busy, counted], busy)
+    assert s.written(e, None, "anon", [], ["AirQualityObserved"]) == {"AirQualityObserved"}
+    row = s.r.rows[-1]
+    assert H.calls == 5 and row["id"] == "anon.types.written" and row["result"] == "pass", row
+    assert row["actual"] == "count=13723 after 4 busy 503", row
+
+
+def test_a_count_still_busy_at_its_wait_fails_its_own_row_with_the_answer(monkeypatch):
+    monkeypatch.setattr(suite.time, "sleep", lambda _: None)
+    monkeypatch.setattr(suite, "COUNT_WAIT", 0.0)
+    busy = (503, {"retry-after": "1"}, b'{"title":"Service Unavailable"}')
+    s, _, e = written_suite([], busy)
+    assert s.written(e, None, "anon", [], ["AirQualityObserved"]) == {"AirQualityObserved"}
+    row = s.r.rows[-1]
+    assert row["result"] == "fail" and row["target"] == "ep AirQualityObserved", row
+    assert row["actual"].startswith("503 ") and "busy 503 within 0 s" in row["actual"], row
+    s2, _, _ = written_suite([(200, {"ngsild-results-count": "0"}, b"[]")], busy)
+    assert s2.written(e, None, "anon", [], ["Vehicle"]) == set() and s2.r.rows == []  # no rows: still extra
 
 
 def test_a_busy_gateway_answer_is_sent_again_a_bounded_number_of_times_and_named_on_the_row(monkeypatch):

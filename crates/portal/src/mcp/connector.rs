@@ -112,17 +112,26 @@ pub async fn handle_connector(
         .and_then(|h| h.strip_prefix("Bearer "))
         .map(str::trim)
         .filter(|t| !t.is_empty());
-    let (Some(token), Some(verifier)) = (token, state.bearer.as_ref()) else {
+    let Some(token) = token else {
+        return unauthorized(&address, &id);
+    };
+    // The Organization realm of this host checks its own tokens, the installation's the rest
+    // (T-7142).
+    let realm = crate::auth::realms::of_token(&state, token);
+    let Some(verifier) = crate::auth::realms::verifier(&state, realm.as_deref()) else {
         return unauthorized(&address, &id);
     };
     // Every connector token names the connectors' audience and exactly one connector's scope:
     // a Portal token, or one for another connector, is not a token for this one (AG-143, T-5954).
-    let Ok((session, _)) = verifier
+    let Ok((mut session, _)) = verifier
         .verify_for_scope(token, connectors::AUDIENCE, &connectors::scope(&id))
         .await
     else {
         return unauthorized(&address, &id);
     };
+    if realm.is_some() {
+        crate::auth::realms::confine(&mut session.identity, &state.config.bootstrap_admins);
+    }
     if state.is_revoked(&session) {
         return unauthorized(&address, &id);
     }

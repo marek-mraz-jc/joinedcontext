@@ -16,8 +16,7 @@ use kaisatsu_core::i18n::{Bundle, negotiate_for_realm};
 use kaisatsu_core::page;
 use kaisatsu_core::*;
 use kaisatsu_crypto::{
-    constant_time_str_eq, random_handle_256, sha256_hex, verify_and_maybe_rehash,
-    verify_jwt_with_jwk,
+    constant_time_str_eq, random_handle_256, verify_and_maybe_rehash, verify_jwt_with_jwk,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -77,17 +76,8 @@ pub fn broker_router() -> Router<OidcState> {
         )
 }
 
-fn read_auth_cookie(headers: &HeaderMap) -> Option<String> {
-    crate::handlers::read_cookie(headers, &crate::handlers::sign_in_cookie_name("auth"))
-}
-
 fn verify_auth_cookie(headers: &HeaderMap, auth_session: &AuthSession) -> Result<()> {
-    let Some(raw) = read_auth_cookie(headers) else {
-        return Err(KaisatsuError::BadRequest(
-            "missing auth session cookie".into(),
-        ));
-    };
-    if !constant_time_str_eq(&sha256_hex(&raw), &auth_session.handle_hash) {
+    if !crate::handlers::auth_cookie_holds(headers, &auth_session.handle_hash) {
         return Err(KaisatsuError::BadRequest(
             "mismatched auth session cookie".into(),
         ));

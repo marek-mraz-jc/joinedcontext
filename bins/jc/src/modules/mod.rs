@@ -47,7 +47,7 @@ mod ekiben_pg;
 #[cfg(feature = "gateway")]
 pub mod gateway;
 #[cfg(feature = "kaisatsu")]
-mod kaisatsu;
+pub(crate) mod kaisatsu;
 #[cfg(feature = "model-tools")]
 pub mod model_tools;
 #[cfg(feature = "portal")]
@@ -170,9 +170,16 @@ pub async fn build(
             organizations.extend(portal::apps_vars(cfg));
             organizations.extend(portal::ingest_vars(cfg));
             organizations.extend(portal::limits_vars(cfg));
-            portal::build(ctx, cfg.portal_siblings, organizations, mount, shutdown)
-                .await
-                .map(|(router, _)| router)
+            portal::build(
+                ctx,
+                cfg.portal_siblings,
+                &cfg.organizations,
+                organizations,
+                mount,
+                shutdown,
+            )
+            .await
+            .map(|(router, _)| router)
         }
         #[cfg(feature = "shako")]
         Module::Shako => {

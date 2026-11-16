@@ -9,6 +9,7 @@
 use axum::http::HeaderMap;
 
 use crate::agents::identity::persons_token;
+use crate::auth::realms::exchanger;
 use crate::auth::session::{self, Front};
 use crate::state::AppState;
 
@@ -26,15 +27,13 @@ pub async fn endpoint_token(
     headers: &HeaderMap,
     slug: &str,
 ) -> Result<Option<String>, String> {
-    let oidc = state
-        .oidc
-        .as_ref()
-        .ok_or("this Portal has no Keycloak client to read the Endpoint with")?;
     if Front::of(headers, state.config.trust_edge_token) != Front::Portal {
         let Some(token) = persons_token(headers, state.config.trust_edge_token) else {
             return Ok(None);
         };
-        return oidc
+        return exchanger(state, token)
+            .await
+            .map_err(|err| err.to_string())?
             .exchange_for_endpoint(token, slug)
             .await
             .map(Some)
@@ -53,7 +52,9 @@ pub async fn endpoint_token(
     let Some(access) = state.session_access_token(&session, now) else {
         return Ok(None);
     };
-    let exchanged = oidc
+    let exchanged = exchanger(state, &access)
+        .await
+        .map_err(|err| err.to_string())?
         .exchange_for_endpoint(&access, slug)
         .await
         .map_err(|err| err.to_string())?;
@@ -169,6 +170,68 @@ pub(crate) mod tests {
             let token = endpoint_token(&state, &headers, "closedslug").await;
             assert_eq!(token, Ok(Some(EXCHANGED.to_owned())));
         }
+    }
+
+    /// T-7142: a person of an Organization's own realm has their token exchanged at that realm,
+    /// on that Organization's host; the same token anywhere else goes to the installation's
+    /// realm, which knows no such person, and is never sent to the Organization's.
+    #[tokio::test]
+    async fn an_organization_realms_token_is_exchanged_at_its_own_realm_alone() {
+        use crate::auth::oidc::tests::{config_for, mock_realm};
+        use crate::organization_host::{scope, OrganizationHost};
+        let installation = mock_realm().await;
+        let ba = mock_realm().await;
+        let issuer = format!("{}/realms/bb", ba.uri());
+        let host = |name: &str| OrganizationHost {
+            organization: name.into(),
+            base: format!("https://portal.{name}.example")
+                .parse()
+                .expect("url"),
+        };
+        let config = Config {
+            oidc: Some(config_for(&installation)),
+            organization_hosts: vec![host("ba"), host("hel")],
+            organization_realms: vec![crate::auth::realms::RealmSetting {
+                organization: "ba".into(),
+                issuer: issuer.parse().expect("url"),
+                jwks_url: format!("{issuer}/protocol/openid-connect/certs")
+                    .parse()
+                    .expect("url"),
+            }],
+            ..Config::for_tests()
+        };
+        let mut state = AppState::new(config, None);
+        let _installation = realm(&mut state, 0).await;
+        let person = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &json!({ "iss": issuer, "sub": "sub-ba" }),
+            &jsonwebtoken::EncodingKey::from_secret(b"unverified-here"),
+        )
+        .expect("token");
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .and(body_string_contains(format!("subject_token={person}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": EXCHANGED, "token_type": "Bearer", "expires_in": 300
+            })))
+            .expect(1)
+            .mount(&ba)
+            .await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {person}").parse().expect("header"),
+        );
+        let on_ba = scope(host("ba"), endpoint_token(&state, &headers, "closedslug")).await;
+        assert_eq!(on_ba, Ok(Some(EXCHANGED.to_owned())));
+        let on_hel = scope(host("hel"), endpoint_token(&state, &headers, "closedslug")).await;
+        assert!(
+            on_hel.is_err(),
+            "hel's host exchanged ba's token: {on_hel:?}"
+        );
+        assert!(endpoint_token(&state, &headers, "closedslug")
+            .await
+            .is_err());
     }
 
     /// A session whose access token this process does not hold (a restart, another replica), a

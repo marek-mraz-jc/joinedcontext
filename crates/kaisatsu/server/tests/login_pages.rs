@@ -91,12 +91,17 @@ struct Attempt {
 }
 
 async fn start(app: &Router, extra: &str) -> Attempt {
+    start_in(app, extra, None).await
+}
+
+/// Starts a sign-in in a browser that already holds `jar` (its auth cookie), as a second tab does.
+async fn start_in(app: &Router, extra: &str, jar: Option<&str>) -> Attempt {
     let uri = format!(
         "{AUTH}?client_id=edge&redirect_uri={}&response_type=code&scope=openid&state=st&code_challenge={}&code_challenge_method=S256{extra}",
         url::form_urlencoded::byte_serialize(CALLBACK.as_bytes()).collect::<String>(),
         sha256_base64url(VERIFIER),
     );
-    let (st, h, _) = get(app, &uri, None).await;
+    let (st, h, _) = get_with_cookie(app, &uri, None, jar).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
     let url = location(&h);
     let cookie = h[header::SET_COOKIE]
@@ -322,6 +327,89 @@ async fn k1_session_code_replayed_from_second_browser_is_refused() {
     // 3. The original browser with the matching cookie still completes the login.
     let (st_ok, h_ok, _) = first_browser.password(&app, MEMBER, MEMBER_PW).await;
     assert!(is_code(st_ok, &h_ok));
+}
+
+/// T-7147: two sign-ins started in one browser (two tabs, or a Portal page and an Organization
+/// host) both finish. Red before T-7147: the second start replaced the one-handle auth cookie,
+/// so the first tab's form answered "This page has expired".
+#[tokio::test]
+async fn two_sign_ins_in_one_browser_both_finish() {
+    let (app, _) = app().await;
+    let first = start(&app, "").await;
+    let second = start_in(&app, "", Some(&first.cookie)).await;
+    assert_ne!(first.session, second.session);
+    assert!(
+        second
+            .cookie
+            .contains(&first.cookie["__Host-wk_auth=".len()..]),
+        "the second start keeps the first tab's handle"
+    );
+    let jar = second.cookie.clone();
+
+    let (st, h, html) = post_form(
+        &app,
+        &first.url,
+        &[
+            ("csrf_token", &first.csrf),
+            ("session_code", &first.session),
+            ("username", MEMBER),
+            ("password", MEMBER_PW),
+        ],
+        Some(&jar),
+    )
+    .await;
+    assert!(is_code(st, &h), "first tab: {st} {html}");
+    let (st, h, html) = second.password(&app, MEMBER, MEMBER_PW).await;
+    assert!(is_code(st, &h), "second tab: {st} {html}");
+}
+
+/// T-7147: the browser's set of sign-ins is bounded; a sign-in pushed out of it, like one the
+/// browser never held, is refused with the expired page, and its CSRF token stays per session.
+#[tokio::test]
+async fn sign_in_not_in_the_browsers_set_is_refused() {
+    let (app, _) = app().await;
+    let oldest = start(&app, "").await;
+    let mut jar = oldest.cookie.clone();
+    let mut newest = None;
+    for _ in 0..8 {
+        let a = start_in(&app, "", Some(&jar)).await;
+        jar.clone_from(&a.cookie);
+        newest = Some(a);
+    }
+    let newest = newest.expect("eight starts");
+    assert_eq!(jar.matches('.').count(), 7, "at most eight handles: {jar}");
+
+    let (st, _, html) = post_form(
+        &app,
+        &oldest.url,
+        &[
+            ("csrf_token", &oldest.csrf),
+            ("session_code", &oldest.session),
+            ("username", MEMBER),
+            ("password", MEMBER_PW),
+        ],
+        Some(&jar),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(page_id(&html), "expired");
+
+    // Another session's CSRF token does not carry over to a session the browser holds.
+    let (st, h, _) = post_form(
+        &app,
+        &newest.url,
+        &[
+            ("csrf_token", &oldest.csrf),
+            ("session_code", &newest.session),
+            ("username", MEMBER),
+            ("password", MEMBER_PW),
+        ],
+        Some(&jar),
+    )
+    .await;
+    assert!(!is_code(st, &h), "a foreign CSRF token signs nothing in");
+    let (st, h, _) = newest.password(&app, MEMBER, MEMBER_PW).await;
+    assert!(is_code(st, &h));
 }
 
 #[tokio::test]

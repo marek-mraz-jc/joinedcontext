@@ -51,6 +51,11 @@ FILE_TRIES, FILE_WAIT = 60, 300.0
 FILE_ROWS = 300_000
 FILE_413 = b"the file would hold more rows than a file may"
 BUSY_TRIES, BUSY_WAIT = 3, 5.0  # the gateway's busy 503 (Suite.get)
+# A count read of a large type on a busy copy passes the gateway's READ_DEADLINE (10 s) and is
+# answered 503 with Retry-After: smoke 43870005560's restore copy answered three AirQualityObserved
+# counts (13723 rows) 503 after 10.4..11.8 s each and the fourth read 16 s later in 1 s. A count is
+# asked again for up to COUNT_WAIT seconds (Suite.count_read).
+COUNT_WAIT = 120.0
 # A file's cell holds a whole geometry: a NoiseZone polygon passes csv's default 128 KiB field.
 csv.field_size_limit(64 * 1024 * 1024)
 # One iCal feed reads at most RESIDUAL_SCAN entities (antares-ops/src/scan.rs, 10_000 in jc and in
@@ -240,12 +245,27 @@ class Suite:
             self.write_refused(e, p.token, (403,), "person", sorted(want))
 
     def live_count(self, e, token, t, id_pattern: str | None = None) -> int | None:
+        return self.count_read(e, token, t, id_pattern)[0]
+
+    def count_read(self, e, token, t, id_pattern: str | None = None) -> tuple[int | None, str]:
+        """The count of `t` and what was answered: a busy 503 is asked again (get) until
+        COUNT_WAIT seconds have passed; (None, the last answer) when no count came."""
         path = f"/api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&count=true&limit=0"
         if id_pattern:
             path += f"&idPattern={q(id_pattern)}"
-        st, h, _ = self.get(path, token)
+        end, busy = time.monotonic() + COUNT_WAIT, 0
+        while True:
+            st, h, raw = self.get(path, token)
+            busy += self.busy.get(path, 0)
+            if st != 503 or not h.get("retry-after") or time.monotonic() >= end:
+                break
+            busy += 1
+            time.sleep(min(float(h["retry-after"]), BUSY_WAIT))
         n = h.get("ngsild-results-count")
-        return int(n) if st == 200 and n is not None and n.isdigit() else None
+        if st == 200 and n is not None and n.isdigit():
+            return int(n), f"count={n}" + (f" after {busy} busy 503" if busy else "")
+        return None, (f"{st} {short(raw, 120)}" + (" no count" if st == 200 else "")
+                      + (f" after {busy} busy 503 within {COUNT_WAIT:g} s" if busy else ""))
 
     def grown(self, e, token, who, want: dict, tenant: dict):
         """A synthetic bundle's rehearsal runs the imported Pipelines against their live sources
@@ -320,19 +340,22 @@ class Suite:
 
     def written(self, e, token, who, grants, extra: list) -> set:
         """Of the listed types the bundle holds no row of, those a granting Policy names and the
-        Endpoint shows rows of: the rehearsal's Pipelines wrote them (synthetic bundle only)."""
+        Endpoint shows rows of: the rehearsal's Pipelines wrote them (synthetic bundle only). A
+        granted type whose count never came (busy past COUNT_WAIT) fails its own row with the
+        answer, so the listing names no extra for it (smoke 43870005560 showed only the extra)."""
         sels = e.selectors(grants)
         ok = set()
         for t in extra:
             if sels is not None and not any(s.type in (t, "*") for s in sels):
                 continue
-            n = self.live_count(e, token, t)
-            if n:
-                ok.add(t)
-                self.r.check(f"{who}.types.written", f"{e.slug} {t}",
-                             f"GET /api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&count=true",
-                             "a granted type the bundle holds no row of shows the rows a Pipeline wrote",
-                             f"count={n}", True)
+            n, got = self.count_read(e, token, t)
+            if n == 0:
+                continue
+            ok.add(t)
+            self.r.check(f"{who}.types.written", f"{e.slug} {t}",
+                         f"GET /api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&count=true",
+                         "a granted type the bundle holds no row of shows the rows a Pipeline wrote",
+                         got, n is not None)
         return ok
 
     def reads(self, e, token, grants, want: dict, narrowed: str, tenant: dict, who: str):
@@ -724,6 +747,7 @@ def main(argv=None) -> int:
     with cf.ThreadPoolExecutor(max_workers=a.workers) as pool:
         list(pool.map(s.endpoint, eps))
     s.r.write(out, {"export": str(export), "exportedAt": index.get("exportedAt"), "endpoints": len(eps),
+                    "tenants": {e.slug: e.tenant for e in eps},  # the restore suite's born proof (T-7146)
                     "closed": sum(1 for e in eps if e.closed),
                     "person token": "given" if s.person.token else "none",
                     "person audience": len(s.person.aud), "person groups": sorted(s.person.groups)[:20]})

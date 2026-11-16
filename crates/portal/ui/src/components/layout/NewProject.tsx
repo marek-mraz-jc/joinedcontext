@@ -182,7 +182,7 @@ export function NewProjectDialog({
  * which `permissions/me` answers, and the refusal is shown on the control rather than by hiding
  * it (UI-44, PF-65). The API is what refuses; this only says so first.
  */
-export function NewProjectButton({ project }: { project: string }): JSX.Element {
+export function NewProjectButton({ project, inSidebar = false }: { project: string; inSidebar?: boolean }): JSX.Element {
   const { t } = useTranslation();
   const permissions = usePermissions(project);
   const [writing, setWriting] = useState(false);
@@ -198,10 +198,12 @@ export function NewProjectButton({ project }: { project: string }): JSX.Element 
           referenced — is the exact shape `PermissionGuard.tsx:15-19` names as the bug: a
           keyboard user landed on an unnamed stop, a mouse user got no tooltip, and nobody was
           told why (T-1758, UI-44). */}
+      {/* In the sidebar a quiet action under the switcher, not a second switcher (T-7148). */}
       <Button
-        variant="secondary"
-        size="sm"
-        className="w-full justify-center"
+        variant={inSidebar ? "ghost" : "secondary"}
+        // `md` in the sidebar: a finger's height on a phone (T-7148).
+        size={inSidebar ? "md" : "sm"}
+        className={inSidebar ? "w-full justify-start px-2.5 text-fg-muted" : "w-full justify-center"}
         disabled={!allowed}
         disabledReason={allowed ? undefined : reason}
         icon={<Icon name="plus" className="size-4" />}
@@ -209,6 +211,13 @@ export function NewProjectButton({ project }: { project: string }): JSX.Element 
       >
         {t("projects.new")}
       </Button>
+      {/* The reason in sight too, under the refused action: a title shows only on hover. The
+          button already carries it as its description, so this copy is not read twice. */}
+      {inSidebar && !allowed ? (
+        <span aria-hidden="true" className="px-2.5 text-caption text-fg-muted">
+          {reason}
+        </span>
+      ) : null}
       <NewProjectDialog open={writing} onOpenChange={setWriting} />
     </>
   );
