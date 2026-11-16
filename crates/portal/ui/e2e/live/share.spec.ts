@@ -97,7 +97,7 @@ test("an endpoint proposed and approved through the UI: Live, the hidden attribu
   const viewer = await signIn(browser, VIEWER, `/projects/${PROJECT}/endpoints?lang=en`);
   const newButton = viewer.page.getByRole("button", { name: "New endpoint" });
   await expect(newButton).toBeDisabled();
-  await expect(viewer.page.getByText(/your role does not permit/)).toBeAttached();
+  await expect(viewer.page.getByText(/Your role in .+ cannot add or change endpoints\./)).toBeAttached();
   const viewerPublic = await read(viewer.page, link);
   expect(viewerPublic.status).toBe(200);
   expect(viewerPublic.entity).not.toHaveProperty(HIDDEN);

@@ -348,7 +348,7 @@ test("2. the organization: a settings edit rejected, a new person edited, disabl
   await viewer.page.goto("/organization/people?lang=en", { waitUntil: "load" });
   const refused = viewer.page.getByRole("button", { name: "New person" });
   await expect(refused).toHaveAttribute("aria-disabled", "true", { timeout: 60_000 });
-  await expect(refused).toHaveAttribute("title", /permit 'create' on 'Person'/);
+  await expect(refused).toHaveAttribute("title", /cannot add people\./);
 
   // A group with the person in it: a red change the administrator approves (PF-58).
   await page.goto("/organization/groups/new?lang=en", { waitUntil: "load" });

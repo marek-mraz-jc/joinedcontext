@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { Button, PermissionGuard } from "../src/components/ui";
+import { deniedReason } from "../src/components/ui/PermissionGuard";
 import { DeleteResourceAction } from "../src/components/DeleteResourceDialog";
 import { EditResourceAction } from "../src/components/EditResourceDialog";
 
@@ -56,7 +57,7 @@ describe("the permission guard", () => {
   it("disables a control in a project out of reach (404, PF-59), which has no document to allow it", async () => {
     const { onClick } = renderGuard({ title: "Not Found", status: 404, detail: "project helsinki not found" }, "Endpoint", "propose", 404);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute("title", expect.stringMatching(/^Disabled: /));
+      expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute("title", expect.stringMatching(/^Your role in helsinki cannot /));
     });
     await userEvent.click(screen.getByRole("button", { name: /New endpoint/ }));
     expect(onClick).not.toHaveBeenCalled();
@@ -68,11 +69,11 @@ describe("the permission guard", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute(
         "title",
-        expect.stringMatching(/^Disabled: /),
+        expect.stringMatching(/^Your role in helsinki cannot /),
       );
     });
     const button = screen.getByRole("button", { name: /New endpoint/ });
-    const reason = "Disabled: your role does not permit 'propose' on 'Endpoint' in this project";
+    const reason = "Your role in helsinki cannot add or change endpoints. Whoever manages the project can grant it.";
     expect(button).toHaveAccessibleDescription(reason);
     expect(button).toHaveAttribute("title", reason);
 
@@ -104,11 +105,11 @@ describe("the permission guard", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute(
         "title",
-        expect.stringMatching(/^Disabled: /),
+        expect.stringMatching(/^Your role in helsinki cannot /),
       );
     });
     expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAccessibleDescription(
-      /'propose' on 'Pipeline'/,
+      /cannot add or change pipelines\./,
     );
   });
 
@@ -119,11 +120,11 @@ describe("the permission guard", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute(
         "title",
-        expect.stringMatching(/^Disabled: /),
+        expect.stringMatching(/^Your role in helsinki cannot /),
       );
     });
     expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAccessibleDescription(
-      /'delete' on 'Endpoint'/,
+      /cannot delete endpoints\./,
     );
 
     // The same role, the verb it does hold.
@@ -214,7 +215,7 @@ describe("the permission guard", () => {
       [/Edit/, "propose"],
       [new RegExp(en.resourceDelete.button), "delete"],
     ] as const) {
-      const reason = `Disabled: your role does not permit '${verb}' on 'Endpoint' in this project`;
+      const reason = `Your role in helsinki cannot ${en.permissions.action[verb]} endpoints. Whoever manages the project can grant it.`;
       await waitFor(() => {
         expect(screen.getByRole("button", { name })).toHaveAttribute("title", reason);
       });
@@ -224,5 +225,39 @@ describe("the permission guard", () => {
       await userEvent.click(button);
     }
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+// T-7106: a refusal speaks in words at both scopes; the verb and the kind's code name never reach
+// the person ("'propose' on 'SyncSource'" read as internal terms to the UI judge).
+describe("the refusal sentence", () => {
+  const t = i18n.t.bind(i18n) as (key: string, options?: Record<string, unknown>) => string;
+  const words: Record<string, string> = {
+    read: "see",
+    propose: "add or change",
+    approve: "approve changes to",
+    delete: "delete",
+    create: "add",
+    update: "change",
+    disable: "disable",
+  };
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it.each(Object.entries(words))("names %s in words in a project and in the organization", (verb, action) => {
+    const v = verb as keyof typeof words & Parameters<typeof deniedReason>[2];
+    expect(deniedReason(t, "helsinki", v, "SyncSource")).toBe(
+      `Your role in helsinki cannot ${action} sync sources. Whoever manages the project can grant it.`,
+    );
+    expect(deniedReason(t, "org", v, "SyncSource")).toBe(`Only an organization administrator can ${action} sync sources.`);
+  });
+
+  it.each(["en", "sk", "cs", "de"])("leaves no raw verb or kind in the %s sentence", async (lang) => {
+    await i18n.changeLanguage(lang);
+    const reason = deniedReason(t, "helsinki", "propose", "SyncSource");
+    expect(reason).toContain("helsinki");
+    expect(reason).not.toMatch(/propose|SyncSource|'/);
   });
 });

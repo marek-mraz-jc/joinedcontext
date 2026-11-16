@@ -14,6 +14,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { ResourceRowActions } from "../src/components/ResourceRowActions";
 import { expectNoAxeViolations, json, renderPage } from "./page_contract";
+import { deniedReason } from "../src/components/ui/PermissionGuard";
 
 const TARGET = {
   project: "helsinki",
@@ -26,7 +27,7 @@ const TARGET = {
 const more = en.rowActions.more.replace("{name}", "Air quality");
 
 /** The sentence a disabled action carries, as i18next renders it. */
-const denied = (verb: string, kind: string) => i18n.t("permissions.denied", { verb, kind });
+const denied = (verb: Parameters<typeof deniedReason>[2], kind: string) => deniedReason(i18n.t, "helsinki", verb, kind);
 
 /** A permissions document that grants exactly `verbs` on `Endpoint`. */
 function effective(verbs: string[]) {
