@@ -17,7 +17,7 @@ import { usePermissions } from "../../api/permissions";
 import { appSchema, appUiSchema } from "../../schemas/kinds";
 import { fromAppEnvelope, toAppEnvelope } from "./appForm";
 import type { AppForm } from "./appForm";
-import { deniedReason, PermissionGuard } from "../../components/ui/PermissionGuard";
+import { deniedReason, PermissionGuard, DeniedNote } from "../../components/ui/PermissionGuard";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
 import { AppCheckChip, useAppChecks } from "./AppCheckChip";
 import type { AppCheck } from "./AppCheckChip";
@@ -315,7 +315,13 @@ export function AppsCatalog({ project }: { project: string }): JSX.Element {
   if (list.isError) {
     return (
       <div className="space-y-4">
-        <PageHeader compact title={t("apps.title")} description={t("apps.subtitle")} />
+        {/* A role that may not add an app is told so here too, where the generator is left out. */}
+        <PageHeader
+          compact
+          title={t("apps.title")}
+          description={t("apps.subtitle")}
+          note={<DeniedNote project={project} kind="App" verb="propose" />}
+        />
         <PageFailed
           error={list.error}
           onRetry={() => {

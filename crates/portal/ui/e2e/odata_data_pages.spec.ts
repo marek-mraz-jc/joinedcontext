@@ -242,6 +242,7 @@ for (const width of [1440, 400]) {
       await page.goto("/projects/helsinki/apps?lang=en");
       const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
+      await expect(page.getByText(/Your role in helsinki cannot add or change applications\./).first()).toBeVisible();
       await shoot(page, "apps-refused", width, refused);
       await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { [APPS]: failure });
