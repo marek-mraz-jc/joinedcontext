@@ -290,15 +290,22 @@ def results(report: Path) -> dict:
     return rows
 
 
-def run(a) -> int:
-    """up, then --runs full runs of every journey (persons reset between runs), the measurements,
-    then down (--keep-traces keeps the failed journeys' traces and shots)."""
+def up_or_down(a) -> bool:
+    """up; on a failed start every stack is torn down, the import logs kept."""
     try:
         up(a)
+        return True
     except (RuntimeError, subprocess.CalledProcessError) as e:
         log(f"up failed: {e}; tearing down, the import logs kept")
         a.keep_traces = True
         down(a)
+        return False
+
+
+def run(a) -> int:
+    """up, then --runs full runs of every journey (persons reset between runs), the measurements,
+    then down (--keep-traces keeps the failed journeys' traces and shots)."""
+    if not up_or_down(a):
         return 1
     run_dir = a.run.resolve()
     workers = a.stacks * a.slots
@@ -331,7 +338,8 @@ def run(a) -> int:
 
 def selftest(a) -> int:
     a.stacks, a.slots = 2, 1
-    up(a)
+    if not up_or_down(a):
+        return 1
     # Two journeys, two workers: worker p runs on stack p % 2, so each stack serves one.
     rc = playwright(a.run.resolve(), "J010 |J011 ", 2)
     a.keep_traces = False
