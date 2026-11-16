@@ -189,7 +189,7 @@ describe("DataGrid", () => {
     expect(document.querySelector(".jc-data-grid-more, .jc-data-grid-more-toggle")).toBeNull();
     cleanup();
     grid({ columns: wide });
-    expect(document.querySelector(".jc-data-grid-more, .jc-data-grid-more-toggle")).toBeNull();    vi.unstubAllGlobals();
+    expect(document.querySelector(".jc-data-grid-more, .jc-data-grid-more-toggle")).toBeNull();
   });
 
   it("pages through a long list", () => {
