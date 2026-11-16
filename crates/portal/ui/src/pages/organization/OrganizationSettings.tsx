@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { organizationReading } from "../../api/odata";
 import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
-import { useChosenOrganizationName, useOrganizationManifests } from "../../api/projects";
+import { useOrganizationManifests } from "../../api/projects";
 import { EditResourceAction } from "../../components/EditResourceDialog";
 import type { EditableForm } from "../../components/EditResourceDialog";
 import { EmptyState, Skeleton } from "../../components/ui";
@@ -162,11 +162,9 @@ export function OrganizationSettings(): JSX.Element {
     queryKey: ["organization-limits"],
     queryFn: async () => organizationReading("limits"),
   });
-  // With several Organizations: the one `?org=` chooses, else the installation's (ADR-N-058 2.7).
-  const chosen = useChosenOrganizationName();
+  // The host's Organization; on the deployment's own address the installation's (T-7151).
   const all = asManifests(organizations.data?.items ?? []);
   const organization =
-    all.find((item) => item.metadata.name === chosen) ??
     all.find((item) => (item.spec as OrganizationSpec | undefined)?.installation === true) ??
     all[0];
   const spec = (organization?.spec ?? {}) as OrganizationSpec;

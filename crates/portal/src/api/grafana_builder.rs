@@ -1103,6 +1103,225 @@ pub async fn builder_get(
     }))
 }
 
+/// One version of a builder dashboard: a commit of its file on the default branch, so one
+/// approved Change (T-7150). History starts at the file's first commit.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardVersion {
+    /// The commit, the `{sha}` of the version's own routes.
+    pub sha: String,
+    /// Who wrote it, as the commit names them; never their e-mail address.
+    pub author: String,
+    /// When, as the forge dates the commit (RFC 3339).
+    pub date: String,
+    /// The first line of its message, e.g. `change dashboard Bike stations`.
+    pub message: String,
+}
+
+/// A builder dashboard's versions, newest first.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DashboardVersions {
+    pub items: Vec<DashboardVersion>,
+}
+
+/// One version read back into choices, to compare with another.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DashboardVersionBoard {
+    pub sha: String,
+    pub board: Board,
+}
+
+/// The most versions a dashboard lists.
+const VERSIONS: usize = 50;
+
+/// The versions of `uid`'s file on the default branch, newest first; 404 for a uid that is not a
+/// builder dashboard's or has no file.
+async fn versions_of(
+    state: &AppState,
+    project: &str,
+    uid: &str,
+) -> Result<Vec<crate::forge::Commit>, ApiError> {
+    if !builder::is_builder_uid(uid) {
+        return Err(no_dashboard(project, uid));
+    }
+    let shako = forge(state, project)?;
+    let base = shako.default_branch().await?;
+    let commits = shako
+        .list_commits(&base, &builder::path_of(project, uid), VERSIONS)
+        .await?;
+    if commits.is_empty() {
+        return Err(no_dashboard(project, uid));
+    }
+    Ok(commits)
+}
+
+/// Version `sha` of `uid` read back into choices. Only a sha the file's own history on the
+/// default branch lists is read, so no other path, branch or project answers through it; the
+/// rest is 404 as an unknown version.
+async fn version_board(
+    state: &AppState,
+    project: &str,
+    uid: &str,
+    sha: &str,
+) -> Result<Board, ApiError> {
+    let listed = versions_of(state, project, uid).await?;
+    if !listed.iter().any(|commit| commit.sha == sha) {
+        return Err(ApiError::NotFound(format!(
+            "dashboard '{uid}' has no version '{sha}'"
+        )));
+    }
+    let shako = forge(state, project)?;
+    let file = shako
+        .get_file(&builder::path_of(project, uid), sha)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("dashboard '{uid}' has no version '{sha}'")))?;
+    let read = builder::read_file(uid, &file.content).map_err(|why| refused("version", why))?;
+    let names = endpoints_by_datasource(state, project).await;
+    decompile(&read, &|uid| names.get(uid).cloned()).map_err(|why| refused("version", why))
+}
+
+/// Refuses a version naming an Endpoint the caller may not read: its choices would name it.
+fn readable_version(
+    state: &AppState,
+    effective: &Effective,
+    project: &str,
+    board: &Board,
+) -> Result<(), ApiError> {
+    let named = board
+        .variables
+        .iter()
+        .map(|variable| variable.endpoint.as_str())
+        .chain(board.panels.iter().map(|panel| panel.endpoint.as_str()))
+        .filter(|name| !name.is_empty());
+    for name in named {
+        if readable_endpoint(state, effective, project, name).is_none() {
+            return Err(ApiError::Denied(
+                "this version reads an Endpoint you may not read; ask a project owner for read access".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project}/grafana/builder/{uid}/versions",
+    summary = "List A Dashboard's Versions",
+    description = "The versions of a builder dashboard, newest first: each approved Change of its file on the project's default branch, with who wrote it and when (at most 50). Needs read on the project. Changes no data.",
+    tag = "grafana",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("uid" = String, Path, description = "Dashboard uid"),
+    ),
+    responses(
+        (status = 200, description = "The versions, newest first", body = DashboardVersions),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 404, description = "No such project, or no builder dashboard of that uid in it", body = ProblemDetails),
+        (status = 503, description = "The forge did not answer", body = ProblemDetails),
+    )
+)]
+pub async fn builder_versions(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, uid)): Path<(String, String)>,
+) -> Result<Json<DashboardVersions>, ApiError> {
+    member(&state, &user.0.identity, &project)?;
+    let items = versions_of(&state, &project, &uid)
+        .await?
+        .into_iter()
+        .map(|commit| DashboardVersion {
+            sha: commit.sha,
+            author: commit.author,
+            date: commit.date,
+            message: commit.message,
+        })
+        .collect();
+    Ok(Json(DashboardVersions { items }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}",
+    summary = "Read A Dashboard Version",
+    description = "One version of a builder dashboard read back into choices, to compare with another. Only a version the dashboard's own history lists is read. Needs read on the project and on every Endpoint the version names. Changes no data.",
+    tag = "grafana",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("uid" = String, Path, description = "Dashboard uid"),
+        ("sha" = String, Path, description = "The version's commit, from the versions list"),
+    ),
+    responses(
+        (status = 200, description = "The version's choices", body = DashboardVersionBoard),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "The version names an Endpoint the caller may not read", body = ProblemDetails),
+        (status = 404, description = "No such project, dashboard or version", body = ProblemDetails),
+        (status = 422, description = "The version's file does not read back into choices", body = ProblemDetails),
+        (status = 503, description = "The forge did not answer", body = ProblemDetails),
+    )
+)]
+pub async fn builder_version(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, uid, sha)): Path<(String, String, String)>,
+) -> Result<Json<DashboardVersionBoard>, ApiError> {
+    let effective = member(&state, &user.0.identity, &project)?;
+    let board = version_board(&state, &project, &uid, &sha).await?;
+    readable_version(&state, &effective, &project, &board)?;
+    Ok(Json(DashboardVersionBoard { sha, board }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore",
+    summary = "Propose Restoring A Dashboard Version",
+    description = "Proposes a Change that writes an earlier version of a builder dashboard back as its newest: the version's choices compiled again, checked as an edit is. Waits for approval like every edit. Needs propose on Dashboard and read on every Endpoint the version names.",
+    tag = "grafana",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("uid" = String, Path, description = "Dashboard uid"),
+        ("sha" = String, Path, description = "The version's commit, from the versions list"),
+    ),
+    responses(
+        (status = 202, description = "Proposed; waits for approval", body = BuilderSaved),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "The caller may not build dashboards, or may not read an Endpoint the version names", body = ProblemDetails),
+        (status = 404, description = "No such project, dashboard or version", body = ProblemDetails),
+        (status = 409, description = "The dashboard is that version already, or a Change of it is open", body = ProblemDetails),
+        (status = 422, description = "The version no longer fits: a source, type or attribute it names is gone; the errors name it", body = ProblemDetails),
+        (status = 503, description = "The forge or the dashboards service did not answer", body = ProblemDetails),
+    )
+)]
+pub async fn builder_restore(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, uid, sha)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<(StatusCode, Json<BuilderSaved>), ApiError> {
+    let identity = &user.0.identity;
+    let effective = proposer(&state, identity, &project)?;
+    let board = version_board(&state, &project, &uid, &sha).await?;
+    let existing = saved_file(&state, &project, &uid)
+        .await?
+        .ok_or_else(|| no_dashboard(&project, &uid))?;
+    let text = file_of(&state, &effective, &headers, &project, &uid, &board).await?;
+    if text == existing.content {
+        return Err(ApiError::Conflict(
+            "the dashboard is this version already; nothing to restore".into(),
+        ));
+    }
+    let change = propose(
+        &state,
+        identity,
+        &project,
+        &uid,
+        board.title.trim(),
+        Some(&text),
+        Some(&existing),
+    )
+    .await?;
+    Ok((StatusCode::ACCEPTED, Json(BuilderSaved { uid, change })))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route(
@@ -1120,6 +1339,18 @@ pub fn router() -> Router<AppState> {
         .route(
             "/projects/{project}/grafana/builder/{uid}",
             get(builder_get).put(builder_update).delete(builder_delete),
+        )
+        .route(
+            "/projects/{project}/grafana/builder/{uid}/versions",
+            get(builder_versions),
+        )
+        .route(
+            "/projects/{project}/grafana/builder/{uid}/versions/{sha}",
+            get(builder_version),
+        )
+        .route(
+            "/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore",
+            post(builder_restore),
         )
 }
 

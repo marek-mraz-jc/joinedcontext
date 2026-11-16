@@ -520,7 +520,7 @@
     },
     "src/components/layout/Shell.tsx": {
       "controls": {
-        "Button": 5
+        "Button": 4
       },
       "tests": [
         "addressItem.test.ts",
@@ -1438,6 +1438,14 @@
       "tests": [
         "dashboard_page.test.tsx",
         "grafana_page.test.tsx"
+      ]
+    },
+    "src/pages/grafana/DashboardHistory.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "dashboard_history.test.tsx"
       ]
     },
     "src/pages/grafana/DashboardList.tsx": {
