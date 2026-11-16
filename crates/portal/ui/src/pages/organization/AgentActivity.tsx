@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { api, ApiError, unwrap } from "../../api/client";
 import i18n from "../../i18n";
 import type { components } from "../../api/schema";
+import { organizationReading } from "../../api/odata";
 import {
   Alert,
   Badge,
@@ -124,24 +125,18 @@ export function AgentActivity({
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last: Activity) => last.nextCursor ?? undefined,
     queryFn: async ({ pageParam }): Promise<Activity> =>
-      unwrap(
-        await api.GET("/api/v1/organization/agents/activity", {
-          params: {
-            query: {
-              project: scope.project,
-              profile: scope.profile,
-              run: scope.run,
-              person: filters.person || undefined,
-              space: filters.space || undefined,
-              verdict: filters.verdict || undefined,
-              since: filters.since
-                ? new Date(`${filters.since}T00:00:00`).toISOString()
-                : undefined,
-              cursor: pageParam,
-            },
-          },
-        }),
-      ),
+      organizationReading("agentActivity", {
+        inProject: scope.project,
+        profile: scope.profile,
+        run: scope.run,
+        person: filters.person || undefined,
+        space: filters.space || undefined,
+        verdict: filters.verdict || undefined,
+        since: filters.since
+          ? new Date(`${filters.since}T00:00:00`).toISOString()
+          : undefined,
+        cursor: pageParam,
+      }),
   });
   const runs = activity.data?.pages.flatMap((page) => page.runs) ?? [];
   const alerts = activity.data?.pages[0]?.alerts ?? [];

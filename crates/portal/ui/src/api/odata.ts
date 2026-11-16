@@ -134,6 +134,7 @@ interface Readings {
   limits: Answer<"get_limits">;
   brokers: Answer<"list_brokers">;
   agents: Answer<"list_agents">;
+  agentActivity: Answer<"list_agent_activity">;
   costs: Answer<"get_costs">;
   addresses: Answer<"list_addresses">;
   dataAccess: Answer<"get_data_access">;

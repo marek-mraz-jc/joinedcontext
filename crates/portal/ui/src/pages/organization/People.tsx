@@ -37,7 +37,7 @@ import {
 } from "../../components/ui/PermissionGuard";
 import { asUser } from "../apps/members";
 import { proposeChecked } from "../../api/proposal";
-import { doorAction, type RestAnswer } from "../../api/odata";
+import { act, doorAction, ORGANIZATION, type RestAnswer } from "../../api/odata";
 import type { ResourceProposal } from "../../api/manifest";
 import { useProjects } from "../../api/projects";
 import { RadioGroup } from "../../components/ui/RadioGroup";
@@ -1162,21 +1162,16 @@ type Outcome =
   | { action: "deleted" };
 
 async function perform(id: string, action: Action): Promise<Outcome> {
-  const path = { params: { path: { id } } };
   switch (action) {
     case "disable":
-      await unwrap(
-        await api.POST("/api/v1/organization/people/{id}/disable", path),
-      );
+      await act("jc_person_disable", ORGANIZATION, { id });
       return { action };
     case "enable":
-      await unwrap(
-        await api.POST("/api/v1/organization/people/{id}/enable", path),
-      );
+      await act("jc_person_enable", ORGANIZATION, { id });
       return { action };
     case "reset-password": {
       const reset = (await doorAction("portal_person_reset_password", {
-        person: path.params.path.id,
+        person: id,
       })) as RestAnswer<"reset_password">;
       return {
         action,
@@ -1186,7 +1181,7 @@ async function perform(id: string, action: Action): Promise<Outcome> {
     }
     case "resend-invitation": {
       const sent = (await doorAction("portal_person_resend_invitation", {
-        person: path.params.path.id,
+        person: id,
       })) as RestAnswer<"resend_invitation">;
       return {
         action,
@@ -1196,18 +1191,16 @@ async function perform(id: string, action: Action): Promise<Outcome> {
     }
     case "remove-second-factor":
       await doorAction("portal_person_remove_second_factor", {
-        person: path.params.path.id,
+        person: id,
       });
       return { action };
     case "sign-out":
-      await unwrap(
-        await api.POST("/api/v1/organization/people/{id}/sign-out", path),
-      );
+      await act("jc_person_sign_out", ORGANIZATION, { id });
       return { action };
     case "delete": {
-      const result = await api.DELETE("/api/v1/organization/people/{id}", path);
-      const change = await unwrap(result);
-      return result.response.status === 204
+      // A 204 (no manifest named the person) answers null; else the Change it waits for.
+      const change = await doorAction("portal_person_delete", { person: id });
+      return change === null
         ? { action: "deleted" }
         : { action, change: change as Change };
     }

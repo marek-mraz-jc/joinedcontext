@@ -3565,6 +3565,11 @@
             "$Type": "Edm.String"
           },
           {
+            "$Name": "inProject",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
             "$Name": "limit",
             "$Nullable": true,
             "$Type": "Edm.Int64"
@@ -3581,6 +3586,36 @@
           },
           {
             "$Name": "person",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "profile",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "run",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "since",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "until",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "verdict",
             "$Nullable": true,
             "$Type": "Edm.String"
           }
@@ -5225,6 +5260,27 @@
           },
           {
             "$Name": "client",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_person_delete": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "person",
             "$Nullable": false,
             "$Type": "Edm.String"
           }

@@ -66,6 +66,21 @@ struct OrganizationInput {
     organization: Option<String>,
     #[serde(default)]
     person: Option<String>,
+    /// agentActivity's project filter: MCP takes `project` out of every call's arguments.
+    #[serde(default, rename = "inProject")]
+    in_project: Option<String>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    run: Option<String>,
+    #[serde(default)]
+    space: Option<String>,
+    #[serde(default)]
+    verdict: Option<String>,
+    #[serde(default)]
+    since: Option<String>,
+    #[serde(default)]
+    until: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,7 +124,14 @@ fn organization_schema() -> Value {
             "group": text("dataAccess: one group's column", NAME),
             "endpoint": text("dataAccess: one Endpoint's row, by slug", NAME),
             "organization": text("widgetOptions: the Organization, by name", NAME),
-            "person": text("personReadable: the Keycloak user id", ID)
+            "person": text("personReadable: the Keycloak user id; agentActivity: runs this person started", ID),
+            "inProject": text("agentActivity: one project's runs", NAME),
+            "profile": text("agentActivity: one agent profile's runs", NAME),
+            "run": text("agentActivity: one run", ID),
+            "space": text("agentActivity: runs that read this Context Space", NAME),
+            "verdict": { "type": "string", "enum": ["ok", "refused"], "description": "agentActivity: refused, runs with a refused step" },
+            "since": text("agentActivity: runs started at or after, e.g. 2026-11-01T00:00:00Z", TERM),
+            "until": text("agentActivity: runs started before", TERM)
         },
         "required": ["aspect"],
         "additionalProperties": false
@@ -157,7 +179,21 @@ fn requests_schema() -> Value {
 /// The members `aspect` takes besides itself, and the ones it cannot go without.
 fn members_of(aspect: Aspect) -> (&'static [&'static str], &'static [&'static str]) {
     match aspect {
-        Aspect::AgentActivity => (&["limit", "cursor"], &[]),
+        Aspect::AgentActivity => (
+            &[
+                "limit",
+                "cursor",
+                "inProject",
+                "profile",
+                "run",
+                "person",
+                "space",
+                "verdict",
+                "since",
+                "until",
+            ],
+            &[],
+        ),
         Aspect::Costs => (&["month"], &[]),
         Aspect::DataAccess => (&["group", "endpoint"], &[]),
         Aspect::WidgetOptions => (&["organization"], &["organization"]),
@@ -177,6 +213,13 @@ fn members_fit_the_aspect(input: &OrganizationInput) -> Result<(), OpError> {
         ("endpoint", input.endpoint.is_some()),
         ("organization", input.organization.is_some()),
         ("person", input.person.is_some()),
+        ("inProject", input.in_project.is_some()),
+        ("profile", input.profile.is_some()),
+        ("run", input.run.is_some()),
+        ("space", input.space.is_some()),
+        ("verdict", input.verdict.is_some()),
+        ("since", input.since.is_some()),
+        ("until", input.until.is_some()),
     ];
     let (takes, needs) = members_of(input.aspect);
     for (member, present) in given {
@@ -241,9 +284,16 @@ async fn read(
         ),
         Aspect::AgentActivity => {
             let query = crate::api::agent_activity::ActivityQuery {
+                project: input.in_project,
+                profile: input.profile,
+                run: input.run,
+                person: input.person,
+                space: input.space,
+                verdict: input.verdict,
+                since: input.since,
+                until: input.until,
                 limit: input.limit,
                 cursor: input.cursor,
-                ..Default::default()
             };
             json!(
                 crate::api::agent_activity::list_agent_activity(user(), state(), Query(query))
@@ -528,6 +578,21 @@ mod tests {
                 None,
             ),
             (json!({ "aspect": "addresses" }), None),
+            // T-7101: the REST door's filters belong to agentActivity alone.
+            (
+                json!({ "aspect": "agentActivity", "inProject": "air", "profile": "steward",
+                        "run": "r1", "person": "id-1", "space": "pm10", "verdict": "refused",
+                        "since": "2026-11-01T00:00:00Z", "until": "2026-11-02T00:00:00Z" }),
+                None,
+            ),
+            (
+                json!({ "aspect": "costs", "verdict": "ok" }),
+                Some("/verdict"),
+            ),
+            (
+                json!({ "aspect": "personReadable", "person": "id-1", "since": "2026-11-01T00:00:00Z" }),
+                Some("/since"),
+            ),
         ] {
             match (organization_validate(&input), path) {
                 (Ok(()), None) => {}

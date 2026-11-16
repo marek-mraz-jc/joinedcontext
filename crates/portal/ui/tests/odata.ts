@@ -163,14 +163,22 @@ export function readingAsRest(url: string | URL): URL | undefined {
   if (!door) return undefined;
   const rest = new URL(door(params), at.origin);
   for (const [name, value] of Object.entries(params)) {
-    if (name !== "aspect" && name !== "person")
-      rest.searchParams.set(name, value);
+    // personReadable's person is its path member; agentActivity's a filter of the query.
+    const inPath = name === "person" && params.aspect === "personReadable";
+    // agentActivity's inProject is the REST door's project (MCP takes `project` for itself).
+    if (name !== "aspect" && !inPath)
+      rest.searchParams.set(name === "inProject" ? "project" : name, value);
   }
   return rest;
 }
 
 /** Each Portal door's REST door (API/13 §2b, T-7100; crates/portal/src/api/odata_portal.rs). */
 const DOORS: Record<string, [string, string]> = {
+  // The Organization-bound people actions whose registry operation is their REST route
+  // (route_coverage_tests names each), answered the same way (T-7101).
+  jc_person_disable: ["POST", "/organization/people/{id}/disable"],
+  jc_person_enable: ["POST", "/organization/people/{id}/enable"],
+  jc_person_sign_out: ["POST", "/organization/people/{id}/sign-out"],
   portal_people_remove: ["POST", "/organization/people/remove"],
   portal_people_name_by_id: ["POST", "/organization/people/name-by-id"],
   portal_person_names: ["GET", "/organization/people/names"],
@@ -186,6 +194,7 @@ const DOORS: Record<string, [string, string]> = {
     "POST",
     "/organization/people/{person}/remove-second-factor",
   ],
+  portal_person_delete: ["DELETE", "/organization/people/{person}"],
   portal_person_consent_revoke: [
     "DELETE",
     "/organization/people/{person}/consents/{client}",
@@ -223,7 +232,7 @@ const DOORS: Record<string, [string, string]> = {
 };
 
 const DOOR =
-  /^\/api\/v1\/(?:Organization|projects\('((?:[^']|'')*)'\))\/JoinedContext\.Portal\.(portal_\w+)(?:\(([^)]*)\))?$/;
+  /^\/api\/v1\/(?:Organization|projects\('((?:[^']|'')*)'\))\/JoinedContext\.Portal\.(portal_\w+|jc_person_(?:disable|enable|sign_out))(?:\(([^)]*)\))?$/;
 
 /**
  * The REST request whose handler answers the Portal door `request` calls, or nothing for any other
