@@ -529,6 +529,176 @@ async fn a_reader_reads_a_dashboards_versions_and_only_a_proposer_restores_one()
     assert_eq!(text, old_text, "the old version, compiled again");
 }
 
+/// The saved charts' table, shared with grafana_tests: each test here clears only its own rows.
+async fn database() -> Option<sqlx::PgPool> {
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty());
+    let Some(url) = url else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return None;
+    };
+    let pool = sqlx::PgPool::connect(&url)
+        .await
+        .expect("the test database");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrations");
+    sqlx::query("DELETE FROM grafana_visualizations WHERE id LIKE 't7161%'")
+        .execute(&pool)
+        .await
+        .expect("a clean table");
+    Some(pool)
+}
+
+async fn saved_ids(pool: &sqlx::PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT id FROM grafana_visualizations WHERE id LIKE 't7161%' ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .expect("the rows")
+}
+
+/// T-7161: three charts saved one by one (rows name no person, so the dashboard is the
+/// project's) move into one Saved charts dashboard. The dry run counts and writes nothing, the
+/// first run proposes the dashboard, and once it is merged a run removes only the charts the
+/// merged file draws: the one a reviewer retitled and the map the builder cannot draw stay.
+#[tokio::test]
+async fn saved_charts_move_into_one_dashboard_and_only_what_the_merged_file_draws_is_removed() {
+    use joinedcontext_portal::grafana::{self, Kind, Visualization};
+    let Some(pool) = database().await else { return };
+    let shako = common::forge().await;
+    let grafana_server = daiya().await;
+    Mock::given(method("DELETE"))
+        .and(wiremock::matchers::path_regex(
+            "^/grafana/api/dashboards/uid/",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&grafana_server)
+        .await;
+    let mut state = world(&shako, &grafana_server);
+    state.db = Some(pool.clone());
+    for (id, title, kind, attribute) in [
+        ("t7161a", "Free bikes", Kind::Stat, "availableBikeNumber"),
+        (
+            "t7161b",
+            "Free bikes over time",
+            Kind::Timeseries,
+            "availableBikeNumber",
+        ),
+        ("t7161c", "Stations", Kind::Map, "location"),
+    ] {
+        grafana::insert(
+            &pool,
+            &Visualization {
+                id: id.into(),
+                project: PROJECT.into(),
+                title: title.into(),
+                endpoint: "bikes-open".into(),
+                entity_type: "BikeHireDockingStation".into(),
+                attribute: attribute.into(),
+                kind,
+                created_at: String::new(),
+            },
+        )
+        .await
+        .expect("a saved chart");
+    }
+    let moves = format!("{BUILDER}/saved-charts");
+
+    let reader = send(
+        &state,
+        person("vera"),
+        "POST",
+        &moves,
+        Some(json!({ "dryRun": true })),
+    )
+    .await;
+    assert_eq!(reader.status, StatusCode::FORBIDDEN, "{}", reader.text);
+    let unknown = send(
+        &state,
+        person("eva"),
+        "POST",
+        &moves,
+        Some(json!({ "dry": true })),
+    )
+    .await;
+    assert_eq!(
+        unknown.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        unknown.text
+    );
+
+    let dry = send(
+        &state,
+        person("eva"),
+        "POST",
+        &moves,
+        Some(json!({ "dryRun": true })),
+    )
+    .await;
+    assert_eq!(dry.status, StatusCode::OK, "{}", dry.text);
+    let report = body(&dry);
+    assert_eq!(report["stage"], "propose");
+    assert_eq!(report["before"], 3);
+    assert_eq!(report["panels"], 2);
+    assert_eq!(report["moved"], json!(["t7161a", "t7161b"]));
+    assert_eq!(report["kept"][0]["id"], "t7161c");
+    assert!(
+        committed_files(&shako, REPO).await.is_empty(),
+        "a dry run writes nothing"
+    );
+
+    let proposed = send(&state, person("eva"), "POST", &moves, Some(json!({}))).await;
+    assert_eq!(proposed.status, StatusCode::ACCEPTED, "{}", proposed.text);
+    let uid = body(&proposed)["uid"].as_str().expect("a uid").to_owned();
+    assert!(builder::is_builder_uid(&uid));
+    assert!(body(&proposed)["change"].is_object(), "{}", proposed.text);
+    let (file, text) = committed_files(&shako, REPO)
+        .await
+        .last()
+        .cloned()
+        .expect("a file");
+    assert_eq!(file, format!("projects/{PROJECT}/grafana/{uid}.json"));
+    assert_eq!(
+        saved_ids(&pool).await.len(),
+        3,
+        "nothing goes before the merge"
+    );
+
+    // The reviewer retitled one panel before approving.
+    let merged = text.replacen("\"Free bikes over time\"", "\"Bikes over time\"", 1);
+    assert_ne!(merged, text);
+    holds(&shako, &uid, "main", "blob-merged", &merged).await;
+    let dry = send(
+        &state,
+        person("eva"),
+        "POST",
+        &moves,
+        Some(json!({ "dryRun": true })),
+    )
+    .await;
+    assert_eq!(dry.status, StatusCode::OK, "{}", dry.text);
+    assert_eq!(body(&dry)["stage"], "remove");
+    assert_eq!(body(&dry)["moved"], json!(["t7161a"]));
+    assert_eq!(body(&dry)["kept"].as_array().map(Vec::len), Some(2));
+    assert_eq!(saved_ids(&pool).await.len(), 3, "a dry run removes nothing");
+
+    let run = send(&state, person("eva"), "POST", &moves, Some(json!({}))).await;
+    assert_eq!(run.status, StatusCode::OK, "{}", run.text);
+    assert_eq!(saved_ids(&pool).await, ["t7161b", "t7161c"]);
+    let removed: Vec<String> = grafana_server
+        .received_requests()
+        .await
+        .expect("recorded")
+        .iter()
+        .filter(|request| request.method.as_str() == "DELETE")
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    assert_eq!(removed, ["/grafana/api/dashboards/uid/pv-t7161a"]);
+}
+
 #[tokio::test]
 async fn a_dashboard_with_an_open_change_is_not_proposed_twice() {
     let shako = MockServer::start().await;

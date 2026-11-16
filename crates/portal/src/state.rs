@@ -102,6 +102,10 @@ pub struct AppState {
     /// Comments on a space's entities and the notifications of their mentions (API/01 §35).
     pub comments: Arc<crate::entity_comments::CommentStore>,
     pub feedback: Arc<crate::feedback::FeedbackStore>,
+    /// An Organization's backup targets and their audit log (T-7154).
+    pub org_backups: Arc<crate::org_backup::BackupStore>,
+    /// How an Organization backup reaches S3: public addresses only, outside tests.
+    pub org_backup_egress: Arc<crate::org_backup::Egress>,
     /// People's connectors and their audit (AG-142, AG-147).
     pub connectors: Arc<crate::connectors::ConnectorStore>,
     /// Portal tabs paired with a connector, which hear its UI actions (T-5967).
@@ -306,6 +310,8 @@ impl AppState {
             trash: Arc::new(crate::entity_trash::TrashStore::new(None)),
             comments: Arc::new(crate::entity_comments::CommentStore::new(None)),
             feedback: Arc::new(crate::feedback::FeedbackStore::new(None)),
+            org_backups: Arc::new(crate::org_backup::BackupStore::new(None)),
+            org_backup_egress: Arc::new(crate::org_backup::Egress::default()),
             connectors: Arc::new(crate::connectors::ConnectorStore::new(None)),
             paired_tabs: Arc::default(),
             plans: Arc::default(),
@@ -377,6 +383,16 @@ impl AppState {
         records: Arc<dyn crate::domain_verification::TxtRecords>,
     ) -> Self {
         self.txt_records = Some(records);
+        self
+    }
+
+    /// An Organization backup that reaches S3 through `http`, private addresses included: for a
+    /// test's in-process S3 only.
+    pub fn with_org_backup_egress(mut self, http: reqwest::Client) -> Self {
+        self.org_backup_egress = Arc::new(crate::org_backup::Egress {
+            http,
+            public_only: false,
+        });
         self
     }
 
@@ -786,6 +802,20 @@ impl AppState {
                 "no Keycloak admin client: Group manifests are read, the realm is not written"
             ),
         }
+        // Each Organization's realm, as that realm's own `portal-reconciler` (T-7144).
+        if let Some((id, secret)) = self.config.keycloak_admin.clone() {
+            for realm in self.organization_realms.values() {
+                if let Some(groups) = crate::reconciler::groups::GroupSync::new(
+                    &realm.backchannel,
+                    id.clone(),
+                    secret.clone(),
+                ) {
+                    syncer = syncer.with_organization_groups(Arc::new(
+                        groups.for_organization(&realm.organization),
+                    ));
+                }
+            }
+        }
         // Every published App's own client (ADR-N-030, AP-111). It is written as the Portal
         // client's own service account, the one identity the realm gives `manage-clients`.
         // Who holds an App role is looked up and mapped with the group credential above,
@@ -802,18 +832,37 @@ impl AppState {
                     &oidc.backchannel(),
                     oidc.client_id.clone(),
                     oidc.auth.clone(),
-                    host,
+                    host.clone(),
                 ) {
                     Some(mut clients) => {
                         if let Some((id, secret)) = self.config.keycloak_admin.clone() {
                             clients = clients.with_members(id, secret);
                         }
                         syncer = syncer.with_app_clients(Arc::new(
-                            clients.with_foreign(Arc::clone(&self.foreign_names)),
+                            clients
+                                .with_foreign(Arc::clone(&self.foreign_names))
+                                .without(self.organization_realms.keys().cloned()),
                         ))
                     }
                     None => {
                         tracing::warn!("the issuer is not a realm URL, so no App client is managed")
+                    }
+                }
+                // The Apps of an Organization with a realm of its own have their client there,
+                // written by the same Portal client (T-7001 §3: one secret for every realm, T-7165).
+                for realm in self.organization_realms.values() {
+                    if let Some(mut clients) = crate::reconciler::app_clients::AppClientSync::new(
+                        &realm.backchannel,
+                        oidc.client_id.clone(),
+                        oidc.auth.clone(),
+                        host.clone(),
+                    ) {
+                        if let Some((id, secret)) = self.config.keycloak_admin.clone() {
+                            clients = clients.with_members(id, secret);
+                        }
+                        syncer = syncer.with_organization_app_clients(Arc::new(
+                            clients.for_organization(&realm.organization),
+                        ));
                     }
                 }
             }
@@ -1149,6 +1198,7 @@ impl AppState {
         self.trash = Arc::new(crate::entity_trash::TrashStore::new(db.clone()));
         self.comments = Arc::new(crate::entity_comments::CommentStore::new(db.clone()));
         self.feedback = Arc::new(crate::feedback::FeedbackStore::new(db.clone()));
+        self.org_backups = Arc::new(crate::org_backup::BackupStore::new(db.clone()));
         self.connectors = Arc::new(crate::connectors::ConnectorStore::new(db.clone()));
         self.alerts = Arc::new(crate::alerts::AlertStore::new(db.clone()));
         self.health_log = Arc::new(crate::health_log::HealthStore::new(db.clone()));

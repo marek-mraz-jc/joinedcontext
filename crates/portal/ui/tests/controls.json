@@ -1448,6 +1448,14 @@
         "dashboard_history.test.tsx"
       ]
     },
+    "src/pages/grafana/SavedChartsMove.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "saved_charts_move.test.tsx"
+      ]
+    },
     "src/pages/grafana/DashboardList.tsx": {
       "controls": {
         "Button": 4
@@ -1895,6 +1903,15 @@
       "tests": [
         "admin_grid_organization.test.tsx",
         "organization_agents.test.tsx"
+      ]
+    },
+    "src/pages/organization/Backups.tsx": {
+      "controls": {
+        "Button": 7,
+        "Switch": 1
+      },
+      "tests": [
+        "organization_backups.test.tsx"
       ]
     },
     "src/pages/organization/Costs.tsx": {

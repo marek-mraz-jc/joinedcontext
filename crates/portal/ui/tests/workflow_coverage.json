@@ -61,6 +61,16 @@
         "routes": [
           "DELETE /api/v1/projects/{project}/grafana/builder/{uid}"
         ]
+      },
+      "move-saved": {
+        "live": {
+          "spec": "grafana.spec.ts",
+          "test": "a steward checks moving the saved charts into one dashboard"
+        },
+        "personOnly": "moving the saved charts into the Saved charts dashboard is a person's call on the Grafana page, proposed as a Change a reviewer approves",
+        "routes": [
+          "POST /api/v1/projects/{project}/grafana/builder/saved-charts"
+        ]
       }
     },
     "mqttbroker": {
@@ -1955,6 +1965,48 @@
         "personOnly": "an administrator revokes a person's connector in the Portal; a connector never revokes one (AG-151, T-5975)",
         "routes": [
           "DELETE /api/v1/organization/connectors/{id}"
+        ]
+      }
+    },
+    "organization-backup": {
+      "set-target": {
+        "live": {
+          "spec": "org-backups.spec.ts",
+          "test": "a person who is no administrator of the Organization is refused every backup door"
+        },
+        "personOnly": "an Organization's backup holds its bucket credentials and restores its settings: an administrator does it on Administration > Backups, never an agent (T-7154)",
+        "routes": [
+          "PUT /api/v1/organization/backups/configuration"
+        ]
+      },
+      "run": {
+        "live": {
+          "spec": "org-backups.spec.ts",
+          "test": "a person who is no administrator of the Organization is refused every backup door"
+        },
+        "personOnly": "an Organization's backup holds its bucket credentials and restores its settings: an administrator does it on Administration > Backups, never an agent (T-7154)",
+        "routes": [
+          "POST /api/v1/organization/backups/configuration/run"
+        ]
+      },
+      "delete": {
+        "live": {
+          "spec": "org-backups.spec.ts",
+          "test": "a person who is no administrator of the Organization is refused every backup door"
+        },
+        "personOnly": "an Organization's backup holds its bucket credentials and restores its settings: an administrator does it on Administration > Backups, never an agent (T-7154)",
+        "routes": [
+          "DELETE /api/v1/organization/backups/configuration/bundle"
+        ]
+      },
+      "restore": {
+        "live": {
+          "spec": "org-backups.spec.ts",
+          "test": "a person who is no administrator of the Organization is refused every backup door"
+        },
+        "personOnly": "an Organization's backup holds its bucket credentials and restores its settings: an administrator does it on Administration > Backups, never an agent (T-7154)",
+        "routes": [
+          "POST /api/v1/organization/backups/configuration/versions/{version}/restore"
         ]
       }
     }

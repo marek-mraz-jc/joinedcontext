@@ -989,6 +989,130 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/backups/configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Configuration Backup
+         * @description The Organization's configuration backup target (never its secret key) and the newest runs, deletes and restores (T-7154).
+         */
+        get: operations["organization_backup_overview"];
+        /**
+         * Set Configuration Backup Target
+         * @description Saves the bucket, schedule and retention. The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154).
+         */
+        put: operations["organization_backup_save"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/configuration/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Configuration Backup
+         * @description A soft delete: the bucket keeps every version behind a delete marker until retention removes them, and any version can still be restored (T-7154).
+         */
+        delete: operations["organization_backup_soft_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/configuration/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Configuration Backup Now
+         * @description Builds the Organization's configuration bundle and uploads it as a new version, whether the schedule is on or off (T-7154).
+         */
+        post: operations["organization_backup_run_now"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/configuration/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Configuration Backup Versions
+         * @description Every version and delete marker of the Organization's bundle in its bucket, newest first, with the bucket's versioning and Object Lock state (T-7154).
+         */
+        get: operations["organization_backup_versions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/configuration/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Configuration Backup Version
+         * @description One version of the Organization's bundle, as the zip that was uploaded (T-7154).
+         */
+        get: operations["organization_backup_download"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/configuration/versions/{version}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Configuration Backup Version
+         * @description Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. A bundle of another Organization is refused (T-7154).
+         */
+        post: operations["organization_backup_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization/brokers": {
         parameters: {
             query?: never;
@@ -3352,6 +3476,26 @@ export interface paths {
          * @description Runs one panel of an unsaved dashboard as the caller: the Portal compiles the panel's query from its choices, checks it as the dashboard page checks a saved panel, and answers the panel and its frames. The body takes choices only; a query member is refused. Needs propose on Dashboard. Changes no data.
          */
         post: operations["builder_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/grafana/builder/saved-charts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Saved Charts Into A Dashboard
+         * @description Moves the project's charts saved one by one into one builder dashboard, Saved charts. The first run proposes the dashboard as a Change; once it is merged, the next run removes each saved chart the merged file draws (same Endpoint, type, attribute, kind and title) and keeps every other one, with the reason. `dryRun` reports the counts and changes nothing. Needs propose on Dashboard and read on every Endpoint a chart names.
+         */
+        post: operations["builder_saved_charts"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8886,6 +9030,11 @@ export interface components {
             /** @description The JWT the provider signed, carrying the `logout_events` claim. */
             logout_token: string;
         };
+        /** @description The page's state: the target (never its secret), the newest acts on it. */
+        BackupOverview: {
+            log: components["schemas"]["LogEntry"][];
+            target?: null | components["schemas"]["Target"];
+        };
         /** @description A bar chart's own choices: the text attribute that names each bar, one bar per entity. */
         BarChartOptions: {
             xField: string;
@@ -9160,6 +9309,16 @@ export interface components {
             /** @description What the forms offer, the server's lists: refresh intervals, units, colours. */
             refreshes: string[];
             units: string[];
+        };
+        BundleVersion: {
+            /** @description A soft delete: the bundle reads as gone until a version is restored. */
+            deleteMarker: boolean;
+            isLatest: boolean;
+            /** @description RFC 3339. */
+            lastModified: string;
+            /** Format: int64 */
+            size: number;
+            versionId: string;
         };
         Capabilities: {
             /** @description An endpoint not named here is `read`. */
@@ -11318,6 +11477,12 @@ export interface components {
             /** @description The NGSI-LD entity as the person read it, normalized. */
             entity: Record<string, never>;
         };
+        /** @description A row that stays where it is, and why. */
+        Kept: {
+            id: string;
+            reason: string;
+            title: string;
+        };
         /**
          * @description What a visualization draws.
          * @enum {string}
@@ -11446,6 +11611,26 @@ export interface components {
         ListMeta: {
             continue?: string | null;
             remainingItemCount?: number | null;
+        };
+        /** @description One audited act on an Organization's backup. */
+        LogEntry: {
+            /** @description `run`, `delete`, `restore-plan` or `restore`. */
+            action: string;
+            /** @description Who: a username, or `schedule`. */
+            actor: string;
+            /** @description RFC 3339. */
+            at: string;
+            /** Format: int64 */
+            bytes: number;
+            /** Format: int64 */
+            id: number;
+            kind: string;
+            /** @description What happened, in words; never a credential. */
+            message: string;
+            objectKey: string;
+            ok: boolean;
+            organization: string;
+            versionId: string;
         };
         /** @description The URL the browser must visit to finish an RP-initiated logout at Keycloak. */
         LogoutTarget: {
@@ -12592,6 +12777,23 @@ export interface components {
             fields: components["schemas"]["FieldChange"][];
             summary: components["schemas"]["PlanSummary"];
         };
+        PlanGroup: {
+            /**
+             * @description The Change the restore proposed for this project, once applied; a second administrator
+             *     approves it as any other Change.
+             */
+            change?: unknown;
+            changed: string[];
+            created: string[];
+            /** @description `organization`, or a project's name. */
+            name: string;
+            /**
+             * @description What this group needs done by hand: an Organization-level manifest is restored through
+             *     the Organization's own repository, never by this door.
+             */
+            note?: string | null;
+            unchanged: number;
+        };
         /** @description Counts of planned resource mutations. */
         PlanSummary: {
             create?: number;
@@ -13421,6 +13623,26 @@ export interface components {
                 [key: string]: string;
             } | null;
         };
+        RestoreInput: {
+            /**
+             * @description `false` (the default) plans only; `true` proposes one Change per project, which another
+             *     administrator approves.
+             */
+            apply?: boolean;
+        };
+        /**
+         * @description What restoring one version would change, per project and for the Organization's own
+         *     manifests: manifests that would be created or changed, and how many are as they are.
+         */
+        RestorePlan: {
+            /** @description Manifests created or changed in all groups: 0 means the Organization is as it was then. */
+            changes: number;
+            groups: components["schemas"]["PlanGroup"][];
+            organization: string;
+            /** @description When the bundle was taken. */
+            takenAt: string;
+            versionId: string;
+        };
         RestoreRequest: {
             /** @description The commit of one of the listed builds. */
             commit: string;
@@ -13550,6 +13772,11 @@ export interface components {
             /** Format: int64 */
             maxTokens: number;
             modelName: string;
+            /**
+             * @description The Organization of the run's project: the one Organization whose own realm may issue
+             *     the token of the person who started it (T-7144); absent, the installation realm's alone.
+             */
+            organization?: string | null;
             /** @description The folder the run writes, as its repository spells it. */
             pathPrefix: string;
             project: string;
@@ -13580,6 +13807,36 @@ export interface components {
             at: string;
             record: Record<string, never>;
         };
+        /** @description What moving the project's saved charts into the Saved charts dashboard does or did (T-7161). */
+        SavedChartsMove: {
+            /** @description The project's saved charts before the run. */
+            before: number;
+            change?: null | components["schemas"]["Change"];
+            dryRun: boolean;
+            /** @description The charts that stay saved, each with the reason. */
+            kept: components["schemas"]["Kept"][];
+            /** @description The charts the dashboard takes (propose) or that were removed, or would be (remove). */
+            moved: string[];
+            /** @description The dashboard's panels: planned when proposing, merged when removing. */
+            panels: number;
+            stage: components["schemas"]["SavedChartsStage"];
+            /** @description The Saved charts dashboard's uid, the same on every run. */
+            uid: string;
+        };
+        /**
+         * @description How a move of the saved charts runs: `dryRun` reports and changes nothing.
+         * @example {
+         *       "dryRun": true
+         *     }
+         */
+        SavedChartsRun: {
+            dryRun?: boolean;
+        };
+        /**
+         * @description Which step of the move a run took.
+         * @enum {string}
+         */
+        SavedChartsStage: "propose" | "remove";
         /**
          * @description What a workspace covers (CC-76, API/01 §22): the whole project, one space and what it
          *     holds, or a list of resources.
@@ -14095,6 +14352,49 @@ export interface components {
             revision?: string | null;
         };
         /**
+         * @description Where an Organization's backup goes and when it runs. The secret access key is sealed with
+         *     the Portal's age key and never leaves this struct: it is not serialised.
+         */
+        Target: {
+            accessKeyId: string;
+            bucket: string;
+            enabled: boolean;
+            /** @description `https://s3.eu-central-1.amazonaws.com`, a MinIO or Ceph address. */
+            endpoint: string;
+            /** Format: int32 */
+            everyHours: number;
+            /** Format: int32 */
+            keepDays: number;
+            kind: string;
+            /** @description RFC 3339; the start of the last scheduled or manual run. */
+            lastRunAt?: string | null;
+            organization: string;
+            /** @description The folder of the bucket every object of this backup lands under, e.g. `jc/`. */
+            prefix: string;
+            region: string;
+            /** @description RFC 3339. */
+            updatedAt: string;
+            updatedBy: string;
+        };
+        /** @description What an administrator sets. `secretAccessKey` is written only: absent keeps the saved one. */
+        TargetInput: {
+            accessKeyId: string;
+            /** @description `bb-backups` */
+            bucket: string;
+            enabled: boolean;
+            /** @description `https://s3.eu-central-1.amazonaws.com` */
+            endpoint: string;
+            /** Format: int32 */
+            everyHours: number;
+            /** Format: int32 */
+            keepDays: number;
+            /** @description `joinedcontext/`; empty for the bucket's root. */
+            prefix?: string;
+            /** @description `eu-central-1` */
+            region: string;
+            secretAccessKey?: string | null;
+        };
+        /**
          * @description One template as a person picks it (T-3263, AP-141): what it is for, for whom, and the data
          *     it needs; the source stays the model's.
          */
@@ -14354,6 +14654,13 @@ export interface components {
             contract: string;
             portal: components["schemas"]["Build"];
             ui?: null | components["schemas"]["Build"];
+        };
+        /** @description The versions of the bundle in the bucket, and what the bucket says of itself. */
+        VersionList: {
+            objectLock: boolean;
+            /** @description `Enabled`, `Suspended` or empty (never versioned). */
+            versioning: string;
+            versions: components["schemas"]["BundleVersion"][];
         };
         /** @description How a view looks at its type (API/01 §30). */
         ViewConfig: {
@@ -17039,6 +17346,337 @@ export interface operations {
             };
             /** @description The caller reads no project */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    organization_backup_overview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Target and log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupOverview"];
+                };
+            };
+            /** @description Not an administrator of the request's Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    organization_backup_save: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "accessKeyId": "backup-writer",
+                 *       "bucket": "bb-backups",
+                 *       "enabled": true,
+                 *       "endpoint": "https://s3.eu-central-1.amazonaws.com",
+                 *       "everyHours": 24,
+                 *       "keepDays": 30,
+                 *       "prefix": "joinedcontext/",
+                 *       "region": "eu-central-1"
+                 *     }
+                 */
+                "application/json": components["schemas"]["TargetInput"];
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Target"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The bucket's versioning is not on */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A field is not valid; `errors` names it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No age key to seal the secret, or the bucket cannot be reached */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    organization_backup_soft_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delete marker written */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target, or its versioning is off */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    organization_backup_run_now: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run's log entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogEntry"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target, or its bucket's versioning is off */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The bucket cannot be reached */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    organization_backup_versions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionList"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The bucket cannot be reached */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    organization_backup_download: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description S3 version id */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The zip */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": unknown;
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    organization_backup_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description S3 version id */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "apply": false
+                 *     }
+                 */
+                "application/json": components["schemas"]["RestoreInput"];
+            };
+        };
+        responses: {
+            /** @description The plan, and the Changes once applied */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestorePlan"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A bundle of another Organization, or of a project it no longer has */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25341,6 +25979,105 @@ export interface operations {
             };
             /** @description A field the builder does not take; the errors name it */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_saved_charts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedChartsRun"];
+            };
+        };
+        responses: {
+            /** @description A dry run, or the removing run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedChartsMove"];
+                };
+            };
+            /** @description Proposed; waits for approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedChartsMove"];
+                };
+            };
+            /** @description A body that does not parse */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not build dashboards, or may not read an Endpoint a chart names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project the caller has a part in */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No saved chart to move, a Change of the dashboard is open, or no dashboards service for the project */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A chart no longer fits: a source, type or attribute it names is gone; the errors name it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The forge, the database or the dashboards service did not answer */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

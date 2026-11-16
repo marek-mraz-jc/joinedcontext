@@ -983,6 +983,9 @@ export interface Functions {
   portal_app_dashboard: { name: string };
   portal_app_templates: Record<string, never>;
   portal_assistant_access: Record<string, never>;
+  portal_backup_configuration_download: { version: string };
+  portal_backup_configuration_get: Record<string, never>;
+  portal_backup_configuration_versions: Record<string, never>;
   portal_blueprint_list: Record<string, never>;
   portal_change_manifests: { id: string };
   portal_change_outside: Record<string, never>;
@@ -1143,6 +1146,9 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_app_dashboard: ["Project"],
   portal_app_templates: ["Organization"],
   portal_assistant_access: ["Project"],
+  portal_backup_configuration_download: ["Organization"],
+  portal_backup_configuration_get: ["Organization"],
+  portal_backup_configuration_versions: ["Organization"],
   portal_blueprint_list: ["Organization"],
   portal_change_manifests: ["Project"],
   portal_change_outside: ["Project"],
@@ -1303,6 +1309,10 @@ export interface Actions {
   portal_app_rebuild: { name: string };
   portal_app_rename_shapes: Record<string, never>;
   portal_app_restore: { name: string; body?: unknown };
+  portal_backup_configuration_delete: Record<string, never>;
+  portal_backup_configuration_restore: { version: string; body?: unknown };
+  portal_backup_configuration_run: Record<string, never>;
+  portal_backup_configuration_set: { body?: unknown };
   portal_change_restore: { id: string };
   portal_change_undo: { id: string };
   portal_comment_add: { space: string; body?: unknown };
@@ -1324,6 +1334,7 @@ export interface Actions {
   portal_grafana_builder_create: { body?: unknown };
   portal_grafana_builder_preview: { body?: unknown };
   portal_grafana_builder_restore: { uid: string; sha: string };
+  portal_grafana_builder_saved_charts: { body?: unknown };
   portal_grafana_builder_update: { uid: string; body?: unknown };
   portal_grafana_remove: { id: string };
   portal_grafana_save: { body?: unknown };
@@ -1453,6 +1464,10 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_app_rebuild: ["Project"],
   portal_app_rename_shapes: ["Project"],
   portal_app_restore: ["Project"],
+  portal_backup_configuration_delete: ["Organization"],
+  portal_backup_configuration_restore: ["Organization"],
+  portal_backup_configuration_run: ["Organization"],
+  portal_backup_configuration_set: ["Organization"],
   portal_change_restore: ["Project"],
   portal_change_undo: ["Project"],
   portal_comment_add: ["Project"],
@@ -1474,6 +1489,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_grafana_builder_create: ["Project"],
   portal_grafana_builder_preview: ["Project"],
   portal_grafana_builder_restore: ["Project"],
+  portal_grafana_builder_saved_charts: ["Project"],
   portal_grafana_builder_update: ["Project"],
   portal_grafana_remove: ["Project"],
   portal_grafana_save: ["Project"],

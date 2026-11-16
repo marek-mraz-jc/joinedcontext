@@ -92,6 +92,8 @@ fn world_at(ba_back: &str) -> World {
         oidc: Some(oidc),
         keycloak_admin: Some(("portal-reconciler".into(), ClientAuth::Secret("r".into()))),
         bootstrap_admins: ROOTS.to_owned(),
+        apps_url: Some("https://city.example".parse().expect("url")),
+        serve_app_hosts: true,
         ..Config::for_tests()
     };
     let state = AppState::new(config, None);
@@ -134,6 +136,16 @@ fn world_at(ba_back: &str) -> World {
                     "scope": { "organization": org } }),
         ));
     }
+    // A public App in each Organization's project (T-7165).
+    for (app, project) in [("map-hel", "helsinki"), ("map-ba", "bratislava")] {
+        m.upsert(envelope(
+            "App",
+            app,
+            project,
+            json!({ "kind": "ui", "source": { "path": "." }, "build": {}, "visibility": "public",
+                    "lifecycle": "published", "dataNeeds": [] }),
+        ));
+    }
     World {
         state,
         installation,
@@ -154,10 +166,14 @@ fn token(key: &EncodingKey, kid: &str, issuer: &str, who: &str, groups: &[&str])
 }
 
 async fn get(state: &AppState, at: &str, auth: (&str, &str)) -> StatusCode {
+    get_at(state, at, auth, "/api/v1/projects").await
+}
+
+async fn get_at(state: &AppState, at: &str, auth: (&str, &str), uri: &str) -> StatusCode {
     server::app(state.clone())
         .oneshot(
             Request::builder()
-                .uri("/api/v1/projects")
+                .uri(uri)
                 .header(header::HOST, at)
                 .header(auth.0, auth.1)
                 .body(Body::empty())
@@ -231,6 +247,91 @@ async fn a_token_of_an_organizations_realm_reaches_its_own_host_alone() {
         &[],
     );
     assert_eq!(bearer(&w.state, HEL, &hel).await, StatusCode::OK);
+}
+
+/// An access token of App `app`'s own client, issued by `issuer`.
+fn app_token(key: &EncodingKey, kid: &str, issuer: &str, app: &str) -> String {
+    let now = session::now_unix();
+    let client = format!("app-{app}");
+    let claims = json!({
+        "iss": issuer, "typ": "Bearer", "aud": client, "azp": client, "sub": "sub-ba-only",
+        "preferred_username": "ba-only", "exp": now + 300, "iat": now,
+        "resource_access": { client: { "roles": [] } },
+    });
+    let mut header = Header::new(Algorithm::ES256);
+    header.kid = Some(kid.into());
+    encode(&header, &claims, key).expect("sign")
+}
+
+/// T-7165: an App's token is its Organization's realm's alone: ba's App takes a token of ba's
+/// realm and refuses the installation's, hel's App the other way round.
+#[tokio::test]
+async fn an_apps_token_is_checked_by_its_organizations_realm_alone() {
+    let w = world();
+    let me = |at: &'static str, project: &'static str, app: &'static str, token: String| {
+        let state = w.state.clone();
+        async move {
+            get_at(
+                &state,
+                at,
+                ("authorization", &format!("Bearer {token}")),
+                &format!("/api/v1/projects/{project}/apps/{app}/me"),
+            )
+            .await
+        }
+    };
+    let ba_on_ba = app_token(&w.ba, "ba", BA_REALM, "map-ba");
+    let installation_on_ba = app_token(&w.installation, "installation", INSTALLATION, "map-ba");
+    let ba_on_hel = app_token(&w.ba, "ba", BA_REALM, "map-hel");
+    let installation_on_hel = app_token(&w.installation, "installation", INSTALLATION, "map-hel");
+    assert_eq!(
+        me(BA, "bratislava", "map-ba", ba_on_ba).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        me(BA, "bratislava", "map-ba", installation_on_ba).await,
+        StatusCode::UNAUTHORIZED,
+        "an installation token on ba's App"
+    );
+    assert_eq!(
+        me(HEL, "helsinki", "map-hel", ba_on_hel).await,
+        StatusCode::UNAUTHORIZED,
+        "ba's realm on hel's App"
+    );
+    assert_eq!(
+        me(HEL, "helsinki", "map-hel", installation_on_hel).await,
+        StatusCode::OK
+    );
+}
+
+/// T-7165: an App signs in at its Organization's realm, whatever host asks.
+#[tokio::test]
+async fn an_apps_sign_in_goes_to_its_organizations_realm() {
+    let w = world();
+    for (app, realm) in [("map-ba", BA_REALM), ("map-hel", INSTALLATION)] {
+        let response = server::app(w.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/login")
+                    .header(header::HOST, format!("{app}.apps.city.example"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "{app}");
+        let location = response.headers()[header::LOCATION]
+            .to_str()
+            .expect("location");
+        assert!(
+            location.starts_with(&format!("{realm}/protocol/openid-connect/auth?")),
+            "{app}: {location}"
+        );
+        assert!(
+            location.contains(&format!("client_id=app-{app}")),
+            "{location}"
+        );
+    }
 }
 
 /// The bootstrap group is the operators', in the installation realm: a token of ba's realm that

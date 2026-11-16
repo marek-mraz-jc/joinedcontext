@@ -118,7 +118,7 @@ pub struct NewVisualization {
     pub kind: Kind,
 }
 
-fn stored(err: sqlx::Error) -> ApiError {
+pub(crate) fn stored(err: sqlx::Error) -> ApiError {
     tracing::warn!(error = %err, "the visualizations could not be read or written");
     ApiError::Unavailable("the saved visualizations could not be read or written".into())
 }

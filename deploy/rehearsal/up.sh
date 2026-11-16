@@ -24,8 +24,10 @@ home=${REHEARSAL_HOME:-$HOME/rehearsal}/$env_name
 jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
 # A jc embedding a Portal UI older than the clone's UI sources serves the old UI silently: refuse it.
 # A jc copied out of a release image (bins/jc/e2e/release/stacks.py) embeds that image's UI: the
-# file `image` beside it names the image, and REHEARSAL_JC_IMAGE must name the same one.
-if [ -z "${REHEARSAL_JC_IMAGE:-}" ] || [ "$(cat "$(dirname "$jc_bin")/image" 2>/dev/null)" != "$REHEARSAL_JC_IMAGE" ]; then
+# file `image` beside it names the image, and REHEARSAL_JC_IMAGE must name the same one. The stamp
+# is read through jc_dir: test_smoke_yml.py reads every `dirname "$jc_bin")/<name>` as a binary.
+jc_dir=$(dirname "$jc_bin")
+if [ -z "${REHEARSAL_JC_IMAGE:-}" ] || [ "$(cat "$jc_dir/image" 2>/dev/null)" != "$REHEARSAL_JC_IMAGE" ]; then
   "$here/ui-fresh.sh" "$here/../.." "$jc_bin" || exit 1
 fi
 export_dir=${REHEARSAL_EXPORT:-$home/export}

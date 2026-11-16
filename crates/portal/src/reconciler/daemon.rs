@@ -223,12 +223,17 @@ pub struct Syncer {
     /// `None` when no Keycloak admin client is configured: the `Group` manifests are then read
     /// and served, and the realm is written by nobody (PF-63).
     groups: Option<Arc<GroupSync>>,
+    /// The groups of each Organization with a realm of its own, in that realm (T-7144).
+    organization_groups: Vec<Arc<GroupSync>>,
     /// The realm's people and the database of their pending removals (PF-93). `None` leaves a
     /// removal pending until a Portal with both runs.
     people: Option<(Arc<crate::people::People>, sqlx::PgPool)>,
     /// The Keycloak client of every published App (ADR-N-030, AP-111). `None` without an admin
     /// client or an apps host: the Apps are served, and nobody's client is written.
     app_clients: Option<Arc<super::app_clients::AppClientSync>>,
+    /// The App clients of each Organization with a realm of its own (T-7165). Their secrets stay
+    /// out of `app_client_secrets`: the edge file logs in at the installation realm alone.
+    organization_app_clients: Vec<Arc<super::app_clients::AppClientSync>>,
     /// The secret of every App whose client is in place, by App name, as the last run left it:
     /// what the edge file is composed with (AP-112). Never logged.
     app_client_secrets:
@@ -401,8 +406,10 @@ impl Syncer {
             subscriptions: None,
             dashboards: None,
             groups: None,
+            organization_groups: Vec::new(),
             people: None,
             app_clients: None,
+            organization_app_clients: Vec::new(),
             app_client_secrets: Arc::default(),
             workload_clients: None,
             host_runner_values: RwLock::default(),
@@ -615,6 +622,12 @@ impl Syncer {
         self
     }
 
+    /// Makes each run bring an Organization's own realm to its derived groups (T-7144).
+    pub fn with_organization_groups(mut self, groups: Arc<GroupSync>) -> Self {
+        self.organization_groups.push(groups);
+        self
+    }
+
     /// Makes each run delete the people whose removal Change has been merged (PF-93).
     pub fn with_people(mut self, people: Arc<crate::people::People>, pool: sqlx::PgPool) -> Self {
         self.people = Some((people, pool));
@@ -624,6 +637,15 @@ impl Syncer {
     /// Makes each run bring every published App's Keycloak client to what the App says (AP-111).
     pub fn with_app_clients(mut self, clients: Arc<super::app_clients::AppClientSync>) -> Self {
         self.app_clients = Some(clients);
+        self
+    }
+
+    /// Makes each run bring an Organization's own realm to its Apps' clients (T-7165).
+    pub fn with_organization_app_clients(
+        mut self,
+        clients: Arc<super::app_clients::AppClientSync>,
+    ) -> Self {
+        self.organization_app_clients.push(clients);
         self
     }
 
@@ -2450,6 +2472,19 @@ impl Syncer {
             super::groups::record(fresh_mirror, &outcomes);
             self.say_group_drift(&outcomes).await;
         }
+        if self.organization_groups.is_empty() {
+            return;
+        }
+        let generated = super::groups::derived_groups(fresh_mirror, projects, chrono::Utc::now());
+        for groups in &self.organization_groups {
+            for outcome in groups.converge_with(fresh_mirror, &generated).await {
+                if let Some(err) = &outcome.error {
+                    tracing::warn!(group = %outcome.name, error = %err, "group did not converge in its Organization's realm")
+                } else if !outcome.drift.is_empty() {
+                    tracing::info!(group = %outcome.name, drift = %outcome.drift.join("; "), "group brought back in its Organization's realm")
+                }
+            }
+        }
     }
 
     async fn converge_app_clients(&self, fresh_mirror: &Mirror) {
@@ -2481,6 +2516,17 @@ impl Syncer {
                     .app_client_secrets
                     .write()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = run.secrets;
+            }
+        }
+        for clients in &self.organization_app_clients {
+            let run = clients.converge(fresh_mirror).await;
+            super::app_clients::record(fresh_mirror, &run.outcomes);
+            for outcome in &run.outcomes {
+                if let Some(err) = &outcome.error {
+                    tracing::warn!(app = %outcome.app, error = %err, "app client did not converge in its Organization's realm")
+                } else if !outcome.drift.is_empty() {
+                    tracing::info!(app = %outcome.app, drift = %outcome.drift.join("; "), "app client brought back in its Organization's realm")
+                }
             }
         }
     }

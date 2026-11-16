@@ -95,6 +95,7 @@ const SPACE_FILTER: (&str, Place) = ("space", Place::Query("Edm.String"));
 const VIEW: (&str, Place) = ("id", Place::Path);
 const CONNECTOR: (&str, Place) = ("id", Place::Path);
 const DAYS: (&str, Place) = ("days", Place::Query("Edm.Int32"));
+const VERSION: (&str, Place) = ("version", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -290,6 +291,62 @@ pub static DOORS: &[Door] = &[
         Method::DELETE,
         "/organization/connectors/{connector}",
         &[("connector", Place::Path)],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_get",
+        Org,
+        Method::GET,
+        "/organization/backups/configuration",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_set",
+        Org,
+        Method::PUT,
+        "/organization/backups/configuration",
+        &[BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_run",
+        Org,
+        Method::POST,
+        "/organization/backups/configuration/run",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_versions",
+        Org,
+        Method::GET,
+        "/organization/backups/configuration/versions",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_download",
+        Org,
+        Method::GET,
+        "/organization/backups/configuration/versions/{version}",
+        &[VERSION],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_restore",
+        Org,
+        Method::POST,
+        "/organization/backups/configuration/versions/{version}/restore",
+        &[VERSION, BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_delete",
+        Org,
+        Method::DELETE,
+        "/organization/backups/configuration/bundle",
+        &[],
         Who::Administrator,
     ),
     door(
@@ -1804,6 +1861,14 @@ pub static DOORS: &[Door] = &[
         Method::PUT,
         "/projects/{project}/grafana/builder/{uid}",
         &[UID, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_saved_charts",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder/saved-charts",
+        &[BODY],
         Who::ProjectReader,
     ),
     door(
