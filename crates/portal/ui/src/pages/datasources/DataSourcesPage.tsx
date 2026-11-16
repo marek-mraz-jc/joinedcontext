@@ -263,6 +263,9 @@ const RUNNER_GROUPS = [
   "utility",
 ] as const;
 
+/** The runner's inputs the wizard names beside the streams: file servers, queues, databases, a webhook. */
+const WIZARD_RUNNER_INPUTS = ["sftp", "aws_s3", "amqp_0_9", "amqp_1", "kafka", "kafka_franz", "sql_select", "http_server"];
+
 /** DataSources of one project: what the city reads from, and with which credential (MF-35). */
 export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   const { t, i18n } = useTranslation();
@@ -304,6 +307,14 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   const [probe, setProbe] = useState<Probe | null>(null);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
 
+  // The source a proposal just named, which the page offers to start a pipeline on (G-22).
+  const [proposed, setProposed] = useState<string | null>(null);
+  const startPipeline = (source: string) => {
+    const pipelines = `/projects/${project}/pipelines`;
+    handPrefill(pipelines, { class: "auto", source: { dataSourceRef: source } });
+    void navigate({ href: pipelines });
+  };
+
   const list = useQuery({
     queryKey: queryKeys.list(project, PLURAL),
     // A change on its way polls until it lands (T-1392).
@@ -330,6 +341,17 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   const brokerList = useReadableList(project, "mqttbrokers", "MqttBroker");
   const brokers = useMemo(() => brokerOptions(asManifests(brokerList.data?.items ?? [])), [brokerList.data]);
 
+  // The connections the wizard hands to their own form: the streams, and the runner's file
+  // servers, queues and databases this runner has (T-7094).
+  const wizardOthers = useMemo(
+    () => [
+      ...(["mqtt", "websocket"] as const).map((other) => ({ type: other, label: t(`datasources.type.${other}`) })),
+      ...(catalog?.inputs ?? [])
+        .filter((input) => WIZARD_RUNNER_INPUTS.includes(input.name))
+        .map((input) => ({ type: input.name, label: t(`datasources.type.${input.name}`, { defaultValue: input.name }) })),
+    ],
+    [catalog, t],
+  );
   const runnerCatalogInput = catalog?.inputs.find((i) => i.name === type);
   const selectedSummary = runnerCatalogInput?.summary;
 
@@ -409,9 +431,10 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
     mutationFn: async ({ form, draft: draftRef }: { form: DataSourceForm; draft?: { kind: string; name: string } }) => {
       return write(form, false, draftRef);
     },
-    onSuccess: (result) => {
+    onSuccess: (result, { form }) => {
       if (isChange(result)) {
         setChange(result);
+        setProposed(editing ? null : (form.name ?? null));
       }
       closeDialog();
       void queryClient.invalidateQueries({ queryKey: queryKeys.list(project, PLURAL) });
@@ -622,12 +645,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
               key: "pipeline",
               label: t("datasources.newPipeline"),
               onSelect: () => {
-                const pipelines = `/projects/${project}/pipelines`;
-                handPrefill(pipelines, {
-                  class: "auto",
-                  source: { dataSourceRef: source.metadata.name },
-                });
-                void navigate({ href: pipelines });
+                startPipeline(source.metadata.name);
               },
             },
           ]}
@@ -659,6 +677,13 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
       </div>
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
+      {change && proposed ? (
+        <div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => startPipeline(proposed)}>
+            {t("datasources.wizard.handoff", { name: proposed })}
+          </Button>
+        </div>
+      ) : null}
 
       {noSources ? setUps : null}
 
@@ -812,6 +837,18 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
         >
           {editing ? null : (
             <TemplateGallery
+              project={project}
+              secrets={secrets}
+              others={wizardOthers}
+              onPick={(other) => {
+                // The form of that type opens below, the wizard's advanced way (T-7094).
+                setType(other);
+                setDraft((held) => (held ? { name: held.name, title: held.title } : undefined));
+                setPlan(null);
+                setProbe(null);
+                setCollectedSecrets({});
+                document.getElementById("datasource-type")?.focus();
+              }}
               onUse={(chosen, form) => {
                 // The template fills the form and checks it at once: the first records show
                 // before anything is proposed (T-3249).

@@ -114,6 +114,18 @@ pub fn harness(
     sample: &Sample,
     capture_url: &str,
 ) -> Result<Value, HarnessError> {
+    harness_of(spec, sample, capture_url, MAX_MESSAGES)
+}
+
+/// [`harness`] keeping at most `max` messages of a sample and of each page a mapping splits,
+/// where the test keeps [`MAX_MESSAGES`]: the Portal's whole-source check reads every record of
+/// a source (G-21, T-7085).
+pub fn harness_of(
+    spec: &PipelineSpec,
+    sample: &Sample,
+    capture_url: &str,
+    max: usize,
+) -> Result<Value, HarnessError> {
     // A URL sample is fetched by a processor rather than read by an input, which the branch
     // below explains; the prelude that does it is pushed once the processor list exists.
     let mut fetch_once = false;
@@ -181,7 +193,7 @@ pub fn harness(
         processors.push(json!({ "switch": [{
             "check": "!errored()",
             "processors": [
-                { "mapping": format!("root = this.slice(0, {MAX_MESSAGES})") },
+                { "mapping": format!("root = this.slice(0, {max})") },
                 { "unarchive": { "format": "json_array" } },
             ],
         }]}));
@@ -195,7 +207,7 @@ pub fn harness(
             // mapping against a shape production never gives it — an aggregate over the page
             // would read one entity and answer zero (T-0911).
             processors.push(json!({ "mapping": format!(
-                "let rows = content().parse_json()\nroot = if $rows.type() == \"array\" {{ $rows.slice(0, {MAX_MESSAGES}) }} else {{ $rows }}"
+                "let rows = content().parse_json()\nroot = if $rows.type() == \"array\" {{ $rows.slice(0, {max}) }} else {{ $rows }}"
             )}));
         }
         SampleFormat::Csv => {
@@ -205,7 +217,7 @@ pub fn harness(
             // "expected string value, got null" (T-4268). A header with no rows stays one
             // message of an empty array, so the test still answers.
             processors.push(json!({ "mapping": format!(
-                "let rows = content().string().parse_csv()\nroot = if $rows.length() > 0 {{ $rows.slice(0, {MAX_MESSAGES}) }} else {{ [$rows] }}"
+                "let rows = content().string().parse_csv()\nroot = if $rows.length() > 0 {{ $rows.slice(0, {max}) }} else {{ [$rows] }}"
             )}));
             processors.push(json!({ "unarchive": { "format": "json_array" } }));
         }
@@ -260,7 +272,7 @@ pub fn harness(
         "root = if this.output.type() == \"array\" {{ ",
         "this.output.slice(0, {}).map_each(o -> {{ \"input\": this.input, \"output\": o, \"error\": null, \"steps\": this.steps }}) ",
         "}} else {{ [this] }}"
-    ), MAX_MESSAGES) }));
+    ), max) }));
     processors.push(json!({ "unarchive": { "format": "json_array" } }));
 
     Ok(json!({
@@ -616,6 +628,34 @@ mod tests {
     /// T-6572: a feed whose records sit in `data.stations` reaches the steps one station per
     /// message, split right after the fetch as the runner splits it (PL-114), so a 100 KB GBFS
     /// page never travels as one message; a path that is not dotted names builds no harness.
+    /// T-7085: the whole-source check keeps every record it names, where a test keeps 20.
+    #[test]
+    fn harness_of_keeps_the_messages_it_is_given_and_harness_keeps_twenty() {
+        let sample = Sample {
+            text: Some("a,b\n1,2\n".into()),
+            url: None,
+            format: SampleFormat::Csv,
+            records: None,
+        };
+        let capture = "http://portal:9090/internal/pipeline-tests/abc";
+        let cuts = |config: &Value| -> Vec<String> {
+            config["pipeline"]["processors"]
+                .as_array()
+                .expect("processors")
+                .iter()
+                .filter_map(|p| p["mapping"].as_str())
+                .filter(|m| m.contains("slice(0, "))
+                .map(str::to_owned)
+                .collect()
+        };
+        let whole = harness_of(&spec(None), &sample, capture, 50_000).expect("a harness");
+        let cut = cuts(&whole);
+        assert_eq!(cut.len(), 2, "the csv rows and the output split: {cut:?}");
+        assert!(cut.iter().all(|m| m.contains("slice(0, 50000)")), "{cut:?}");
+        let test = harness(&spec(None), &sample, capture).expect("a harness");
+        assert!(cuts(&test).iter().all(|m| m.contains("slice(0, 20)")));
+    }
+
     #[test]
     fn a_sample_with_records_splits_the_fetched_body_before_the_steps() {
         let sample = Sample {

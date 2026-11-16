@@ -387,6 +387,18 @@
         "kind"
       ],
       "reason": "file formats' own names (GeoJSON, NGSI-LD)"
+    },
+    "datasources.wizard.api.sensorThings": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "SensorThings is the OGC standard's own name, the one the wizard's card names (T-7094)"
+    },
+    "datasources.wizard.apiUrlHelp.arcgisFeature": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "FeatureServer is the word in the ArcGIS address the person copies (T-7094)"
     }
   },
   "disabled": {

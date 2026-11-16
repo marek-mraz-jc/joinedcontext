@@ -337,6 +337,8 @@ describe("the pipeline workbench", () => {
       "workbench-schedule-step-title",
       "workbench-lifetime-title",
       "workbench-validation-title",
+      // The whole-source check follows the steps: it reads the saved pipeline, not the draft (T-7085).
+      "source-check-title",
     ]);
     for (const hint of [
       en.pipelines.workbench.source.hint,

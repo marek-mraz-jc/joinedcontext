@@ -44,7 +44,7 @@ daiya = [
   "dep:daiya-server",
   "dep:daiya-model",
 ]
-ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:futures"]
+ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:ekiben-linkml", "dep:futures"]
 # The platform's broker build (Antares image-jc FEATURES without parquet and tabular): Endpoint
 # views, the joinedcontext engine and every surface dev's broker serves.
 antares = ["dep:antares-broker"]
@@ -112,6 +112,7 @@ daiya-model = { path = "../../crates/daiya/model", optional = true }
 
 ekiben-server = { path = "../../crates/ekiben/crates/ekiben-server", optional = true }
 ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true }
+ekiben-linkml = { path = "../../crates/shared/ekiben-linkml", optional = true }
 
 antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true, features = ["full", "jc-policy", "linkml", "ical", "feed", "parquet", "tabular"] }
 

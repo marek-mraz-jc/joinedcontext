@@ -135,6 +135,11 @@ pub struct Config {
     /// sidecar (`JC_PORTAL_PIPELINE_IDENTITY=pipeline`) rather than its project's `pipelines`
     /// account (`project`, the default), PL-19. Set once the federated mechanism is seen working.
     pub pipeline_identity: bool,
+    /// Whether the validation stage before every write checks a record with the space's LinkML
+    /// model (`JC_PORTAL_PIPELINE_STAGE=linkml`, the runner's `linkml_validate`, G-19) rather
+    /// than one JSON Schema per class (`json-schema`, the default). Set once a space's reject
+    /// sets agree under both (`ekiben-processors` bench, T-7068).
+    pub pipeline_linkml_stage: bool,
     /// How such a stream proves its pipeline's client: the runner's token sidecar
     /// (`pipeline`), or the client's own secret (`pipeline-secret`, jc: one process, no
     /// Kubernetes identity; the clients come with the imported realm).
@@ -474,6 +479,7 @@ impl std::fmt::Debug for Config {
             )
             .field("mail_from", &self.mail_from)
             .field("pipeline_identity", &self.pipeline_identity)
+            .field("pipeline_linkml_stage", &self.pipeline_linkml_stage)
             .field("pipeline_credential", &self.pipeline_credential)
             .field("pipelines_concurrency", &self.pipelines_concurrency)
             .field("pipeline_namespace", &self.pipeline_namespace)
@@ -2076,6 +2082,17 @@ impl Config {
 
         // PL-19: a value nobody meant is refused at start-up, not read as either identity.
         use crate::reconciler::streams::PipelineCredential;
+        let pipeline_linkml_stage =
+            match lookup("JC_PORTAL_PIPELINE_STAGE").as_deref().map(str::trim) {
+                None | Some("") | Some("json-schema") => false,
+                Some("linkml") => true,
+                Some(other) => {
+                    return Err(ConfigError::Invalid {
+                        var: "JC_PORTAL_PIPELINE_STAGE",
+                        reason: format!("`{other}` is neither `json-schema` nor `linkml`"),
+                    })
+                }
+            };
         let (pipeline_identity, pipeline_credential) = match lookup("JC_PORTAL_PIPELINE_IDENTITY")
             .as_deref()
             .map(str::trim)
@@ -2263,6 +2280,7 @@ impl Config {
             pipeline_runner_url,
             pipeline_runner_token,
             pipeline_identity,
+            pipeline_linkml_stage,
             pipeline_credential,
             pipelines_concurrency,
             pipeline_namespace,
@@ -2358,6 +2376,7 @@ impl Config {
             pipeline_runner_url: None,
             pipeline_runner_token: None,
             pipeline_identity: false,
+            pipeline_linkml_stage: false,
             pipeline_credential: crate::reconciler::streams::PipelineCredential::Sidecar,
             pipelines_concurrency: (1, 1),
             pipeline_namespace: None,
@@ -3194,6 +3213,18 @@ mod tests {
             .expect_err("a typo is refused")
             .to_string();
         assert!(err.contains("JC_PORTAL_PIPELINE_IDENTITY"), "{err}");
+        let stage = |value: &str| {
+            Config::from_vars(|k| (k == "JC_PORTAL_PIPELINE_STAGE").then(|| value.to_owned()))
+        };
+        assert!(!with(None).expect("default").pipeline_linkml_stage);
+        assert!(
+            !stage("json-schema")
+                .expect("json-schema")
+                .pipeline_linkml_stage
+        );
+        assert!(stage("linkml").expect("linkml").pipeline_linkml_stage);
+        let err = stage("LinkML").expect_err("a typo is refused").to_string();
+        assert!(err.contains("JC_PORTAL_PIPELINE_STAGE"), "{err}");
     }
 
     /// PL-78: each lane runs one pipeline at a time until configured, and a count below one or a

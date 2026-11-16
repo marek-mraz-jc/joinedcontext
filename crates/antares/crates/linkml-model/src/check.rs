@@ -11,13 +11,13 @@
 //! gateway say the same words.
 //!
 //! A text's `pattern` matches as JSON Schema and SHACL read it, anywhere in
-//! the value. What the subset does not hold is not checked: closed classes
-//! (the runner's JSON-Schema stage closes them by the `DataModel`'s
-//! `open_world`, which the broker's model bytes do not carry), the
-//! type of a Relationship's target (that needs a read of the target; an id
-//! tells nothing about it, ADR-N-041). An Attribute no class of the Entity
-//! lists, and an Entity of no class of the model, pass: a LinkML class is
-//! open by default.
+//! the value. What the subset does not hold is not checked: the type of a
+//! Relationship's target (that needs a read of the target; an id tells
+//! nothing about it, ADR-N-041). An Entity of no class of the model passes.
+//! An Attribute no class of the Entity lists passes too, a LinkML class is
+//! open by default, except under [`Rules::compact`] with `closed`: the
+//! runner's stage closes a class unless its `DataModel` is `openWorld`
+//! (DM-28), a field the broker's model bytes do not carry.
 //!
 //! A refusal names the Attribute and the rule, never the value (the value
 //! may be personal data, and a log line or a Problem Details carries it).
@@ -79,6 +79,8 @@ pub mod component {
     pub const MAX_INCLUSIVE: &str = "sh:MaxInclusiveConstraintComponent";
     /// A text the slot's `pattern` does not match.
     pub const PATTERN: &str = "sh:PatternConstraintComponent";
+    /// An Attribute a closed class does not list.
+    pub const CLOSED: &str = "sh:ClosedConstraintComponent";
     /// A unit code other than the one the model states.
     pub const HAS_VALUE: &str = "sh:HasValueConstraintComponent";
 }
@@ -95,6 +97,7 @@ fn component_of(text: &str) -> &'static str {
         rule::MINIMUM => component::MIN_INCLUSIVE,
         rule::MAXIMUM => component::MAX_INCLUSIVE,
         rule::PATTERN => component::PATTERN,
+        rule::CLOSED => component::CLOSED,
         _ => component::DATATYPE,
     }
 }
@@ -149,6 +152,8 @@ pub mod rule {
     pub const MINIMUM: &str = "its value is below the minimum the model states";
     /// A number above the slot's `maximum_value`.
     pub const MAXIMUM: &str = "its value is above the maximum the model states";
+    /// An Attribute a closed class does not list.
+    pub const CLOSED: &str = "the model does not list it on a closed class";
     /// A text the slot's `pattern` does not match.
     pub const PATTERN: &str = "its value does not match the pattern the model states";
 }
@@ -182,6 +187,7 @@ struct SlotRule {
 /// One class's rules, keyed by slot IRI, with its required slots.
 #[derive(Debug, Default)]
 struct ClassRules {
+    name: String,
     slots: HashMap<String, Arc<SlotRule>>,
     required: Vec<(String, Arc<SlotRule>)>,
 }
@@ -191,16 +197,55 @@ struct ClassRules {
 #[derive(Debug, Default)]
 pub struct Rules {
     classes: HashMap<String, ClassRules>,
+    /// Whether an Attribute no class of the Entity lists is refused (`sh:closed`).
+    closed: bool,
 }
 
+/// The members of a compacted Entity that are no Attribute: a closed class
+/// takes them, as the runner's JSON-Schema stage does (DM-130, DM-131).
+const OWN_MEMBERS: [&str; 8] = [
+    "id",
+    "type",
+    "@context",
+    "scope",
+    "createdAt",
+    "modifiedAt",
+    "deletedAt",
+    "expiresAt",
+];
+
 impl Rules {
-    /// The rules of every class of `model`.
+    /// The rules of every class of `model`, keyed by IRI: the expanded form
+    /// the broker stores. Every class is open.
     #[must_use]
     pub fn of(model: &Model) -> Self {
+        Self::keyed(model, |c| model.class_iri(c), |s| model.slot_iri(s), false)
+    }
+
+    /// The rules of every class of `model` keyed by the names a compacted
+    /// Entity carries under the model's own `@context` ([`crate::context`]
+    /// maps each slot's name to its IRI): the class name as `type`, the slot
+    /// name as the Attribute. What a pipeline's runner sees before the write.
+    /// With `closed`, an Attribute no class of the Entity lists is refused
+    /// (`sh:closed`, a `DataModel` that is not `openWorld`, DM-28).
+    #[must_use]
+    pub fn compact(model: &Model, closed: bool) -> Self {
+        Self::keyed(model, str::to_owned, str::to_owned, closed)
+    }
+
+    fn keyed(
+        model: &Model,
+        class_key: impl Fn(&str) -> String,
+        slot_key: impl Fn(&str) -> String,
+        closed: bool,
+    ) -> Self {
         let schema = model.schema();
         let mut classes = HashMap::with_capacity(schema.classes.len());
         for class in schema.classes.keys() {
-            let mut rules = ClassRules::default();
+            let mut rules = ClassRules {
+                name: class.clone(),
+                ..ClassRules::default()
+            };
             for (name, slot) in model.class_slots(class) {
                 let range = match model.range(&slot) {
                     Range::Type(b) => Kind::Type(b),
@@ -237,7 +282,7 @@ impl Rules {
                         .and_then(serde_json::Number::as_f64),
                     pattern: slot.pattern.as_deref().and_then(crate::model::pattern),
                 });
-                let iri = model.slot_iri(name);
+                let iri = slot_key(name);
                 // The Entity's own members are no Attributes: `id` and
                 // `type` are checked by the NGSI-LD expansion itself.
                 let own = slot.identifier == Some(true) || matches!(name, "id" | "type");
@@ -248,9 +293,9 @@ impl Rules {
                     rules.slots.insert(iri, rule);
                 }
             }
-            classes.insert(model.class_iri(class), rules);
+            classes.insert(class_key(class), rules);
         }
-        Self { classes }
+        Self { classes, closed }
     }
 }
 
@@ -329,6 +374,16 @@ pub fn entity(rules: &Rules, doc: &Value, whole: bool) -> Result<(), Violation> 
     let members = doc.as_object().into_iter().flatten();
     for (name, instances) in members {
         let Some(slot) = classes.iter().find_map(|c| c.slots.get(name)) else {
+            if let Some(class) = classes.first().filter(|_| rules.closed) {
+                if !OWN_MEMBERS.contains(&name.as_str()) {
+                    return Err(Violation {
+                        attribute: name.clone(),
+                        class: class.name.clone(),
+                        rule: rule::CLOSED,
+                        component: component::CLOSED,
+                    });
+                }
+            }
             continue;
         };
         let list = match instances {
@@ -577,6 +632,10 @@ mod tests {
     const NS: &str = "https://e.org/";
 
     fn rules() -> Rules {
+        Rules::of(&model())
+    }
+
+    fn model() -> Model {
         let json = br#"{"id": "https://e.org/", "name": "s",
           "classes": {
             "Thing": {"slots": ["name", "id"]},
@@ -612,7 +671,7 @@ mod tests {
             "occupancy": {"range": "integer", "minimum_value": 0, "maximum_value": 10},
             "plate": {"pattern": "^[A-Z]{2}-[0-9]{3}$"}
           }}"#;
-        Rules::of(&Model::read(json, &crate::SURFACE_LIMITS).unwrap())
+        Model::read(json, &crate::SURFACE_LIMITS).unwrap()
     }
 
     fn sensor(attrs: &[(&str, Value)]) -> Value {
@@ -894,6 +953,41 @@ mod tests {
         );
         // `id` is required and an identifier: the Entity's own member.
         assert!(entity(&r, &sensor(&[]), true).is_ok());
+    }
+
+    #[test]
+    fn a_compacted_entity_is_read_by_the_models_names_and_a_closed_class_refuses_the_rest() {
+        let doc = json!({"id": "urn:ngsi-ld:Sensor:1", "type": "Sensor", "@context": [],
+            "createdAt": "2026-01-01T00:00:00Z", "scope": "/a",
+            "pm10": {"type": "Property", "value": 1.5}, "name": {"type": "Property", "value": "n"}});
+        let open = Rules::compact(&model(), false);
+        let closed = Rules::compact(&model(), true);
+        assert!(entity(&open, &doc, true).is_ok());
+        assert!(
+            entity(&closed, &doc, true).is_ok(),
+            "system members and inherited slots pass"
+        );
+        let mut bad = doc.clone();
+        bad["pm10"]["value"] = json!("high");
+        assert_eq!(entity(&open, &bad, true).unwrap_err().rule, rule::NUMBER);
+        let mut extra = doc.clone();
+        extra["unlisted"] = json!({"type": "Property", "value": "secret"});
+        assert!(entity(&open, &extra, true).is_ok(), "open by default");
+        let v = entity(&closed, &extra, true).unwrap_err();
+        assert_eq!(
+            (v.attribute.as_str(), v.class.as_str(), v.rule, v.component),
+            ("unlisted", "Sensor", rule::CLOSED, component::CLOSED)
+        );
+        assert!(!v.to_string().contains("secret"));
+        let other = json!({"id": "urn:ngsi-ld:X:1", "type": "X", "unlisted": 1});
+        assert!(
+            entity(&closed, &other, true).is_ok(),
+            "no class, nothing closes"
+        );
+        assert!(
+            entity(&rules(), &doc, true).is_ok(),
+            "the expanded rules know no short name"
+        );
     }
 
     #[test]

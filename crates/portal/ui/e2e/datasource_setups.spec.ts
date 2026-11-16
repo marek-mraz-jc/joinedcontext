@@ -140,7 +140,7 @@ test.describe("ready-made set-ups on Data sources", () => {
     const type = page.getByTestId("form-page").getByLabel("Type", { exact: true });
     await expect(type.locator('option[value="nats"]')).toHaveCount(1);
     const offered = await type.locator("option").evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
-    for (const name of ["kafka", "amqp_0_9", "sql_select", "aws_s3", "stdin", "http_server"]) expect(offered).not.toContain(name);
+    for (const name of ["kafka", "amqp_0_9", "aws_s3", "stdin", "http_server"]) expect(offered).not.toContain(name);
     expect(offered).toEqual(expect.arrayContaining(["http_client", "nats", "nats_jetstream", "csv", "websocket"]));
     await type.selectOption("nats");
     await shot(page, "runner-input-nats");
@@ -159,7 +159,7 @@ test.describe("ready-made set-ups on Data sources", () => {
   test("a JSON template names the array its records sit in, and refuses a path that is not names", async ({ page }) => {
     await stubApi(page);
     await page.goto(`/projects/${PROJECT}/datasources/new?lang=en`);
-    await page.getByText("Start from a template").click();
+    // Open at first since T-7094: the wizard is the first choice.
     await page.getByRole("button", { name: /REST API \(JSON\)/ }).click();
     await page.getByLabel("Address of the API").fill("https://gbfs.example.org/gbfs/2.2/helsinki/en/station_information.json");
     const records = page.getByTestId("datasource-templates").getByRole("textbox", { name: "Records are in" });

@@ -121,13 +121,8 @@ async fn build_with(
     if portal_beside {
         hand_to_portal(runner);
     }
-    let mut manager = StreamManager::new(
-        build_full_registry(),
-        resources,
-        Some(root),
-        EnvAccess::None,
-    )
-    .with_admission(admission(hosts));
+    let mut manager = StreamManager::new(registry(), resources, Some(root), EnvAccess::None)
+        .with_admission(admission(hosts));
     // The deployment's shared resources first (Bento's `streams -r`): a restored or posted
     // stream may name any of them (`helsinki__gtfs`, `events_tail`).
     if let Some(path) = &cfg.resources_file {
@@ -484,6 +479,14 @@ fn host_target(
         path_prefixes: prefixes,
         late,
     })
+}
+
+/// Every component the runner carries, with the Portal's `linkml_validate` stage (G-19): it
+/// links the EUPL linkml-model, so it lives beside jc and not in the permissive ekiben crates.
+fn registry() -> std::sync::Arc<ekiben_core::Registry> {
+    let registry = build_full_registry();
+    ekiben_linkml::register(&registry);
+    registry
 }
 
 #[cfg(test)]

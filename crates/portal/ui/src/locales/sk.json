@@ -2529,7 +2529,8 @@
         "url": "Zadajte celú adresu začínajúcu na https:// alebo http://.",
         "ckanDataset": "Toto je stránka datasetu, nie súbor. Otvorte na nej zdroj CSV alebo JSON a skopírujte jeho adresu na stiahnutie.",
         "layer": "Zadajte vrstvu, ktorú čítať, alebo adresu súboru GeoJSON.",
-        "records": "Zadajte cestu ako názvy spojené bodkami, napr. data.stations."
+        "records": "Zadajte cestu ako názvy spojené bodkami, napr. data.stations.",
+        "secretKey": "Uveďte položku v tajomstve, ktorá drží prístupový údaj."
       }
     },
     "test": {
@@ -2549,33 +2550,6 @@
       "title": "Pripravené nastavenia",
       "lead": "Nastavenie zapíše zdroj, jeho pipeline aj plán v jednej zmene z niekoľkých odpovedí. Príklad: kanál GBFS mestských bicyklov načítaný každú minútu.",
       "back": "Späť na zdroje údajov"
-    },
-    "webhook": {
-      "title": "Kam odosielatelia posielajú",
-      "hint": "Adresu pipeline vložte do odosielateľa. Posiela požiadavky POST s hlavičkou nižšie.",
-      "header": "Hlavička: {header}",
-      "maxBody": "Najväčšie telo: {bytes} bajtov",
-      "noReaders": "Tento zdroj zatiaľ nečíta žiadna pipeline, preto nemá adresu. Vytvorte pipeline, ktorá ho číta, a vráťte sa.",
-      "unpublished": "Táto inštalácia nezverejňuje adresu pre webhooky. Požiadajte administrátora, aby do nasadenia pridal vstupný záznam.",
-      "copy": "Kopírovať adresu",
-      "copied": "Adresa skopírovaná",
-      "test": {
-        "title": "Poslať testovaciu udalosť",
-        "hint": "Pošle telo nižšie vybranej pipeline, podpísané tak, ako ho podpisuje váš odosielateľ. Udalosť prejde pipeline ako skutočná.",
-        "button": "Poslať testovaciu udalosť",
-        "running": "Posielam…",
-        "accepted": "Prijaté ({status}): pipeline udalosť prevzala.",
-        "refused": "Bežec odpovedal {status}: {answer}",
-        "unauthorized": "Tajomstvo alebo hlavička, ktoré tento zdroj uvádza, nezodpovedajú tomu, čo má bežec: skontrolujte obe a pošlite znova."
-      },
-      "testPipeline": {
-        "label": "Pipeline",
-        "help": "Jedna z pipeline, ktoré čítajú tento zdroj, napríklad ttn-uplinks."
-      },
-      "testBody": {
-        "label": "Telo",
-        "help": "Udalosť tak, ako by ju poslal odosielateľ, napríklad JSON jedného uplinku podľa dokumentácie poskytovateľa."
-      }
     },
     "preset": {
       "title": "Predvoľba otvoreného API",
@@ -2649,6 +2623,91 @@
         "thing": "Thing"
       },
       "refused": "Požiadajte správcu projektu o rolu, ktorá navrhuje zdroje údajov."
+    },
+    "wizard": {
+      "step": "{n}. {label}",
+      "kind": "Čo pripájate",
+      "address": "Adresa a prístupový údaj",
+      "discover": "Výber zo služby",
+      "pagingTitle": "Stránky",
+      "format": "Formát",
+      "check": "Názov a prvé riadky",
+      "groups": {
+        "api": "API otvorených dát, čítané po stránkach",
+        "file": "Súbor alebo kanál na adrese",
+        "other": "Niečo iné: prúd, súborový server, front, databáza alebo webhook"
+      },
+      "otherHelp": "Otvorí nižšie celý formulár toho pripojenia: MQTT, SFTP, Kafka, databáza a ďalšie.",
+      "otherNone": "Vyberte pripojenie…",
+      "api": {
+        "ckan": "Všetky datasety jednej organizácie na portáli CKAN.",
+        "arcgisFeature": "Prvky jednej vrstvy služby ArcGIS Feature Service.",
+        "odata": "Riadky jednej množiny entít služby OData v4.",
+        "wfs": "Všetky prvky jedného typu WFS 2.0 ako GeoJSON.",
+        "ogcFeatures": "Položky jednej kolekcie OGC API Features.",
+        "sensorThings": "Veci alebo dátové prúdy služby SensorThings."
+      },
+      "apiUrl": "Adresa služby",
+      "apiUrlHelp": {
+        "ckan": "Adresa portálu, napríklad https://opendata-ajuntament.barcelona.cat/data.",
+        "arcgisFeature": "Adresa FeatureServer, napríklad https://services.example/arcgis/rest/services/Trees/FeatureServer.",
+        "odata": "Koreň služby končiaci na .svc, napríklad https://services.odata.org/V4/Northwind/Northwind.svc.",
+        "wfs": "Adresa WFS pred otáznikom, napríklad https://kartta.hel.fi/ws/geoserver/avoindata/wfs.",
+        "ogcFeatures": "Adresa API, napríklad https://demo.pygeoapi.io/master.",
+        "sensorThings": "Adresa s verziou, napríklad https://iot.hamburg.de/v1.1."
+      },
+      "secret": "Prístupový údaj",
+      "secretPublic": "Žiadny: verejný zdroj",
+      "secretHelp": "Vyberte tajomstvo s kľúčom alebo tokenom; heslo sa sem nikdy nepíše.",
+      "secretNone": "Zdroje údajov tohto projektu zatiaľ nepoužívajú žiadne tajomstvo; verejný zdroj ho nepotrebuje. Zdroj s kľúčom dostane tajomstvo vo formulári nižšie.",
+      "secretKeyHelp": "Položka v tajomstve, ktorá drží prístupový údaj, napríklad token.",
+      "secretProbe": "Zdroj s prístupovým údajom kontrola nenačíta; po uložení ho načíta Otestovať pripojenie.",
+      "pagingHint": "Raz prečíta prvú odpoveď na bežci projektu a povie, koľko stránok beh prečíta.",
+      "pagingButton": "Zistiť stránkovanie",
+      "pagingRunning": "Čítam prvú odpoveď…",
+      "paging": {
+        "pages": "Prečíta {pages} stránok po {onPage} ({total} záznamov).",
+        "more": "Číta stránky po {onPage}, kým služba nepovie, že ďalšie nie sú.",
+        "walk": "Ide na ďalšiu stránku, ktorú služba uvedie, na prvej je {onPage} záznamov.",
+        "totalOnly": "Prvá odpoveď hovorí o {total} záznamoch spolu, {onPage} na tejto stránke, ale neuvádza ďalšiu stránku; nastavte stránkovanie vo formulári nižšie.",
+        "once": "Jedna odpoveď obsahuje všetko: adresa sa pri behu prečíta raz.",
+        "skipped": "Nedá sa zistiť: {reason}. Skúste to znova alebo nastavte stránkovanie vo formulári nižšie."
+      },
+      "allPages": "Čítať všetky stránky",
+      "allPagesHint": "Zapíše stránkovanie do formulára; bez neho sa prečíta len prvá stránka.",
+      "presetPages": "Druh API stránkuje zdroj sám, s veľkosťou stránky, ktorú služba dovolí, ak ju nenastavíte vo formulári nižšie.",
+      "oneRead": "Súbor alebo kanál sa pri každom behu prečíta celý: stránky nemá.",
+      "rows": "Jeden záznam na riadok",
+      "rowsHint": "Každý riadok CSV príde do pipeline ako jeden záznam s názvami stĺpcov z hlavičky.",
+      "handoff": "Spustiť pipeline nad {name}",
+      "picked": "Vybraté: {value}. Vyplniť formulár a skontrolovať ho zapíše do formulára nižšie."
+    },
+    "webhook": {
+      "title": "Kam odosielatelia posielajú",
+      "hint": "Adresu pipeline vložte do odosielateľa. Posiela požiadavky POST s hlavičkou nižšie.",
+      "header": "Hlavička: {header}",
+      "maxBody": "Najväčšie telo: {bytes} bajtov",
+      "noReaders": "Tento zdroj zatiaľ nečíta žiadna pipeline, preto nemá adresu. Vytvorte pipeline, ktorá ho číta, a vráťte sa.",
+      "unpublished": "Táto inštalácia nezverejňuje adresu pre webhooky. Požiadajte administrátora, aby do nasadenia pridal vstupný záznam.",
+      "copy": "Kopírovať adresu",
+      "copied": "Adresa skopírovaná",
+      "test": {
+        "title": "Poslať testovaciu udalosť",
+        "hint": "Pošle telo nižšie vybranej pipeline, podpísané tak, ako ho podpisuje váš odosielateľ. Udalosť prejde pipeline ako skutočná.",
+        "button": "Poslať testovaciu udalosť",
+        "running": "Posielam…",
+        "accepted": "Prijaté ({status}): pipeline udalosť prevzala.",
+        "refused": "Bežec odpovedal {status}: {answer}",
+        "unauthorized": "Tajomstvo alebo hlavička, ktoré tento zdroj uvádza, nezodpovedajú tomu, čo má bežec: skontrolujte obe a pošlite znova."
+      },
+      "testPipeline": {
+        "label": "Pipeline",
+        "help": "Jedna z pipeline, ktoré čítajú tento zdroj, napríklad ttn-uplinks."
+      },
+      "testBody": {
+        "label": "Telo",
+        "help": "Udalosť tak, ako by ju poslal odosielateľ, napríklad JSON jedného uplinku podľa dokumentácie poskytovateľa."
+      }
     },
     "signatureHeader": {
       "label": "Hlavička s podpisom",
@@ -3021,7 +3080,23 @@
       "maskedKept": "{count, plural, one {# záznam zostáva v zozname: jeho hodnota bola zamaskovaná ako tajomstvo a opakovanie by zapísalo masku. Prinesie ho ďalšie čítanie zdroja.} few {# záznamy zostávajú v zozname: ich hodnoty boli zamaskované ako tajomstvo a opakovanie by zapísalo masku. Prinesie ich ďalšie čítanie zdroja.} other {# záznamov zostáva v zozname: ich hodnoty boli zamaskované ako tajomstvo a opakovanie by zapísalo masku. Prinesie ich ďalšie čítanie zdroja.}}",
       "newest": "Najnovšie",
       "older": "Staršie záznamy",
-      "openRun": "Otvoriť jeho beh"
+      "openRun": "Otvoriť jeho beh",
+      "groups": {
+        "title": "Podľa pravidla",
+        "lead": "Všetky uchované záznamy podľa porušeného pravidla a atribútu, najväčšia skupina prvá. Opravte najprv najväčšiu skupinu.",
+        "export": "Exportovať CSV",
+        "exporting": "Exportuje sa…",
+        "exportHint": "Všetky uchované záznamy s pravidlom a dôvodom, tajomstvá zamaskované a osobné atribúty vynechané. Súbor: {file}.",
+        "count": "{count, plural, one {# záznam} few {# záznamy} other {# záznamov}}",
+        "allowed": "Model povoľuje:",
+        "fix": {
+          "model": "Opravte v dátovom modeli: odmieta tento atribút alebo hodnotu. Ak je zdroj správny, rozšírte slot alebo atribút deklarujte.",
+          "mapping": "Opravte v mapovaní: zapisuje hodnotu nesprávneho tvaru. Preveďte ju alebo namapujte na to, čo slot prijíma.",
+          "step": "Opravte krok: krok pipeline na týchto záznamoch zlyhal. Chybu kroku nájdete v behu záznamu.",
+          "runner": "Runner tieto záznamy odmietol bez pravidla modelu. Jeho slová nájdete v behu záznamu."
+        },
+        "example": "Príklad"
+      }
     },
     "runs": {
       "open": "Behy a záznam",
@@ -3219,6 +3294,24 @@
         "title": "Životnosť",
         "hint": "Kedy entity alebo niektoré ich polia opustia priestor. Uloží sa ako životnosť pipeline, nikdy ako kód mapovania.",
         "pickType": "Najprv vyberte cieľ a typ, ktorý mapovanie zapisuje: životnosť sa nastavuje pre každý typ."
+      },
+      "sourceCheck": {
+        "title": "Skontrolovať celý zdroj",
+        "hint": "Spustí uloženú pipeline nad každou stranou zdroja a spočíta, čo by ostrý beh prijal a odmietol, podľa pravidla. Nič sa nezapíše. Zastaví sa po 60 s alebo 50 000 záznamoch. Príklad: zdroj CKAN s 12 stranami, 2 300 záznamov.",
+        "run": "Skontrolovať celý zdroj",
+        "again": "Skontrolovať znova",
+        "running": "Číta sa každá strana zdroja; trvá to najviac 60 s.",
+        "unsaved": "Kontrola číta uloženú pipeline: navrhnite túto a skontrolujte ju, keď sa jej zmena zlúči.",
+        "failed": "Kontrola sa nespustila",
+        "counts": "{count, plural, one {# záznam} few {# záznamy} other {# záznamov}}: prijatých {accepted, number}, odmietnutých {rejected, number}",
+        "complete": "Prečítala sa každá strana zdroja; ostrý beh by dal na zoznam odmietnutých tie isté záznamy.",
+        "partial": "Kontrola neprečítala celý zdroj, takže počty pokrývajú len prečítanú časť. Dôvod je nižšie.",
+        "rows": "{count, plural, one {# odmietnutý záznam} few {Prvé # odmietnuté záznamy} other {Prvých # odmietnutých záznamov}}",
+        "place": "Záznam {place}",
+        "more": "{count, plural, one {Ďalší # záznam je započítaný} few {Ďalšie # záznamy sú započítané} other {Ďalších # záznamov je započítaných}} v skupinách vyššie.",
+        "groupsLead": "Každý záznam, ktorý kontrola odmietla, spočítaný podľa porušeného pravidla a atribútu, najväčšia skupina prvá. Opravte najprv najväčšiu skupinu.",
+        "completeClean": "Prečítala sa každá strana zdroja a žiadny záznam neporušuje pravidlo: ostrý beh by zapísal všetky.",
+        "retry": "Spustite ju znova, keď je dôvod vyššie vyriešený."
       },
       "schedule": {
         "title": "Kedy beží",
@@ -3763,7 +3856,7 @@
       "grants": "Oprávnenia",
       "byPolicy": "Povolené politikou {policy}",
       "fix": "Oprava: {fix}",
-      "counts": "odoslané {sent}, odmietnuté {rejected}, zlyhané {failed}",
+      "counts": "odoslané {sent}, odmietnuté {rejected, number}, zlyhané {failed}",
       "perMinute": "{rate} záznamov za minútu",
       "openPipeline": "Otvoriť pipeline",
       "openRuns": "Behy",

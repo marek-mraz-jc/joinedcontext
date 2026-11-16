@@ -8,25 +8,61 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "author": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "createdAt": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "decision": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "files": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "lane": {
         "$Nullable": true
       },
       "mergeRequest": {
         "$Nullable": true
       },
+      "metadata": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "name": {},
       "phase": {
         "$Nullable": true
       },
+      "planFields": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "project": {},
       "proposedBy": {
         "$Nullable": true
+      },
+      "status": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "summary": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       },
       "title": {
         "$Nullable": true
       },
       "url": {
         "$Nullable": true
+      },
+      "waitsOn": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       }
     },
     "ContextSpace": {
@@ -37,6 +73,10 @@
       "$Kind": "EntityType",
       "kind": {
         "$Nullable": true
+      },
+      "metadata": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       },
       "name": {},
       "notServing": {
@@ -51,6 +91,14 @@
       },
       "space": {
         "$Nullable": true
+      },
+      "spec": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "status": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       },
       "title": {
         "$Nullable": true
@@ -68,6 +116,10 @@
       "kind": {
         "$Nullable": true
       },
+      "metadata": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "name": {},
       "notServing": {
         "$Nullable": true
@@ -81,6 +133,14 @@
       },
       "space": {
         "$Nullable": true
+      },
+      "spec": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "status": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       },
       "title": {
         "$Nullable": true
@@ -1333,58 +1393,6 @@
             "$Name": "limit",
             "$Nullable": true,
             "$Type": "Edm.Int64"
-          }
-        ],
-        "$ReturnType": {
-          "$Type": "Edm.Untyped"
-        }
-      }
-    ],
-    "jc_person_get": [
-      {
-        "$IsBound": true,
-        "$Kind": "Function",
-        "$Parameter": [
-          {
-            "$Name": "bindingParameter",
-            "$Nullable": false,
-            "$Type": "JoinedContext.Portal.Project"
-          },
-          {
-            "$Name": "id",
-            "$Nullable": false,
-            "$Type": "Edm.String"
-          }
-        ],
-        "$ReturnType": {
-          "$Type": "Edm.Untyped"
-        }
-      }
-    ],
-    "jc_person_list": [
-      {
-        "$IsBound": true,
-        "$Kind": "Function",
-        "$Parameter": [
-          {
-            "$Name": "bindingParameter",
-            "$Nullable": false,
-            "$Type": "JoinedContext.Portal.Project"
-          },
-          {
-            "$Name": "first",
-            "$Nullable": true,
-            "$Type": "Edm.Int64"
-          },
-          {
-            "$Name": "max",
-            "$Nullable": true,
-            "$Type": "Edm.Int64"
-          },
-          {
-            "$Name": "search",
-            "$Nullable": true,
-            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {

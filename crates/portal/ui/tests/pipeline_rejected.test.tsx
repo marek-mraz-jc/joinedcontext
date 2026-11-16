@@ -51,6 +51,9 @@ function answering(seen: Seen, pages: Record<string, unknown>, retry?: unknown) 
         .then((body: unknown) => seen.retried.push(body));
       return jsonResponse(retry, 202);
     }
+    if (path === `${REJECTED}/groups`) {
+      return jsonResponse({ groups: [], total: 0 });
+    }
     if (path === REJECTED) {
       const before = new URL(request.url).searchParams.get("before") ?? "newest";
       return jsonResponse(pages[before]);
@@ -101,6 +104,64 @@ describe("a pipeline's rejected records", () => {
     expect(within(dialog).queryByRole("button", { name: en.pipelines.rejected.older })).toBeNull();
     await userEvent.click(within(dialog).getByRole("button", { name: en.pipelines.rejected.newest }));
     expect(await within(dialog).findByText("sh:datatype")).toBeInTheDocument();
+  });
+
+  it("groups_every_kept_record_by_rule_and_path_with_its_fix_and_exports_them", async () => {
+    const seen: Seen = { retried: [] };
+    const base = answering(seen, { newest: { items: [record(9), record(8)], total: 41 } });
+    const groups = {
+      total: 41,
+      groups: [
+        { rule: "sh:datatype", path: "capacity", count: 38, fix: "mapping", examples: [record(9)] },
+        {
+          rule: "sh:in",
+          path: "status",
+          count: 3,
+          fix: "mapping",
+          allowed: ["working", "closed"],
+          examples: [record(4, { rule: "sh:in", path: "status", message: "status is not one of the values the model lists" })],
+        },
+      ],
+    };
+    const exported: string[] = [];
+    await renderRoute({
+      path: PATH,
+      answer: (path, request) => {
+        if (path === `${REJECTED}/groups`) return jsonResponse(groups);
+        if (path === `${REJECTED}/export`) {
+          exported.push(path);
+          return new Response("id,at,rule,path,step,run,message,record\r\n", {
+            status: 200,
+            headers: { "Content-Type": "text/csv" },
+          });
+        }
+        return base(path, request);
+      },
+    });
+    const createObjectURL = vi.fn(() => "blob:rejected");
+    Object.defineProperty(URL, "createObjectURL", { value: createObjectURL, configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+    const dialog = await openRejected();
+    const section = await within(dialog).findByRole("region", { name: en.pipelines.rejected.groups.title });
+    const cards = within(section).getAllByRole("listitem");
+    expect(cards).toHaveLength(2);
+    expect(within(cards[0]).getByText("sh:datatype")).toBeInTheDocument();
+    expect(within(cards[0]).getByText("38 records")).toBeInTheDocument();
+    expect(within(cards[0]).getByText(en.pipelines.rejected.groups.fix.mapping)).toBeInTheDocument();
+    // The largest group opens; the rest are one line until opened.
+    expect(cards[0].querySelector("details")?.open).toBe(true);
+    expect(cards[1].querySelector("details")?.open).toBe(false);
+    expect(within(cards[1]).getByText("working, closed", { exact: false })).toBeInTheDocument();
+    expect(within(cards[1]).getByText("3 records")).toBeInTheDocument();
+    expect(
+      within(section).getByText(
+        en.pipelines.rejected.groups.exportHint.replace("{file}", "helsinki-stations-rejected.csv"),
+      ),
+    ).toBeInTheDocument();
+    await userEvent.click(within(section).getByRole("button", { name: en.pipelines.rejected.groups.export }));
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
+    expect(exported).toEqual([`${REJECTED}/export`]);
+    await expectAxeClean(dialog);
   });
 
   it("opens_the_run_a_record_was_refused_in_with_its_log", async () => {

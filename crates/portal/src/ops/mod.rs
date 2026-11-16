@@ -24,6 +24,7 @@ pub mod data_query;
 pub mod data_views;
 pub mod data_write;
 pub mod datasource_discover;
+pub mod datasource_paging;
 pub mod drafts;
 pub mod endpoint_reach;
 pub mod feed_shape;
