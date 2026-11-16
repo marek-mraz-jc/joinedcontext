@@ -111,11 +111,26 @@ impl BearerVerifier {
     }
 
     pub fn with_jwks_url(issuer: &Url, audience: &str, jwks_url: Url) -> Self {
+        Self::with_http(issuer, audience, jwks_url, reqwest::Client::builder())
+    }
+
+    /// [`Self::with_jwks_url`] dialing the hosts jc's listener answers for (`crate::reach`): an
+    /// Organization's realm keys on its sign-in host's back channel (T-7133).
+    pub fn reached(issuer: &Url, audience: &str, jwks_url: Url) -> Self {
+        Self::with_http(issuer, audience, jwks_url, crate::reach::builder())
+    }
+
+    fn with_http(
+        issuer: &Url,
+        audience: &str,
+        jwks_url: Url,
+        http: reqwest::ClientBuilder,
+    ) -> Self {
         Self {
             issuer: issuer.as_str().trim_end_matches('/').to_string(),
             audience: audience.to_string(),
             jwks_url,
-            http: reqwest::Client::builder()
+            http: http
                 .timeout(Duration::from_secs(5))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
