@@ -12,7 +12,7 @@ included: they ran against a real PostgreSQL 17 (`KAISATSU_TEST_DATABASE_URL`, d
 
 | Item | Status | Tests | Red proof (guard removed -> test red) |
 |---|---|---|---|
-| **K1** auth session cookie, constant time | done | `server/tests/login_pages.rs::k1_session_code_replayed_from_second_browser_is_refused` | `auth_cookie_matches` check |
+| **K1** auth session cookie, constant time | done | `server/tests/login_pages.rs::k1_session_code_replayed_from_second_browser_is_refused`, `two_sign_ins_in_one_browser_both_finish`, `sign_in_not_in_the_browsers_set_is_refused` (T-7147) | `auth_cookie_matches` check |
 | **K2** `organization:` scope vs memberships | done | `server/tests/security_regressions.rs::k2_organization_scope_checks_membership_and_never_emits_foreign_org_claim` | `user_is_member_of_org` |
 | **K3** `view-clients` read-only on roles, client scopes | done | `admin/tests/authz_regressions.rs::k3_view_clients_cannot_write_roles_or_client_scopes_on_compat_routes`, `core/tests/authz_matrix.rs` | `can_write` role list; managed-App client-role rule (`client_role_write`) |
 | **K4** pairwise subject | done | `core/tests/claims_mappers.rs::k4_pairwise_subject_mapper_differs_across_sectors_and_salts_and_hides_user_id`, `server/tests/oidc_flows.rs::k4_pairwise_sub_agrees_across_tokens_userinfo_and_introspection`, `::k4_userinfo_refuses_a_sub_that_is_not_the_clients_subject` | mapper hash; userinfo subject compare |

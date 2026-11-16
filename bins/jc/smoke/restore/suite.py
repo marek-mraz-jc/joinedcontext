@@ -19,7 +19,7 @@ pass; `settle` waits (--settle s) until the copy answers the before run's anonym
 
 Pass: every check id of the compared suites has the same pass/fail/skip on the copy as before the
 dump (not an absolute pass; a row absent before is no fault only when every entity of its type in
-the copy was created after the before run started, step `born`: a Pipeline wrote the type since), and
+its Endpoint's tenant in the copy was created after the before run started, step `born`: a Pipeline wrote the type since), and
 the controls hold: the fresh PostgreSQL held none of the
 databases, each restored table has the row count of the snapshot, every compared suite passed at
 least one check before, an unknown Endpoint slug is refused on both, the copy is another jc
@@ -195,6 +195,12 @@ def load_checks(out: Path) -> dict | None:
     return load_rows(json.loads(f.read_text()))
 
 
+def load_tenants(out: Path) -> dict[str, str]:
+    """Endpoint slug -> its Antares tenant, as the endpoints suite wrote them (meta `tenants`)."""
+    f = out / "results.json"
+    return dict(json.loads(f.read_text()).get("tenants") or {}) if f.exists() else {}
+
+
 def load_rows(doc: dict) -> dict:
     # A check id repeats per target (an Endpoint slug, a kind): the key is target/id, with #n for a
     # pair that repeats in one run.
@@ -213,29 +219,41 @@ def row_type(target: str) -> str:
     return target.partition(" ")[2]
 
 
-BORN_SQL = ("SELECT t || CASE WHEN min(created_at) >= '{since}'::timestamptz THEN '|new' ELSE '|old' END"
-            " FROM entities, unnest(types) AS t GROUP BY t")
+def born_key(target: str, tenants: dict[str, str]) -> str:
+    """"<tenant> <Type>" of a per-type row whose slug names a known tenant, else "" (no proof)."""
+    slug, _, t = target.partition(" ")
+    return f"{tenants[slug]} {t}" if t and tenants.get(slug) else ""
+
+
+# Per tenant: smoke 43896843578's q7gad2u6 listed no TrafficFlowObserved before and 1000 written by
+# its Pipeline after, while another tenant's older seeded rows of the type kept it out of a per-type
+# proof (born: []).
+BORN_SQL = ("SELECT tenant_id || '|' || t || CASE WHEN min(created_at) >= '{since}'::timestamptz"
+            " THEN '|new' ELSE '|old' END FROM entities, unnest(types) AS t GROUP BY tenant_id, t")
 
 
 def born_types(text: str) -> set[str]:
-    """BORN_SQL's lines (expanded type IRI|new or |old) to the short names whose every IRI is new."""
+    """BORN_SQL's lines (tenant|expanded type IRI|new or |old) to "<tenant> <short name>" whose
+    every IRI in that tenant is new."""
     new, old = set(), set()
     for line in text.splitlines():
-        iri, _, flag = line.strip().rpartition("|")
-        if iri:
-            (new if flag == "new" else old).add(re.split(r"[/#]", iri)[-1])
+        head, _, flag = line.strip().rpartition("|")
+        tenant, _, iri = head.partition("|")
+        if tenant and iri:
+            (new if flag == "new" else old).add(f"{tenant} {re.split(r'[/#]', iri)[-1]}")
     return new - old
 
 
 def compare(res: Results, suite: str, before: dict | None, after: dict | None, call: str,
-            born: set[str] = frozenset()) -> None:
+            born: set[str] = frozenset(), tenants: dict[str, str] | None = None) -> None:
     """One row per check id: the copy must answer as the source did before the dump.
 
     The source's Pipelines go on writing between the before run, the dump and the after run (smoke
     43662696026, 43666862140: 3..12 rows each). A row absent before and present after is no restore
-    fault when its type had no entity yet when the before run started: `born` holds those types,
-    proved by the copy's own store (every entity of the type created at or after that time, see
-    Ops.born). A row present before and absent after, or a changed verdict, stays a fail."""
+    fault when its type had no entity yet in the row's tenant when the before run started: `born`
+    holds those "<tenant> <Type>", proved by the copy's own store (every entity of the type in the
+    tenant created at or after that time, see Ops.born), `tenants` maps the row's slug to its tenant.
+    A row present before and absent after, or a changed verdict, stays a fail."""
     if before is None or after is None:
         side = "before" if before is None else "after"
         res.check(f"{suite}.results", suite, call, "results.json before and after", f"none {side}", False)
@@ -247,10 +265,11 @@ def compare(res: Results, suite: str, before: dict | None, after: dict | None, c
         b, a = before.get(id), after.get(id)
         exp = f"before: {b['result']}" if b else "before: absent"
         act = f"after: {a['result']}" if a else "after: absent"
-        if a and not b and row_type(a.get("target", "")) in born:
+        if a and not b and born_key(a.get("target", ""), tenants or {}) in born:
             res.skip(f"{suite}/{id}", suite, call, exp,
-                     f"{act}: every {row_type(a['target'])} entity of the copy was created after the before run "
-                     "started (a Pipeline wrote the type since), so the before run could not see it")
+                     f"{act}: every {row_type(a['target'])} entity of the Endpoint's tenant in the copy was "
+                     "created after the before run started (a Pipeline wrote the type since), so the "
+                     "before run could not see it")
             continue
         ok = bool(a and b and a["result"] == b["result"])
         why = "" if ok else (a or b or {}).get("actual", "")[:200]
@@ -532,9 +551,8 @@ class Ops:
         return self.dst.counts(db)
 
     def born(self, since: str) -> set[str]:
-        """Short names of the types whose every entity in the copy's broker was created at or after
-        `since` (ISO 8601 UTC), across tenants: a type with one older entity anywhere is not in it.
-        ponytail: per type, not per tenant; key it by tenant if a row ever needs the narrower proof."""
+        """"<tenant> <short type>" whose every entity of that tenant in the copy's broker was created
+        at or after `since` (ISO 8601 UTC): one older entity of the type in the tenant keeps it out."""
         return born_types(self.dst.psql("antares", BORN_SQL.format(since=since)))
 
     def start(self, role: str) -> int:
@@ -742,7 +760,7 @@ def pipeline(a, res: Results, ops: Ops, out: Path) -> dict:
         meta["bornSince"], meta["born"] = since, sorted(born)
         for s in suites:
             compare(res, s, load_checks(before_dir / s), load_checks(after_dir / s), f"run {s} before vs after",
-                    born)
+                    born, load_tenants(after_dir / s))
         (s1, path), (s2, _) = unknown_slug(a.base_url), unknown_slug(rbase)
         res.check("control.unknown-slug", "restore", f"GET {path} on source and copy",
                   "the same refusal (4xx) on both", f"source {s1}, copy {s2}", s1 == s2 and 400 <= s1 < 500)

@@ -621,9 +621,7 @@ async fn endpoint_token(caller: &Caller, state: &AppState, slug: &str) -> Result
                 .into(),
         )
     })?;
-    let oidc = state.oidc.as_ref().ok_or_else(|| {
-        ApiError::Unavailable("this Portal has no Keycloak client to read data with".into())
-    })?;
+    let oidc = crate::auth::realms::exchanger(state, &bearer.0).await?;
     Ok(oidc.exchange_for_endpoint(&bearer.0, slug).await?)
 }
 

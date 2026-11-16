@@ -58,25 +58,27 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
     let jar = PrivateCookieJar::from_headers(request.headers(), state.config.cookie_key.clone());
     // A session sealed with a key a rotation is still letting in is read here too, and the
     // refresh below re-seals it with the active one (T-0973).
-    let Some(current) = session::load_with(request.headers(), &state) else {
+    let Some((current, realm)) = session::load_with_realm(request.headers(), &state) else {
         return next.run(request).await;
     };
     let now = session::now_unix();
     if !current.needs_refresh(now) {
         return next.run(request).await;
     }
-    let refreshed = match state.oidc.as_deref() {
-        Some(client) => client.refresh_with_access(&current).await,
-        None => Err(ApiError::Unavailable(
-            "no identity provider is configured".into(),
-        )),
+    // The realm that issued the session refreshes it (T-7133).
+    let refreshed = match crate::auth::oidc::realm_client(&state, realm.as_deref()).await {
+        Ok(client) => client.refresh_with_access(&current).await,
+        Err(e) => Err(e),
     };
     match refreshed {
-        Ok((fresh, access)) => {
+        Ok((mut fresh, access)) => {
+            if realm.is_some() {
+                crate::auth::realms::confine(&mut fresh.identity, &state.config.bootstrap_admins);
+            }
             let mut request = request;
             request.extensions_mut().insert(fresh.clone());
             let response = next.run(request).await;
-            match session::store(jar, &fresh) {
+            match session::store_in(jar, &fresh, realm.as_deref()) {
                 Ok(jar) => {
                     state.keep_session_claims(&fresh);
                     state.keep_access_token(&fresh, access);

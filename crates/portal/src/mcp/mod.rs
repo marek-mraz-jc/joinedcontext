@@ -169,14 +169,20 @@ pub async fn handle_mcp(
         return unauthorized_response(&state);
     };
 
-    let Some(verifier) = state.bearer.as_ref() else {
+    // A token of the Organization realm of this host is checked there, any other at the
+    // installation's (T-7142, as `CurrentUser` does).
+    let realm = crate::auth::realms::of_token(&state, token);
+    let Some(verifier) = crate::auth::realms::verifier(&state, realm.as_deref()) else {
         return unauthorized_response(&state);
     };
 
-    let session = match verifier.verify(token).await {
+    let mut session = match verifier.verify(token).await {
         Ok(s) => s,
         Err(_) => return unauthorized_response(&state),
     };
+    if realm.is_some() {
+        crate::auth::realms::confine(&mut session.identity, &state.config.bootstrap_admins);
+    }
 
     if state.is_revoked(&session) {
         return unauthorized_response(&state);

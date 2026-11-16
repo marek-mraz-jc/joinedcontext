@@ -18,6 +18,8 @@ mod provision;
 pub mod runtime;
 pub mod setup;
 pub mod siblings;
+#[cfg(feature = "kaisatsu")]
+pub mod split_realm;
 
 pub use app::{MountPlan, Running, StartError, build_router, plan_mounts, run_until, start};
 pub use config::{Cli, Config, MountMode};
