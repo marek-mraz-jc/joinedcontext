@@ -143,11 +143,13 @@ pub fn check(
         }
     }
     if let Some(row) = existing.iter().find(|row| row.host == host) {
-        return Err(Refusal::Conflict(if row.organization == entry.organization {
-            format!("host '{host}' is in the registry already")
-        } else {
-            format!("host '{host}' is a host of another Organization")
-        }));
+        return Err(Refusal::Conflict(
+            if row.organization == entry.organization {
+                format!("host '{host}' is in the registry already")
+            } else {
+                format!("host '{host}' is a host of another Organization")
+            },
+        ));
     }
     Ok(())
 }
@@ -175,22 +177,35 @@ mod tests {
         for host in ["smartcity.other.sk", "xbbsk.sk", "bbsk.sk.evil.com"] {
             let refused = check(&RULES, &[], &entry(host), Some("bbsk.sk")).unwrap_err();
             assert_eq!(refused.status(), 422, "{host}: {refused}");
-            assert!(refused.to_string().contains("not under bbsk.sk"), "{refused}");
+            assert!(
+                refused.to_string().contains("not under bbsk.sk"),
+                "{refused}"
+            );
         }
         for host in ["bbsk.sk", "smartcity.bbsk.sk", "a.b.bbsk.sk"] {
             check(&RULES, &[], &entry(host), Some("bbsk.sk")).expect(host);
         }
         let none = check(&RULES, &[], &entry("smartcity.bbsk.sk"), None).unwrap_err();
         assert_eq!(none.status(), 422);
-        assert!(none.to_string().contains("verify the Organization's domain"));
+        assert!(
+            none.to_string()
+                .contains("verify the Organization's domain")
+        );
     }
 
     #[test]
     fn a_reserved_label_under_the_installation_domain_is_422() {
-        for host in ["api.jcdev.example", "login.jcdev.example", "x.api.jcdev.example"] {
+        for host in [
+            "api.jcdev.example",
+            "login.jcdev.example",
+            "x.api.jcdev.example",
+        ] {
             let refused = check_labels(&RULES, &entry(host)).unwrap_err();
             assert_eq!(refused.status(), 422, "{host}");
-            assert!(refused.to_string().contains("reserved for the platform"), "{refused}");
+            assert!(
+                refused.to_string().contains("reserved for the platform"),
+                "{refused}"
+            );
         }
         check_labels(&RULES, &entry("smartcity.bbsk.jcdev.example")).expect("own label");
         check_labels(&RULES, &entry("api.bbsk.sk")).expect("a customer's own api. host");
@@ -210,10 +225,12 @@ mod tests {
             organization: "bbsk",
             sign_in: true,
         };
-        assert!(check_labels(&RULES, &login)
-            .unwrap_err()
-            .to_string()
-            .contains("login_host"));
+        assert!(
+            check_labels(&RULES, &login)
+                .unwrap_err()
+                .to_string()
+                .contains("login_host")
+        );
     }
 
     #[test]
@@ -232,8 +249,18 @@ mod tests {
 
     #[test]
     fn hosts_are_plain_and_lowercase() {
-        for host in ["Smartcity.bbsk.sk", "a..bbsk.sk", "-a.bbsk.sk", "a_b.bbsk.sk", ""] {
-            assert_eq!(check_labels(&RULES, &entry(host)).unwrap_err().status(), 422, "{host}");
+        for host in [
+            "Smartcity.bbsk.sk",
+            "a..bbsk.sk",
+            "-a.bbsk.sk",
+            "a_b.bbsk.sk",
+            "",
+        ] {
+            assert_eq!(
+                check_labels(&RULES, &entry(host)).unwrap_err().status(),
+                422,
+                "{host}"
+            );
         }
         assert_eq!(bare("idm.localhost:8080"), "idm.localhost");
         assert!(under_domain("a.bbsk.sk", "bbsk.sk."));

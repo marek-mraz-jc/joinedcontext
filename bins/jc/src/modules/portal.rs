@@ -102,8 +102,16 @@ pub async fn build(
     if let Some(pool) = &state.db {
         let added = joinedcontext_portal::host_registry::seed(pool, &registry)
             .await
-            .map_err(|e| err(format!("host registry: the jc.toml hosts could not be seeded: {e}")))?;
-        tracing::info!(added, of = registry.len(), "host registry: jc.toml hosts seeded");
+            .map_err(|e| {
+                err(format!(
+                    "host registry: the jc.toml hosts could not be seeded: {e}"
+                ))
+            })?;
+        tracing::info!(
+            added,
+            of = registry.len(),
+            "host registry: jc.toml hosts seeded"
+        );
     }
     // Set once the state is built: a failed attempt's listener goes, the next binds anew.
     if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
@@ -149,7 +157,11 @@ pub(crate) fn registry_seed(cfg: &crate::config::Config) -> Vec<SeedHost> {
     for org in &cfg.organizations {
         for m in org.hosts.by_module() {
             if m.bound && m.prefix.is_none() {
-                add(m.host, &org.name, m.role.map_or("portal-site", |r| r.as_str()));
+                add(
+                    m.host,
+                    &org.name,
+                    m.role.map_or("portal-site", |r| r.as_str()),
+                );
             }
         }
         if let Some(apps) = &org.hosts.apps {
@@ -740,7 +752,14 @@ mod tests {
         let rows = registry_seed(&cfg);
         let seed: Vec<(&str, &str, Option<&str>, &str)> = rows
             .iter()
-            .map(|s| (s.host.as_str(), s.organization.as_str(), s.organization_id.as_deref(), s.role.as_str()))
+            .map(|s| {
+                (
+                    s.host.as_str(),
+                    s.organization.as_str(),
+                    s.organization_id.as_deref(),
+                    s.role.as_str(),
+                )
+            })
             .collect();
         assert_eq!(
             seed,

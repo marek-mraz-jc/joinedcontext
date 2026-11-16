@@ -9,11 +9,11 @@
 
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use jc_router::registry::Rules;
 use joinedcontext_portal::error::ApiError;
 use joinedcontext_portal::host_registry::{
     propose, remove, rows, seed, Proposal, SeedHost, SEEDED_BY,
 };
-use jc_router::registry::Rules;
 use sqlx::PgPool;
 
 const RULES: Rules<'static> = Rules {
@@ -111,7 +111,11 @@ async fn no_domain_without_proof() {
 async fn reserved_labels_hold_at_the_portal_as_on_the_seed() {
     let pool = pool().await;
     let org = format!("o{}", run("r"));
-    for host in ["api.jcdev.example", "login.jcdev.example", "idm.jcdev.example"] {
+    for host in [
+        "api.jcdev.example",
+        "login.jcdev.example",
+        "idm.jcdev.example",
+    ] {
         let e = propose(&pool, &RULES, &proposal(host, &org, None))
             .await
             .expect_err(host);
@@ -123,7 +127,10 @@ async fn reserved_labels_hold_at_the_portal_as_on_the_seed() {
 async fn one_host_one_organization_also_when_two_writes_race() {
     let pool = pool().await;
     let host = format!("smartcity.{}.jcdev.example", run("c"));
-    let (alpha, beta) = (proposal(&host, "alpha", None), proposal(&host, "beta", None));
+    let (alpha, beta) = (
+        proposal(&host, "alpha", None),
+        proposal(&host, "beta", None),
+    );
     let (a, b) = tokio::join!(
         propose(&pool, &RULES, &alpha),
         propose(&pool, &RULES, &beta),
@@ -155,17 +162,27 @@ async fn a_removed_host_stays_removed_through_a_restart() {
     // The next start seeds the same jc.toml again.
     assert_eq!(seed(&pool, &seeded).await.expect("restart"), 0);
     let all = rows(&pool).await.expect("rows");
-    let state = |h: &str| all.iter().find(|row| row.host == h).map(|row| row.state.clone());
+    let state = |h: &str| {
+        all.iter()
+            .find(|row| row.host == h)
+            .map(|row| row.state.clone())
+    };
     assert_eq!(state(&kept).as_deref(), Some("served"));
     assert_eq!(state(&gone).as_deref(), Some("removed"));
-    assert!(all.iter().all(|row| row.host != kept || row.organization_id.is_none()));
+    assert!(all
+        .iter()
+        .all(|row| row.host != kept || row.organization_id.is_none()));
     assert!(!remove(&pool, &gone).await.expect("twice"));
     // The tombstone is never revived, rewritten or deleted, by any path.
     for sql in [
         "UPDATE organization_hosts SET state = 'served' WHERE host = $1",
         "DELETE FROM organization_hosts WHERE host = $1",
     ] {
-        let err = sqlx::query(sql).bind(&gone).execute(&pool).await.expect_err(sql);
+        let err = sqlx::query(sql)
+            .bind(&gone)
+            .execute(&pool)
+            .await
+            .expect_err(sql);
         assert!(err.to_string().contains("stays"), "{sql}: {err}");
     }
     let err = sqlx::query("DELETE FROM organization_hosts WHERE host = $1")

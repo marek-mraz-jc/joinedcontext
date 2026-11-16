@@ -2845,15 +2845,26 @@ path_prefix = "/api/endpoint"
             )
         };
         for (hosts, refused) in [
-            ("portal = \"api.city.example\"", "the label 'api' under city.example is reserved"),
-            ("portal = \"login.city.example\"", "the label 'login' under city.example is reserved"),
-            ("portal = \"smartcity.zilina.sk\", api = \"idm.zilina.sk\"", "idm. names a sign-in host"),
+            (
+                "portal = \"api.city.example\"",
+                "the label 'api' under city.example is reserved",
+            ),
+            (
+                "portal = \"login.city.example\"",
+                "the label 'login' under city.example is reserved",
+            ),
+            (
+                "portal = \"smartcity.zilina.sk\", api = \"idm.zilina.sk\"",
+                "idm. names a sign-in host",
+            ),
         ] {
             let err = orgs(&with(hosts)).unwrap_err().to_string();
             assert!(err.contains(refused), "{hosts}: {err}");
         }
-        orgs(&with("portal = \"smartcity.zilina.city.example\", idm = \"idm.zilina.city.example\""))
-            .expect("own labels");
+        orgs(&with(
+            "portal = \"smartcity.zilina.city.example\", idm = \"idm.zilina.city.example\"",
+        ))
+        .expect("own labels");
     }
 
     /// `host = "auto"` (T-6991 §2): five origins from `base_host`, none of the customer's.
@@ -2892,7 +2903,10 @@ path_prefix = "/api/endpoint"
         let own = "[[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000c3\"\n";
         for (host, says) in [
             // A shared host of `auto` carries a reserved label, refused as the registry does.
-            ("api.city.example", "the label 'api' under city.example is reserved"),
+            (
+                "api.city.example",
+                "the label 'api' under city.example is reserved",
+            ),
             ("idm.city.example", "also a host of login_host"),
             ("zilina.city.example", "also a host of zilina"),
         ] {

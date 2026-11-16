@@ -1137,9 +1137,23 @@ hosts = { portal = "smartcity.nitra.sk" }
         ]);
         let r = report_for(FIVE, &[], Some("acme.example.net"), &world);
         let errors = errors(&r);
-        assert!(errors.iter().any(|e| e.contains("opendata.bbsk.sk: removed in the host registry, still in jc.toml for bbsk")), "{errors:?}");
-        assert!(errors.iter().any(|e| e.contains("api.bbsk.sk: the host registry gives it to hel, jc.toml to bbsk")), "{errors:?}");
-        assert!(!errors.iter().any(|e| e.contains("smartcity.bbsk.sk")), "{errors:?}");
+        assert!(
+            errors.iter().any(|e| e.contains(
+                "opendata.bbsk.sk: removed in the host registry, still in jc.toml for bbsk"
+            )),
+            "{errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e
+                    .contains("api.bbsk.sk: the host registry gives it to hel, jc.toml to bbsk")),
+            "{errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|e| e.contains("smartcity.bbsk.sk")),
+            "{errors:?}"
+        );
         world.registry = Some(vec![row("smartcity.bbsk.sk", "bbsk", "served")]);
         assert!(!report_for(FIVE, &[], Some("acme.example.net"), &world).failed());
     }
