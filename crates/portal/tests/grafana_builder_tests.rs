@@ -412,6 +412,123 @@ async fn a_builder_saves_eight_kinds_as_one_grafana_file_that_reads_back_as_the_
     );
 }
 
+/// The history of `uid`'s file on main: each `(sha, author)`, newest first.
+async fn history(shako: &MockServer, uid: &str, commits: &[(&str, &str)]) {
+    let rows: Vec<Value> = commits
+        .iter()
+        .map(|(sha, author)| json!({
+            "Sha": sha, "Message": "change dashboard Bike stations\n\nbody",
+            "Author": author, "Email": format!("{author}@hel.fi"), "Date": "2026-11-16T10:00:00Z"
+        }))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.History(Ref=@r,Path=@p,Top=@n)")))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/grafana/{uid}.json'"),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": rows })))
+        .with_priority(1)
+        .mount(shako)
+        .await;
+}
+
+/// T-7150: a dashboard's versions are the approved Changes of its file. A reader lists them and
+/// reads one as choices, never an e-mail address and never a version naming an Endpoint they may
+/// not read; only a person who may propose dashboards restores one, as a Change of the old
+/// choices compiled again; restoring the version it is already is refused.
+#[tokio::test]
+async fn a_reader_reads_a_dashboards_versions_and_only_a_proposer_restores_one() {
+    const OLD: &str = "1111111111111111111111111111111111111111";
+    const NEW: &str = "2222222222222222222222222222222222222222";
+    let shako = common::forge().await;
+    let grafana = daiya().await;
+    let state = world(&shako, &grafana);
+    binding(&state, "ana", "reader", json!({ "contextSpace": "air" }));
+    let (uid, old_text) = created(&state, &shako).await;
+    let new_text = old_text.replacen("\"Bike stations\"", "\"Bike stations, renamed\"", 1);
+    assert_ne!(new_text, old_text, "the fixture renames the dashboard");
+    history(&shako, &uid, &[(NEW, "eva"), (OLD, "ada")]).await;
+    holds(&shako, &uid, "main", "blob-new", &new_text).await;
+    holds(&shako, &uid, NEW, "blob-new", &new_text).await;
+    holds(&shako, &uid, OLD, "blob-old", &old_text).await;
+    let versions = format!("{BUILDER}/{uid}/versions");
+
+    let list = send(&state, person("vera"), "GET", &versions, None).await;
+    assert_eq!(list.status, StatusCode::OK, "{}", list.text);
+    let items = body(&list)["items"].clone();
+    assert_eq!(items[0]["sha"], NEW);
+    assert_eq!(items[1]["author"], "ada");
+    assert_eq!(items[0]["message"], "change dashboard Bike stations");
+    assert!(
+        !list.text.contains("@hel.fi"),
+        "no e-mail address: {}",
+        list.text
+    );
+
+    let old = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{versions}/{OLD}"),
+        None,
+    )
+    .await;
+    assert_eq!(old.status, StatusCode::OK, "{}", old.text);
+    assert_eq!(body(&old)["board"]["title"], "Bike stations");
+    let new = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{versions}/{NEW}"),
+        None,
+    )
+    .await;
+    assert_eq!(body(&new)["board"]["title"], "Bike stations, renamed");
+
+    // A member who may not read the Endpoint the version names; a sha the history does not list;
+    // a person of another project.
+    let hidden = send(
+        &state,
+        person("ana"),
+        "GET",
+        &format!("{versions}/{OLD}"),
+        None,
+    )
+    .await;
+    assert_eq!(hidden.status, StatusCode::FORBIDDEN, "{}", hidden.text);
+    assert!(!hidden.text.contains("bikes-open"), "{}", hidden.text);
+    let stray = "3333333333333333333333333333333333333333";
+    let unknown = send(
+        &state,
+        person("eva"),
+        "GET",
+        &format!("{versions}/{stray}"),
+        None,
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND, "{}", unknown.text);
+    let outside = send(&state, person("ola"), "GET", &versions, None).await;
+    assert_eq!(outside.status, StatusCode::NOT_FOUND, "{}", outside.text);
+
+    // Restore: a reader is refused, the version it is already is nothing to restore, an
+    // earlier one is a Change writing its choices back.
+    let restore = |sha: &str| format!("{versions}/{sha}/restore");
+    let refused = send(&state, person("vera"), "POST", &restore(OLD), None).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    let same = send(&state, person("eva"), "POST", &restore(NEW), None).await;
+    assert_eq!(same.status, StatusCode::CONFLICT, "{}", same.text);
+    let restored = send(&state, person("eva"), "POST", &restore(OLD), None).await;
+    assert_eq!(restored.status, StatusCode::ACCEPTED, "{}", restored.text);
+    let (file, text) = committed_files(&shako, REPO)
+        .await
+        .last()
+        .cloned()
+        .expect("a committed file");
+    assert_eq!(file, format!("projects/{PROJECT}/grafana/{uid}.json"));
+    assert_eq!(text, old_text, "the old version, compiled again");
+}
+
 #[tokio::test]
 async fn a_dashboard_with_an_open_change_is_not_proposed_twice() {
     let shako = MockServer::start().await;
