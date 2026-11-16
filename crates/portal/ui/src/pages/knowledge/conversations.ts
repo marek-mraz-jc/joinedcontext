@@ -1,6 +1,7 @@
 // The stored conversations of a project's assistants (API/01 §34, API/05 §3.1, AG-99, T-4670):
 // the list, one conversation with its steps, the erasure, and a turn as an eval case.
 import { api, unwrap } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 
 export interface ConversationRow {
   id: string;
@@ -162,11 +163,7 @@ export async function listConversations(
   project: string,
   filter: ConversationFilter,
 ): Promise<{ items: ConversationRow[]; nextCursor: string | null }> {
-  const answer = (await unwrap(
-    await api.GET("/api/v1/projects/{project}/knowledge/conversations", {
-      params: { path: { project }, query: filterQuery(filter) },
-    }),
-  )) as { items?: ConversationRow[]; nextCursor?: string | null } | null;
+  const answer = (await door("portal_knowledge_conversation_list", { ...filterQuery(filter) }, project)) as { items?: ConversationRow[]; nextCursor?: string | null } | null;
   return { items: Array.isArray(answer?.items) ? answer.items : [], nextCursor: answer?.nextCursor ?? null };
 }
 
@@ -232,11 +229,7 @@ function isUsage(answer: unknown): answer is UsageSummary {
 }
 
 export async function conversationUsage(project: string, filter: ConversationFilter): Promise<UsageSummary> {
-  const answer: unknown = await unwrap(
-    await api.GET("/api/v1/projects/{project}/knowledge/conversations/usage", {
-      params: { path: { project }, query: rangeQuery(filter) },
-    }),
-  );
+  const answer: unknown = await door("portal_knowledge_conversation_usage", { ...rangeQuery(filter) }, project);
   if (!isUsage(answer)) throw new Error("the knowledge assistant answered no usage summary");
   return answer;
 }
@@ -271,37 +264,23 @@ export function shareText(share: number | null | undefined, locale: string): str
 }
 
 export async function getConversation(project: string, conversation: string): Promise<Conversation> {
-  return (await unwrap(
-    await api.GET("/api/v1/projects/{project}/knowledge/conversations/{conversation}", {
-      params: { path: { project, conversation } },
-    }),
-  )) as Conversation;
+  return (await door("portal_knowledge_conversation_get", { conversation }, project)) as Conversation;
 }
 
 export async function eraseConversation(project: string, conversation: string): Promise<void> {
-  await unwrap(
-    await api.DELETE("/api/v1/projects/{project}/knowledge/conversations/{conversation}", {
-      params: { path: { project, conversation } },
-    }),
-  );
+  await doorAction("portal_knowledge_conversation_erase", { conversation }, project);
 }
 
 /** Makes one assistant forget the answers it keeps for repeated questions; how many it forgot (T-4731). */
 export async function forgetAnswers(project: string, deployment: string): Promise<number> {
-  const answer = (await unwrap(
-    await api.DELETE("/api/v1/projects/{project}/knowledge/deployments/{deployment}/answers", {
-      params: { path: { project, deployment } },
-    }),
-  )) as { forgotten?: unknown };
-  return typeof answer.forgotten === "number" ? answer.forgotten : 0;
+  const answer = (await doorAction("portal_knowledge_answers_forget", { deployment }, project)) as {
+    forgotten?: unknown;
+  } | null;
+  return typeof answer?.forgotten === "number" ? answer.forgotten : 0;
 }
 
 export async function sameQuestion(project: string, conversation: string, turn: number): Promise<SameTurn[]> {
-  const answer = (await unwrap(
-    await api.GET("/api/v1/projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same", {
-      params: { path: { project, conversation, turn } },
-    }),
-  )) as { items?: SameTurn[] } | null;
+  const answer = (await door("portal_knowledge_conversation_same", { conversation, turn: String(turn) }, project)) as { items?: SameTurn[] } | null;
   return Array.isArray(answer?.items) ? answer.items : [];
 }
 

@@ -256,6 +256,35 @@ const OPERATIONS: Record<string, Door> = {
   portal_access_request_approve: ["POST", "/projects/{project}/access-requests/{id}/approve"],
   portal_access_request_decline: ["POST", "/projects/{project}/access-requests/{id}/decline"],
   portal_access_request_revoke: ["POST", "/projects/{project}/access-requests/{id}/revoke"],
+  // The knowledge assistant's doors: its sources, deployments and stored conversations (T-7111).
+  portal_knowledge_source_list: ["GET", "/projects/{project}/knowledge/sources"],
+  portal_knowledge_page_list: ["GET", "/projects/{project}/knowledge/sources/{source}/pages"],
+  portal_knowledge_page_links: ["GET", "/projects/{project}/knowledge/sources/{source}/pages/{page}/links"],
+  portal_knowledge_document_list: ["GET", "/projects/{project}/knowledge/sources/{source}/documents"],
+  portal_knowledge_search: ["GET", "/projects/{project}/knowledge/sources/{source}/search"],
+  portal_knowledge_passage_list: ["GET", "/projects/{project}/knowledge/sources/{source}/passages"],
+  portal_knowledge_error_list: ["GET", "/projects/{project}/knowledge/sources/{source}/errors"],
+  portal_knowledge_inclusion_set: ["POST", "/projects/{project}/knowledge/sources/{source}/inclusion"],
+  portal_knowledge_recrawl: ["POST", "/projects/{project}/knowledge/sources/{source}/recrawl"],
+  portal_knowledge_file_list: ["GET", "/projects/{project}/knowledge/sources/{source}/files"],
+  portal_knowledge_file_remove: ["DELETE", "/projects/{project}/knowledge/sources/{source}/files/{id}"],
+  portal_knowledge_context_preview: ["POST", "/projects/{project}/knowledge/deployments/context"],
+  portal_knowledge_usage: ["GET", "/projects/{project}/knowledge/deployments/{deployment}/usage"],
+  portal_knowledge_answers_forget: [
+    "DELETE",
+    "/projects/{project}/knowledge/deployments/{deployment}/answers",
+  ],
+  portal_knowledge_conversation_list: ["GET", "/projects/{project}/knowledge/conversations"],
+  portal_knowledge_conversation_usage: ["GET", "/projects/{project}/knowledge/conversations/usage"],
+  portal_knowledge_conversation_get: ["GET", "/projects/{project}/knowledge/conversations/{conversation}"],
+  portal_knowledge_conversation_erase: [
+    "DELETE",
+    "/projects/{project}/knowledge/conversations/{conversation}",
+  ],
+  portal_knowledge_conversation_same: [
+    "GET",
+    "/projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same",
+  ],
 };
 
 /** Whether `request` calls one of {@link OPERATIONS}. */

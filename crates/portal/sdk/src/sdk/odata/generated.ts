@@ -946,6 +946,19 @@ export interface Functions {
   portal_endpoint_quality: { endpoint: string };
   portal_erasure_get: { space: string; id: string };
   portal_erasure_list: { space: string };
+  portal_knowledge_conversation_get: { conversation: string };
+  portal_knowledge_conversation_list: { deployment?: string; from?: string; to?: string; status?: string; feedback?: string; slow?: boolean; minCostUsd?: number; q?: string; sort?: string; cursor?: string };
+  portal_knowledge_conversation_same: { conversation: string; turn: string };
+  portal_knowledge_conversation_usage: { deployment?: string; from?: string; to?: string };
+  portal_knowledge_document_list: { source: string };
+  portal_knowledge_error_list: { source: string };
+  portal_knowledge_file_list: { source: string };
+  portal_knowledge_page_links: { source: string; page: string };
+  portal_knowledge_page_list: { source: string; parent?: number; q?: string };
+  portal_knowledge_passage_list: { source: string; page?: number; document?: number };
+  portal_knowledge_search: { source: string; q?: string; limit?: number };
+  portal_knowledge_source_list: Record<string, never>;
+  portal_knowledge_usage: { deployment: string };
   portal_notification_list: Record<string, never>;
   portal_opendata_pages: Record<string, never>;
   portal_organization_change_get: { id: string };
@@ -1034,6 +1047,19 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_endpoint_quality: ["Project"],
   portal_erasure_get: ["Project"],
   portal_erasure_list: ["Project"],
+  portal_knowledge_conversation_get: ["Project"],
+  portal_knowledge_conversation_list: ["Project"],
+  portal_knowledge_conversation_same: ["Project"],
+  portal_knowledge_conversation_usage: ["Project"],
+  portal_knowledge_document_list: ["Project"],
+  portal_knowledge_error_list: ["Project"],
+  portal_knowledge_file_list: ["Project"],
+  portal_knowledge_page_links: ["Project"],
+  portal_knowledge_page_list: ["Project"],
+  portal_knowledge_passage_list: ["Project"],
+  portal_knowledge_search: ["Project"],
+  portal_knowledge_source_list: ["Project"],
+  portal_knowledge_usage: ["Project"],
   portal_notification_list: ["Organization"],
   portal_opendata_pages: ["Organization"],
   portal_organization_change_get: ["Organization"],
@@ -1127,6 +1153,12 @@ export interface Actions {
   portal_erasure_approve: { space: string; id: string; body?: unknown };
   portal_erasure_decline: { space: string; id: string; body?: unknown };
   portal_erasure_file: { space: string; dryRun?: string; body?: unknown };
+  portal_knowledge_answers_forget: { deployment: string };
+  portal_knowledge_context_preview: { dryRun?: string; lang?: string; body?: unknown };
+  portal_knowledge_conversation_erase: { conversation: string };
+  portal_knowledge_file_remove: { source: string; id: string };
+  portal_knowledge_inclusion_set: { source: string; body?: unknown };
+  portal_knowledge_recrawl: { source: string };
   portal_notification_read: { notification: string };
   portal_opendata_page_preview: { body?: unknown };
   portal_opendata_page_revert: { page: string; lang: string };
@@ -1221,6 +1253,12 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_erasure_approve: ["Project"],
   portal_erasure_decline: ["Project"],
   portal_erasure_file: ["Project"],
+  portal_knowledge_answers_forget: ["Project"],
+  portal_knowledge_context_preview: ["Project"],
+  portal_knowledge_conversation_erase: ["Project"],
+  portal_knowledge_file_remove: ["Project"],
+  portal_knowledge_inclusion_set: ["Project"],
+  portal_knowledge_recrawl: ["Project"],
   portal_notification_read: ["Organization"],
   portal_opendata_page_preview: ["Organization"],
   portal_opendata_page_revert: ["Organization"],

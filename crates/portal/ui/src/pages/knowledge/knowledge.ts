@@ -1,8 +1,9 @@
 // The knowledge assistant's administration routes (API/01 §34, T-3057): what a project's
 // sources hold once crawled. The answers are jc-assistant's; the shapes below are API/05 §3.
-import { api, ApiError, readCsrfToken, unwrap } from "../../api/client";
+import { ApiError, readCsrfToken } from "../../api/client";
 import type { ProblemDetails } from "../../api/client";
 import type { Manifest } from "../../api/manifest";
+import { door, doorAction } from "../../api/odata";
 
 export interface SourceJob {
   state: "queued" | "running" | "done" | "failed";
@@ -148,38 +149,26 @@ export const knowledgeKeys = {
 
 export async function listSources(project: string): Promise<KnowledgeSourceRow[]> {
   return items<KnowledgeSourceRow>(
-    await unwrap(await api.GET("/api/v1/projects/{project}/knowledge/sources", { params: { path: { project } } })),
+    await door("portal_knowledge_source_list", {}, project),
   );
 }
 
 export async function listPages(project: string, source: string, parent: number | null): Promise<PageRow[]> {
   return items<PageRow>(
-    await unwrap(
-      await api.GET("/api/v1/projects/{project}/knowledge/sources/{source}/pages", {
-        params: { path: { project, source }, query: parent === null ? {} : { parent } },
-      }),
-    ),
+    await door("portal_knowledge_page_list", parent === null ? { source } : { source, parent }, project),
   );
 }
 
 /** At most 100 pages of the whole source whose title or address holds `q` (UI-99). */
 export async function findPages(project: string, source: string, q: string): Promise<PageRow[]> {
   return items<PageRow>(
-    await unwrap(
-      await api.GET("/api/v1/projects/{project}/knowledge/sources/{source}/pages", {
-        params: { path: { project, source }, query: { q } },
-      }),
-    ),
+    await door("portal_knowledge_page_list", { source, q }, project),
   );
 }
 
 /** What `search_documents` would answer from this one source, best first (UI-99). */
 export async function trySearch(project: string, source: string, q: string): Promise<SearchHit[]> {
-  const answer = await unwrap(
-    await api.GET("/api/v1/projects/{project}/knowledge/sources/{source}/search", {
-      params: { path: { project, source }, query: { q, limit: 5 } },
-    }),
-  );
+  const answer = await door("portal_knowledge_search", { source, q, limit: 5 }, project);
   const hits = (answer as { hits?: unknown } | null)?.hits;
   return Array.isArray(hits) ? (hits as SearchHit[]) : [];
 }
@@ -206,11 +195,7 @@ export function topLanguages(
 
 export async function listDocuments(project: string, source: string): Promise<DocumentRow[]> {
   return items<DocumentRow>(
-    await unwrap(
-      await api.GET("/api/v1/projects/{project}/knowledge/sources/{source}/documents", {
-        params: { path: { project, source } },
-      }),
-    ),
+    await door("portal_knowledge_document_list", { source }, project),
   );
 }
 
@@ -220,51 +205,30 @@ export async function listPassages(
   owner: { page?: number; document?: number },
 ): Promise<Passage[]> {
   return items<Passage>(
-    await unwrap(
-      await api.GET("/api/v1/projects/{project}/knowledge/sources/{source}/passages", {
-        params: { path: { project, source }, query: owner },
-      }),
-    ),
+    await door("portal_knowledge_passage_list", { source, ...owner }, project),
   );
 }
 
 export async function listLinks(project: string, source: string, page: number): Promise<LinkRow[]> {
   return items<LinkRow>(
-    await unwrap(
-      await api.GET("/api/v1/projects/{project}/knowledge/sources/{source}/pages/{page}/links", {
-        params: { path: { project, source, page } },
-      }),
-    ),
+    await door("portal_knowledge_page_links", { source, page: String(page) }, project),
   );
 }
 
 export async function setInclusion(project: string, source: string, change: InclusionChange): Promise<InclusionCounts> {
-  const answer = await unwrap(
-    await api.POST("/api/v1/projects/{project}/knowledge/sources/{source}/inclusion", {
-      params: { path: { project, source } },
-      body: change,
-    }),
-  );
+  const answer = await doorAction("portal_knowledge_inclusion_set", { source, body: change }, project);
   const counts = answer as Partial<InclusionCounts> | null;
   return { pages: counts?.pages ?? 0, documents: counts?.documents ?? 0, passagesRemoved: counts?.passagesRemoved ?? 0 };
 }
 
 export async function listErrors(project: string, source: string): Promise<CrawlError[]> {
   return items<CrawlError>(
-    await unwrap(
-      await api.GET("/api/v1/projects/{project}/knowledge/sources/{source}/errors", {
-        params: { path: { project, source } },
-      }),
-    ),
+    await door("portal_knowledge_error_list", { source }, project),
   );
 }
 
 export async function recrawl(project: string, source: string): Promise<void> {
-  await unwrap(
-    await api.POST("/api/v1/projects/{project}/knowledge/sources/{source}/recrawl", {
-      params: { path: { project, source } },
-    }),
-  );
+  await doorAction("portal_knowledge_recrawl", { source }, project);
 }
 
 /** A file an administrator uploaded to a `source: upload` (API/05 §3, T-4184). */
@@ -288,11 +252,7 @@ export function uploadedFile(url: string): { name: string; page: number | null }
 
 export async function listFiles(project: string, source: string): Promise<UploadedFile[]> {
   return items<UploadedFile>(
-    await unwrap(
-      await api.GET("/api/v1/projects/{project}/knowledge/sources/{source}/files", {
-        params: { path: { project, source } },
-      }),
-    ),
+    await door("portal_knowledge_file_list", { source }, project),
   );
 }
 
@@ -318,11 +278,7 @@ export async function uploadFile(project: string, source: string, file: Blob, na
 }
 
 export async function removeFile(project: string, source: string, id: number): Promise<void> {
-  await unwrap(
-    await api.DELETE("/api/v1/projects/{project}/knowledge/sources/{source}/files/{id}", {
-      params: { path: { project, source, id } },
-    }),
-  );
+  await doorAction("portal_knowledge_file_remove", { source, id: String(id) }, project);
 }
 
 export interface UsageDay {
@@ -334,11 +290,7 @@ export interface UsageDay {
 
 export async function listUsage(project: string, deployment: string): Promise<UsageDay[]> {
   return items<UsageDay>(
-    await unwrap(
-      await api.GET("/api/v1/projects/{project}/knowledge/deployments/{deployment}/usage", {
-        params: { path: { project, deployment } },
-      }),
-    ),
+    await door("portal_knowledge_usage", { deployment }, project),
   );
 }
 
@@ -754,11 +706,10 @@ export async function previewContext(
   manifest: Manifest,
   lang: string,
 ): Promise<AssistantContext> {
-  const answer = (await unwrap(
-    await api.POST("/api/v1/projects/{project}/knowledge/deployments/context", {
-      params: { path: { project }, query: { dryRun: "All", lang } },
-      body: manifest,
-    }),
+  const answer = (await doorAction(
+    "portal_knowledge_context_preview",
+    { dryRun: "All", lang, body: manifest },
+    project,
   )) as Partial<AssistantContext> | null;
   // The lists are what the preview walks; an answer without them reads as an empty context.
   const listed = <T,>(items: T[] | undefined): T[] => (Array.isArray(items) ? items : []);

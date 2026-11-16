@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The knowledge pages read through their Portal doors (T-7111): each REST stub below answers its door.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4282 (T-4281 items 8, 9): the deployment form picks the region's and the city's pages and is
 // laid out in capabilities, at a phone's and a desktop's width. `vite preview` has no Portal API

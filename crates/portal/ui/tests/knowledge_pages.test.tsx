@@ -478,7 +478,7 @@ describe("finding pages and trying the search (UI-99, T-4659)", () => {
     expect(within(hits).getByText("Kalendár zvozu")).toBeInTheDocument();
     expect(within(hits).getByText("Odpad vyvážame v utorok.")).toBeInTheDocument();
     expect(readsOf(fetchMock)).toContain(
-      `/api/v1/projects/banskabystrica/knowledge/sources/bb-web/search?q=${encodeURIComponent("kedy vyvážajú odpad")}&limit=5`,
+      `/api/v1/projects/banskabystrica/knowledge/sources/bb-web/search?${new URLSearchParams({ q: "kedy vyvážajú odpad", limit: "5" })}`,
     );
   });
 
