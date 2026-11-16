@@ -263,7 +263,7 @@ fn top_authority(text: &str) -> Option<u32> {
             b'"' => in_str = !in_str,
             b'[' | b'(' if !in_str => depth += 1,
             b']' | b')' if !in_str => depth = depth.saturating_sub(1),
-            _ if !in_str && depth == 1 => {
+            _ if !in_str && depth == 1 && text.is_char_boundary(i) => {
                 let rest = &text[i..];
                 let upper = rest.get(..10).unwrap_or(rest).to_ascii_uppercase();
                 let skip = if upper.starts_with("AUTHORITY[") {
@@ -724,6 +724,17 @@ mod tests {
     use std::io::Write;
 
     const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/shapefile/helsinki-3879-alueet.zip");
+
+    /// A hostile .prj with a non-ASCII character outside quotes at the top level is read, not
+    /// sliced mid-character.
+    #[test]
+    fn a_prj_with_a_non_ascii_character_at_the_top_level_is_read_without_a_panic() {
+        assert_eq!(
+            top_authority("PROJCS[\"x\",ä,AUTHORITY[\"EPSG\",\"3879\"]]"),
+            Some(3879)
+        );
+        assert_eq!(top_authority("PROJCS[ää]"), None);
+    }
 
     /// The fixture's members, `edit` applied, zipped again.
     fn rezip(edit: impl Fn(&mut Vec<(String, Vec<u8>)>)) -> Vec<u8> {
