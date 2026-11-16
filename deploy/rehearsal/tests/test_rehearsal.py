@@ -1906,6 +1906,24 @@ def test_the_portals_sign_in_token_names_the_portal_once_and_nothing_else_moves(
     assert rh.add_portal_audience(shipped)[1] is False, "jc's shipped realm has the mapper"
 
 
+def test_pipeline_clients_are_marked_for_the_portals_audiences_and_nothing_else_moves():
+    own = {"clientId": "zilina-pl-drepo", "attributes": {"joinedcontext.serviceaccount": "zilina/pl-drepo"}}
+    realm = {"clients": [{"clientId": "helsinki-pipelines", "secret": "$(env:A)"}, own,
+                         {"clientId": "portal-api", "attributes": {"x": "y"}},
+                         {"clientId": "zilina-pl-fake"}]}
+    out, marked = rh.mark_pipeline_audiences(realm)
+    assert marked == ["helsinki-pipelines", "zilina-pl-drepo"]
+    by = {c["clientId"]: c for c in out["clients"]}
+    assert by["helsinki-pipelines"] == {"clientId": "helsinki-pipelines", "secret": "$(env:A)",
+                                        "attributes": {"audiences-managed-by": "joinedcontext"}}
+    assert by["zilina-pl-drepo"]["attributes"] == {"joinedcontext.serviceaccount": "zilina/pl-drepo",
+                                                   "audiences-managed-by": "joinedcontext"}
+    assert by["portal-api"] == {"clientId": "portal-api", "attributes": {"x": "y"}}
+    assert by["zilina-pl-fake"] == {"clientId": "zilina-pl-fake"}, "no account attribute, not a Pipeline's own"
+    assert own == {"clientId": "zilina-pl-drepo", "attributes": {"joinedcontext.serviceaccount": "zilina/pl-drepo"}}
+    assert rh.mark_pipeline_audiences(out) == (out, [])
+
+
 def test_the_assistants_client_may_ask_the_shared_embedders_scope_and_nothing_else_moves():
     realm = {"clients": [{"clientId": "jc-assistant", "secret": "$(file:x)", "optionalClientScopes": ["address"]},
                          {"clientId": "portal-api", "optionalClientScopes": []}],
