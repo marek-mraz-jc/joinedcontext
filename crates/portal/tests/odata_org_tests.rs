@@ -790,6 +790,46 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
     )
     .await;
     assert_eq!(odata.status, rest.status, "{} / {}", odata.text, rest.text);
+    // A person of another Organization (ba) reads their own notifications and preferences on
+    // the Organization they reach, as the shell asks on every page (T-6812, viewer smoke 404).
+    let metadata = get(&state, Mode::Shared, "ba-only", "/api/v1/$metadata").await;
+    for (name, rest_uri) in [
+        ("portal_notification_list", "/api/v1/notifications"),
+        ("portal_preferences_get", "/api/v1/preferences"),
+    ] {
+        assert!(
+            metadata
+                .text
+                .contains(&format!(r#"<Function Name="{name}" IsBound="true">"#)),
+            "{name}: {}",
+            metadata.text
+        );
+        let rest = get(&state, Mode::Shared, "ba-only", rest_uri).await;
+        let odata = get(
+            &state,
+            Mode::Shared,
+            "ba-only",
+            &format!("/api/v1/Organization/JoinedContext.Portal.{name}()"),
+        )
+        .await;
+        assert_ne!(
+            odata.status,
+            StatusCode::NOT_FOUND,
+            "{name}: {}",
+            odata.text
+        );
+        assert_eq!(
+            odata.status, rest.status,
+            "{name}: {} / {}",
+            odata.text, rest.text
+        );
+    }
+    // An Organization's door stays the installation's: none for the ba person.
+    assert!(
+        !metadata.text.contains("portal_person_names"),
+        "{}",
+        metadata.text
+    );
     // No installation claim and a caller of several: the address names none.
     state
         .mirror
