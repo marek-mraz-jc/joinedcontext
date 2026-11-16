@@ -119,7 +119,7 @@ describe("editing a resource from its list", () => {
     // Listed in the menu, disabled, with the reason: a narrow role has to be readable (UI-44).
     const edit = await rowMenuItem(new RegExp(en.resourceEdit.button));
     expect(edit).toHaveAttribute("aria-disabled", "true");
-    expect(edit.getAttribute("title")).toMatch(/propose/);
+    expect(edit.getAttribute("title")).toMatch(/cannot add or change /);
   });
 
   it("opens the stored manifest without its status and proposes the edit once", async () => {
