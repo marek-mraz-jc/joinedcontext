@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap } from "../../api/client";
+import { call } from "../../api/odata";
 import type { components } from "../../api/schema";
 import type { Change } from "../../api/manifest";
 import { ChangeNotice } from "../../components/ChangeNotice";
@@ -100,12 +101,7 @@ export function AccountAccess({
   const key = [...queryKeys.list(project, "serviceaccounts"), account, "access"];
   const access = useQuery({
     queryKey: key,
-    queryFn: async (): Promise<AccountAccessAnswer> =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/serviceaccounts/{name}/access", {
-          params: { path: { project, name: account } },
-        }),
-      ),
+    queryFn: (): Promise<AccountAccessAnswer> => call("jc_serviceaccount_access", project, { name: account }),
   });
   const revoke = useMutation({
     mutationFn: async (grant: AccountGrant): Promise<Change> =>

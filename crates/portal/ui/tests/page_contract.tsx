@@ -30,6 +30,7 @@ import type { ReactElement } from "react";
 import i18n from "../src/i18n";
 import { BrandingProvider } from "../src/branding";
 import { resetDocumentTitle } from "../src/documentTitle";
+import { asOData, readingAsRest } from "./odata";
 
 /** The four languages the Portal ships; a string must exist in all of them (UI-11). */
 export const LOCALES = ["en", "sk", "cs", "de"] as const;
@@ -100,14 +101,20 @@ export function renderPage(element: ReactElement, harness: PageHarness): RenderR
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request =
         input instanceof Request ? input : new Request(new URL(String(input), window.location.origin), init);
-      const url = new URL(request.url, window.location.origin);
-      const own = await answer(url, request);
-      if (own) return own;
-      if (url.pathname.endsWith("/auth/me")) {
-        return json({ subject: "b7c1e0f4", username: "jana.kovacova", name: "Jana Kováčová", roles: ["portal-editor"] });
-      }
-      if (url.pathname.endsWith("/branding")) return json(branding);
-      return json(list([]));
+      const asked = new URL(request.url, window.location.origin);
+      // An Administration reading over OData is answered by its REST door's stub (T-7098).
+      const rest = readingAsRest(asked);
+      const url = rest ?? asked;
+      const answered = async (): Promise<Response> => {
+        const own = await answer(url, request);
+        if (own) return own;
+        if (url.pathname.endsWith("/auth/me")) {
+          return json({ subject: "b7c1e0f4", username: "jana.kovacova", name: "Jana Kováčová", roles: ["portal-editor"] });
+        }
+        if (url.pathname.endsWith("/branding")) return json(branding);
+        return json(list([]));
+      };
+      return rest ? asOData(await answered()) : answered();
     }),
   );
 

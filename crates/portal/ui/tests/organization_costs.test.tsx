@@ -115,7 +115,7 @@ describe("Administration → Costs", () => {
     await screen.findByText("doprava");
     fireEvent.change(screen.getByLabelText(en.organization.costs.month), { target: { value: "2026-08" } });
     await waitFor(() => expect(requests).toContain("/api/v1/organization/costs?month=2026-08"));
-    fireEvent.click(screen.getByRole("button", { name: en.organization.costs.export }));
+    fireEvent.click(await screen.findByRole("button", { name: en.organization.costs.export }));
     await waitFor(() => expect(requests).toContain("/api/v1/organization/costs/export?month=2026-08"));
     await waitFor(() => expect(created).toHaveBeenCalled());
   });

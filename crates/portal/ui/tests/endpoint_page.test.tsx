@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
+import { asOData, odataCall, odataValue, readingAsRest } from "./odata";
 
 const PROJECT = "banskabystrica";
 const NAME = "ovzdusie-public";
@@ -177,8 +178,8 @@ function renderPage({
       return json({ admitted: true });
     }
     // Who reads the Endpoint is the Organization administrators' (T-6412): this caller is refused.
-    if (path === "/api/v1/organization/data-access") {
-      return json({ title: "Forbidden", status: 403, detail: "read on Person" }, 403);
+    if (readingAsRest(url)?.pathname === "/api/v1/organization/data-access") {
+      return json({ title: "Forbidden", status: 403, detail: "read on Person" }, 403).then(asOData);
     }
     if (path.startsWith(`/api/endpoint/${SLUG}/ngsi-ld/v1/entities`)) {
       if (counts === null) {
@@ -199,8 +200,8 @@ function renderPage({
       return json(permissions);
     }
     // The filter proof's left side (T-3802): nothing under the draft, so the page shows no read error.
-    if (path.endsWith(`/endpoints/${NAME}/preview`)) {
-      return json({ entities: [], count: 0 });
+    if (odataCall(url)?.name === "jc_endpoint_preview") {
+      return Promise.resolve(odataValue({ entities: [], count: 0 }));
     }
     // T-5118: the page's Usage section, with nobody having called yet.
     if (path.endsWith(`/endpoints/${NAME}/usage`)) {

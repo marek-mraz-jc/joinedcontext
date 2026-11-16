@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { AccountAccess, accessMatrix } from "../src/pages/access/AccountAccess";
 import { fromServiceAccountEnvelope, toServiceAccountEnvelope } from "../src/pages/access/ServiceAccounts";
+import { odataCall, odataValue } from "./odata";
 
 const ACTIVE = {
   index: 0,
@@ -51,7 +52,7 @@ function stub(mayRevoke: boolean): Sent[] {
       sent.push({ method: request.method, path: url.pathname, body: text ? JSON.parse(text) : undefined });
       const json = (body: unknown, status = 200) =>
         new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-      if (url.pathname.endsWith("/serviceaccounts/vendor-ci/access")) return json(answer(mayRevoke));
+      if (odataCall(url)?.name === "jc_serviceaccount_access") return odataValue(answer(mayRevoke));
       if (url.pathname.endsWith("/serviceaccounts/vendor-ci/revoke")) {
         return json(
           {

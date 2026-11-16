@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { greenVerdict, isCheck } from "./verdict";
+import { odataBody, odataCall } from "../tests/odata";
 
 // `vite preview` has no portal API behind it, so the API is answered in the browser and
 // everything above it — routing, polling, the pause button — is the real thing.
@@ -112,8 +113,8 @@ async function stubApi(page: Page): Promise<{ writes: string[] }> {
         bufferDepth: 340,
       });
     }
-    if (path.endsWith("/changes/history")) {
-      return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ChangeList", items: [EARLIER] });
+    if (odataCall(request.url())?.name === "jc_change_history") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: odataBody({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ChangeList", items: [EARLIER] }) });
     }
     if (path.endsWith(`/changes/${EARLIER.metadata.name}/manifests`)) {
       return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", metadata: {}, items: [EARLIER_MANIFEST] });

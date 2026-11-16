@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { organizationReading } from "../../api/odata";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
@@ -28,7 +28,7 @@ export function Brokers(): JSX.Element {
   const brokers = useQuery({
     queryKey: ["organizationBrokers"],
     enabled: administers,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/brokers")),
+    queryFn: async () => organizationReading("brokers"),
   });
 
   if (permissions.isLoading) {

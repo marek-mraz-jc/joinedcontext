@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { call } from "../../api/odata";
 import type { Manifest } from "../../api/manifest";
 import { endpointUrl } from "../../components/endpoints/links";
 import { accessQuery, mayQuery } from "../../components/entities/AccessPanel";
@@ -204,25 +205,21 @@ async function readServed(
   type: string,
   page: { ids?: string[]; limit: number; offset: number },
 ): Promise<Page> {
-  const answer = await unwrap(
-    await api.POST("/api/v1/projects/{project}/endpoints/{name}/preview", {
-      params: { path: endpoint },
-      body: {
-        projection:
-          draft.classes.length > 0
-            ? {
-                classes: draft.classes,
-                ...(Object.keys(draft.filter).length > 0 ? { filter: draft.filter } : {}),
-              }
-            : null,
-        hiddenAttributes: draft.hiddenAttributes,
-        type,
-        ...(page.ids ? { id: page.ids } : {}),
-        limit: page.limit,
-        offset: page.offset,
-      },
-    }),
-  );
+  const answer = await call("jc_endpoint_preview", endpoint.project, {
+    name: endpoint.name,
+    projection:
+      draft.classes.length > 0
+        ? {
+            classes: draft.classes,
+            ...(Object.keys(draft.filter).length > 0 ? { filter: draft.filter } : {}),
+          }
+        : null,
+    hiddenAttributes: draft.hiddenAttributes,
+    type,
+    ...(page.ids ? { id: page.ids } : {}),
+    limit: page.limit,
+    offset: page.offset,
+  });
   const entities = answer.entities.filter(
     (item): item is ProofEntity => typeof item === "object" && item !== null && typeof item.id === "string",
   );

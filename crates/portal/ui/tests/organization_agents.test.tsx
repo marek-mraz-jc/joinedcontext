@@ -12,6 +12,7 @@ import { AgentPage, Agents } from "../src/pages/organization/Agents";
 import { ServiceAccounts } from "../src/pages/access/ServiceAccounts";
 import { McpServersPage } from "../src/pages/mcp/McpServersPage";
 import { expectNoAxeViolations, json, renderPage } from "./page_contract";
+import { odataCall, odataValue } from "./odata";
 
 const t = en.organization.agents;
 
@@ -96,8 +97,8 @@ function render({ items = [CHAT, ACCOUNT, RUN], status = 200, permissions = STEW
               status,
             );
       }
-      if (url.pathname === "/api/v1/projects/helsinki/serviceaccounts/sensor-feed/access") {
-        return json({
+      if (odataCall(url)?.name === "jc_serviceaccount_access" && odataCall(url)?.params.name === "sensor-feed") {
+        return odataValue({
           account: "sensor-feed",
           project: "helsinki",
           delegates: false,

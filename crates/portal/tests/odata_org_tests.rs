@@ -902,6 +902,126 @@ async fn a_function_answers_as_mcp_tools_call_and_takes_aliases() {
 /// service that moves it fails here until the snapshot is written again
 /// (`JC_WRITE_SNAPSHOT=1 cargo test --test odata_org_tests sdk_metadata`) and the client
 /// regenerated (`node sdk/scripts/odata-gen.mjs`), which CI checks has no diff.
+/// An OData alias of `value` as the UI's SDK client sends it: the literal, percent-encoded.
+fn alias(value: &Value) -> String {
+    let literal = match value {
+        Value::String(text) => format!("'{}'", text.replace('\'', "''")),
+        other => other.to_string(),
+    };
+    literal
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// T-6812: each function the Portal UI moved onto the service, called as its SDK client calls it
+/// (every argument an alias, a JSON object as one), answers what that operation's REST door
+/// answered the page before: the same status, and the REST body as the function's `value`.
+#[tokio::test]
+async fn the_functions_the_ui_calls_answer_as_their_rest_doors() {
+    let state = state();
+    state.mirror.upsert(envelope(
+        "ServiceAccount",
+        "etl",
+        "helsinki",
+        json!({ "owner": { "user": "jana@hel.fi" }, "purpose": "nightly import",
+                "roles": [{ "role": "space-writer", "scope": { "contextSpace": "air" } }], "credentials": [] }),
+    ));
+    let hel = Mode::Host("hel");
+    let subject = json!({ "kind": "role", "name": "reader" });
+    let simulated =
+        json!({ "subject": { "kind": "group", "name": "stewards" }, "action": "retrieveEntity" });
+    // This state has no forge and no Endpoint: the history and the simulation are refusals.
+    let cases: [(&str, Value, Answer, u16); 4] = [
+        (
+            "jc_access_explore",
+            json!({ "subject": subject }),
+            act(
+                &state,
+                "root",
+                "/api/v1/projects/helsinki/access/explore",
+                None,
+                json!({ "subject": subject }),
+            )
+            .await,
+            200,
+        ),
+        (
+            "jc_serviceaccount_access",
+            json!({ "name": "etl" }),
+            get(
+                &state,
+                hel,
+                "root",
+                "/api/v1/projects/helsinki/serviceaccounts/etl/access",
+            )
+            .await,
+            200,
+        ),
+        (
+            "jc_change_history",
+            json!({ "page": 1, "kind": "Policy", "name": "air" }),
+            get(
+                &state,
+                hel,
+                "root",
+                "/api/v1/projects/helsinki/changes/history?page=1&kind=Policy&name=air",
+            )
+            .await,
+            503,
+        ),
+        (
+            "jc_access_simulate",
+            json!({ "endpoint": "air", "subject": simulated["subject"], "action": "retrieveEntity" }),
+            act(
+                &state,
+                "root",
+                "/api/v1/projects/helsinki/endpoints/air/access/simulate",
+                None,
+                simulated.clone(),
+            )
+            .await,
+            404,
+        ),
+    ];
+    for (name, params, rest, expected) in cases {
+        let params = params.as_object().expect("object");
+        let names: Vec<String> = params.keys().map(|k| format!("{k}=@{k}")).collect();
+        let aliases: Vec<String> = params
+            .iter()
+            .map(|(k, v)| format!("@{k}={}", alias(v)))
+            .collect();
+        let uri = format!(
+            "/api/v1/projects('helsinki')/JoinedContext.Portal.{name}({})?{}",
+            names.join(","),
+            aliases.join("&")
+        );
+        let odata = get(&state, hel, "root", &uri).await;
+        assert_eq!(
+            odata.status, rest.status,
+            "{name}: OData {} REST {}",
+            odata.text, rest.text
+        );
+        assert_eq!(rest.status.as_u16(), expected, "{name}: {}", rest.text);
+        if rest.status.is_success() {
+            assert_eq!(odata.json()["value"], rest.json(), "{name}");
+        } else {
+            // A refusal says the same sentence through either door.
+            assert_eq!(
+                odata.json()["error"]["message"],
+                rest.json()["detail"],
+                "{name}: {}",
+                odata.text
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn sdk_metadata_snapshot_is_the_org_admins_metadata() {
     // One snapshot per role (T-6821): the SDK client is generated from the org-admin's.
@@ -1482,6 +1602,145 @@ async fn a_refusals_fields_and_hint_carry_into_the_odata_error() {
     assert_eq!(targets, paths, "{}", odata.text);
     assert_eq!(error["target"], paths[0], "{}", odata.text);
     assert_eq!(error["hint"], problem["hint"], "{}", odata.text);
+}
+
+/// `value` with each RFC 3339 instant as one token: two reads of a live reading differ in when.
+fn timeless(value: Value) -> Value {
+    match value {
+        Value::String(text) if chrono::DateTime::parse_from_rfc3339(&text).is_ok() => {
+            json!("<instant>")
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(timeless).collect()),
+        Value::Object(map) => {
+            Value::Object(map.into_iter().map(|(k, v)| (k, timeless(v))).collect())
+        }
+        other => other,
+    }
+}
+
+/// T-7098: the Administration pages' readings are the Organization's: `jc_organization_read`,
+/// bound to the `Organization` singleton, answers each aspect with its REST door's status, its
+/// body or its refusal's sentence, for an administrator and for a viewer, and no project binds it.
+#[tokio::test]
+async fn the_organizations_readings_answer_as_their_rest_doors() {
+    let state = state();
+    let mode = Mode::Host("hel");
+    let cases: [(Value, &str); 13] = [
+        (json!({ "aspect": "projects" }), "/api/v1/projects"),
+        (json!({ "aspect": "setup" }), "/api/v1/organization/setup"),
+        (json!({ "aspect": "health" }), "/api/v1/organization/health"),
+        (
+            json!({ "aspect": "healthChecks" }),
+            "/api/v1/organization/health-checks",
+        ),
+        (json!({ "aspect": "limits" }), "/api/v1/organization/limits"),
+        (
+            json!({ "aspect": "brokers" }),
+            "/api/v1/organization/brokers",
+        ),
+        (json!({ "aspect": "agents" }), "/api/v1/organization/agents"),
+        (
+            json!({ "aspect": "agentActivity", "limit": 5 }),
+            "/api/v1/organization/agents/activity?limit=5",
+        ),
+        (
+            json!({ "aspect": "costs", "month": "2026-09" }),
+            "/api/v1/organization/costs?month=2026-09",
+        ),
+        (
+            json!({ "aspect": "addresses" }),
+            "/api/v1/organization/addresses",
+        ),
+        (
+            json!({ "aspect": "dataAccess" }),
+            "/api/v1/organization/data-access",
+        ),
+        (
+            json!({ "aspect": "widgetOptions", "organization": "hel" }),
+            "/api/v1/organization/widgets/options?organization=hel",
+        ),
+        (
+            json!({ "aspect": "personReadable", "person": "sub-ada" }),
+            "/api/v1/organization/people/sub-ada/readable",
+        ),
+    ];
+    let mut answered = std::collections::BTreeSet::new();
+    for (params, rest_uri) in cases {
+        let params = params.as_object().expect("object");
+        let names: Vec<String> = params.keys().map(|k| format!("{k}=@{k}")).collect();
+        let aliases: Vec<String> = params
+            .iter()
+            .map(|(k, v)| format!("@{k}={}", alias(v)))
+            .collect();
+        let uri = format!(
+            "/api/v1/Organization/JoinedContext.Portal.jc_organization_read({})?{}",
+            names.join(","),
+            aliases.join("&")
+        );
+        for who in ["root", "hel-only"] {
+            let odata = get(&state, mode, who, &uri).await;
+            let rest = get(&state, mode, who, rest_uri).await;
+            assert_eq!(
+                odata.status, rest.status,
+                "{who} {rest_uri}: OData {} REST {}",
+                odata.text, rest.text
+            );
+            answered.insert((who, rest.status.as_u16()));
+            if rest.status.is_success() {
+                assert_eq!(
+                    timeless(odata.json()["value"].clone()),
+                    timeless(rest.json()),
+                    "{who} {rest_uri}"
+                );
+            } else {
+                assert_eq!(
+                    odata.json()["error"]["message"],
+                    rest.json()["detail"],
+                    "{who} {rest_uri}: {}",
+                    odata.text
+                );
+            }
+        }
+    }
+    // Both an answer and a refusal ran through the parity above.
+    assert!(answered.contains(&("root", 200)), "{answered:?}");
+    assert!(answered.contains(&("hel-only", 403)), "{answered:?}");
+
+    let bound = |text: &str, ty: &str| {
+        text.contains(&format!(
+            r#"Name="jc_organization_read" IsBound="true"><Parameter Name="bindingParameter" Type="JoinedContext.Portal.{ty}""#
+        ))
+    };
+    let metadata = get(&state, mode, "root", "/api/v1/$metadata").await;
+    assert!(bound(&metadata.text, "Organization"), "{}", metadata.text);
+    assert!(!bound(&metadata.text, "Project"), "{}", metadata.text);
+    let on_project = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_organization_read(aspect='setup')",
+    )
+    .await;
+    assert_eq!(
+        on_project.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        on_project.text
+    );
+    // A member given to another aspect is refused at its path, as the REST op door refuses it.
+    let misplaced = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/Organization/JoinedContext.Portal.jc_organization_read(aspect='setup',person='x')",
+    )
+    .await;
+    assert_eq!(
+        misplaced.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        misplaced.text
+    );
 }
 
 /// T-7097: the people's operations are bound to the `Organization` singleton of the installation's

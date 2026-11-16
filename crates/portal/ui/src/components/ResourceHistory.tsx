@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../api/client";
+import { call } from "../api/odata";
 import { usePermissions } from "../api/permissions";
 import { changeSentence, fieldSentence, landed } from "../routes/changeWords";
 import type { PlannedField } from "../routes/changeWords";
@@ -55,12 +56,7 @@ export function ResourceHistory({
   const history = useInfiniteQuery({
     queryKey: [...queryKeys.changes(project), "history", kind, name, "", "", ""] as const,
     initialPageParam: 1,
-    queryFn: async ({ pageParam }) =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/history", {
-          params: { path: { project }, query: { page: pageParam, kind, name } },
-        }),
-      ),
+    queryFn: ({ pageParam }) => call("jc_change_history", project, { page: pageParam, kind, name }),
     getNextPageParam: (last) => last.next ?? undefined,
   });
   // The API matches a name that contains the one asked; this resource is the one named exactly.
