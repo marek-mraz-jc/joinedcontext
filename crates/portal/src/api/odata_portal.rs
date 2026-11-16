@@ -78,6 +78,9 @@ const LANG: (&str, Place) = ("lang", Place::Path);
 const CHANGE: (&str, Place) = ("id", Place::Path);
 const SPACE: (&str, Place) = ("space", Place::Path);
 const PIPELINE: (&str, Place) = ("pipeline", Place::Path);
+const SOURCE: (&str, Place) = ("source", Place::Path);
+const DEPLOYMENT: (&str, Place) = ("deployment", Place::Path);
+const CONVERSATION: (&str, Place) = ("conversation", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -101,7 +104,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 79] = [
+pub static DOORS: [Door; 98] = [
     door(
         "portal_people_remove",
         Org,
@@ -751,6 +754,189 @@ pub static DOORS: [Door; 79] = [
         Method::POST,
         "/projects/{project}/access-requests/{id}/revoke",
         &[CHANGE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_source_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_page_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/pages",
+        &[
+            SOURCE,
+            ("parent", Place::Query("Edm.Int64")),
+            ("q", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_page_links",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/pages/{page}/links",
+        &[SOURCE, PAGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_document_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/documents",
+        &[SOURCE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_search",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/search",
+        &[
+            SOURCE,
+            ("q", Place::Query("Edm.String")),
+            ("limit", Place::Query("Edm.Int32")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_passage_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/passages",
+        &[
+            SOURCE,
+            ("page", Place::Query("Edm.Int64")),
+            ("document", Place::Query("Edm.Int64")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_error_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/errors",
+        &[SOURCE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_inclusion_set",
+        Project,
+        Method::POST,
+        "/projects/{project}/knowledge/sources/{source}/inclusion",
+        &[SOURCE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_recrawl",
+        Project,
+        Method::POST,
+        "/projects/{project}/knowledge/sources/{source}/recrawl",
+        &[SOURCE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_file_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/files",
+        &[SOURCE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_file_remove",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/knowledge/sources/{source}/files/{id}",
+        &[SOURCE, CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_context_preview",
+        Project,
+        Method::POST,
+        "/projects/{project}/knowledge/deployments/context",
+        &[
+            ("dryRun", Place::Query("Edm.String")),
+            ("lang", Place::Query("Edm.String")),
+            BODY,
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_usage",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/deployments/{deployment}/usage",
+        &[DEPLOYMENT],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_answers_forget",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/knowledge/deployments/{deployment}/answers",
+        &[DEPLOYMENT],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/conversations",
+        &[
+            ("deployment", Place::Query("Edm.String")),
+            ("from", Place::Query("Edm.String")),
+            ("to", Place::Query("Edm.String")),
+            ("status", Place::Query("Edm.String")),
+            ("feedback", Place::Query("Edm.String")),
+            ("slow", Place::Query("Edm.Boolean")),
+            ("minCostUsd", Place::Query("Edm.Double")),
+            ("q", Place::Query("Edm.String")),
+            ("sort", Place::Query("Edm.String")),
+            ("cursor", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_usage",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/conversations/usage",
+        &[
+            ("deployment", Place::Query("Edm.String")),
+            ("from", Place::Query("Edm.String")),
+            ("to", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_get",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/conversations/{conversation}",
+        &[CONVERSATION],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_erase",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/knowledge/conversations/{conversation}",
+        &[CONVERSATION],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_same",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same",
+        &[CONVERSATION, ("turn", Place::Path)],
         Who::ProjectReader,
     ),
 ];

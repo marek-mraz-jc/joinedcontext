@@ -2140,6 +2140,9 @@ fn door_sample(member: &str) -> Value {
         "template" => json!("bar"),
         "limit" => json!(5),
         "before" => json!(1),
+        "parent" | "document" | "turn" => json!(1),
+        "slow" => json!(true),
+        "minCostUsd" => json!(0.02),
         other => json!(format!("{other}-1")),
     }
 }
