@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { RichRow, RichCell } from "./model";
 import type { ColumnLayout, GridLabels, GridRefusal, UseEntityGridOptions, VisibleColumn } from "./useEntityGrid";
-import { DEFAULT_LABELS, readableName } from "./useEntityGrid";
+import { DEFAULT_LABELS, readable } from "./useEntityGrid";
 import { targetName } from "./cells";
 import type { FilterColumn } from "./filters";
 import type { GridMapLabels } from "./GridMap";
@@ -321,7 +321,7 @@ function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
   // A phone's table has no filter row (T-6748): its area picker stands here, by the place's label (T-7072).
   const places = asText ? [] : shared.filter((each) => each.place);
   if (!props.compact || (!oneType && places.length === 0 && !shared.some((each) => each.value !== ""))) return null;
-  const labelOf = (attr: string) => options.layout?.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readableName(attr);
+  const labelOf = (attr: string) => options.layout?.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readable(attr);
   return (
     <div className="jc-grid-typeline">
       {oneType ? (

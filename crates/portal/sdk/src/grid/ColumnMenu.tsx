@@ -37,13 +37,26 @@ export function sortWords(kind: ColumnKind, labels: GridLabels): [asc: string, d
   return [labels.sortAsc, labels.sortDesc];
 }
 
+const GUTTER = 8;
+
+/**
+ * Where a header popup's left edge goes: under the cell, its right edges aligned, inside the window
+ * and never left of the grid (`edge`). `beside` keeps the column itself in sight (a filter, T-7112):
+ * right of the cell where it fits, else left of it, else under it as the rest.
+ */
+export function menuLeft(at: { left: number; right: number }, width: number, viewport: number, edge: number, beside = false): number {
+  if (beside && at.right + width + GUTTER <= viewport) return at.right;
+  if (beside && at.left - width >= edge) return at.left - width;
+  return Math.max(edge, Math.min(at.right - width, viewport - width - GUTTER));
+}
+
 /**
  * A popup placed fixed at its header cell, inside the window, following it as the page scrolls.
  * The grid clips what overflows it, so under a short grid a menu lost everything below its first
  * items (T-4924). It stays under the host's sticky header, whose height the host gives as
  * --jc-grid-sticky-top (the menu's scroll-margin-top in grid.css, resolved to pixels; T-5181).
  */
-export function usePlaceAtCell(): React.MutableRefObject<HTMLDivElement | null> {
+export function usePlaceAtCell(beside = false): React.MutableRefObject<HTMLDivElement | null> {
   const box = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     const menu = box.current;
@@ -63,9 +76,8 @@ export function usePlaceAtCell(): React.MutableRefObject<HTMLDivElement | null> 
       menu.style.top = `${up ? at.top - Math.min(menu.scrollHeight, room) : under}px`;
       // An 8 px gutter from both screen edges, as the page keeps (UI judge, T-6344). Never left of
       // the grid: a host's sidebar stands above the menu and would hide its first column's (T-6454).
-      const gutter = 8;
-      const edge = Math.max(gutter, cell.closest(".jc-grid")?.getBoundingClientRect().left ?? 0);
-      menu.style.left = `${Math.max(edge, Math.min(at.right - width, window.innerWidth - width - gutter))}px`;
+      const edge = Math.max(GUTTER, cell.closest(".jc-grid")?.getBoundingClientRect().left ?? 0);
+      menu.style.left = `${menuLeft(at, width, window.innerWidth, edge, beside)}px`;
     };
     place();
     window.addEventListener("scroll", place, true);

@@ -246,6 +246,23 @@ describe("the data section of an endpoint", () => {
     expect(links).toContainEqual({ type: "WeatherObserved", q: "temperature>20", sort: "temperature;desc" });
   });
 
+  it("opens a link's search in the search box and keeps it out of the link's query (T-7112)", async () => {
+    const user = userEvent.setup();
+    const links: DataLink[] = [];
+    show({ link: { type: "AirQualityObserved", search: "412" }, onLink: (next) => links.push(next) });
+    const box = await screen.findByRole("searchbox", { name: en.spaces.toolbar.search });
+    expect(box).toHaveValue("412");
+    // The rows are the searched ones, and the link the view writes back carries the words, not a query.
+    await waitFor(() => expect(entityReads().some((url) => (url.searchParams.get("q") ?? "").includes("(?i)412"))).toBe(true));
+    await waitFor(() => expect(links.at(-1)).toEqual({ type: "AirQualityObserved", search: "412" }));
+    // A new word replaces it in the link, once typing settles.
+    await user.clear(box);
+    await user.type(box, "41");
+    await waitFor(() => expect(links.at(-1)).toEqual({ type: "AirQualityObserved", search: "41" }));
+    await user.clear(box);
+    await waitFor(() => expect(links.at(-1)).toEqual({ type: "AirQualityObserved" }));
+  });
+
   it("sorts every row through the endpoint and writes the order into the link", async () => {
     const user = userEvent.setup();
     const links: { sort?: string }[] = [];

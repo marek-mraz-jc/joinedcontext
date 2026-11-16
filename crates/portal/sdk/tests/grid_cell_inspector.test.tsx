@@ -130,7 +130,7 @@ describe("the grid's inspector", () => {
     render(<EntityGrid config={config()} source={source(async () => table)} />);
     const cell = (await screen.findByText("21")).closest('[role="gridcell"]') as HTMLElement;
     fireEvent.click(cell.querySelector(".jc-grid-info") as HTMLElement);
-    const panel = screen.getByRole("dialog", { name: `${L.title}: no2` });
+    const panel = screen.getByRole("dialog", { name: `${L.title}: No2` });
     expect(within(panel).getByRole("status")).toHaveTextContent(L.prohibited);
     fireEvent.keyDown(panel, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -141,7 +141,7 @@ describe("the grid's inspector", () => {
     render(<EntityGrid config={config()} source={source(async () => table)} labels={{ close: "Sulje" }} />);
     const cell = (await screen.findByText("21")).closest('[role="gridcell"]') as HTMLElement;
     fireEvent.click(cell.querySelector(".jc-grid-info") as HTMLElement);
-    const panel = screen.getByRole("dialog", { name: `${L.title}: no2` });
+    const panel = screen.getByRole("dialog", { name: `${L.title}: No2` });
     fireEvent.click(within(panel).getByRole("button", { name: "Sulje" }));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -153,7 +153,7 @@ describe("the grid's inspector", () => {
     const grid = screen.getByRole("grid");
     grid.focus();
     fireEvent.keyDown(grid, { key: "i" });
-    const panel = screen.getByRole("dialog", { name: `${L.title}: pm10` });
+    const panel = screen.getByRole("dialog", { name: `${L.title}: Pm10` });
     expect(document.activeElement).toBe(within(panel).getByRole("heading"));
     fireEvent.keyDown(panel, { key: "Escape" });
     expect(document.activeElement).toBe(grid);
@@ -163,7 +163,7 @@ describe("the grid's inspector", () => {
   it("opens from the cell's i button, editable cells included", async () => {
     render(<EntityGrid config={config()} source={source(async () => table)} />);
     await screen.findByDisplayValue("Kallio");
-    fireEvent.click(screen.getAllByRole("button", { name: `${L.title}: name` })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: `${L.title}: Name` })[0]);
     expect(within(screen.getByRole("dialog")).getByRole("status")).toHaveTextContent(L.grant);
   });
 
@@ -171,7 +171,7 @@ describe("the grid's inspector", () => {
     render(<EntityGrid config={config()} source={source(async () => table)} />);
     const cell = (await screen.findByText("21")).closest('[role="gridcell"]') as HTMLElement;
     fireEvent.click(cell);
-    expect(await screen.findByRole("tab", { name: "no2", selected: true })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "No2", selected: true })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: `${L.title}: no2` })).toBeNull();
   });
 

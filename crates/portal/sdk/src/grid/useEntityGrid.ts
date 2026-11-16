@@ -14,8 +14,8 @@ import { keptMembers } from "./apply";
 import type { AttributeChange, EntityChange } from "./apply";
 import type { EnumOption } from "../enums";
 import type { RelationEnd } from "../relations";
-import { readableName } from "./readableName";
-export { readableName };
+import { readable, readableName } from "./readableName";
+export { readable, readableName };
 
 export type MetaKey = "observedAt" | "unit" | "datasetId" | "createdAt" | "modifiedAt";
 
@@ -777,7 +777,7 @@ function buildColumns(
     // Hidden covers what the person may not read, so even the name leaves when it is not theirs.
     if (left.has(attr)) continue;
     const gridCol = colMap.get(attr);
-    const label = layout.labels?.[attr] ?? gridCol?.label ?? readableName(attr);
+    const label = layout.labels?.[attr] ?? gridCol?.label ?? readable(attr);
     const width = layout.width?.[attr] ?? gridCol?.width;
     const symbol = unitSymbol(unitOfColumn(rows, attr));
     cols.push({ key: attr, attr, meta: null, label: symbol ? `${label} (${symbol})` : label, pinned: attr === lead, ...(width ? { width } : {}) });

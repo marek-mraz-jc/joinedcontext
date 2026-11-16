@@ -29,13 +29,13 @@ export function EndpointDatasetPage({ slug }: { slug: string }): JSX.Element {
   // (T-5082): a reload or a shared link opens the same rows. Replaced, never pushed.
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as DataLink;
-  const link: DataLink = { type: search.type, q: search.q, sort: search.sort };
+  const link: DataLink = { type: search.type, q: search.q, search: search.search, sort: search.sort };
   const writeLink = useCallback(
     (next: DataLink) => {
-      if (next.type === search.type && next.q === search.q && next.sort === search.sort) return;
-      void navigate({ to: ".", search: { type: next.type, q: next.q, sort: next.sort }, replace: true });
+      if (next.type === search.type && next.q === search.q && next.search === search.search && next.sort === search.sort) return;
+      void navigate({ to: ".", search: { type: next.type, q: next.q, search: next.search, sort: next.sort }, replace: true });
     },
-    [navigate, search.type, search.q, search.sort],
+    [navigate, search.type, search.q, search.search, search.sort],
   );
   const dataset = readable.data?.datasets.find((row) => row.slug === slug);
   // The endpoint's own DCAT entry names it for a visitor too (T-7072): its title in the page's

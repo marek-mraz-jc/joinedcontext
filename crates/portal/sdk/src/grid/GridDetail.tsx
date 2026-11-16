@@ -66,6 +66,7 @@ export function GridDetail({ view }: { view: GridView }): React.JSX.Element | nu
       name={rowName(detailRow)}
       columns={columns}
       renderValue={detailValue}
+      labelOf={view.hiddenLabel}
       labels={{
         rowDetail: labels.rowDetail,
         close: labels.close,

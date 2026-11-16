@@ -37,7 +37,8 @@ function conditionOps(column: FilterColumn): FilterOp[] {
 
 export function AutoFilter({ column, label, labels, filter, load, formatValue, onApply, onClose }: AutoFilterProps): React.JSX.Element {
   const id = useId();
-  const box = usePlaceAtCell();
+  // Beside its column, so the values it filters stay in sight while a person picks (T-7112).
+  const box = usePlaceAtCell(true);
   const search = useRef<HTMLInputElement>(null);
   const lists = Boolean(load) && listsValues(column.kind);
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });

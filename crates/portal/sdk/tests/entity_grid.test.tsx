@@ -244,7 +244,7 @@ describe("EntityGrid", () => {
     expect(screen.getByRole("heading", { name: "Details: Kamppi" })).toHaveFocus();
     // The grid's columns, then what the entity carries beyond them.
     const terms = Array.from(panel.querySelectorAll("dt")).map((dt) => dt.textContent);
-    expect(terms).toEqual(["Name", "Bikes", "location", "refDevice"]);
+    expect(terms).toEqual(["Name", "Bikes", "Location", "Ref device"]);
 
     const bikes = panel.querySelector<HTMLInputElement>("dd input")!;
     fireEvent.change(bikes, { target: { value: "7" } });
@@ -540,8 +540,8 @@ describe("EntityGrid", () => {
     } };
     render(<EntityGrid config={columnless} source={nothingMatches} virtual />);
     await screen.findByText("Kamppi");
-    fireEvent.change(screen.getByLabelText("Filter: name"), { target: { value: "contains" } });
-    fireEvent.change(screen.getByLabelText("Value: name"), { target: { value: "zz-no-such-station" } });
+    fireEvent.change(screen.getByLabelText("Filter: Name"), { target: { value: "contains" } });
+    fireEvent.change(screen.getByLabelText("Value: Name"), { target: { value: "zz-no-such-station" } });
     // Narrowed by the person: the empty state names the filters as the cause (T-7063).
     await screen.findByText(DEFAULT_LABELS.filtersMatchNothing);
     expect(screen.queryByText(DEFAULT_LABELS.empty)).toBeNull();
@@ -549,7 +549,7 @@ describe("EntityGrid", () => {
     // Each question is asked once for its rows and once for its count (T-6541).
     expect(asked).toEqual([undefined, undefined, 'name[*]~="zz-no-such-station"', 'name[*]~="zz-no-such-station"']);
     // The filter stays where the person can see and clear it.
-    expect(screen.getByLabelText("Value: name")).toHaveValue("zz-no-such-station");
+    expect(screen.getByLabelText("Value: Name")).toHaveValue("zz-no-such-station");
   });
 
   // T-5623: a next page still on its way when the question changes is dropped, and the new

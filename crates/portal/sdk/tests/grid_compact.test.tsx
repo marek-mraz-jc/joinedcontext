@@ -67,6 +67,20 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(container.querySelector(".jc-grid-typeline")).not.toHaveTextContent("Category");
   });
 
+  it("labels a row's fields the phone's table leaves out by the grid's own labels, not their raw names (T-7112)", async () => {
+    HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    const same = entities.map((each) => ({ ...each, category: { type: "Property", value: "socialService" }, dataProvider: { type: "Property", value: "City" } }));
+    render(<EntityGrid config={config} source={fixtureSource(same)} compact filterRow={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open: Kallio" }));
+    const dialog = await screen.findByRole("dialog", { hidden: true });
+    // Category left the table for the line above; the model labels it, and an unlabelled field reads in words.
+    await waitFor(() => expect(dialog).toHaveTextContent("Category"));
+    expect(dialog).not.toHaveTextContent("category");
+    expect(dialog).toHaveTextContent("Data provider");
+  });
+
   it("reads the source once when the labels prop is an inline literal (T-6781)", async () => {
     const real = fixtureSource(entities);
     let reads = 0;

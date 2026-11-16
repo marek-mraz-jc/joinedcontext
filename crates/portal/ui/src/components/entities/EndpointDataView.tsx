@@ -31,10 +31,12 @@ interface SchemaIndex {
   models?: { name?: string; version?: number }[];
 }
 
-/** What a link to this view holds (T-5082): the type, the query as typed, and the order. */
+/** What a link to this view holds (T-5082): the type, the query as typed, the search, and the order. */
 export interface DataLink {
   type?: string;
   q?: string;
+  /** The search box's words (T-7112): they open in the box, not as a query the reader never typed. */
+  search?: string;
   /** `attr` or `attr;desc`, as `orderBy` takes it (CIM 009 4.23). */
   sort?: string;
   /** The reader removed the model's default filter (DM-135): the link opens without it. */
@@ -839,7 +841,7 @@ export function EndpointDataView({
     queryFn: () => fetchJson(`${root}/api/endpoint/${encodeURIComponent(slug)}/widget.json`),
   });
   // The space's toolbar over this grid (T-6303), its state held by the toolbar's own hook.
-  const tools = useDataToolbarState();
+  const tools = useDataToolbarState(link?.search);
   const phone = useIsPhone();
   const { extras, group } = tools;
   const { types, type, columns, klass, view: classView, slots, shape, hiddenNow, shownColumns, enums, relations, links, kinds, gridColumns } =
@@ -861,11 +863,14 @@ export function EndpointDataView({
   // The default filter's inputs open in the Filter panel; from the first default on, the panel is the reader's.
   tools.adoptDefault(groupOf(preset?.filters));
   const allAsked = andQ(asked, tools.q);
+  // The link keeps the search apart from the query, so a reopened view fills the search box (T-7112).
+  const linkQ = andQ(asked, tools.filterQ);
+  const linkSearch = tools.search.trim() || undefined;
   const filtered = opened.filterText !== null || conditionCount(group) > 0;
   const sortKeys = useMemo(() => sortKeysOf(opened.sort, tools.thenBy), [opened.sort, tools.thenBy]);
   useEffect(() => {
-    if (type) onLink?.({ type: type.name, q: allAsked || undefined, sort: sortText, ...(dropped ? { noDefault: true } : {}) });
-  }, [type, allAsked, sortText, dropped, onLink]);
+    if (type) onLink?.({ type: type.name, q: linkQ || undefined, ...(linkSearch ? { search: linkSearch } : {}), sort: sortText, ...(dropped ? { noDefault: true } : {}) });
+  }, [type, linkQ, linkSearch, sortText, dropped, onLink]);
   const map = useMemo(() => (type ? mapDefaultsOf(widget.data, type.name) : undefined), [widget.data, type]);
   useRowCard(type?.name, klass, slots, shape, kinds, enums, i18n.language, map, onCard);
   const onQuery = useCallback((query: { q?: string }) => setAsked(query.q), []);

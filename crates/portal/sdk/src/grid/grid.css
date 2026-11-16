@@ -2778,9 +2778,13 @@ a.jc-cell--link:focus-visible {
   display: flex;
   min-width: min(20ch, 40vw);
   max-width: 100%;
+  /* One line under the whole id, across the gap the cut head leaves before its tail: each part
+     underlined alone read as two links (T-7112). */
+  text-decoration: none;
+  background: linear-gradient(currentColor, currentColor) left bottom / 100% 1px no-repeat;
 }
 .jc-grid-id > span {
-  text-decoration: inherit;
+  text-decoration: none;
   white-space: nowrap;
 }
 .jc-grid-id-head {
@@ -3004,7 +3008,7 @@ a.jc-cell--link:focus-visible {
   font-size: 1rem;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type {
+.jc-grid-history .jc-grid-history-windows {
   display: inline-flex;
   border: 1px solid var(--jc-color-line, #cbd5e1);
   border-radius: var(--jc-radius-md, 6px);
@@ -3013,30 +3017,30 @@ a.jc-cell--link:focus-visible {
   gap: 2px;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type label {
+.jc-grid-history .jc-grid-history-windows label {
   padding: 0.25rem 0.75rem;
   border-radius: calc(var(--jc-radius-md, 6px) - 2px);
   cursor: pointer;
   font-size: 0.875rem;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type input {
+.jc-grid-history .jc-grid-history-windows input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type label:has(input:checked) {
+.jc-grid-history .jc-grid-history-windows label:has(input:checked) {
   background: var(--jc-color-accent, #0066cc);
   color: #ffffff;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type label:has(input:focus-visible) {
+.jc-grid-history .jc-grid-history-windows label:has(input:focus-visible) {
   outline: 2px solid var(--jc-color-accent, #0066cc);
   outline-offset: 2px;
 }
 
-.jc-grid-attr-view .jc-grid-history-versions {
+.jc-grid-history-versions {
   display: flex;
   align-items: center;
   gap: var(--jc-space-2, 8px);
@@ -3051,7 +3055,7 @@ a.jc-cell--link:focus-visible {
   color: var(--jc-color-muted, #666);
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type {
+.jc-grid-history .jc-grid-history-windows {
   width: fit-content;
 }
 

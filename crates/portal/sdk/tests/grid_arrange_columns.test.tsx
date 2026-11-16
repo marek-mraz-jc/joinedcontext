@@ -62,18 +62,18 @@ describe("the toolbar's Arrange columns panel (T-6738)", () => {
     expect(within(panel).getByRole("checkbox", { name: "Show field: Name" })).toBeDisabled();
     expect(within(panel).getByRole("checkbox", { name: "Show field: Name" })).toHaveAccessibleDescription("Always shown");
     fireEvent.click(within(panel).getByRole("checkbox", { name: "Show field: Count" }));
-    await waitFor(() => expect(headers()).toEqual(["Name", "status"]));
+    await waitFor(() => expect(headers()).toEqual(["Name", "Status"]));
     const back = within(screen.getByRole("dialog", { name: "Arrange columns" })).getByRole("checkbox", { name: "Show field: Count" });
     expect(back).not.toBeChecked();
     fireEvent.click(back);
-    await waitFor(() => expect(headers()).toEqual(["Name", "Count", "status"]));
+    await waitFor(() => expect(headers()).toEqual(["Name", "Count", "Status"]));
   });
 
   it("hands a hide to the host that holds hidden", async () => {
     const onHide = vi.fn();
     render(<EntityGrid config={config} source={fixtureSource(entities)} onHide={onHide} />);
     await screen.findByText("Alpha");
-    fireEvent.click(within(openPanel()).getByRole("checkbox", { name: "Show field: status" }));
+    fireEvent.click(within(openPanel()).getByRole("checkbox", { name: "Show field: Status" }));
     expect(onHide).toHaveBeenCalledWith("ngsi-ld:status");
   });
 
@@ -86,22 +86,22 @@ describe("the toolbar's Arrange columns panel (T-6738)", () => {
     expect(within(panel).getByRole("button", { name: "Move up: Name" })).toBeDisabled();
     fireEvent.click(within(panel).getByRole("button", { name: "Move down: Count" }));
     expect(onLayout).toHaveBeenLastCalledWith({ order: ["name", "ngsi-ld:status", "count"] });
-    await waitFor(() => expect(headers()).toEqual(["Name", "status", "Count"]));
+    await waitFor(() => expect(headers()).toEqual(["Name", "Status", "Count"]));
     panel = screen.getByRole("dialog", { name: "Arrange columns" });
-    const field = within(panel).getByRole("textbox", { name: "Label in this view: status" });
-    expect(field).toHaveAttribute("placeholder", "status");
+    const field = within(panel).getByRole("textbox", { name: "Label in this view: Status" });
+    expect(field).toHaveAttribute("placeholder", "Status");
     fireEvent.change(field, { target: { value: "  State  " } });
     fireEvent.keyDown(field, { key: "Enter" });
     expect(onLayout).toHaveBeenLastCalledWith({ order: ["name", "ngsi-ld:status", "count"], labels: { "ngsi-ld:status": "State" } });
     await waitFor(() => expect(headers()).toEqual(["Name", "State", "Count"]));
     // Emptied, the label goes back to the model's.
-    const again = within(screen.getByRole("dialog", { name: "Arrange columns" })).getByRole("textbox", { name: "Label in this view: status" });
+    const again = within(screen.getByRole("dialog", { name: "Arrange columns" })).getByRole("textbox", { name: "Label in this view: Status" });
     fireEvent.change(again, { target: { value: "" } });
     fireEvent.blur(again);
-    await waitFor(() => expect(headers()).toEqual(["Name", "status", "Count"]));
+    await waitFor(() => expect(headers()).toEqual(["Name", "Status", "Count"]));
     fireEvent.click(within(screen.getByRole("dialog", { name: "Arrange columns" })).getByRole("button", { name: "Reset columns" }));
     expect(onLayout).toHaveBeenLastCalledWith({});
-    await waitFor(() => expect(headers()).toEqual(["Name", "Count", "status"]));
+    await waitFor(() => expect(headers()).toEqual(["Name", "Count", "Status"]));
   });
 
   it("keeps a typed label as text, never as markup", async () => {
