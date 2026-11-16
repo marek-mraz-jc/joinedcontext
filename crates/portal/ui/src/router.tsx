@@ -626,11 +626,14 @@ const dashboardNewRoute = createRoute({
 const dashboardEditRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/projects/$project/grafana/dashboards/$uid/edit",
+  // "Add visualization" on a dashboard opens its next edit with one new panel selected.
+  validateSearch: (search: Record<string, unknown>): { add?: true } => (search.add ? { add: true } : {}),
   component: function DashboardEditRoute() {
     const { project, uid } = dashboardEditRoute.useParams();
+    const { add } = dashboardEditRoute.useSearch();
     return (
       <Shell project={project}>
-        <DashboardBuilderPage key={uid} project={project} uid={uid} />
+        <DashboardBuilderPage key={uid} project={project} uid={uid} addPanel={add === true} />
       </Shell>
     );
   },
