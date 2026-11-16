@@ -1574,7 +1574,7 @@ impl Harness {
         // A run starts and records itself here; the proxy behind it is the mock, so it builds
         // nothing (S-39).
         config.agent_settings = Some(AgentSettings {
-            namespace: "agents".to_owned(),
+            namespace: Some("agents".to_owned()),
             portal_namespace: "portal".to_owned(),
             proxy_base: server.uri(),
             run_ttl_secs: 600,

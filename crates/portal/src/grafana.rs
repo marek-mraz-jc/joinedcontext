@@ -296,7 +296,7 @@ fn person_refused(body: &Value) -> bool {
 fn unreachable(what: &str, err: impl std::fmt::Display) -> ApiError {
     tracing::warn!(error = %err, what, "Grafana did not answer");
     ApiError::Unavailable(format!(
-        "Grafana did not answer while {what}; try again in a minute"
+        "the dashboards service did not answer while {what}; try again in a minute"
     ))
 }
 

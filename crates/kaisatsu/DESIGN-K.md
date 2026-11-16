@@ -6,7 +6,7 @@ This document records the architecture and state-machine designs for items **K1â
 
 ### Part 1: Security & Sessions (K1â€“K6)
 - **K1 Auth session cookie binding**:
-  - `authorize_get` issues `__Host-wk_auth=<handle>` (Path=/, no Domain, on every mount, T-6974) and stores `handle_hash = sha256_hex(handle)` on `AuthSession`.
+  - `authorize_get` issues `__Host-wk_auth=<handle>.<older handles>` (Path=/, no Domain, on every mount, T-6974) and stores `handle_hash = sha256_hex(handle)` on `AuthSession`. The cookie keeps the newest 8 handles (T-7147), so sign-ins started in two tabs of one browser both finish; every presented handle is compared in constant time.
   - Every `login-actions` GET and POST (`authenticate`, `first-broker-login`) extracts the `auth` cookie via `kaisatsu_oidc::sign_in_cookie_name("auth")`, hashes its value with SHA-256, and compares it against `auth_session.handle_hash` in constant time (`kaisatsu_crypto::constant_time_str_eq`).
   - Missing or mismatched cookies are refused with the exact expired-session page on GET (`page_id = "expired"`, no CSRF token or details) and `400 Bad Request` (`"login session expired"`) on POST.
 - **K2 Organization pinned by `organization:<alias>` scope**:

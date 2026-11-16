@@ -104,6 +104,34 @@ test("a person builds a dashboard from choices, previews it, and it opens once a
   opened.push(edited);
   await approve(approver.page, PROJECT, edited);
 
+  // Its history: the two approved versions, the first compared with the current, and a restore
+  // asked twice that proposes a Change (T-7150). The journey rejects that Change, so the removal
+  // below meets no open one.
+  await expect
+    .poll(async () => {
+      const answer = await page.request.get(`/api/v1/projects/${PROJECT}/grafana/builder/${uid}/versions`);
+      return answer.ok() ? ((await answer.json()) as { items: unknown[] }).items.length : 0;
+    }, { timeout: 240_000, intervals: [10_000] })
+    .toBe(2);
+  await page.goto(`/projects/${PROJECT}/grafana/dashboards/${uid}?lang=en`);
+  const history = page.getByRole("region", { name: "History" });
+  await expect(history.getByRole("listitem")).toHaveCount(2, { timeout: 30_000 });
+  await history.getByRole("button", { name: "Compare with current" }).click();
+  await expect(history.getByText(`${TITLE} edited`, { exact: true })).toBeVisible();
+  await history.getByRole("button", { name: "Restore", exact: true }).click();
+  await history.getByRole("button", { name: "Yes, propose the restore" }).click();
+  const opening = history.getByRole("link", { name: "Open the change" });
+  await expect(opening).toBeVisible({ timeout: 30_000 });
+  const restoreChange = decodeURIComponent((await opening.getAttribute("href"))?.split("/").pop() ?? "");
+  expect(restoreChange).not.toBe("");
+  opened.push(restoreChange);
+  const rejecting = await csrf(approver.context);
+  const rejected = await approver.page.request.post(`/api/v1/projects/${PROJECT}/changes/${restoreChange}/reject`, {
+    headers: { "x-csrf-token": rejecting, "content-type": "application/json" },
+    data: { reason: "Made by the live journey grafana-builder to test a restore; the journey removes the dashboard next." },
+  });
+  expect(rejected.ok(), await rejected.text()).toBe(true);
+
   // The removal goes through approval too, and the dashboard leaves daiya.
   const token = await csrf(steward.context);
   const removal = await page.request.delete(`/api/v1/projects/${PROJECT}/grafana/builder/${uid}`, { headers: { "x-csrf-token": token } });

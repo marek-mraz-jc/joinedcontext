@@ -86,6 +86,21 @@ describe("the dashboard page", () => {
     await waitFor(() => expect(new URLSearchParams(asked.at(-1)).getAll("var-testid")).toEqual(["run-41", "run-42"]));
   });
 
+  // T-7160: "Add visualization" opens the builder on this dashboard with one new panel to fill.
+  it("offers a proposer of a builder dashboard to add a visualization, and a reader not", async () => {
+    const UID = "jcd-0123456789abcdef";
+    answers[`${BASE}/${UID}`] = { body: VIEW };
+    answers["/api/v1/projects/helsinki/grafana/builder"] = { body: { mayEdit: true, pending: [], refreshes: [], units: [], colors: [] } };
+    const view = renderAt(() => <DashboardPage project="helsinki" uid={UID} />);
+    const add = await screen.findByRole("link", { name: "Add visualization" });
+    expect(add.getAttribute("href")).toBe(`/projects/helsinki/grafana/dashboards/${UID}/edit?add=true`);
+    view.unmount();
+    answers["/api/v1/projects/helsinki/grafana/builder"] = { body: { mayEdit: false, pending: [], refreshes: [], units: [], colors: [] } };
+    renderAt(() => <DashboardPage project="helsinki" uid={UID} />);
+    expect(await screen.findByRole("heading", { level: 1, name: "k6 load" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Add visualization" })).not.toBeInTheDocument();
+  });
+
   it("asks again over a new range and on Refresh now", async () => {
     const user = userEvent.setup();
     renderAt(() => <DashboardPage project="helsinki" uid="k6" />);

@@ -3406,6 +3406,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/grafana/builder/{uid}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List A Dashboard's Versions
+         * @description The versions of a builder dashboard, newest first: each approved Change of its file on the project's default branch, with who wrote it and when (at most 50). Needs read on the project. Changes no data.
+         */
+        get: operations["builder_versions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read A Dashboard Version
+         * @description One version of a builder dashboard read back into choices, to compare with another. Only a version the dashboard's own history lists is read. Needs read on the project and on every Endpoint the version names. Changes no data.
+         */
+        get: operations["builder_version"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Propose Restoring A Dashboard Version
+         * @description Proposes a Change that writes an earlier version of a builder dashboard back as its newest: the version's choices compiled again, checked as an edit is. Waits for approval like every edit. Needs propose on Dashboard and read on every Endpoint the version names.
+         */
+        post: operations["builder_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/grafana/dashboards": {
         parameters: {
             query?: never;
@@ -10091,6 +10151,29 @@ export interface components {
             title: string;
             uid: string;
         };
+        /**
+         * @description One version of a builder dashboard: a commit of its file on the default branch, so one
+         *     approved Change (T-7150). History starts at the file's first commit.
+         */
+        DashboardVersion: {
+            /** @description Who wrote it, as the commit names them; never their e-mail address. */
+            author: string;
+            /** @description When, as the forge dates the commit (RFC 3339). */
+            date: string;
+            /** @description The first line of its message, e.g. `change dashboard Bike stations`. */
+            message: string;
+            /** @description The commit, the `{sha}` of the version's own routes. */
+            sha: string;
+        };
+        /** @description One version read back into choices, to compare with another. */
+        DashboardVersionBoard: {
+            board: components["schemas"]["Board"];
+            sha: string;
+        };
+        /** @description A builder dashboard's versions, newest first. */
+        DashboardVersions: {
+            items: components["schemas"]["DashboardVersion"][];
+        };
         /** @description One dashboard: what the page lays out. Panel queries stay on the server. */
         DashboardView: {
             description?: string | null;
@@ -11948,7 +12031,7 @@ export interface components {
             kind: string;
             smartDataModels: components["schemas"]["CatalogueEntry"][];
         };
-        /** @description One Organization a caller sees (PF-124): its name, the `?org=` value, and its title. */
+        /** @description The Organization of the Portal host: its name and its title. */
         OrganizationSummary: {
             name: string;
             title?: components["schemas"]["Text"];
@@ -12876,9 +12959,9 @@ export interface components {
             items: components["schemas"]["ProjectSummary"][];
             kind: string;
             /**
-             * @description The Organizations that own a listed project, by name, when the installation holds more
-             *     than one (PF-124, ADR-N-058 section 2.7): what the organization switcher offers. Empty
-             *     with one Organization, so a person who sees one gets no switcher.
+             * @description The Organization whose own Portal host the request reached, its one entry; empty on
+             *     every other address. No Portal lists Organizations (T-7151): each runs on its own host,
+             *     and an operator finds them under `GET /organization/addresses`.
              */
             organizations: components["schemas"]["OrganizationSummary"][];
         };
@@ -25566,6 +25649,211 @@ export interface operations {
                 };
             };
             /** @description The forge did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_versions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Dashboard uid */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The versions, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardVersions"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project, or no builder dashboard of that uid in it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The forge did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_version: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Dashboard uid */
+                uid: string;
+                /** @description The version's commit, from the versions list */
+                sha: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The version's choices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardVersionBoard"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The version names an Endpoint the caller may not read */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project, dashboard or version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The version's file does not read back into choices */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The forge did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Dashboard uid */
+                uid: string;
+                /** @description The version's commit, from the versions list */
+                sha: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Proposed; waits for approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderSaved"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not build dashboards, or may not read an Endpoint the version names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project, dashboard or version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The dashboard is that version already, or a Change of it is open */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The version no longer fits: a source, type or attribute it names is gone; the errors name it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The forge or the dashboards service did not answer */
             503: {
                 headers: {
                     [name: string]: unknown;

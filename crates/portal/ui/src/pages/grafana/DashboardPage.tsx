@@ -20,6 +20,7 @@ import type { PanelData, PanelDefinition } from "../../components/panels/PanelVi
 import { PanelView } from "../../components/panels/PanelView";
 import { overrideWords, RefreshPicker, rangeWords, TimeRangeControls } from "../../components/panels/TimePicker";
 import { panelRange, QUICK_RANGES, refreshMs, resolveTime } from "../../components/panels/timeRange";
+import { DashboardHistory } from "./DashboardHistory";
 
 type View = components["schemas"]["DashboardView"];
 type Variable = components["schemas"]["VariableView"];
@@ -244,10 +245,16 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
       actions={
         <>
           {mayEdit ? (
-            <Link to="/projects/$project/grafana/dashboards/$uid/edit" params={{ project, uid }} className={buttonClass("secondary", "sm")}>
-              <Icon name="pencil" className="size-4" />
-              {t("builder.edit")}
-            </Link>
+            <>
+              <Link to="/projects/$project/grafana/dashboards/$uid/edit" params={{ project, uid }} search={{ add: true }} className={buttonClass("primary", "sm")}>
+                <Icon name="plus" className="size-4" />
+                {t("builder.addVisualization")}
+              </Link>
+              <Link to="/projects/$project/grafana/dashboards/$uid/edit" params={{ project, uid }} className={buttonClass("secondary", "sm")}>
+                <Icon name="pencil" className="size-4" />
+                {t("builder.edit")}
+              </Link>
+            </>
           ) : null}
           {safe ? (
             <a className={buttonClass("ghost", "sm")} href={safe} target="_blank" rel="noopener noreferrer">
@@ -376,6 +383,8 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
           )}
         />
       )}
+      {/* The builder's dashboards are files with a history; a provisioned one has none here (T-7150). */}
+      {isBuilderUid(uid) ? <DashboardHistory project={project} uid={uid} mayEdit={mayEdit} /> : null}
     </div>
   );
 }

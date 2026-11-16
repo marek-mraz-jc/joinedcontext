@@ -1178,8 +1178,14 @@ impl AppState {
     fn attach_run_clients(&mut self) {
         // A builder run is scheduled into the cluster this Portal runs in (AG-33). The client is
         // the same in-cluster one the app converger uses; outside a cluster it stays `None` and
-        // a run is refused rather than recorded with no pod behind it.
-        if self.config.agent_settings.is_some() {
+        // a run is refused rather than recorded with no pod behind it. No namespace means no
+        // workspace at all, so no client either (T-7149).
+        if self
+            .config
+            .agent_settings
+            .as_ref()
+            .is_some_and(|settings| settings.namespace.is_some())
+        {
             match crate::apps::kube::KubeClient::in_cluster() {
                 Ok(Some(kube)) => self.kube = Some(Arc::new(kube)),
                 Ok(None) => tracing::info!(

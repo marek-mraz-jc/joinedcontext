@@ -45,10 +45,9 @@ describe("the Organization of a project", () => {
     await waitFor(() => expect(locales.result.current).toEqual(["sk", "en"]));
   });
 
-  it("names the owner, the chosen one on the organization's pages, or the only one", () => {
-    const list = { organizations: [{ name: "hel" }, { name: "za" }], ownerOf: new Map([["zilina", "za"]]) };
+  it("names the owner, else the Organization of the Portal host", () => {
+    const list = { organizations: [], ownerOf: new Map([["zilina", "za"]]) };
     expect(organizationNameOf(list, "zilina")).toBe("za");
-    expect(organizationNameOf(list, "org", "hel")).toBe("hel");
     expect(organizationNameOf(list, "org")).toBeUndefined();
     expect(organizationNameOf({ organizations: [{ name: "mesto-bb" }], ownerOf: new Map() }, "org")).toBe("mesto-bb");
     expect(organizationNameOf(undefined, "zilina")).toBeUndefined();

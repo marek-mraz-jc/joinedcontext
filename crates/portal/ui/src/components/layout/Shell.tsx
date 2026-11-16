@@ -14,8 +14,8 @@ import { PairedTabBar } from "../../connectors/PairedTabBar";
 import { CommandPalette } from "../../navigation/CommandPalette";
 import { PageTools } from "../../navigation/PageTools";
 import { useAuth } from "../../auth/AuthProvider";
-import { localized, ORG_NAMESPACE } from "../../api/manifest";
-import { lastAddress, rememberAddress, rememberProject, useOrganizations, useProjects, useProjectTitles } from "../../api/projects";
+import { ORG_NAMESPACE } from "../../api/manifest";
+import { lastAddress, rememberAddress, rememberProject, useProjects, useProjectTitles } from "../../api/projects";
 import { useAdministers } from "../../api/permissions";
 import { useBranding, useHiddenSections } from "../../branding";
 import {
@@ -48,11 +48,8 @@ function ProjectSelector({ active }: { active: string }) {
   const { t } = useTranslation();
   const known = useProjects().data ?? [];
   const titleOf = useProjectTitles();
-  // With several Organizations the list is the chosen one's (PF-124); the active project stays.
-  const organization = useChosenOrganization(active);
-  const { ownerOf } = useOrganizations().data ?? { ownerOf: new Map<string, string | undefined>() };
-  const shown = organization ? known.filter((name) => ownerOf.get(name) === organization) : known;
-  const projects = shown.includes(active) ? shown : [active, ...shown];
+  // The active project is listed whatever the API says.
+  const projects = known.includes(active) ? known : [active, ...known];
   // The page in hand, so the switch keeps it: a person comparing two projects' endpoints stays
   // in Endpoints instead of walking back from Spaces every time (T-2425, UI-05).
   const here = useRouterState({ select: (state) => sameSection(state.location.pathname) });
@@ -65,6 +62,8 @@ function ProjectSelector({ active }: { active: string }) {
     search: withoutCopy({}),
     href: project === active ? undefined : lastAddress(project),
   });
+  const title = titleOf(active);
+  const titled = title !== active;
   return (
     <Menu>
       <MenuTrigger asChild>
@@ -72,121 +71,54 @@ function ProjectSelector({ active }: { active: string }) {
           variant="secondary"
           size="lg"
           aria-label={t("nav.projects")}
-          className="w-full justify-start gap-2.5 px-2.5 text-left"
+          // The trigger is the sidebar's width, so a long name is cut there; the full name is
+          // in the hint and in the menu, which wraps it (T-7148).
+          title={titled ? `${title} (${active})` : active}
+          // `h-auto!`: the control's fixed height held one line; the title takes two (T-7148).
+          className="h-auto! min-h-control-lg w-full justify-start gap-2.5 px-2.5 py-1.5 text-left"
         >
-          <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-caption font-bold uppercase text-primary-fg">
-            {active.slice(0, 2)}
+          <span
+            aria-hidden="true"
+            data-testid="project-initials"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-caption font-bold tracking-tight text-primary-fg"
+          >
+            {initials(title)}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-body font-semibold text-fg">{titleOf(active)}</span>
-            {/* The slug under the title, the name every path and manifest uses (T-4243). */}
-            <span aria-hidden={titleOf(active) === active || undefined} className="block truncate font-mono text-caption text-fg-muted">
-              {titleOf(active) !== active ? active : "\u00a0"}
+            {/* A title wraps at its words to two lines; a slug is one word, cut on one line. */}
+            <span className={clsx("text-body font-semibold leading-snug text-fg", titled ? "line-clamp-2" : "block truncate")}>
+              {title}
             </span>
+            {/* The slug under the title, the name every path and manifest uses (T-4243); a
+                project without a title is its slug, said once on one line (T-7148). */}
+            {titled ? <span className="block truncate font-mono text-caption text-fg-muted">{active}</span> : null}
           </span>
-          <Icon name="chevronDown" className="size-4 text-fg-subtle" />
-        </Button>
-      </MenuTrigger>
-      {/* The trigger's own width, which Radix measures and publishes: a computed size, not one
-          the spacing scale could name. */}
-      <MenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
-        <MenuLabel>{t("nav.projects")}</MenuLabel>
-        {projects.map((project) => (
-          <MenuItem key={project} asChild>
-            <Link
-              {...switchTo(project)}
-              aria-current={project === active ? "true" : undefined}
-            >
-              {project === active ? <Icon name="check" className="size-4 shrink-0" /> : <span className="size-4 shrink-0" />}
-              {/* Every row the same two lines: the title, then the slug every path uses (owner 2026-10-30). */}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{titleOf(project)}</span>
-                {/* Without a title the slug is the first line, and the second keeps the row's height. */}
-                <span
-                  aria-hidden={titleOf(project) === project || undefined}
-                  className="block truncate font-mono text-caption text-fg-muted"
-                >
-                  {titleOf(project) !== project ? project : "\u00a0"}
-                </span>
-              </span>
-            </Link>
-          </MenuItem>
-        ))}
-      </MenuContent>
-    </Menu>
-  );
-}
-
-/**
- * The Organization the person works in (PF-124): `?org=` when it names one they see, else the
- * active project's. `undefined` when they see one Organization only.
- */
-function useChosenOrganization(active: string): string | undefined {
-  const { organizations, ownerOf } = useOrganizations().data ?? { organizations: [], ownerOf: new Map() };
-  const asked = useRouterState({ select: (state) => (state.location.search as { org?: string }).org });
-  if (organizations.length < 2) {
-    return undefined;
-  }
-  if (asked && organizations.some((organization) => organization.name === asked)) {
-    return asked;
-  }
-  return ownerOf.get(active) ?? undefined;
-}
-
-/**
- * Switches between the Organizations the person sees, for a person who sees more than one
- * (PF-124, ADR-N-058 section 2.7). The choice is kept in `?org=` and opens that Organization's
- * first project on the page in hand; the server listed only Organizations owning a project the
- * person reads, so every entry opens something.
- */
-function OrganizationSwitcher({ active, inSidebar = false }: { active: string; inSidebar?: boolean }) {
-  const { t, i18n } = useTranslation();
-  const data = useOrganizations().data;
-  const known = useProjects().data ?? [];
-  const chosen = useChosenOrganization(active);
-  const here = useRouterState({ select: (state) => sameSection(state.location.pathname) });
-  if (!data || data.organizations.length < 2) {
-    return null;
-  }
-  const titleOf = (name: string) =>
-    localized(data.organizations.find((organization) => organization.name === name)?.title, i18n.language, name);
-  return (
-    <Menu>
-      <MenuTrigger asChild>
-        <Button
-          variant={inSidebar ? "secondary" : "ghost"}
-          size="sm"
-          aria-label={t("nav.organizationSwitch", { organization: chosen ? titleOf(chosen) : "" })}
-          title={t("nav.organizationHint")}
-          className={inSidebar ? "w-full justify-start gap-1.5" : "max-w-48 gap-1.5"}
-        >
-          <Icon name="user" className="size-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-left">{chosen ? titleOf(chosen) : t("nav.organizationChoose")}</span>
           <Icon name="chevronDown" className="size-4 shrink-0 text-fg-subtle" />
         </Button>
       </MenuTrigger>
-      <MenuContent align={inSidebar ? "start" : "end"} className="min-w-56 max-w-80">
-        <MenuLabel>
-          {t("nav.organizationLabel")}
-          <span className="block text-caption font-normal text-fg-muted">{t("nav.organizationHint")}</span>
-        </MenuLabel>
-        {data.organizations.map((organization) => {
-          const first = known.find((name) => data.ownerOf.get(name) === organization.name);
-          if (!first) {
-            return null;
-          }
+      {/* At least the trigger's width (Radix publishes it), else 28rem or the screen less its
+          gutter: the sidebar-wide menu cut the one name it listed (T-7148). */}
+      <MenuContent align="start" className="w-[max(var(--radix-dropdown-menu-trigger-width),min(28rem,calc(100vw-2rem)))]">
+        <MenuLabel>{t("nav.projects")}</MenuLabel>
+        {projects.map((project) => {
+          const current = project === active;
+          const name = titleOf(project);
           return (
-            <MenuItem key={organization.name} asChild>
+            <MenuItem key={project} asChild>
               <Link
-                to="/projects/$project/$plural"
-                params={{ project: organization.name === data.ownerOf.get(active) ? active : first, plural: here.plural }}
-                search={withoutCopy({ org: organization.name })}
-                aria-current={organization.name === chosen ? "true" : undefined}
+                {...switchTo(project)}
+                title={name !== project ? `${name} (${project})` : project}
+                aria-current={current ? "true" : undefined}
+                // Marked by its colour and weight too, not by the check alone (T-7148).
+                className="py-2! [&[aria-current]]:bg-primary-soft [&[aria-current]]:font-semibold [&[aria-current]]:text-primary-soft-fg"
               >
-                {organization.name === chosen ? <Icon name="check" className="size-4" /> : <span className="size-4" />}
-                <span className="min-w-0">
-                  <span className="block truncate">{titleOf(organization.name)}</span>
-                  <span className="block truncate font-mono text-caption text-fg-muted">{organization.name}</span>
+                {current ? <Icon name="check" className="size-4 shrink-0" /> : <span className="size-4 shrink-0" />}
+                {/* A long name wraps instead of being cut; the slug follows only when a title differs. */}
+                <span className="min-w-0 flex-1 wrap-anywhere">
+                  <span className="block">{name}</span>
+                  {name !== project ? (
+                    <span className="block font-mono text-caption text-fg-muted">{project}</span>
+                  ) : null}
                 </span>
               </Link>
             </MenuItem>
@@ -195,6 +127,16 @@ function OrganizationSwitcher({ active, inSidebar = false }: { active: string; i
       </MenuContent>
     </Menu>
   );
+}
+
+/** Up to two initials of a project's name ("Banská Bystrica city data" → "BB"), its badge (T-7148). */
+function initials(name: string): string {
+  return name
+    .split(/[\s\-_.]+/u)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0]?.toLocaleUpperCase() ?? "")
+    .join("");
 }
 
 /** The sections with a route of their own: the generic `$plural` template would resolve to it anyway, with a router warning. */
@@ -804,10 +746,6 @@ function ProjectFrame({
               </span>
             </Link>
           ) : null}
-          {/* On a phone the switcher sits atop the sidebar, where its name has room (UI-15). */}
-          <span className="contents max-sm:hidden">
-            <OrganizationSwitcher active={project} />
-          </span>
           <LanguageSwitcher />
           <JobsMenu />
           <FeedbackButton open={feedbackOpen} onOpenChange={setFeedbackOpen} buttonClassName="hidden sm:inline-flex" />
@@ -830,6 +768,8 @@ function ProjectFrame({
           aria-label={t("nav.main")}
           className={clsx(
             "z-40 w-sidebar shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-surface p-3",
+            // The phone drawer takes the room a phone has, so a project's name is not cut (T-7148).
+            "max-lg:w-sidebar-drawer",
             // The viewport minus the `h-14` header (the below-header token).
             // From lg only: at 768 px the open sidebar left a table 460 px and cut its actions,
             // so a tablet opens it from the menu button like a phone (T-4265, photo audit T-4160 #41).
@@ -838,14 +778,13 @@ function ProjectFrame({
           )}
         >
           {sidebar ? sidebar(closeNav) : (<>
-          <div className="flex flex-col gap-2">
-            <span className="contents sm:hidden">
-              <OrganizationSwitcher active={project} inSidebar />
-            </span>
+          {/* The project and New project read as one block, set off from the
+              sections under it (T-7148). */}
+          <div className="flex flex-col gap-1.5 border-b border-border pb-3">
             <ProjectSelector active={project} />
             {/* Opening a project is a setting of the organization, so the control is always
                 here, disabled with the reason when this caller may not (UI-44, PF-65). */}
-            <NewProjectButton project={project} />
+            <NewProjectButton project={project} inSidebar />
           </div>
           <ul className="flex flex-col gap-0.5">
             {NAV_SECTIONS.filter((section) => !isHiddenSection(section.plural, hiddenSections)).map((section) => {

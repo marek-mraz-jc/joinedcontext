@@ -285,6 +285,23 @@ describe("the dashboard builder page", () => {
     expect(screen.getByRole("link", { name: "Open the change" })).toHaveAttribute("href", "/projects/helsinki/approvals/chg-00000009");
   });
 
+  // T-7160: "Add visualization" on a dashboard opens its next edit with one new panel, selected.
+  it("opens a saved dashboard with one new panel to fill when asked to add a visualization", async () => {
+    await renderRoute({ path: `/projects/helsinki/grafana/dashboards/${UID}/edit?add=1`, answer: answering() });
+    expect(await screen.findByRole("heading", { name: "Panel: Panel 2" })).toBeInTheDocument();
+    expect(screen.getAllByText("Free bikes").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Panel 3")).not.toBeInTheDocument();
+  });
+
+  it("adds no panel to a dashboard whose change waits for approval", async () => {
+    await renderRoute({
+      path: `/projects/helsinki/grafana/dashboards/${UID}/edit?add=1`,
+      answer: answering({ [`GET ${BUILDER}/${UID}`]: () => jsonResponse({ ...SAVED, pending: { uid: UID, title: "Bikes", change: "chg-00000009", url: "https://forge/pulls/9" } }) }),
+    });
+    expect(await screen.findByText("A change of this dashboard waits for approval")).toBeInTheDocument();
+    expect(screen.queryByText("Panel 2")).not.toBeInTheDocument();
+  });
+
   it("says why a preview failed", async () => {
     await renderRoute({
       path: `/projects/helsinki/grafana/dashboards/${UID}/edit`,

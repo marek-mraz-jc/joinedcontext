@@ -79,6 +79,12 @@ pub struct Siblings {
     /// The Portal's public base on each `[[organizations]]` host, beside its own mount's: what
     /// the realm registers a redirect URI for.
     pub organization_portals: Vec<String>,
+    /// The Portal's internal listener in this `jc`, known before the Portal is built: the agent
+    /// proxy's run lookups and model key reports go there (T-7149).
+    pub portal_internal: Option<SocketAddr>,
+    /// The agent proxy `jc` runs beside the assistant (loopback), the Portal's
+    /// `JC_AGENT_PROXY_BASE` (T-7149).
+    pub agent_proxy: Option<SocketAddr>,
 }
 
 /// The loopback address that reaches a listener bound to `addr` (an unspecified bind address is
@@ -136,6 +142,8 @@ impl Siblings {
             listener: reach,
             modules,
             organization_portals: Vec::new(),
+            portal_internal: None,
+            agent_proxy: None,
         }
     }
 
@@ -288,6 +296,7 @@ const PIPELINE_BATCH_RUNS: &str = "3";
 /// | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID` | gateway |
 /// | `JC_PORTAL_MODEL_TOOLS_URL` | model-tools (its loopback listener) |
 /// | `JC_PORTAL_KNOWLEDGE_URL` | assistant (its loopback listener; absent while the module is off) |
+/// | `JC_AGENT_PROXY_BASE`, `JC_PORTAL_AGENT_PROXY_CLIENT_ID` | the assistant's agent proxy (its loopback listener, when `jc` runs it) |
 #[must_use]
 pub fn portal_vars(
     siblings: &Siblings,
@@ -456,6 +465,23 @@ pub fn portal_vars(
         group(
             "JC_PORTAL_KNOWLEDGE_URL",
             vec![("JC_PORTAL_KNOWLEDGE_URL", Some(assistant.internal.clone()))],
+        );
+    }
+    // Agent runs (AG-33): jc's own proxy, whose run callbacks the Portal answers only with the
+    // proxy client's token (AG-52). No namespace: jc schedules no cluster workspace (T-7149).
+    if let Some(proxy) = siblings.agent_proxy {
+        group(
+            "JC_AGENT_PROXY_BASE",
+            vec![
+                (
+                    "JC_AGENT_PROXY_BASE",
+                    Some(format!("http://{}", reach(proxy))),
+                ),
+                (
+                    "JC_PORTAL_AGENT_PROXY_CLIENT_ID",
+                    Some(setup::PROXY_CLIENT.to_owned()),
+                ),
+            ],
         );
     }
     // Host mode: the Portal dials each host-mounted sibling URL it was handed at jc's listener
@@ -879,6 +905,36 @@ pub(crate) mod tests {
         // Off: no knowledge address at all.
         siblings.remove(Module::Assistant);
         assert!(!portal_vars(&siblings, &setup, none).contains_key(key));
+    }
+
+    /// T-7149 (AG-33): with jc's agent proxy beside it the Portal runs agent runs through it, with
+    /// no workspace namespace and the proxy client as the only caller of the run callbacks.
+    /// Before, no jc Portal had agent settings and every conversation answered 503.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn the_portal_runs_agents_through_jcs_proxy() {
+        let (mut siblings, setup, _d) = fixture("https");
+        let mount = jc_router::Mount::new("portal", "https", "city.example", "/portal").unwrap();
+        let portal = |siblings: &Siblings| {
+            crate::modules::portal::config(&mount, none, portal_vars(siblings, &setup, none))
+                .unwrap()
+        };
+        assert!(portal(&siblings).agent_settings.is_none(), "no proxy here");
+        siblings.agent_proxy = Some("0.0.0.0:40126".parse().unwrap());
+        let config = portal(&siblings);
+        let settings = config.agent_settings.as_ref().expect("agent runs on");
+        assert_eq!(settings.proxy_base, "http://127.0.0.1:40126");
+        assert_eq!(settings.namespace, None);
+        assert_eq!(
+            config.agent_proxy_client_id.as_deref(),
+            Some(setup::PROXY_CLIENT)
+        );
+        // An operator's own proxy wins, and with it the operator's own client.
+        let explicit = portal_vars(&siblings, &setup, |k| {
+            (k == "JC_AGENT_PROXY_BASE").then(|| "http://proxy.example:8080".to_owned())
+        });
+        assert!(!explicit.contains_key("JC_AGENT_PROXY_BASE"));
+        assert!(!explicit.contains_key("JC_PORTAL_AGENT_PROXY_CLIENT_ID"));
     }
 
     #[test]

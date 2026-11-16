@@ -3,7 +3,6 @@ import type { JSX } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ApiError, queryKeys, reasonOf } from "../../api/client";
-import { useChosenOrganizationName } from "../../api/projects";
 import { proposeChecked } from "../../api/proposal";
 import { asManifests, isChange, localized, ORG_NAMESPACE } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
@@ -458,7 +457,6 @@ export function RoleBindings({
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language ?? "en";
   const bindings = useReadableList(ORG_NAMESPACE, "rolebindings", "RoleBinding");
-  const chosen = useChosenOrganizationName();
   const spaces = useReadableList(project, "spaces", "ContextSpace", scope !== "organization");
   const [prefill] = useState(() =>
     typeof window !== "undefined" && new URLSearchParams(window.location.search).get("grant")
@@ -485,8 +483,7 @@ export function RoleBindings({
   const loading = bindings.isPending || (scope !== "organization" && spaces.isPending);
   const here = asManifests(bindings.data?.items ?? []).filter((binding) => {
     const at = (binding.spec as BindingSpec).scope;
-    // With several Organizations the page shows the chosen one's bindings (ADR-N-058 2.7).
-    const organizational = Boolean(at?.organization) && (chosen === undefined || at?.organization === chosen);
+    const organizational = Boolean(at?.organization);
     const inProject =
       at?.project === project || (at?.contextSpace !== undefined && spaceNames.has(at.contextSpace));
     return scope === "organization" ? organizational : scope === "project" ? inProject : organizational || inProject;

@@ -38,6 +38,8 @@ use joinedcontext_portal::state::AppState;
 
 const TABLE: &str = include_str!("authz_matrix.yaml");
 const PROJECT: &str = "helsinki";
+/// The one version of the fixture's builder dashboard, as its history lists it.
+const BUILDER_VERSION: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const OTHER_PROJECT: &str = "praha";
 /// The name every seeded object of the fixture carries.
 const EXISTING: &str = "existing";
@@ -388,6 +390,25 @@ async fn fixture() -> AppState {
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .set_body_json(json!({ "Sha": "blob-1", "Content": common::encode("{}") })),
+        )
+        .with_priority(1)
+        .mount(&forge)
+        .await;
+    // Its history: one version, so the version doors reach the file past the caller's check.
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path(format!(
+            "{}/Shako.History(Ref=@r,Path=@p,Top=@n)",
+            common::REPO
+        )))
+        .and(wiremock::matchers::query_param(
+            "@p",
+            format!("'projects/{PROJECT}/grafana/jcd-0123456789abcdef.json'"),
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(json!({ "value": [{
+                "Sha": BUILDER_VERSION, "Message": "add dashboard Bike stations",
+                "Author": "eva", "Date": "2026-11-16T10:00:00Z"
+            }]})),
         )
         .with_priority(1)
         .mount(&forge)

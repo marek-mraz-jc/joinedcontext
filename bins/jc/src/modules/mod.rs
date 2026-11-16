@@ -47,7 +47,7 @@ mod ekiben_pg;
 #[cfg(feature = "gateway")]
 pub mod gateway;
 #[cfg(feature = "kaisatsu")]
-mod kaisatsu;
+pub(crate) mod kaisatsu;
 #[cfg(feature = "model-tools")]
 pub mod model_tools;
 #[cfg(feature = "portal")]
@@ -94,6 +94,9 @@ pub struct BuildCtx<'a> {
     pub secrets: &'a crate::config::Secrets,
     /// `[door]`: verifies kaisatsu tokens for the modules this container serves to others.
     pub door: Option<&'a std::sync::Arc<crate::door::Door>>,
+    /// The Portal's internal listener, bound before any module starts so the agent proxy knows
+    /// its address (T-7149); `None` binds `JC_INTERNAL_BIND` when the Portal is built.
+    pub portal_internal: Option<&'a std::sync::Arc<std::net::TcpListener>>,
 }
 
 /// Builds the router of `module` mounted at `mount`.

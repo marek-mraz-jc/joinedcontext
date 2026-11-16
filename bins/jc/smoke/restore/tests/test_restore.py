@@ -334,7 +334,7 @@ def test_a_type_first_written_after_the_before_run_is_no_restore_fault():
     before = suite.load_rows(per_type(("Event", "anon.ogc.csv", "pass")))
     after = suite.load_rows(per_type(("Event", "anon.ogc.csv", "pass"), ("Vehicle", "anon.ogc.csv", "pass")))
     res = Results("restore", "x")
-    suite.compare(res, "endpoints", before, after, "run endpoints", {"Vehicle"})
+    suite.compare(res, "endpoints", before, after, "run endpoints", {"t1 Vehicle"}, {"ep": "t1"})
     rows = by_id(res)
     assert [r for r in res.rows if r["result"] == "fail"] == []
     assert rows["endpoints/ep Vehicle/anon.ogc.csv"]["result"] == "skip"
@@ -346,26 +346,47 @@ def test_a_type_held_at_dump_time_and_missing_after_stays_red():
     before = suite.load_rows(per_type(("Event", "anon.ogc.csv", "pass"), ("Tree", "anon.count", "pass")))
     after = suite.load_rows(per_type(("Vehicle", "anon.ogc.csv", "pass"), ("Tree", "anon.count", "fail")))
     res = Results("restore", "x")
-    suite.compare(res, "endpoints", before, after, "run endpoints", {"Event", "Tree"})
+    suite.compare(res, "endpoints", before, after, "run endpoints", {"t1 Event", "t1 Tree"}, {"ep": "t1"})
     bad = {r["id"] for r in res.rows if r["result"] == "fail"}
     assert bad == {"endpoints/ep Event/anon.ogc.csv", "endpoints/ep Vehicle/anon.ogc.csv",
                    "endpoints/ep Tree/anon.count"}
 
 
-def test_born_types_needs_every_iri_of_a_short_name_new():
-    text = ("https://smartdatamodels.org/dataModel.Transportation/Vehicle|new\n"
-            "https://uri.etsi.org/ngsi-ld/default-context/Event|new\n"
-            "https://example.org/ns#Event|old\n"
-            "https://smartdatamodels.org/dataModel.Environment/AirQualityObserved|old\n")
-    assert suite.born_types(text) == {"Vehicle"}
-    assert "'2026-11-15T03:00:00Z'::timestamptz" in suite.BORN_SQL.format(since="2026-11-15T03:00:00Z")
+def test_born_types_needs_every_iri_of_a_short_name_new_in_its_tenant():
+    text = ("t1|https://smartdatamodels.org/dataModel.Transportation/Vehicle|new\n"
+            "t1|https://uri.etsi.org/ngsi-ld/default-context/Event|new\n"
+            "t1|https://example.org/ns#Event|old\n"
+            "t1|https://smartdatamodels.org/dataModel.Environment/AirQualityObserved|old\n"
+            "t2|https://uri.etsi.org/ngsi-ld/default-context/Event|new\n")
+    assert suite.born_types(text) == {"t1 Vehicle", "t2 Event"}
+    sql = suite.BORN_SQL.format(since="2026-11-15T03:00:00Z")
+    assert "'2026-11-15T03:00:00Z'::timestamptz" in sql and "GROUP BY tenant_id, t" in sql
+
+
+def test_a_type_another_tenant_held_before_is_still_born_in_the_endpoints_tenant():
+    # smoke 43896843578 (T-7146): q7gad2u6 listed no TrafficFlowObserved before and 1000 its Pipeline
+    # wrote after; another Endpoint's tenant held older seeded rows of the type, so a per-type proof
+    # (born: []) failed the row. The proof is per tenant; a slug of no known tenant has none.
+    born = suite.born_types("helsinki|https://uri.etsi.org/ngsi-ld/default-context/TrafficFlowObserved|new\n"
+                            "zilina|https://uri.etsi.org/ngsi-ld/default-context/TrafficFlowObserved|old\n")
+    before = suite.load_rows({"checks": []})
+    after = suite.load_rows({"checks": [
+        {"id": "anon.types.written", "target": f"{slug} TrafficFlowObserved", "result": "pass", "actual": "count=1000"}
+        for slug in ("q7", "4aw6", "gone")]})
+    res = Results("restore", "x")
+    suite.compare(res, "endpoints", before, after, "run endpoints", born, {"q7": "helsinki", "4aw6": "zilina"})
+    rows = by_id(res)
+    assert rows["endpoints/q7 TrafficFlowObserved/anon.types.written"]["result"] == "skip"
+    assert rows["endpoints/4aw6 TrafficFlowObserved/anon.types.written"]["result"] == "fail"
+    assert rows["endpoints/gone TrafficFlowObserved/anon.types.written"]["result"] == "fail"
 
 
 def test_the_compare_excuses_only_the_types_the_copy_proves_born(tmp_path, monkeypatch):
-    after = {"endpoints": per_type(("Event", "one", "pass"), ("Vehicle", "one", "pass"))}
-    res, meta, ops = run_fake(tmp_path, monkeypatch, after=after, born={"Vehicle"})
+    after = {"endpoints": {**per_type(("Event", "one", "pass"), ("Vehicle", "one", "pass")), "tenants": {"ep": "t1"}}}
+    res, meta, ops = run_fake(tmp_path, monkeypatch, after=after, born={"t1 Vehicle", "t2 Event"})
     rows = by_id(res)
-    assert rows["step.born"]["result"] == "pass" and meta["born"] == ["Vehicle"] and meta["bornSince"] == ops.since
+    assert rows["step.born"]["result"] == "pass" and meta["born"] == ["t1 Vehicle", "t2 Event"]
+    assert meta["bornSince"] == ops.since
     assert rows["endpoints/ep Vehicle/one"]["result"] == "skip"
     assert rows["endpoints/ep Event/one"]["result"] == "fail"  # absent before, no proof
 
