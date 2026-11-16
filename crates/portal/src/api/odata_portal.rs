@@ -968,6 +968,49 @@ pub static DOORS: &[Door] = &[
         &[],
         Who::Administrator,
     ),
+    // A person's rights in a project, an operation by name, a model's LinkML source and an App
+    // preview's reports (T-7176). An operation's input stays in the POST body: the registry binds
+    // jc_pipeline_validate and the jc_repository_* reads as functions, whose input is the URL.
+    door(
+        "portal_permissions_me",
+        Project,
+        Method::GET,
+        "/projects/{project}/permissions/me",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_operation_run",
+        Project,
+        Method::POST,
+        "/projects/{project}/ops/{name}",
+        &[NAME, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_model_source",
+        Project,
+        Method::GET,
+        "/projects/{project}/datamodels/{name}/source",
+        &[NAME],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_preview_error_report",
+        Project,
+        Method::POST,
+        "/projects/{project}/agent-runs/{id}/preview-errors",
+        &[RUN, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_preview_observation_report",
+        Project,
+        Method::POST,
+        "/projects/{project}/agent-runs/{id}/preview-observations",
+        &[RUN, BODY],
+        Who::ProjectReader,
+    ),
     door(
         "portal_space_temporal_audit",
         Project,

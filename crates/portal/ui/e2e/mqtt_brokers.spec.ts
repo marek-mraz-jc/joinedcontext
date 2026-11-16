@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
-import { manifestReadsAsRest } from "./manifestReads";
+import { manifestReadsAsRest, restOrDoor } from "./manifestReads";
 import { manifestAsRest } from "../tests/odata";
 
 /** The broker form's shared draft: its REST door, or the service's jc_draft_get/put the form calls (T-7119). */
@@ -117,7 +117,7 @@ test.describe("MQTT brokers", () => {
   test("a steward adds a broker whose role picks its device from the project's accounts", async ({ page }) => {
     await stubApi(page);
     // A route added later answers first: this steward may create brokers here.
-    await page.route("**/api/v1/projects/helsinki/permissions/me", (route) =>
+    await page.route(restOrDoor("/projects/helsinki/permissions/me", "portal_permissions_me"), (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ project: PROJECT, bootstrap: true, grants: [] }) }),
     );
     // The form saves its shared draft as it is typed (AG-61); the draft comes back as written.
@@ -211,7 +211,7 @@ test.describe("MQTT brokers", () => {
 
   test("a steward fences a broker to the city's networks and a bad range is named at the field (PF-129)", async ({ page }) => {
     await stubApi(page);
-    await page.route("**/api/v1/projects/helsinki/permissions/me", (route) =>
+    await page.route(restOrDoor("/projects/helsinki/permissions/me", "portal_permissions_me"), (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ project: PROJECT, bootstrap: true, grants: [] }) }),
     );
     await page.route(MQTT_DRAFT, async (route) => {
@@ -255,7 +255,7 @@ test.describe("MQTT brokers", () => {
 
   test("a steward raises the connections one address may hold for a NAT'd fleet (T-5888)", async ({ page }) => {
     await stubApi(page);
-    await page.route("**/api/v1/projects/helsinki/permissions/me", (route) =>
+    await page.route(restOrDoor("/projects/helsinki/permissions/me", "portal_permissions_me"), (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ project: PROJECT, bootstrap: true, grants: [] }) }),
     );
     const drafted: unknown[] = [];
@@ -338,7 +338,7 @@ test.describe("MQTT brokers", () => {
 
   test("a steward who reads no account is told where one comes from", async ({ page }) => {
     await stubApi(page);
-    await page.route("**/api/v1/projects/helsinki/permissions/me", (route) =>
+    await page.route(restOrDoor("/projects/helsinki/permissions/me", "portal_permissions_me"), (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ project: PROJECT, bootstrap: true, grants: [] }) }),
     );
     await page.route(rest("/api/v1/projects/helsinki/serviceaccounts"), (route) =>
@@ -405,7 +405,7 @@ test.describe("one MQTT broker's page (T-6103)", () => {
 
   async function openBroker(page: Page, measured: unknown, refused = false, permissions: unknown = STEWARD): Promise<void> {
     await stubApi(page);
-    await page.route("**/api/v1/projects/helsinki/permissions/me", (route) =>
+    await page.route(restOrDoor("/projects/helsinki/permissions/me", "portal_permissions_me"), (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify(permissions) }),
     );
     await page.route(rest("/api/v1/projects/helsinki/serviceaccounts"), (route) =>

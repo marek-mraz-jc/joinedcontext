@@ -4,8 +4,8 @@ import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { api, ApiError, unwrap, reasonOf } from "../../api/client";
-import { door, type RestAnswer } from "../../api/odata";
+import { ApiError, reasonOf } from "../../api/client";
+import { door, readManifest, type RestAnswer } from "../../api/odata";
 import { proposeChecked } from "../../api/proposal";
 import { isChange, ORG_NAMESPACE } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
@@ -85,15 +85,13 @@ function ProfileCard({ project, profile }: { project: string; profile: ProfileAc
 
   const propose = useMutation({
     mutationFn: async (block: unknown) => {
-      const path = { project: ORG_NAMESPACE, plural: "agentprofiles", name: profile.name };
       // `as unknown as { spec: … }` was a double cast: it silenced the compiler rather than
       // describing the value, so a shape change in the API was met when someone proposed an
       // access change to a live profile instead of at build. `Manifest` is that shape — the
       // envelope with its `spec` as a record — and the envelope's own `spec` is the only part
       // that differs, so one assertion of the declared type replaces two of nothing.
-      const current = (await unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path } }),
-      )) as Manifest;
+      const path = { project: ORG_NAMESPACE, plural: "agentprofiles", name: profile.name };
+      const current = (await readManifest(path.project, path.plural, path.name)) as Manifest;
       const manifest: Record<string, unknown> = { ...current, spec: { ...current.spec } };
       delete manifest.status;
       const spec = manifest.spec as Record<string, unknown>;

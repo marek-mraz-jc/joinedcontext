@@ -316,19 +316,16 @@ describe("preview observations (SDK-27)", () => {
   });
 
   it("posts the first observation of each version to the run once", async () => {
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 409 }));
-    const relay = observationRelay("helsinki", "r1", fetchImpl as unknown as typeof fetch);
+    const sent = vi.fn(async () => Promise.reject(new Error("409")));
+    const relay = observationRelay("helsinki", "r1", sent);
     const first = previewObservationOf(observation)!;
     relay(first);
     relay({ ...first, pages: [{ label: "Later", text: "", rows: [] }] });
     relay({ ...first, version: 3 });
     await Promise.resolve();
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("/api/v1/projects/helsinki/agent-runs/r1/preview-observations");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({ version: 2, pages: observation.pages, failedRequests: observation.failedRequests });
-    expect((fetchImpl.mock.calls[1] as unknown as [string, RequestInit])[1].body).toContain('"version":3');
+    expect(sent).toHaveBeenCalledTimes(2);
+    expect(sent.mock.calls[0]).toEqual([{ version: 2, pages: observation.pages, failedRequests: observation.failedRequests }]);
+    expect((sent.mock.calls[1] as unknown as [{ version: number }])[0].version).toBe(3);
   });
 });
 

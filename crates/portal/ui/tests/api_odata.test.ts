@@ -18,6 +18,8 @@ import {
   listRuns,
 } from "../src/api/odata";
 import { importBody } from "../src/api/proposal";
+import { callOperation } from "../src/api/operations";
+import { readModelSource } from "../src/api/datamodelSource";
 import { announceSessionEnded } from "../src/api/sessionEnded";
 import { announceStepUp, stepUpUrl } from "../src/api/stepUp";
 import { manifestAsRest, odataCall, odataError, odataValue } from "./odata";
@@ -178,6 +180,31 @@ describe("the Portal's OData client (T-6812)", () => {
     expect(new URL(sent[1].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_app_restore");
     await expect(sent[1].json()).resolves.toEqual({ name: "air-map", body: { commit: "abc1234" } });
     expect(new URL(sent[2].url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_app_templates()");
+  });
+
+  it("sends a person's rights, an operation, a model's source and a preview's reports to their doors, an operation's input in the body (T-7176)", async () => {
+    const sent: Request[] = [];
+    // Not vi.stubGlobal: tests/setup.ts would answer these doors from their REST stubs.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      sent.push(request);
+      return odataValue(request.url.includes("portal_model_source") ? "id: air\n" : { ok: true });
+    });
+    await door("portal_permissions_me", {}, "air");
+    const pipeline = { kind: "Pipeline", spec: { input: { stdin: {} } } };
+    await expect(callOperation("air", "jc_pipeline_validate", { pipeline, records: [] })).resolves.toEqual({ ok: true, status: 200, output: { ok: true } });
+    await expect(readModelSource("air", "weather")).resolves.toBe("id: air\n");
+    await doorAction("portal_preview_error_report", { id: "r1", body: { message: "boom" } }, "air");
+    expect(new URL(sent[0].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_permissions_me()");
+    const operation = new URL(sent[1].url);
+    expect(sent[1].method).toBe("POST");
+    expect(operation.pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_operation_run");
+    // The manifest travels in the action's body, never in the URL a function would carry it in.
+    expect(operation.search).toBe("");
+    await expect(sent[1].json()).resolves.toEqual({ name: "jc_pipeline_validate", body: { pipeline, records: [] } });
+    expect(new URL(sent[2].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_model_source(name=@name)");
+    expect(new URL(sent[3].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_preview_error_report");
+    await expect(sent[3].json()).resolves.toEqual({ id: "r1", body: { message: "boom" } });
   });
 
   it("imports manifests through the project's jc_project_import with its If-Match, a check as dryRun (T-7143)", async () => {

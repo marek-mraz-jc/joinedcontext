@@ -289,7 +289,7 @@ slots:
         if (url.includes("/permissions/me")) {
           return new Response(JSON.stringify({ grants: [{ rule: { kinds: ["DataModel"], verbs } }] }), { status: 200 });
         }
-        if (url.includes("/datamodels/air-quality/source")) return new Response(SOURCE, { status: 200 });
+        if (url.includes("/datamodels/air-quality/source")) return new Response(SOURCE, { status: 200, headers: { "Content-Type": "text/yaml" } });
         return new Response(JSON.stringify({ items: [] }), { status: 200 });
       }),
     );

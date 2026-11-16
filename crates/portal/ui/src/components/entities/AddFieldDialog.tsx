@@ -7,8 +7,8 @@ import { useId, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { api, unwrap } from "../../api/client";
-import { door, doorAction } from "../../api/odata";
+import { ApiError } from "../../api/client";
+import { door, doorAction, readManifest } from "../../api/odata";
 import { importChecked } from "../../api/proposal";
 import { writeModelSource } from "../../api/datamodelSource";
 import { isChange } from "../../api/manifest";
@@ -127,14 +127,14 @@ export function AddFieldDialog({ project, modelName, source, type, open, onOpenC
     }
     setBusy(true);
     try {
-      const account = await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-        params: { path: { project, plural: "serviceaccounts", name: "pipelines" } },
+      const account = await readManifest(project, "serviceaccounts", "pipelines").catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
       });
-      if (account.response.status === 404) {
+      if (account === null) {
         setRefusals([t("spaces.fields.formula.noAccount")]);
         return;
       }
-      await unwrap(account);
       const applied = withFormula(applyOperations(source, fieldOperations(draft, model, type)), draft.name, draft.expression);
       if (applied.refused.length > 0) {
         setRefusals(applied.refused.map((r) => r.reason));

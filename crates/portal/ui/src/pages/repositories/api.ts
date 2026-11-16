@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { ApiError, api, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { doorAction } from "../../api/odata";
 
 /**
  * The repository reads of the Portal registry (`jc_repository_*`, src/ops/repositories.rs): one
- * source for these pages, `POST …/ops/{name}` and MCP. A refusal comes back as the `ApiError` the
+ * source for these pages, the `portal_operation_run` door and MCP. A refusal comes back as the `ApiError` the
  * shared failure states read.
  */
 export type RepositoryRole = "configuration" | "project" | "application";
@@ -133,12 +134,7 @@ export interface RepositorySettings {
 }
 
 export async function readRepository<T>(project: string, name: string, input: Record<string, unknown>): Promise<T> {
-  return (await unwrap(
-    await api.POST("/api/v1/projects/{project}/ops/{name}", {
-      params: { path: { project, name } },
-      body: input,
-    }),
-  )) as T;
+  return (await doorAction("portal_operation_run", { name, body: input }, project)) as T;
 }
 
 /** One read, cached under the project, the operation and its input. */

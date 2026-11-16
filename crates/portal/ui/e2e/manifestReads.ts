@@ -1,5 +1,5 @@
 import type { Page, Request, Route } from "@playwright/test";
-import { actsOnEntity, answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "../tests/odata";
+import { actsOnEntity, answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, odataCall, proposalAsRest } from "../tests/odata";
 
 // T-7103: the pages read a kind's manifests through the Organization's OData service ($select of
 // spec, status, metadata: api/odata.ts listManifests, readManifest). The server proves each answers
@@ -140,6 +140,15 @@ export function changeAt(id: string, action?: "approve" | "reject"): (url: URL) 
   return (url) =>
     url.pathname.endsWith(rest) ||
     (decodeURIComponent(url.pathname).startsWith("/api/v1/changes(project=") && decodeURIComponent(url.pathname).endsWith(key));
+}
+
+/**
+ * A REST address ending in `rest`, or the Portal door `door` that stands for it (T-7176), for a
+ * `page.route` whose stub answers the REST door: Playwright matches the address the page sent, the
+ * stub meets the REST one.
+ */
+export function restOrDoor(rest: string, door: string): (url: URL) => boolean {
+  return (url) => decodeURIComponent(url.pathname).endsWith(rest) || odataCall(url)?.name === door;
 }
 
 export function manifestReadsAsRest(page: Page): void {
