@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -132,8 +132,8 @@ function TopicsTable({ project, broker, messages }: { project: string; broker: s
       text: (row) => (row.topicFilter ? `${hopText(row.dataSource)} ${row.pipeline ? hopText(row.pipeline) : t("mqttbrokers.topics.noPipeline")}` : ""),
       cell: (row) => <Via project={project} row={row} />,
     },
-    // A type is one word: it never breaks inside (WeatherObserved, not WeatherObserv|ed).
-    { key: "type", label: t("mqttbrokers.topics.type"), text: (row) => row.type ?? "", cell: (row) => <span className="whitespace-nowrap">{row.type ?? "—"}</span> },
+    // A type is one word: break-word keeps it whole, where the cells' anywhere drew WeatherObserv|ed.
+    { key: "type", label: t("mqttbrokers.topics.type"), text: (row) => row.type ?? "", cell: (row) => <span className="[overflow-wrap:break-word]">{row.type ?? "—"}</span> },
     {
       key: "attributes",
       label: t("mqttbrokers.topics.attributes"),
@@ -325,21 +325,10 @@ export function CapturedList({ project, broker, captured, heading }: { project: 
   );
 }
 
-/** A topic filter that wraps only after a `/`, never inside a level (`devices/*/status`). */
+/**
+ * A topic filter that wraps only where a line may break, after a `/` (`devices/+/status`), never
+ * inside a level: break-word, unlike the cells' anywhere, keeps each level in the column's minimum width.
+ */
 function TopicFilter({ filter }: { filter: string }): JSX.Element {
-  const levels = filter.split("/");
-  return (
-    <code className="font-mono text-caption [overflow-wrap:normal] [word-break:keep-all]" data-topic-filter>
-      {levels.map((level, index) => (
-        <Fragment key={index}>
-          {index > 0 ? (
-            <>
-              /<wbr />
-            </>
-          ) : null}
-          <span className="whitespace-nowrap">{level}</span>
-        </Fragment>
-      ))}
-    </code>
-  );
+  return <code className="font-mono text-caption [overflow-wrap:break-word]">{filter}</code>;
 }
