@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { axeViolations } from "./axe";
+import { greenVerdict, isCheck } from "./verdict";
 
 // T-6096: the Flows page is gone. Its ingestion set-ups start from Data sources, and the old
 // address lands on the project's home. `vite preview` has no Portal API behind it, so the browser
@@ -70,6 +71,19 @@ async function stubApi(page: Page, { blueprints = BLUEPRINTS, refuse = false } =
     return json({ apiVersion: API, kind: "List", items: [] });
   });
   return posted;
+}
+
+/** The Portal's answer to a template's Check: the plan of `fields` and a green verdict fresh for the draft sent. */
+async function answerCheck(page: Page, name: string, fields: { path: string; to: string }[]): Promise<void> {
+  await page.route((url) => url.pathname.startsWith(`/api/v1/projects/${PROJECT}/datasources`), async (route) => {
+    const request = route.request();
+    if (!isCheck(request.method(), request.url())) return route.fallback();
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: API, kind: "DataSource", metadata: { name, namespace: PROJECT }, plan: { fields }, ...(greenVerdict(request.postData()) as object) }),
+    });
+  });
 }
 
 async function shot(page: Page, state: string): Promise<void> {
@@ -250,6 +264,11 @@ test.describe("ready-made set-ups on Data sources", () => {
   // saved carries the format and the sheet.
   test("a spreadsheet template names its sheet, refuses a name no workbook holds, and fills the form", async ({ page }) => {
     await stubApi(page);
+    await answerCheck(page, "stations-2026", [
+      { path: "spec.http.url", to: "https://data.example.org/stats/stations-2026.xlsx" },
+      { path: "spec.http.format", to: "xlsx" },
+      { path: "spec.http.sheet", to: "Stations 2026" },
+    ]);
     await page.goto(`/projects/${PROJECT}/datasources/new?lang=en`);
     await page.getByRole("button", { name: /Spreadsheet \(Excel, ODS\)/ }).click();
     const gallery = page.getByTestId("datasource-templates");
@@ -271,6 +290,8 @@ test.describe("ready-made set-ups on Data sources", () => {
     await expect(form.getByRole("textbox", { name: "Sheet", exact: true })).toHaveValue("Stations 2026");
     await expect(form.getByRole("combobox", { name: "Body format" })).toHaveValue(/xlsx|1/);
     await expect(form.getByRole("textbox", { name: /URL/ })).toHaveValue("https://data.example.org/stats/stations-2026.xlsx");
+    // The check judged this very draft: the change can be proposed.
+    await expect(page.getByRole("button", { name: "Propose change" })).toBeEnabled();
     await shot(page, "sheet-applied");
     expect(await axeViolations(page)).toEqual([]);
   });
@@ -280,21 +301,10 @@ test.describe("ready-made set-ups on Data sources", () => {
   // the form it fills carries format shapefile.
   test("a shapefile template asks for the zip's address and fills the form with format shapefile", async ({ page }) => {
     await stubApi(page);
-    await page.route((url) => url.pathname.startsWith(`/api/v1/projects/${PROJECT}/datasources`), async (route) =>
-      route.request().method() !== "POST"
-        ? route.fallback()
-        : route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: JSON.stringify({
-              apiVersion: API,
-              kind: "DataSource",
-              metadata: { name: "kaupunginosat", namespace: PROJECT },
-              plan: { fields: [{ path: "spec.http.url", to: "https://data.example.org/kartta/kaupunginosat.zip" }, { path: "spec.http.format", to: "shapefile" }] },
-              verdict: { ok: true, findings: [], checkedAt: "2026-11-15T21:30:00Z", inputDigest: "sha256:7092" },
-            }),
-          }),
-    );
+    await answerCheck(page, "kaupunginosat", [
+      { path: "spec.http.url", to: "https://data.example.org/kartta/kaupunginosat.zip" },
+      { path: "spec.http.format", to: "shapefile" },
+    ]);
     await page.goto(`/projects/${PROJECT}/datasources/new?lang=en`);
     await page.getByRole("button", { name: /Shapefile \(zipped\)/ }).click();
     const gallery = page.getByTestId("datasource-templates");
@@ -314,6 +324,8 @@ test.describe("ready-made set-ups on Data sources", () => {
     const form = page.getByRole("group", { name: "HTTP endpoint" });
     await expect(form.getByRole("combobox", { name: "Body format" })).toHaveValue(/shapefile|2/);
     await expect(form.getByRole("textbox", { name: /URL/ })).toHaveValue("https://data.example.org/kartta/kaupunginosat.zip");
+    // The check judged this very draft: the change can be proposed.
+    await expect(page.getByRole("button", { name: "Propose change" })).toBeEnabled();
     await shot(page, "shapefile-applied");
     expect(await axeViolations(page)).toEqual([]);
   });
