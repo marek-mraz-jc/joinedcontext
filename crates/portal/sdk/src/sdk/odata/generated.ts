@@ -983,6 +983,8 @@ export interface Functions {
   portal_knowledge_search: { source: string; q?: string; limit?: number };
   portal_knowledge_source_list: Record<string, never>;
   portal_knowledge_usage: { deployment: string };
+  portal_mcp_confirmation_get: { id: string };
+  portal_mcp_elicitation_get: { projectName: string; id: string };
   portal_mqtt_allowance: Record<string, never>;
   portal_mqtt_binding_list: { broker: string };
   portal_mqtt_broker_access: { broker: string; account?: string };
@@ -1114,6 +1116,8 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_knowledge_search: ["Project"],
   portal_knowledge_source_list: ["Project"],
   portal_knowledge_usage: ["Project"],
+  portal_mcp_confirmation_get: ["Organization"],
+  portal_mcp_elicitation_get: ["Organization"],
   portal_mqtt_allowance: ["Project"],
   portal_mqtt_binding_list: ["Project"],
   portal_mqtt_broker_access: ["Project"],
@@ -1241,6 +1245,8 @@ export interface Actions {
   portal_knowledge_inclusion_set: { source: string; body?: unknown };
   portal_knowledge_recrawl: { source: string };
   portal_kpi_check: { body?: unknown };
+  portal_mcp_confirmation_decide: { id: string; body?: unknown };
+  portal_mcp_elicitation_decide: { projectName: string; id: string; body?: unknown };
   portal_mqtt_captured_clear: { broker: string };
   portal_mqtt_device_propose: { broker: string; body?: unknown };
   portal_mqtt_test_publish: { broker: string; body?: unknown };
@@ -1370,6 +1376,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_knowledge_inclusion_set: ["Project"],
   portal_knowledge_recrawl: ["Project"],
   portal_kpi_check: ["Project"],
+  portal_mcp_confirmation_decide: ["Organization"],
+  portal_mcp_elicitation_decide: ["Organization"],
   portal_mqtt_captured_clear: ["Project"],
   portal_mqtt_device_propose: ["Project"],
   portal_mqtt_test_publish: ["Project"],

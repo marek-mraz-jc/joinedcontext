@@ -968,6 +968,68 @@ async fn decide(
     )
 }
 
+/// The page's question through the OData service's Portal door (T-7132): a `GET` of
+/// `portal_mcp_elicitation_get`, or with `decision` a `POST` of `portal_mcp_elicitation_decide`.
+async fn decide_door(
+    app: &axum::Router,
+    project: &str,
+    id: &str,
+    subject: &str,
+    decision: Option<&str>,
+) -> (StatusCode, Value) {
+    use joinedcontext_portal::organization_host::{scope, OrganizationHost};
+    // The Organization the page's host names, as its middleware pins it; the session is that
+    // host's cookie.
+    let host = || OrganizationHost {
+        organization: "hel".to_owned(),
+        base: "https://hel.example".parse().unwrap(),
+    };
+    let (cookie, token) = scope(host(), async {
+        let token = joinedcontext_portal::auth::csrf::Token::mint();
+        let session = session_cookie(subject);
+        let session = session
+            .rsplit_once("; ")
+            .map_or(session.as_str(), |(s, _)| s);
+        let cookie = format!(
+            "{session}; {}={}",
+            joinedcontext_portal::auth::csrf::CSRF_COOKIE,
+            token.as_str()
+        );
+        (cookie, token.as_str().to_owned())
+    })
+    .await;
+    let (method, uri, body) = match decision {
+        None => (
+            "GET",
+            format!(
+                "/api/v1/Organization/JoinedContext.Portal.portal_mcp_elicitation_get(projectName=@p,id=@i)?@p='{project}'&@i='{id}'"
+            ),
+            Body::empty(),
+        ),
+        Some(decision) => (
+            "POST",
+            "/api/v1/Organization/JoinedContext.Portal.portal_mcp_elicitation_decide".to_owned(),
+            Body::from(
+                json!({ "projectName": project, "id": id, "body": { "decision": decision } })
+                    .to_string(),
+            ),
+        ),
+    };
+    let request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("cookie", cookie.as_str())
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, token)
+        .body(body)
+        .unwrap();
+    let resp = scope(host(), app.clone().oneshot(request)).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let answer: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    (status, answer.get("value").cloned().unwrap_or(answer))
+}
+
 async fn rpc(app: axum::Router, token: &str, body: Value) -> Value {
     let resp = app
         .oneshot(
@@ -1602,6 +1664,13 @@ async fn a_red_call_asks_the_person_before_it_runs_and_a_refusal_runs_nothing() 
         "the page links what the call would delete: {question}"
     );
     assert_eq!(question["decision"], Value::Null);
+    let (status, through) =
+        decide_door(&app, "ovzdusie", &elicitation_id, "steward.user", None).await;
+    assert_eq!(status, StatusCode::OK, "{through}");
+    assert_eq!(
+        through, question,
+        "the Portal door answers as the REST door"
+    );
 
     // 2. An answer to a question nobody asked is refused, and still nothing runs.
     let forged = call(json!({
@@ -1697,9 +1766,11 @@ async fn a_red_call_asks_the_person_before_it_runs_and_a_refusal_runs_nothing() 
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    let again_page = format!("/api/v1/projects/ovzdusie/mcp-elicitations/{again_id}/decision");
-    let (status, _) = decide(&app, &again_page, ("cookie", &person), Some("accept")).await;
-    assert_eq!(status, StatusCode::OK);
+    // The page decides through the OData service's Portal door (T-7132).
+    let (status, decided) =
+        decide_door(&app, "ovzdusie", &again_id, "steward.user", Some("accept")).await;
+    assert_eq!(status, StatusCode::OK, "{decided}");
+    assert_eq!(decided["decision"], json!("accept"));
     let accepted = call(json!({
         "name": "jc_resource_delete",
         "arguments": arguments,
