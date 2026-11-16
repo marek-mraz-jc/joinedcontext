@@ -8626,7 +8626,7 @@
      "advanced": false,
      "optional": false,
      "default": null,
-     "description": "The SHA256 fingerprint of the server's host key; the runner connects only to a server presenting this key. Ask the server's operator, or run ssh-keyscan -p 22 sftp.example.org | ssh-keygen -lf - and check it with them, e.g. SHA256:Nh0Me49Zh9fDw/VYUfq43IJmI1T+XrjiYONPND8GzaM."
+     "description": "The server's SHA256 host key fingerprint, for example SHA256:Nh0Me49Zh9fDw/VYUfq43IJmI1T+XrjiYONPND8GzaM; only a server presenting it is accepted. Get it from the operator, or run ssh-keyscan host | ssh-keygen -lf - and confirm with them."
     },
     {
      "path": "credentials",

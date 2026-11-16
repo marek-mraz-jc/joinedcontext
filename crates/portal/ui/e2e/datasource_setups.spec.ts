@@ -140,10 +140,10 @@ test.describe("ready-made set-ups on Data sources", () => {
     const type = page.getByTestId("form-page").getByLabel("Type", { exact: true });
     await expect(type.locator('option[value="nats"]')).toHaveCount(1);
     const offered = await type.locator("option").evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
-    // sql_select and aws_s3 joined once ekiben built them (T-7054, T-7079); ftp and imap are
-    // ekiben's own (T-7092).
-    for (const name of ["kafka", "amqp_0_9", "stdin", "http_server"]) expect(offered).not.toContain(name);
-    expect(offered).toEqual(expect.arrayContaining(["http_client", "nats", "nats_jetstream", "csv", "websocket", "sql_select", "aws_s3", "ftp", "imap"]));
+    // sql_select and aws_s3 joined once ekiben built them (T-7054, T-7079), amqp_0_9 and sftp
+    // with T-7090; ftp and imap are ekiben's own (T-7092).
+    for (const name of ["kafka", "stdin", "http_server"]) expect(offered).not.toContain(name);
+    expect(offered).toEqual(expect.arrayContaining(["http_client", "nats", "nats_jetstream", "csv", "websocket", "sql_select", "aws_s3", "amqp_0_9", "sftp", "ftp", "imap"]));
     await type.selectOption("nats");
     await shot(page, "runner-input-nats");
   });
@@ -155,7 +155,7 @@ test.describe("ready-made set-ups on Data sources", () => {
   test("an ftp source is set up from its form, its password a secret reference", async ({ page }) => {
     await stubApi(page);
     const posted: string[] = [];
-    await page.route(`**/api/v1/projects/${PROJECT}/datasources**`, async (route) => {
+    await page.route((url) => url.pathname.startsWith(`/api/v1/projects/${PROJECT}/datasources`), async (route) => {
       const request = route.request();
       if (request.method() !== "POST") return route.fallback();
       posted.push(request.postData() ?? "");
@@ -282,7 +282,7 @@ test.describe("ready-made set-ups on Data sources", () => {
   // the form it fills carries format shapefile.
   test("a shapefile template asks for the zip's address and fills the form with format shapefile", async ({ page }) => {
     await stubApi(page);
-    await page.route(`**/api/v1/projects/${PROJECT}/datasources**`, async (route) =>
+    await page.route((url) => url.pathname.startsWith(`/api/v1/projects/${PROJECT}/datasources`), async (route) =>
       route.request().method() !== "POST"
         ? route.fallback()
         : route.fulfill({
