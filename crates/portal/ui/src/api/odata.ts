@@ -117,6 +117,7 @@ type Answer<O extends keyof operations> = operations[O] extends {
 interface Answers {
   jc_access_explore: Answer<"explore_access">;
   jc_access_simulate: Answer<"simulate_access">;
+  jc_catalogue_draft: Answer<"draft_publication">;
   jc_change_history: Answer<"list_change_history">;
   jc_endpoint_preview: Answer<"preview_endpoint">;
   jc_serviceaccount_access: Answer<"account_access">;

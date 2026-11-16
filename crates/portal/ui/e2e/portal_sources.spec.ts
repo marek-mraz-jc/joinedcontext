@@ -1,10 +1,14 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
 
 // T-6876 (ODP-15): a portal's Sources and Datasets tabs on stubbed routes. Every state at 1440
 // and 400 px (empty, filled, error, refusal), and one journey that adds a dcat-ap source, tests it,
 // runs it, reads its run log and hides a dataset, each write a checked proposal.
+
+// The tabs read and write through the portal doors (T-7117); the stubs answer their REST doors.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 const HOSTS = { items: [{ organization: "bbsk", hosts: ["doprava.bbsk.sk"], opendata: "https://opendata.bbsk.sk" }] };
 

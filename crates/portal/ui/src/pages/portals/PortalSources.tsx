@@ -2,7 +2,9 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
+import type { RestAnswer } from "../../api/odata";
 import { isChange, ORG_NAMESPACE } from "../../api/manifest";
 import type { Change, ResourceProposal } from "../../api/manifest";
 import { useOrganizations } from "../../api/projects";
@@ -271,7 +273,7 @@ function SourceCard({
   const runsKey = ["portalSourceRuns", portal, source.name];
   const test = useMutation({
     mutationFn: async () =>
-      unwrap(await api.POST("/api/v1/projects/org/portals/{name}/sources/{source}/test", { params: { path } })),
+      (await doorAction("portal_portal_source_test", path)) as RestAnswer<"test_portal_source">,
     onSuccess: (answer) => {
       const outcome = answer.outcome;
       setNotice({ tone: outcome === "ok" ? "success" : "danger", text: t(outcomeKey(outcome), { type: source.type }) });
@@ -280,8 +282,7 @@ function SourceCard({
   });
   const run = useMutation({
     mutationFn: async () => {
-      const answer = await api.POST("/api/v1/projects/org/portals/{name}/sources/{source}/runs", { params: { path } });
-      if (answer.error) throw new ApiError(answer.response.status, answer.error.detail ?? answer.response.statusText, answer.error);
+      await doorAction("portal_portal_source_run", path);
     },
     onSuccess: () => {
       setNotice({ tone: "info", text: t("portals.sources.started") });
@@ -373,7 +374,7 @@ function RunLog({ queryKey, portal, source }: { queryKey: string[]; portal: stri
     retry: false,
     refetchInterval: (query) => ((query.state.data?.items as RunRow[] | undefined)?.some((r) => r.state === "running") ? 5000 : false),
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/org/portals/{name}/sources/{source}/runs", { params: { path: { name: portal, source } } })),
+      (await door("portal_portal_source_runs", { name: portal, source })) as RestAnswer<"list_portal_source_runs">,
   });
   if (runs.isPending) return <PageLoading label={t("app.loading")} />;
   if (runs.isError) return <PageFailed error={runs.error} onRetry={() => void runs.refetch()} />;
@@ -575,7 +576,7 @@ export function PortalDatasetsTab({ name, spec, onSources }: { name: string; spe
     retry: false,
     queryFn: async () => {
       const read = async (offset: number) =>
-        unwrap(await api.GET("/api/v1/projects/org/portals/{name}/datasets", { params: { path: { name }, query: { offset, limit: PAGE } } }));
+        (await door("portal_portal_datasets", { name, offset, limit: PAGE })) as RestAnswer<"list_portal_datasets">;
       const first = await read(0);
       const items = [...first.items];
       while (items.length < Math.min(first.total, MOST)) {

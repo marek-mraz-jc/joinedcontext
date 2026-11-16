@@ -1,8 +1,8 @@
-import { listManifests } from "../../api/odata";
+import { doorAction, listManifests } from "../../api/odata";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { asManifests, localized } from "../../api/manifest";
 import { RecordLink } from "../../components/RecordLink";
 import { RecordView, Button } from "../../components/ui";
@@ -29,11 +29,7 @@ export function ConnectionTest({ project, name, type }: { project: string; name:
   const locale = i18n.resolvedLanguage ?? i18n.language ?? "en";
   const test = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/datasources/{name}/test", {
-          params: { path: { project, name } },
-        }),
-      ) as Probe,
+      (await doorAction("portal_datasource_test", { name }, project)) as Probe,
   });
   const pipelines = useQuery({
     queryKey: queryKeys.list(project, "pipelines"),

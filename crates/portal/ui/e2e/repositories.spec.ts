@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The DataSource doors run through the OData service (T-7117); the stubs answer their REST doors.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The project's repositories on shako, read through the registry (`POST …/ops/jc_repository_*`),
 // in a real browser with the API answered in the browser: list → repository → file → commit →

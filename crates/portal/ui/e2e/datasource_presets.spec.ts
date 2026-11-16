@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The DataSource doors run through the OData service (T-7117); the stubs answer their REST doors.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-7076: an http source with an open data API preset. The steward picks the API, Find in the
 // service lists the feature types the WFS offers (read by the Portal on the project's runner),

@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { digestOf } from "../src/api/digest";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The DataSource doors run through the OData service (T-7117); the stubs answer their REST doors.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-7094 (G-22): the new data source wizard. A steward picks what the source is, gives its
 // address, lets an open data API list what it offers, reads how the source pages in words and

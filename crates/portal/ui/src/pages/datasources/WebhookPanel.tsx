@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
+import { door, doorAction } from "../../api/odata";
+import type { RestAnswer } from "../../api/odata";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
 import { Alert, Button, Card, CodeBlock, Field, Select, Textarea } from "../../components/ui";
 
 const failureOf = (error: unknown, fallback: string): string | null =>
@@ -47,22 +49,13 @@ export function WebhookPanel({ project, name }: { project: string; name: string 
   const info = useQuery({
     queryKey: ["datasource-webhook", project, name],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/datasources/{name}/webhook", {
-          params: { path: { project, name } },
-        }),
-      ),
+      (await door("portal_datasource_webhook", { name }, project)) as RestAnswer<"webhook_info">,
   });
   const [pipeline, setPipeline] = useState("");
   const [body, setBody] = useState("");
   const send = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/datasources/{name}/test-event", {
-          params: { path: { project, name } },
-          body: { pipeline: chosen, body },
-        }),
-      ),
+      (await doorAction("portal_datasource_test_event", { name, body: { pipeline: chosen, body } }, project)) as RestAnswer<"test_event">,
   });
   const data = info.data;
   const addresses = data?.addresses ?? [];
