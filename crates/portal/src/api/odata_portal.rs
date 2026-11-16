@@ -81,6 +81,7 @@ const PIPELINE: (&str, Place) = ("pipeline", Place::Path);
 const SOURCE: (&str, Place) = ("source", Place::Path);
 const DEPLOYMENT: (&str, Place) = ("deployment", Place::Path);
 const CONVERSATION: (&str, Place) = ("conversation", Place::Path);
+const BROKER: (&str, Place) = ("broker", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -104,7 +105,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 98] = [
+pub static DOORS: [Door; 108] = [
     door(
         "portal_people_remove",
         Org,
@@ -937,6 +938,94 @@ pub static DOORS: [Door; 98] = [
         Method::GET,
         "/projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same",
         &[CONVERSATION, ("turn", Place::Path)],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_allowance",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqtt/allowance",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_broker_access",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/access",
+        &[BROKER, ("account", Place::Query("Edm.String"))],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_device_options",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/devices",
+        &[BROKER],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_device_propose",
+        Project,
+        Method::POST,
+        "/projects/{project}/mqttbrokers/{broker}/devices",
+        &[BROKER, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_test_publish",
+        Project,
+        Method::POST,
+        "/projects/{project}/mqttbrokers/{broker}/test-publish",
+        &[BROKER, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_watch",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/watch",
+        &[
+            BROKER,
+            ("account", Place::Query("Edm.String")),
+            ("since", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_measured",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/measured",
+        &[BROKER],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_captured_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/captured",
+        &[
+            BROKER,
+            ("topic", Place::Query("Edm.String")),
+            ("limit", Place::Query("Edm.Int32")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_captured_clear",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/mqttbrokers/{broker}/captured",
+        &[BROKER],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_binding_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/bindings",
+        &[BROKER],
         Who::ProjectReader,
     ),
 ];
