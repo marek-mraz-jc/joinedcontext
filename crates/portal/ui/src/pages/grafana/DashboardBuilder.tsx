@@ -998,15 +998,26 @@ function NotAllowed({ project }: { project: string }): JSX.Element {
 }
 
 /** The builder's working copy: the board, the chosen panel, and the panel edits. */
-function useBoard(sent: components["schemas"]["Board"] | undefined) {
-  const [board, setBoard] = useState<Board>(sent ? boardOf(sent) : emptyBoard());
-  const [selected, setSelected] = useState<number | null>(sent?.panels?.[0]?.id ?? null);
+function useBoard(sent: components["schemas"]["Board"] | undefined, addTitle?: string) {
+  // `addTitle`: the saved board opens with one new panel of that title, selected, once.
+  const [added, setAdded] = useState(false);
+  const adding = added ? undefined : addTitle;
+  const open = (from: components["schemas"]["Board"] | undefined): { board: Board; selected: number | null } => {
+    const opened = from ? boardOf(from) : emptyBoard();
+    if (!from || !adding || opened.panels.length >= 24) return { board: opened, selected: from?.panels?.[0]?.id ?? null };
+    const panel = newPanel(opened, "timeseries", adding);
+    return { board: { ...opened, panels: [...opened.panels, panel] }, selected: panel.id };
+  };
+  const [board, setBoard] = useState<Board>(() => open(sent).board);
+  const [selected, setSelected] = useState<number | null>(() => open(sent).selected);
   // A board read again (the saved version after a conflict) replaces the working copy.
   const [loaded, setLoaded] = useState(sent);
-  if (sent !== loaded) {
+  if (sent !== loaded || (sent && adding)) {
+    const opened = open(sent);
     setLoaded(sent);
-    setBoard(sent ? boardOf(sent) : emptyBoard());
-    setSelected(sent?.panels?.[0]?.id ?? null);
+    setBoard(opened.board);
+    setSelected(opened.selected);
+    if (sent && adding) setAdded(true);
   }
   return {
     board,
@@ -1028,7 +1039,7 @@ function useBoard(sent: components["schemas"]["Board"] | undefined) {
 }
 
 /** The builder: a new dashboard, or the next edit of one the builder saved (`uid`). */
-export function DashboardBuilderPage({ project, uid }: { project: string; uid?: string }): JSX.Element {
+export function DashboardBuilderPage({ project, uid, addPanel = false }: { project: string; uid?: string; addPanel?: boolean }): JSX.Element {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -1041,7 +1052,8 @@ export function DashboardBuilderPage({ project, uid }: { project: string; uid?: 
     enabled: Boolean(uid) && start.data?.mayEdit === true,
     queryFn: async () => (await door("portal_grafana_builder_get", { uid: uid ?? "" }, project)) as RestAnswer<"builder_get">,
   });
-  const work = useBoard(saved.data?.board);
+  // A dashboard waiting for approval stays as it is: nothing is added to a locked board.
+  const work = useBoard(saved.data?.board, addPanel && saved.data && !saved.data.pending ? t("builder.newPanelTitle", { n: (saved.data.board.panels?.length ?? 0) + 1 }) : undefined);
   const save = useMutation({
     mutationFn: async (board: Board) =>
       uid

@@ -837,6 +837,103 @@ async fn a_repository_files_land_as_one_change_as_they_were_written() {
     );
 }
 
+/// T-6972, jc-dev 2026-11-16: a project of layout 2 keeps its files at its own repository's
+/// root. A file already there is replaced in that repository, never created a second time under
+/// `projects/{p}/` of the organization repository, and `{orgDomain}` is judged as the domain.
+#[tokio::test]
+async fn a_layout_two_project_files_are_replaced_in_its_own_repository() {
+    use wiremock::matchers::query_param;
+    let (server, state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    Mock::given(method("GET"))
+        .and(path("/odata/Repositories(Owner='bb',Name='bbproj')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='bbproj')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param("@p", format!("'{FILES_ENDPOINT_PATH}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-endpoint",
+            "Content": base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                FILES_ENDPOINT_ON_MAIN,
+            ),
+        })))
+        .mount(&server)
+        .await;
+    state.mirror.set_layout(2);
+    state
+        .mirror
+        .set_repositories(std::collections::BTreeMap::from([(
+            PROJECT.to_owned(),
+            "bbproj".to_owned(),
+        )]));
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files&dryRun=All");
+    let (status, report) = send(state, &cookie, &content_type, body, &uri).await;
+
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(
+        report["replaced"],
+        json!([format!("projects/{PROJECT}/{FILES_ENDPOINT_PATH}")])
+    );
+    assert!(
+        forge_calls(&server)
+            .await
+            .iter()
+            .all(|call| !call.contains("Name='org')/Shako.File")),
+        "a layout 2 project's file is read from its own repository"
+    );
+}
+
+/// CC-85: in layout 2 a project without a repository of its own gets no files under
+/// `projects/{p}/` of the organization repository, where they would stop every project's
+/// assembly.
+#[tokio::test]
+async fn a_layout_two_project_without_its_own_repository_is_refused() {
+    let (server, state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    state.mirror.set_layout(2);
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files&dryRun=All");
+    let (status, problem) = send(state, &cookie, &content_type, body, &uri).await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    assert!(problem.to_string().contains("registry entry"), "{problem}");
+    assert!(forge_calls(&server).await.is_empty(), "{problem}");
+}
+
+/// T-6972, jc-dev 2026-11-16: before the mirror's first load a layout 2 project reads as
+/// layout 1 with no domain, so the files door answers 503 and plans nothing, rather than a plan
+/// that writes every file again under `projects/{p}/` of the organization repository.
+#[tokio::test]
+async fn a_files_import_before_the_first_sync_is_refused_and_reads_nothing() {
+    use joinedcontext_portal::reconciler::Syncer;
+    let (server, mut state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    let shako = ShakoClient::new(
+        server.uri().parse().expect("forge url"),
+        "bb",
+        "org",
+        "token",
+    )
+    .expect("shako client");
+    state.syncer = Some(Arc::new(Syncer::new(
+        Arc::new(shako),
+        Arc::clone(&state.mirror),
+    )));
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files&dryRun=All");
+    let (status, problem) = send(state, &cookie, &content_type, body, &uri).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert!(problem.to_string().contains("/api/v1/ready"), "{problem}");
+    assert!(
+        forge_calls(&server).await.is_empty(),
+        "nothing is read or planned"
+    );
+}
+
 /// PF-50 at the files door: each manifest is asked of the person's bindings, and a refusal
 /// writes nothing.
 #[tokio::test]

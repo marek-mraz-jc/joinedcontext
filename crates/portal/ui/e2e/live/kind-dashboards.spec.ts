@@ -1,7 +1,7 @@
 /**
  * T-1541 — UI-44, PF-50: a Dashboard, end to end on dev by a person.
  *
- * Created on the Dashboards page ("New dashboard": a name, a title and one page showing one of the
+ * Created on the Report pages page ("New report page": a name, a title and one page showing one of the
  * project's layers), approved, retitled through the dashboard's own menu, removed; the assistant
  * opens the same form; a viewer finds the page's write controls disabled with a reason.
  */
@@ -15,7 +15,7 @@ kindJourney({
   plural: "dashboards",
   page: `/projects/${PROJECT}/dashboards`,
   create: async (page, name) => {
-    await page.getByRole("main").getByRole("button", { name: "New dashboard" }).first().click();
+    await page.getByRole("main").getByRole("button", { name: "New report page" }).first().click();
     const form = page.getByTestId("form-page");
     await expect(form).toBeVisible({ timeout: 30_000 });
     await form.locator("#root_name").fill(name);
@@ -31,7 +31,7 @@ kindJourney({
   change: {
     apply: async (page, name) => {
       // More than one dashboard: the header's chooser picks this one before its menu is its own.
-      const chooser = page.getByRole("main").getByLabel("Dashboards", { exact: true });
+      const chooser = page.getByRole("main").getByLabel("Report pages", { exact: true });
       if (await chooser.count()) {
         await chooser.selectOption(name);
       }
