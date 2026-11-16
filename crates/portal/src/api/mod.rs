@@ -84,6 +84,7 @@ pub mod odata;
 pub mod odata_endpoints;
 pub mod odata_ops;
 pub mod odata_org;
+pub mod odata_portal;
 pub mod opendata_pages;
 pub mod ops;
 pub mod organization_addresses;

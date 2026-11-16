@@ -873,6 +873,14 @@ export interface Functions {
   jc_syncsource_status: { name: string };
   jc_workspace_compare: { name: string };
   jc_workspace_preview_get: { name: string };
+  portal_access_request_list: { endpoint: string };
+  portal_connector_list: Record<string, never>;
+  portal_endpoint_quality: { endpoint: string };
+  portal_notification_list: Record<string, never>;
+  portal_person_names: { ids?: string };
+  portal_preferences_get: Record<string, never>;
+  portal_secret_list: Record<string, never>;
+  portal_visualization_template: { template: string; x?: string; y?: string; color?: string; facet?: string };
 }
 
 /** The entity types each function is bound to. */
@@ -923,6 +931,14 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_syncsource_status: ["Project"],
   jc_workspace_compare: ["Project"],
   jc_workspace_preview_get: ["Project"],
+  portal_access_request_list: ["Project"],
+  portal_connector_list: ["Organization"],
+  portal_endpoint_quality: ["Project"],
+  portal_notification_list: ["Organization"],
+  portal_person_names: ["Organization"],
+  portal_preferences_get: ["Organization"],
+  portal_secret_list: ["Project"],
+  portal_visualization_template: ["Organization"],
 };
 
 /** Each bound action and its parameters. */
@@ -971,6 +987,20 @@ export interface Actions {
   jc_workspace_preview_stop: { name: string };
   jc_workspace_propose: { name: string };
   jc_workspace_update_from_main: { name: string; resolutions?: unknown };
+  portal_access_request_file: { endpoint: string; body?: unknown };
+  portal_connector_revoke: { connector: string };
+  portal_notification_read: { notification: string };
+  portal_people_name_by_id: { dryRun?: boolean };
+  portal_people_remove: { body?: unknown };
+  portal_person_consent_revoke: { person: string; client: string };
+  portal_person_remove_second_factor: { person: string };
+  portal_person_resend_invitation: { person: string };
+  portal_person_reset_password: { person: string };
+  portal_preferences_recent: { body?: unknown };
+  portal_preferences_set: { body?: unknown };
+  portal_secret_set: { body?: unknown };
+  portal_serviceaccount_revoke: { account: string; body?: unknown };
+  portal_serviceaccount_secret_issue: { account: string };
   propose_create: { manifest?: unknown; dryRun?: boolean };
   propose_delete: { dryRun?: boolean };
   propose_update: { manifest?: unknown; patch?: unknown; dryRun?: boolean };
@@ -1023,6 +1053,20 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_workspace_preview_stop: ["Project"],
   jc_workspace_propose: ["Project"],
   jc_workspace_update_from_main: ["Project"],
+  portal_access_request_file: ["Project"],
+  portal_connector_revoke: ["Organization"],
+  portal_notification_read: ["Organization"],
+  portal_people_name_by_id: ["Organization"],
+  portal_people_remove: ["Organization"],
+  portal_person_consent_revoke: ["Organization"],
+  portal_person_remove_second_factor: ["Organization"],
+  portal_person_resend_invitation: ["Organization"],
+  portal_person_reset_password: ["Organization"],
+  portal_preferences_recent: ["Organization"],
+  portal_preferences_set: ["Organization"],
+  portal_secret_set: ["Project"],
+  portal_serviceaccount_revoke: ["Project"],
+  portal_serviceaccount_secret_issue: ["Project"],
   propose_create: ["Project"],
   propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
   propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],

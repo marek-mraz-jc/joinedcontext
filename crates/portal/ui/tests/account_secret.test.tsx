@@ -10,7 +10,7 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { AccountSecret } from "../src/pages/access/AccountSecret";
-import { odataCall, odataValue } from "./odata";
+import { odataCall, odataValue, doorsAsRest } from "./odata";
 
 const ISSUED = {
   clientId: "helsinki-vendor",
@@ -18,7 +18,10 @@ const ISSUED = {
   tokenUrl: "https://idm.example/realms/dev/protocol/openid-connect/token",
 };
 
-function stub(access: Record<string, unknown>, issue: { status: number; body: unknown } = { status: 200, body: ISSUED }) {
+function stub(
+  access: Record<string, unknown>,
+  issue: { status: number; body: unknown } = { status: 200, body: ISSUED },
+) {
   const sent: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -27,19 +30,34 @@ function stub(access: Record<string, unknown>, issue: { status: number; body: un
       const url = new URL(request.url);
       sent.push(`${request.method} ${url.pathname}`);
       const json = (body: unknown, status = 200) =>
-        new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        });
       if (odataCall(url)?.name === "jc_serviceaccount_access") {
-        return odataValue({ account: "vendor", project: "helsinki", delegates: false, mayPropose: true, mayRevoke: true, grants: [], ...access });
+        return odataValue({
+          account: "vendor",
+          project: "helsinki",
+          delegates: false,
+          mayPropose: true,
+          mayRevoke: true,
+          grants: [],
+          ...access,
+        });
       }
-      if (url.pathname.endsWith("/serviceaccounts/vendor/secret")) return json(issue.body, issue.status);
+      if (url.pathname.endsWith("/serviceaccounts/vendor/secret"))
+        return json(issue.body, issue.status);
       return json({ items: [] });
     }),
   );
+  doorsAsRest();
   return sent;
 }
 
 function show(): QueryClient {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
@@ -61,39 +79,75 @@ describe("AccountSecret (PF-37, T-5626)", () => {
   it("issues a secret after the confirmation, shows it once and forgets it on Done", async () => {
     const sent = stub({ noSecret: null, mayIssueSecret: true });
     const client = show();
-    expect(await screen.findByText(/signs in as client helsinki-vendor/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/signs in as client helsinki-vendor/),
+    ).toBeInTheDocument();
     expect(screen.queryByDisplayValue(ISSUED.clientSecret)).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "Issue new secret" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Issue new secret" }),
+    );
     const dialog = await screen.findByRole("alertdialog");
-    expect(within(dialog).getByText("Issue a new secret for vendor?")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Issue a new secret for vendor?"),
+    ).toBeInTheDocument();
     expect(sent.filter((call) => call.startsWith("POST"))).toEqual([]);
-    await userEvent.click(within(dialog).getByRole("button", { name: "Issue new secret" }));
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Issue new secret" }),
+    );
 
-    expect(await screen.findByLabelText("Client secret")).toHaveValue(ISSUED.clientSecret);
+    expect(await screen.findByLabelText("Client secret")).toHaveValue(
+      ISSUED.clientSecret,
+    );
     expect(screen.getByLabelText("Client ID")).toHaveValue("helsinki-vendor");
     expect(screen.getByLabelText("Token URL")).toHaveValue(ISSUED.tokenUrl);
     expect(screen.getByText("Copy the secret now")).toBeInTheDocument();
-    expect(sent.filter((call) => call.startsWith("POST"))).toEqual(["POST /api/v1/projects/helsinki/serviceaccounts/vendor/secret"]);
+    expect(sent.filter((call) => call.startsWith("POST"))).toEqual([
+      "POST /api/v1/projects/helsinki/serviceaccounts/vendor/secret",
+    ]);
 
-    await userEvent.click(screen.getByRole("button", { name: "Hide the secret" }));
-    await waitFor(() => expect(screen.queryByDisplayValue(ISSUED.clientSecret)).toBeNull());
+    await userEvent.click(
+      screen.getByRole("button", { name: "Hide the secret" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByDisplayValue(ISSUED.clientSecret)).toBeNull(),
+    );
     // F-R2UI2-012: forgotten in the mutation cache too, not only off the screen.
     await waitFor(() =>
-      expect(JSON.stringify(client.getMutationCache().getAll().map((mutation) => mutation.state.data))).not.toContain(
-        ISSUED.clientSecret,
-      ),
+      expect(
+        JSON.stringify(
+          client
+            .getMutationCache()
+            .getAll()
+            .map((mutation) => mutation.state.data),
+        ),
+      ).not.toContain(ISSUED.clientSecret),
     );
   });
 
   it("says what failed when the Portal refuses, and shows no secret", async () => {
     stub(
       { noSecret: null, mayIssueSecret: true },
-      { status: 409, body: { type: "about:blank", title: "Conflict", status: 409, detail: "client helsinki-vendor does not exist yet; the Portal creates it within a minute of the account's merge, then try again" } },
+      {
+        status: 409,
+        body: {
+          type: "about:blank",
+          title: "Conflict",
+          status: 409,
+          detail:
+            "client helsinki-vendor does not exist yet; the Portal creates it within a minute of the account's merge, then try again",
+        },
+      },
     );
     show();
-    await userEvent.click(await screen.findByRole("button", { name: "Issue new secret" }));
-    await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Issue new secret" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Issue new secret" }),
+    );
+    await userEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Issue new secret",
+      }),
+    );
     expect(await screen.findByText(/does not exist yet/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Client secret")).toBeNull();
   });
@@ -101,18 +155,29 @@ describe("AccountSecret (PF-37, T-5626)", () => {
   it("tells a person who may not issue who does", async () => {
     stub({ noSecret: null, mayIssueSecret: false });
     show();
-    expect(await screen.findByText("A person who may approve service accounts issues its secret.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Issue new secret" })).toBeNull();
+    expect(
+      await screen.findByText(
+        "A person who may approve service accounts issues its secret.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Issue new secret" }),
+    ).toBeNull();
   });
 
   it.each([
     ["workload", /pod's own token/],
     ["key-pair", /own key pair/],
     ["no-credential", /add one, for example named main/],
-  ])("explains why an account with %s has no secret", async (noSecret, says) => {
-    stub({ noSecret, mayIssueSecret: true });
-    show();
-    expect(await screen.findByText(says)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Issue new secret" })).toBeNull();
-  });
+  ])(
+    "explains why an account with %s has no secret",
+    async (noSecret, says) => {
+      stub({ noSecret, mayIssueSecret: true });
+      show();
+      expect(await screen.findByText(says)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Issue new secret" }),
+      ).toBeNull();
+    },
+  );
 });

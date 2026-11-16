@@ -2,8 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
-import { call } from "../../api/odata";
+import { queryKeys } from "../../api/client";
+import { call, doorAction } from "../../api/odata";
 import type { components } from "../../api/schema";
 import type { Change } from "../../api/manifest";
 import { ChangeNotice } from "../../components/ChangeNotice";
@@ -38,23 +38,41 @@ export interface MatrixCell {
 function covers(rule: GrantRule, kind: string, verb: MatrixVerb): boolean {
   const named = rule.kinds.includes(kind) || rule.kinds.includes("*");
   // `propose` on a kind implies `read` on it (jc-core `Rule::grants`).
-  return named && (rule.verbs.includes(verb) || (verb === "read" && rule.verbs.includes("propose")));
+  return (
+    named &&
+    (rule.verbs.includes(verb) ||
+      (verb === "read" && rule.verbs.includes("propose")))
+  );
 }
 
 /**
  * The kind × verb matrix of one account (AG-130): each cell from the grants in force, with the
  * grant it comes from, or why it is refused. `approve` is never held by an account (PF-58).
  */
-export function accessMatrix(grants: AccountGrant[]): { kind: string; cells: Record<MatrixVerb, MatrixCell> }[] {
-  const kinds = [...new Set(grants.flatMap((grant) => grant.rules.flatMap((rule) => rule.kinds ?? [])))].sort();
+export function accessMatrix(
+  grants: AccountGrant[],
+): { kind: string; cells: Record<MatrixVerb, MatrixCell> }[] {
+  const kinds = [
+    ...new Set(
+      grants.flatMap((grant) =>
+        grant.rules.flatMap((rule) => rule.kinds ?? []),
+      ),
+    ),
+  ].sort();
   return kinds.map((kind) => {
     const cells = {} as Record<MatrixVerb, MatrixCell>;
     for (const verb of MATRIX_VERBS) {
       if (verb === "approve") {
-        cells[verb] = { allowed: false, sources: [], reason: { key: "access.agent.reason.neverApproves" } };
+        cells[verb] = {
+          allowed: false,
+          sources: [],
+          reason: { key: "access.agent.reason.neverApproves" },
+        };
         continue;
       }
-      const giving = grants.filter((grant) => grant.rules.some((rule) => covers(rule, kind, verb)));
+      const giving = grants.filter((grant) =>
+        grant.rules.some((rule) => covers(rule, kind, verb)),
+      );
       const active = giving.filter((grant) => grant.state === "active");
       const source = (grant: AccountGrant) => `${grant.role} · ${grant.scope}`;
       if (active.length > 0) {
@@ -67,9 +85,18 @@ export function accessMatrix(grants: AccountGrant[]): { kind: string; cells: Rec
         allowed: false,
         sources: [],
         reason: ended
-          ? { key: "access.agent.reason.ended", values: { grant: source(ended), when: ended.notAfter ?? "" } }
+          ? {
+              key: "access.agent.reason.ended",
+              values: { grant: source(ended), when: ended.notAfter ?? "" },
+            }
           : waiting
-            ? { key: "access.agent.reason.starts", values: { grant: source(waiting), when: waiting.notBefore ?? "" } }
+            ? {
+                key: "access.agent.reason.starts",
+                values: {
+                  grant: source(waiting),
+                  when: waiting.notBefore ?? "",
+                },
+              }
             : { key: "access.agent.reason.noGrant" },
       };
     }
@@ -77,7 +104,11 @@ export function accessMatrix(grants: AccountGrant[]): { kind: string; cells: Rec
   });
 }
 
-const STATE_TONE = { active: "success", pending: "info", expired: "warning" } as const;
+const STATE_TONE = {
+  active: "success",
+  pending: "info",
+  expired: "warning",
+} as const;
 
 /**
  * What one ServiceAccount may do in the Portal, where each right comes from, and revoke now.
@@ -98,41 +129,59 @@ export function AccountAccess({
   const queryClient = useQueryClient();
   const [revoking, setRevoking] = useState<AccountGrant | null>(null);
   const [change, setChange] = useState<Change | null>(null);
-  const key = [...queryKeys.list(project, "serviceaccounts"), account, "access"];
+  const key = [
+    ...queryKeys.list(project, "serviceaccounts"),
+    account,
+    "access",
+  ];
   const access = useQuery({
     queryKey: key,
-    queryFn: (): Promise<AccountAccessAnswer> => call("jc_serviceaccount_access", project, { name: account }),
+    queryFn: (): Promise<AccountAccessAnswer> =>
+      call("jc_serviceaccount_access", project, { name: account }),
   });
   const revoke = useMutation({
     mutationFn: async (grant: AccountGrant): Promise<Change> =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/serviceaccounts/{name}/revoke", {
-          params: { path: { project, name: account } },
-          body: { index: grant.index, role: grant.role },
-        }),
-      ) as unknown as Change,
+      (await doorAction(
+        "portal_serviceaccount_revoke",
+        { account, body: { index: grant.index, role: grant.role } },
+        project,
+      )) as Change,
     onSuccess: (done) => {
       setChange(done);
       setRevoking(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.list(project, "serviceaccounts") });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.list(project, "serviceaccounts"),
+      });
     },
   });
 
   if (access.isPending) {
     return (
-      <div role="status" aria-busy="true" aria-label={t("app.loading")} className="space-y-2">
+      <div
+        role="status"
+        aria-busy="true"
+        aria-label={t("app.loading")}
+        className="space-y-2"
+      >
         <Skeleton className="h-5 w-40" />
         <Skeleton className="h-20" />
       </div>
     );
   }
   if (access.isError) {
-    return <PageFailed error={access.error} onRetry={() => void access.refetch()} />;
+    return (
+      <PageFailed error={access.error} onRetry={() => void access.refetch()} />
+    );
   }
   const { grants, delegates, mayRevoke } = access.data;
   const rows = accessMatrix(grants);
   const when = (iso: string | null | undefined) =>
-    iso ? new Date(iso).toLocaleString(i18n.language, { dateStyle: "medium", timeStyle: "short" }) : "";
+    iso
+      ? new Date(iso).toLocaleString(i18n.language, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+      : "";
   const heading = `access-${account}`;
   const cellText = (cell: MatrixCell) =>
     `${t(cell.allowed ? "access.agent.allowed" : "access.agent.refused")} ${
@@ -147,33 +196,38 @@ export function AccountAccess({
     {
       key: "kind",
       label: t("access.agent.kind"),
-      text: (row) => (row.kind === "*" ? t("access.agent.everyKind") : row.kind),
+      text: (row) =>
+        row.kind === "*" ? t("access.agent.everyKind") : row.kind,
     },
-    ...MATRIX_VERBS.map(
-      (verb): DataColumn<(typeof rows)[number]> => ({
-        key: verb,
-        label: t(`access.agent.verb.${verb}`),
-        text: (row) => cellText(row.cells[verb]),
-        cell: (row) => {
-          const cell = row.cells[verb];
-          return (
-            <>
-              <span className={cell.allowed ? "font-medium text-success" : "text-fg-muted"}>
-                {t(cell.allowed ? "access.agent.allowed" : "access.agent.refused")}
-              </span>
-              <span className="block text-caption text-fg-muted">
-                {cell.allowed
-                  ? cell.sources.join(", ")
-                  : t(cell.reason?.key ?? "access.agent.reason.noGrant", {
-                      ...cell.reason?.values,
-                      when: when(cell.reason?.values?.when),
-                    })}
-              </span>
-            </>
-          );
-        },
-      }),
-    ),
+    ...MATRIX_VERBS.map((verb): DataColumn<(typeof rows)[number]> => ({
+      key: verb,
+      label: t(`access.agent.verb.${verb}`),
+      text: (row) => cellText(row.cells[verb]),
+      cell: (row) => {
+        const cell = row.cells[verb];
+        return (
+          <>
+            <span
+              className={
+                cell.allowed ? "font-medium text-success" : "text-fg-muted"
+              }
+            >
+              {t(
+                cell.allowed ? "access.agent.allowed" : "access.agent.refused",
+              )}
+            </span>
+            <span className="block text-caption text-fg-muted">
+              {cell.allowed
+                ? cell.sources.join(", ")
+                : t(cell.reason?.key ?? "access.agent.reason.noGrant", {
+                    ...cell.reason?.values,
+                    when: when(cell.reason?.values?.when),
+                  })}
+            </span>
+          </>
+        );
+      },
+    })),
   ];
 
   return (
@@ -181,21 +235,37 @@ export function AccountAccess({
       <Heading id={heading} className="font-medium text-fg">
         {t("access.agent.title")}
       </Heading>
-      {delegates ? <p className="text-body text-fg-muted">{t("access.agent.delegates")}</p> : null}
+      {delegates ? (
+        <p className="text-body text-fg-muted">{t("access.agent.delegates")}</p>
+      ) : null}
       {change ? <ChangeNotice change={change} project={project} /> : null}
       {revoke.isError ? (
-        <InlineError>{revoke.error instanceof Error ? revoke.error.message : t("access.agent.revokeFailed")}</InlineError>
+        <InlineError>
+          {revoke.error instanceof Error
+            ? revoke.error.message
+            : t("access.agent.revokeFailed")}
+        </InlineError>
       ) : null}
 
       <ul className="space-y-2" aria-label={t("access.agent.grants")}>
         {grants.map((grant) => (
-          <li key={`${grant.index}-${grant.role}`} className="flex flex-wrap items-center gap-2">
+          <li
+            key={`${grant.index}-${grant.role}`}
+            className="flex flex-wrap items-center gap-2"
+          >
             <span className="font-medium text-fg">{grant.role}</span>
             <span className="text-fg-muted">{grant.scope}</span>
-            <Badge tone={STATE_TONE[grant.state]}>{t(`access.agent.state.${grant.state}`)}</Badge>
+            <Badge tone={STATE_TONE[grant.state]}>
+              {t(`access.agent.state.${grant.state}`)}
+            </Badge>
             {grant.notAfter ? (
               <span className="text-caption text-fg-muted">
-                {t(grant.state === "expired" ? "access.agent.ended" : "access.agent.ends", { when: when(grant.notAfter) })}
+                {t(
+                  grant.state === "expired"
+                    ? "access.agent.ended"
+                    : "access.agent.ends",
+                  { when: when(grant.notAfter) },
+                )}
               </span>
             ) : null}
             {mayRevoke && grants.length > 1 ? (
@@ -203,7 +273,10 @@ export function AccountAccess({
                 variant="secondary"
                 size="sm"
                 onClick={() => setRevoking(grant)}
-                aria-label={t("access.agent.revokeNamed", { role: grant.role, scope: grant.scope })}
+                aria-label={t("access.agent.revokeNamed", {
+                  role: grant.role,
+                  scope: grant.scope,
+                })}
               >
                 {t("access.agent.revoke")}
               </Button>
@@ -213,24 +286,40 @@ export function AccountAccess({
       </ul>
 
       {rows.length === 0 ? (
-        <p className="text-body text-fg-muted">{t("access.agent.gatewayOnly")}</p>
+        <p className="text-body text-fg-muted">
+          {t("access.agent.gatewayOnly")}
+        </p>
       ) : (
         <AdminGrid
           stack
           storageKey={`${project}:account-access`}
-          query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
+          query={{
+            isPending: false,
+            isError: false,
+            error: null,
+            refetch: () => undefined,
+          }}
           caption={t("access.agent.matrix", { account })}
           rows={rows}
           columns={columns}
           rowKey={(row) => row.kind}
-          empty={<EmptyState bare title={t("access.agent.gatewayOnly")} description={t("access.agent.gatewayOnlyHint")} />}
+          empty={
+            <EmptyState
+              bare
+              title={t("access.agent.gatewayOnly")}
+              description={t("access.agent.gatewayOnlyHint")}
+            />
+          }
         />
       )}
 
       <ConfirmDialog
         open={revoking !== null}
         onOpenChange={(open) => (open ? null : setRevoking(null))}
-        title={t("access.agent.revokeTitle", { role: revoking?.role ?? "", account })}
+        title={t("access.agent.revokeTitle", {
+          role: revoking?.role ?? "",
+          account,
+        })}
         description={t("access.agent.revokeHelp")}
         confirmLabel={t("access.agent.revoke")}
         pending={revoke.isPending}
