@@ -641,15 +641,44 @@ export interface RoleBinding {
 }
 
 export interface Run {
+  allowsWrite?: unknown | null;
+  appClass?: unknown | null;
   appName?: string | null;
+  branch?: unknown | null;
+  changeId?: unknown | null;
+  continues?: unknown | null;
   createdAt?: string | null;
   createdBy?: string | null;
+  dataNeeds?: unknown | null;
+  endpointName?: unknown | null;
+  endpointSlug?: unknown | null;
+  endpoints?: unknown | null;
+  error?: unknown | null;
+  expiresAt?: unknown | null;
+  finishedAt?: unknown | null;
+  firstFrameMs?: unknown | null;
+  firstVersionMs?: unknown | null;
   id: string;
   kind?: string | null;
+  mergeRequest?: unknown | null;
+  mirrorUrl?: unknown | null;
+  origin?: unknown | null;
+  pathPrefix?: unknown | null;
   previewUrl?: string | null;
+  profile?: unknown | null;
   project: string;
+  prompt?: unknown | null;
+  promptDigest?: unknown | null;
+  sourceUrl?: unknown | null;
+  startedAt?: unknown | null;
   status?: string | null;
+  steps?: unknown | null;
+  title?: unknown | null;
+  tokensUsed?: unknown | null;
+  unattended?: unknown | null;
   url?: string | null;
+  visibility?: unknown | null;
+  workspace?: unknown | null;
   "@odata.etag"?: string;
 }
 
