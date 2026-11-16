@@ -47,7 +47,7 @@ mod ekiben_pg;
 #[cfg(feature = "gateway")]
 pub mod gateway;
 #[cfg(feature = "kaisatsu")]
-mod kaisatsu;
+pub(crate) mod kaisatsu;
 #[cfg(feature = "model-tools")]
 pub mod model_tools;
 #[cfg(feature = "portal")]
