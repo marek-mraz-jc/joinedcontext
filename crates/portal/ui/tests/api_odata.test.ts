@@ -13,7 +13,9 @@ import {
   proposeManifest,
   readChange,
   readManifest,
+  readRun,
   rejectChange,
+  listRuns,
 } from "../src/api/odata";
 import { announceSessionEnded } from "../src/api/sessionEnded";
 import { announceStepUp, stepUpUrl } from "../src/api/stepUp";
@@ -276,6 +278,31 @@ describe("the Portal's OData client (T-6812)", () => {
       "/api/v1/organizationRoles",
       "/api/v1/rolebindings",
     ]);
+    vi.restoreAllMocks();
+  });
+
+  it("reads a project's runs and one run as the REST doors list and read them (T-7134)", async () => {
+    // The page test setup reads the service's address back to the REST door whose handler
+    // answers it (tests/odata.ts manifestAsRest): the stub sees the REST read.
+    const run = { id: "r1", project: "air", status: "previewing", prompt: "bikes", dataNeeds: [] };
+    const sent = serve((request) =>
+      Response.json(request.url.endsWith("/agent-runs/r1") ? run : { items: [run] }),
+    );
+    const { items } = await listRuns("air", { kind: "conversation", createdBy: "o'neil", top: 20 });
+    expect(items).toEqual([run]);
+    const list = new URL(sent[0].url);
+    expect(list.pathname).toBe("/api/v1/projects/air/agent-runs");
+    expect(Object.fromEntries(list.searchParams)).toEqual({ kind: "conversation", mine: "true", limit: "20" });
+    expect(await readRun("air", "r1")).toEqual(run);
+    expect(new URL(sent[1].url).pathname).toBe("/api/v1/projects/air/agent-runs/r1");
+    // The addresses the service is asked: a quote doubled inside the filter's literal.
+    const odata = new URL(
+      "/api/v1/projects('air')/runs?$filter=" +
+        encodeURIComponent("appName eq 'o''neil'") +
+        "&$select=id,prompt",
+      "http://localhost",
+    );
+    expect(Object.fromEntries(manifestAsRest(odata)?.rest.searchParams ?? [])).toEqual({ app: "o'neil" });
     vi.restoreAllMocks();
   });
 

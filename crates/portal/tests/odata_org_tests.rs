@@ -4042,6 +4042,43 @@ async fn keyed_project_reads_are_sets_not_functions() {
     .await;
     assert_eq!(one.status, StatusCode::OK, "{}", one.text);
     assert_eq!(one.json()["appName"], "city-bikes", "{}", one.text);
+    // T-7134: a run's page reads it by its key with the REST door's members, its state too.
+    assert_eq!(one.json()["status"], "previewing", "{}", one.text);
+    let detail = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/runs(project='helsinki',id='run-6828')?$select=id,status,title,prompt,dataNeeds,expiresAt",
+    )
+    .await;
+    assert_eq!(detail.status, StatusCode::OK, "{}", detail.text);
+    let detail = detail.json();
+    assert_eq!(detail["title"], "City bikes", "{detail}");
+    assert_eq!(detail["prompt"], "p", "{detail}");
+    assert_eq!(detail["dataNeeds"], json!([]), "{detail}");
+    assert_eq!(detail["expiresAt"], "2099-11-12T06:00:00Z", "{detail}");
+    let listed = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/projects('helsinki')/runs?$filter=kind%20eq%20'application'%20and%20createdBy%20eq%20'root@hel.fi'&$select=id,status,prompt",
+    )
+    .await;
+    assert_eq!(listed.json()["value"][0]["prompt"], "p", "{}", listed.text);
+    assert_eq!(
+        listed.json()["value"][0]["status"],
+        "previewing",
+        "{}",
+        listed.text
+    );
+    let gone = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/runs(project='helsinki',id='run-none')",
+    )
+    .await;
+    assert_eq!(gone.status, StatusCode::NOT_FOUND, "{}", gone.text);
     // Another Organization's caller reads no run of hel's projects.
     let foreign = get(&state, mode, "ba-only", "/api/v1/runs/$count").await;
     assert!(

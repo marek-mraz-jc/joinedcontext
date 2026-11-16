@@ -359,6 +359,11 @@ const OPERATIONS: Record<string, Door> = {
   jc_draft_get: ["GET", "/projects/{project}/drafts/{kind}/{name}"],
   jc_draft_put: ["PUT", "/projects/{project}/drafts/{kind}/{name}", ["manifest", "expectedVersion"]],
   jc_draft_drop: ["DELETE", "/projects/{project}/drafts/{kind}/{name}"],
+  jc_run_create: [
+    "POST",
+    "/projects/{project}/agent-runs",
+    ["appName", "appClass", "endpointName", "endpointNames", "prompt", "visibility", "dataNeeds", "kind", "profile", "unattended"],
+  ],
   jc_run_cancel: ["POST", "/projects/{project}/agent-runs/{id}/cancel"],
   jc_run_publish: ["POST", "/projects/{project}/agent-runs/{id}/publish"],
   portal_run_answer: ["POST", "/projects/{project}/agent-runs/{id}/answers"],
@@ -551,6 +556,10 @@ const UNDER = /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/(\w+)$/;
 const ORG_SET = /^\/api\/v1\/(\w+)$/;
 const WORKSPACES =
   /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)\/workspaces|workspaces\(project='((?:[^']|'')*)',name='((?:[^']|'')*)'\))$/;
+const RUNS =
+  /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)\/runs|runs\(project='((?:[^']|'')*)',id='((?:[^']|'')*)'\))$/;
+/** The REST list's query parameter of each member a runs `$filter` narrows by (api/odata.ts listRuns). */
+const RUN_FILTERS: Record<string, string> = { appName: "app", kind: "kind", createdBy: "mine" };
 const KEYED =
   /^\/api\/v1\/(\w+)\((?:project='((?:[^']|'')*)',name='((?:[^']|'')*)'|'((?:[^']|'')*)')\)$/;
 
@@ -585,6 +594,22 @@ export function manifestAsRest(
     const project = encodeURIComponent(unquote(copies[1] ?? copies[2]));
     const name = copies[3] === undefined ? "" : `/${encodeURIComponent(unquote(copies[3]))}`;
     return { rest: new URL(`/api/v1/projects/${project}/workspaces${name}`, at.origin), one: name !== "", row: true };
+  }
+  // A project's runs and one run (api/odata.ts listRuns, readRun): the rows with `$select` of the
+  // run's members are the REST door's answer (odata_org_tests `keyed_project_reads_are_sets_not_functions`).
+  const runs = RUNS.exec(path);
+  if (runs) {
+    const project = encodeURIComponent(unquote(runs[1] ?? runs[2]));
+    if (runs[3] !== undefined)
+      return { rest: new URL(`/api/v1/projects/${project}/agent-runs/${encodeURIComponent(unquote(runs[3]))}`, at.origin), one: true, row: true };
+    const rest = new URL(`/api/v1/projects/${project}/agent-runs`, at.origin);
+    for (const [, member, value] of (at.searchParams.get("$filter") ?? "").matchAll(/(\w+) eq '((?:[^']|'')*)'/g)) {
+      const name = RUN_FILTERS[member];
+      if (name) rest.searchParams.set(name, name === "mine" ? "true" : unquote(value));
+    }
+    const top = at.searchParams.get("$top");
+    if (top !== null) rest.searchParams.set("limit", top);
+    return { rest, one: false, row: true };
   }
   if (!(at.searchParams.get("$select") ?? "").split(",").includes("spec"))
     return undefined;
