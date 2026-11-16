@@ -8172,7 +8172,8 @@
       "agents": "Agents",
       "costs": "Costs",
       "connectors": "Connectors",
-      "data-access": "Data access"
+      "data-access": "Data access",
+      "backups": "Backups"
     },
     "settings": {
       "title": "Settings",
@@ -8854,7 +8855,7 @@
       "access": "Who belongs to the organization and what each person, group and service account may do. Every change is proposed and approved.",
       "projects": "What every project of the organization holds and publishes, in one place.",
       "platform": "What the installation runs for every project: brokers, environments, data space membership, health and costs.",
-      "settings": "The organization's domain, languages, contacts, policies and limits, and what setup still lacks."
+      "settings": "The organization's domain, languages, contacts, policies and limits, its configuration backups, and what setup still lacks."
     },
     "kindHidden": "Only an organization administrator whose role includes {kinds} sees them here. Ask an organization administrator to add them to your role.",
     "agents": {
@@ -13426,6 +13427,98 @@
     "phase": {
       "merged": "published",
       "rejected": "rejected"
+    }
+  },
+  "backups": {
+    "loading": "Loading the backup…",
+    "unreadable": "The backup could not be read. Try again in a minute.",
+    "lead": "A copy of this Organization's configuration, as files with their ids, in your own S3 bucket: its settings, roles, bindings and each project's manifests with their schemas. No entity data, no code, no secret values. The bucket keeps every version, so a deleted backup can still be restored.",
+    "runs": {
+      "title": "Runs",
+      "scheduled": "Runs every {hours} hours, and whenever you press Run now.",
+      "off": "The schedule is off: nothing runs until you turn it on or press Run now. The bucket and its versions stay.",
+      "now": "Run now",
+      "running": "Running…",
+      "failed": "The run did not finish. Check the bucket below, then press Run now again.",
+      "never": "No run yet. Press Run now to take the first backup.",
+      "lastOk": "Last run {at} by {by}: {size} uploaded.",
+      "lastFailed": "Last run {at} by {by} failed: {reason}. Fix the bucket below and press Run now.",
+      "done": "Backup uploaded as a new version."
+    },
+    "log": {
+      "title": "Who did what ({count})",
+      "ok": "Done",
+      "failed": "Failed: check the reason beside it",
+      "action": {
+        "run": "Backup",
+        "delete": "Delete",
+        "plan": "Restore check",
+        "restore": "Restore"
+      }
+    },
+    "versions": {
+      "title": "Versions",
+      "lead": "Every backup the bucket keeps, newest first. Older versions go after the retention you set.",
+      "versioningOn": "Versioning on",
+      "versioningOff": "Versioning off: backups are refused",
+      "lockOn": "Object Lock on",
+      "lockOff": "No Object Lock",
+      "empty": "No version in the bucket yet",
+      "emptyHint": "Press Run now above to upload the first one.",
+      "deleted": "Deleted",
+      "current": "Current",
+      "download": "Download",
+      "restore": "Restore this version",
+      "delete": "Delete backup",
+      "deleteTitle": "Delete the current backup?",
+      "deleteHint": "The bucket writes a delete marker and keeps every earlier version, so you can still restore one until the retention removes it.",
+      "deletedHint": "The backup is deleted. Every earlier version is still kept: restore one below, or press Run now to write a new one."
+    },
+    "restore": {
+      "title": "Restore this version",
+      "taken": "Taken {at}.",
+      "planning": "Comparing this version with the Organization today…",
+      "same": "Nothing to restore: the Organization is as it was in this version.",
+      "organization": "Organization settings",
+      "counts": "{created} to create, {changed} to change, {unchanged} as they are",
+      "organizationNote": "Organization settings are not changed from here: download this version and propose its organization/ files on the Settings tab.",
+      "proposed": "Proposed as a Change. Another administrator approves it in Changes.",
+      "propose": "Propose the restore",
+      "close": "Close",
+      "project": "Project {project}"
+    },
+    "form": {
+      "title": "Bucket and schedule",
+      "leadNew": "Where the backups go. The bucket must have versioning on; the page checks it before saving.",
+      "leadSaved": "Change where the backups go, how often and how long earlier versions stay.",
+      "emptyTitle": "No backup is set up yet",
+      "emptyHint": "Fill in your S3 bucket below and save. Then press Run now for the first backup.",
+      "endpoint": "S3 address",
+      "region": "Region",
+      "bucket": "Bucket",
+      "prefix": "Folder",
+      "accessKeyId": "Access key id",
+      "secretAccessKey": "Secret access key",
+      "secretKept": "Saved; type a new one to replace it",
+      "everyHours": "Run every (hours)",
+      "keepDays": "Keep earlier versions (days)",
+      "enabled": "Scheduled backups on",
+      "save": "Save",
+      "saving": "Checking the bucket…",
+      "saved": "Saved. The bucket answered with versioning on.",
+      "failed": "The bucket was not saved. Check the fields above and save again.",
+      "invalid": "Not saved: {field} needs a fix, see the line under it."
+    },
+    "hint": {
+      "endpoint": "The https address of the S3 service, e.g. https://s3.eu-central-1.amazonaws.com",
+      "region": "The bucket's region, e.g. eu-central-1",
+      "bucket": "The bucket's name, e.g. city-backups",
+      "prefix": "A folder in the bucket ending in /, e.g. joinedcontext/. Empty for the bucket's root.",
+      "accessKeyId": "The key id of an account that may write to the bucket, e.g. AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "Stored sealed and never shown again. Leave it empty to keep the saved one.",
+      "everyHours": "1 to 672 hours, e.g. 24 for once a day",
+      "keepDays": "1 to 3650 days, e.g. 90",
+      "enabled": "Off keeps the bucket and every version; Run now still works."
     }
   }
 }

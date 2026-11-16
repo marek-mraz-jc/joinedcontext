@@ -91,6 +91,7 @@ const NAME: (&str, Place) = ("name", Place::Path);
 const RUN: (&str, Place) = ("id", Place::Path);
 const QUESTION: (&str, Place) = ("id", Place::Path);
 const PROJECT_NAME: (&str, Place) = ("projectName", Place::Path);
+const VERSION: (&str, Place) = ("version", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -114,7 +115,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 166] = [
+pub static DOORS: [Door; 173] = [
     door(
         "portal_people_remove",
         Org,
@@ -193,6 +194,62 @@ pub static DOORS: [Door; 166] = [
         Method::DELETE,
         "/organization/connectors/{connector}",
         &[("connector", Place::Path)],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_get",
+        Org,
+        Method::GET,
+        "/organization/backups/configuration",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_set",
+        Org,
+        Method::PUT,
+        "/organization/backups/configuration",
+        &[BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_run",
+        Org,
+        Method::POST,
+        "/organization/backups/configuration/run",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_versions",
+        Org,
+        Method::GET,
+        "/organization/backups/configuration/versions",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_download",
+        Org,
+        Method::GET,
+        "/organization/backups/configuration/versions/{version}",
+        &[VERSION],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_restore",
+        Org,
+        Method::POST,
+        "/organization/backups/configuration/versions/{version}/restore",
+        &[VERSION, BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_delete",
+        Org,
+        Method::DELETE,
+        "/organization/backups/configuration/bundle",
+        &[],
         Who::Administrator,
     ),
     door(
