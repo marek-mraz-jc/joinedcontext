@@ -456,6 +456,14 @@ fn host_pipeline_accounts(mirror: &Mirror, bentos: &Bentos, own: bool) -> Vec<Bo
     accounts
 }
 
+/// Whether `account` is a project's `pipelines` account (declared or derived) or a Pipeline's
+/// own, with a client of its own rather than a Kubernetes binding.
+fn pipeline_client(account: &BoundAccount) -> bool {
+    (account.name == crate::reconciler::streams::PIPELINE_ACCOUNT
+        || jc_core::kinds::pipeline_identity::is_derived(&account.name))
+        && matches!(account.auth, Auth::External(_))
+}
+
 /// Whether `account` is a project's or a Pipeline's own pipeline client whose secret a host
 /// runner takes ([`host_pipeline_accounts`]).
 fn host_derived(account: &BoundAccount) -> bool {
@@ -928,7 +936,20 @@ impl WorkloadClientSync {
                 Reach::Endpoint(slug) => vec![slug.clone()],
                 Reach::Internal => vec![crate::auth::internal::INTERNAL_AUDIENCE.to_owned()],
             };
-            let mut outcome = self.converge_one(&token, account, &audiences).await;
+            // What an imported pipeline client may gain: the Endpoints of its project among them.
+            let imported = if pipeline_client(account) {
+                let slugs = endpoint_slugs(mirror, &account.project);
+                audiences
+                    .iter()
+                    .filter(|a| slugs.values().any(|s| s == *a))
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let mut outcome = self
+                .converge_one(&token, account, &audiences, &imported)
+                .await;
             if host && matches!(account.reach, Reach::Pipeline(_)) {
                 if outcome.error.is_none() {
                     self.read_host_secret(&token, account, &mut secrets, &mut outcome)
@@ -1188,12 +1209,14 @@ impl WorkloadClientSync {
     }
 
     /// Adds to an imported pipeline client (`client`, which the wave did not create) an audience
-    /// mapper for each Endpoint slug its Pipelines name that no mapper of the client puts in its
-    /// tokens yet, and nothing else: no mapper is removed or changed, so what the import gave the
+    /// mapper for each Endpoint slug of `slugs` that no mapper of the client puts in its tokens
+    /// yet, and nothing else: no mapper is removed or changed, so what the import gave the
     /// client stays. A Pipeline re-aimed after the import (an open-data Endpoint's write door,
     /// EP-187, T-6972) otherwise writes with a token bound to the old Endpoint alone, and the
-    /// gateway refuses it with `token is not bound to this resource`. The slugs are
-    /// [`named_endpoints`]', the audiences a client the wave makes for that Pipeline gets.
+    /// gateway refuses it with `token is not bound to this resource`. The slugs are the Endpoint
+    /// audiences a client the wave made for that account would get ([`named_endpoints`] for a
+    /// derived one, [`audiences`] for a declared `pipelines` account), never the Portal's or the
+    /// internal listener's.
     async fn add_imported_audiences(
         &self,
         token: &str,
@@ -1243,6 +1266,7 @@ impl WorkloadClientSync {
         token: &str,
         account: &BoundAccount,
         audiences: &[String],
+        imported: &[String],
     ) -> ClientOutcome {
         let mut outcome = ClientOutcome::of(&account.label());
         let id = keycloak_client_id(&account.project, &account.name);
@@ -1268,10 +1292,10 @@ impl WorkloadClientSync {
         let uuid = match held.as_ref() {
             // The platform's own client of an external account (`keycloak-clients.yaml`) serves
             // it as it is: its owner rotates it, so there is nothing to report. An imported
-            // pipeline client only gains the Endpoints its Pipeline names since the import.
+            // pipeline client only gains the Endpoints it writes to since the import.
             Some(client) if account.binding().is_none() && !managed(client) => {
-                if let (true, Reach::Pipeline(slugs)) = (host_derived(account), &account.reach) {
-                    self.add_imported_audiences(token, client, slugs, &mut outcome)
+                if !imported.is_empty() {
+                    self.add_imported_audiences(token, client, imported, &mut outcome)
                         .await;
                 }
                 return outcome;

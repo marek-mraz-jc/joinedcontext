@@ -1787,6 +1787,46 @@ async fn an_imported_pipeline_client_gains_the_audience_of_its_re_aimed_endpoint
         .contains_key("JC_PIPELINE_SECRET_ZILINA_PL_DREPO"));
 }
 
+/// T-6972: the same for a project that declares its `pipelines` account (the synthetic export's
+/// helsinki): its imported client gains the write door of its space, which its role opens, and
+/// neither the internal listener's audience nor anything else.
+#[tokio::test]
+async fn an_imported_declared_pipelines_client_gains_the_new_endpoint_of_its_space_alone() {
+    const DOOR: &str = "d4wq6xm2tb7nc3vk5rzh2jyfa6";
+    let keycloak = realm(json!([])).await;
+    let mut imported = desired_external("helsinki", "pipelines", &ClientCredential::Secret);
+    imported["id"] = json!("uuid-imported");
+    imported["attributes"] = json!({});
+    client_lookup(&keycloak, "helsinki-pipelines", json!([imported])).await;
+    mappers(&keycloak, "uuid-imported", json!([audience_mapper(SLUG)])).await;
+    let mirror = mirror_with(vec![
+        external(
+            "helsinki",
+            "pipelines",
+            json!([{ "kind": "oauth-client", "name": "main" }]),
+        ),
+        endpoint("helsinki", "helsinki-all", "air", SLUG),
+        endpoint("helsinki", "helsinki-all-write", "air", DOOR),
+    ]);
+
+    let wave = sync(&keycloak).with_host_runner(true);
+    let outcomes = wave.converge(&mirror, &Bentos::new()).await;
+
+    let declared = outcomes.iter().find(|o| o.app == "helsinki/pipelines");
+    assert_eq!(
+        declared.map(|o| o.error.clone()),
+        Some(None),
+        "{outcomes:?}"
+    );
+    assert_eq!(audiences_of(&keycloak, "uuid-imported").await, vec![DOOR]);
+    assert_eq!(
+        wrote(&keycloak).await,
+        [format!(
+            "POST {REALM}/clients/uuid-imported/protocol-mappers/models"
+        )]
+    );
+}
+
 /// T-6832: a deleted project's pipeline client goes with it, its tokens revoked by the wave's
 /// usual removal, and its secret leaves the runner in the same run.
 #[tokio::test]
