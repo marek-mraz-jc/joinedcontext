@@ -15,6 +15,7 @@ use crate::modules::BuildCtx;
 use axum::Router;
 use jc_router::Mount;
 use joinedcontext_portal::config::Config;
+use joinedcontext_portal::host_registry::SeedHost;
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use std::collections::BTreeMap;
@@ -56,6 +57,7 @@ pub async fn build(
     wire_siblings: bool,
     orgs: &[crate::config::OrganizationSection],
     organizations: BTreeMap<String, String>,
+    registry: Vec<SeedHost>,
     mount: Mount,
     shutdown: &CancellationToken,
 ) -> Result<(Router, Option<std::net::SocketAddr>), StartError> {
@@ -97,6 +99,20 @@ pub async fn build(
     // The health probe marks its calls so the gateway door writes them as a poll's.
     let _ = joinedcontext_portal::health_probe::MARK.set(crate::access::probe_mark().to_owned());
     let state = AppState::from_config(config).await.map_err(err)?;
+    if let Some(pool) = &state.db {
+        let added = joinedcontext_portal::host_registry::seed(pool, &registry)
+            .await
+            .map_err(|e| {
+                err(format!(
+                    "host registry: the jc.toml hosts could not be seeded: {e}"
+                ))
+            })?;
+        tracing::info!(
+            added,
+            of = registry.len(),
+            "host registry: jc.toml hosts seeded"
+        );
+    }
     // Set once the state is built: a failed attempt's listener goes, the next binds anew.
     if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
         let _ = super::PORTAL_INTERNAL.set(addr);
@@ -113,6 +129,49 @@ pub async fn build(
         .await
         .map_err(|e| err(format!("build listener: {e}")))?;
     Ok((server::app(state), internal))
+}
+
+/// The host registry's seed (T-7129 §1): every host of its own each `[[organizations]]` entry
+/// names (whole-host mounts, Apps domain) and each `[[hosts]]` row, lowercase without a port,
+/// with its role. The Portal inserts only hosts without a row, so a removed host stays removed.
+pub(crate) fn registry_seed(cfg: &crate::config::Config) -> Vec<SeedHost> {
+    let bare = |h: &str| jc_router::registry::bare(h).to_ascii_lowercase();
+    let id = |name: &str| {
+        cfg.organizations
+            .iter()
+            .find(|o| o.name == name)
+            .and_then(|o| o.id.as_ref().map(|id| id.as_str().to_owned()))
+    };
+    let mut out: Vec<SeedHost> = Vec::new();
+    let mut add = |host: &str, organization: &str, role: &str| {
+        let host = bare(host);
+        if !out.iter().any(|s| s.host == host) {
+            out.push(SeedHost {
+                host,
+                organization: organization.to_owned(),
+                organization_id: id(organization),
+                role: role.to_owned(),
+            });
+        }
+    };
+    for org in &cfg.organizations {
+        for m in org.hosts.by_module() {
+            if m.bound && m.prefix.is_none() {
+                add(
+                    m.host,
+                    &org.name,
+                    m.role.map_or("portal-site", |r| r.as_str()),
+                );
+            }
+        }
+        if let Some(apps) = &org.hosts.apps {
+            add(apps, &org.name, jc_router::HostRole::Apps.as_str());
+        }
+    }
+    for row in &cfg.hosts {
+        add(&row.host, &row.organization, "host");
+    }
+    out
 }
 
 /// The realm of each `[[organizations]]` row with a sign-in host of its own (`hosts.idm`,
@@ -677,6 +736,45 @@ mod tests {
     /// T-7133: an Organization with `hosts.idm` gets its realm in the Portal's settings, its
     /// sign-in host dialed at jc's listener beside the hosts jc already reaches; one without gets
     /// none, and neither does a Portal whose realm or reach the environment named.
+    /// T-7135 (T-7129 §1): the registry's seed is every host of an Organization's own with its
+    /// role, once, lowercase and without a port; `auto`'s shared hosts and the working host's
+    /// paths are no Organization's row.
+    #[test]
+    fn the_registry_seed_lists_each_own_host_once_with_its_role() {
+        let text = "base_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\nid = \"sk_bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            hosts = { portal = \"Smartcity.bbsk.sk:8443\", api = \"api.bbsk.sk\", mcp = \"api.bbsk.sk\", idm = \"idm.bbsk.sk\", apps = \"bbsk-apps.example\", portals = [\"mobility.bbsk.sk\"] }\n\
+            [[organizations]]\nname = \"zilina\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a2\"\nhost = \"auto\"\n\
+            [[hosts]]\nhost = \"data.bbsk.sk\"\norganization = \"bbsk\"\n";
+        let file = crate::config::Config::parse_file(std::path::Path::new("jc.toml"), text)
+            .expect("parses");
+        let cfg = crate::config::Config::merge(crate::config::Cli::default(), file).expect("cfg");
+        let rows = registry_seed(&cfg);
+        let seed: Vec<(&str, &str, Option<&str>, &str)> = rows
+            .iter()
+            .map(|s| {
+                (
+                    s.host.as_str(),
+                    s.organization.as_str(),
+                    s.organization_id.as_deref(),
+                    s.role.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seed,
+            [
+                ("smartcity.bbsk.sk", "bbsk", Some("sk_bbsk"), "working"),
+                ("api.bbsk.sk", "bbsk", Some("sk_bbsk"), "api"),
+                ("mobility.bbsk.sk", "bbsk", Some("sk_bbsk"), "portal-site"),
+                ("idm.bbsk.sk", "bbsk", Some("sk_bbsk"), "signin"),
+                ("bbsk-apps.example", "bbsk", Some("sk_bbsk"), "apps"),
+                ("zilina.city.example", "zilina", None, "working"),
+                ("data.bbsk.sk", "bbsk", Some("sk_bbsk"), "host"),
+            ]
+        );
+    }
+
     #[test]
     fn an_organization_with_its_own_sign_in_host_gets_its_realm_in_the_portal() {
         let text = "base_host = \"city.example\"\n\

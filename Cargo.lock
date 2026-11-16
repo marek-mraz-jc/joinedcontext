@@ -7398,6 +7398,7 @@ dependencies = [
  "hmac 0.12.1",
  "jc-chart",
  "jc-core",
+ "jc-router",
  "jcctl",
  "jsonschema",
  "jsonwebtoken 9.3.1",

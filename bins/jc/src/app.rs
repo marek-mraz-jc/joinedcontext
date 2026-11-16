@@ -1429,6 +1429,7 @@ async fn portal_attempt(
                     .chain(modules::portal::limits_vars(&cfg))
                     .chain(modules::portal::reconciler_vars(&cfg))
                     .collect(),
+                modules::portal::registry_seed(&cfg),
                 mount,
                 &shutdown,
             ));
@@ -2351,24 +2352,28 @@ mod tests {
             let err = org_refusal(&format!("{host_mode}{extra}{TWO_ORGS}"));
             assert!(err.contains(says), "{extra}: {err}");
         }
-        // A mode default host: host mode places daiya on dashboards.{base_host}. Kaisatsu's
-        // default host is login_host's too, which refuses it first (T-7006).
-        let err = org_refusal(&format!(
-            "{host_mode}{}",
-            TWO_ORGS.replace("opendata.alpha.test", "dashboards.city.test")
-        ));
-        assert!(err.contains("also used by another mount (daiya)"), "{err}");
-        let file = format!(
-            "{host_mode}{}",
-            TWO_ORGS.replace("opendata.alpha.test", "idm.city.test")
-        );
-        let file = Config::parse_file(std::path::Path::new("jc.toml"), &file).unwrap();
-        let cli = crate::config::Cli {
-            role: Some("kaisatsu,portal".into()),
-            ..crate::config::Cli::default()
-        };
-        let err = Config::merge(cli, file).unwrap_err().to_string();
-        assert!(err.contains("also a host of login_host"), "{err}");
+        // A mode default host: host mode places daiya on dashboards.{base_host}, a reserved
+        // label the host registry's rule refuses at start (T-7135). Kaisatsu's default host is
+        // login_host's too, which refuses it first (T-7006).
+        for (host, says) in [
+            (
+                "dashboards.city.test",
+                "the label 'dashboards' under city.test is reserved",
+            ),
+            ("idm.city.test", "also a host of login_host"),
+        ] {
+            let file = format!(
+                "{host_mode}{}",
+                TWO_ORGS.replace("opendata.alpha.test", host)
+            );
+            let file = Config::parse_file(std::path::Path::new("jc.toml"), &file).unwrap();
+            let cli = crate::config::Cli {
+                role: Some("kaisatsu,portal,daiya".into()),
+                ..crate::config::Cli::default()
+            };
+            let err = Config::merge(cli, file).unwrap_err().to_string();
+            assert!(err.contains(says), "{host}: {err}");
+        }
     }
 
     #[cfg(feature = "portal")]
