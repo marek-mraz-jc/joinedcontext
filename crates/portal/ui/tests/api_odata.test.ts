@@ -6,6 +6,7 @@ import {
   door,
   doorAction,
   listManifests,
+  listOrganizations,
   manifestEtag,
   projectBound,
   readManifest,
@@ -258,6 +259,73 @@ describe("the Portal's OData client (T-6812)", () => {
       404,
       "no endpoint gone you may read",
     ]);
+    vi.restoreAllMocks();
+  });
+
+  it("reads the Projects and the Organization's own manifest, none where the caller reads only the row (T-7104)", async () => {
+    const sent: string[] = [];
+    let readsOrganization = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL((input as Request).url);
+      sent.push(decodeURIComponent(url.pathname + url.search));
+      const project = (name: string, readable: boolean) => ({
+        "@odata.etag": `W/"${name}"`,
+        name,
+        metadata: readable ? { name, namespace: "org", title: "Air" } : null,
+        spec: readable ? { quota: {} } : null,
+        status: null,
+      });
+      const body = url.pathname.endsWith("/Organization")
+        ? !readsOrganization
+          ? { name: "hel", metadata: null, spec: null, status: null }
+          : { "@odata.etag": 'W/"o"', name: "hel", metadata: { name: "hel" }, spec: { domain: "hel.fi" }, status: null }
+        : url.pathname.includes("('noise')")
+          ? project("noise", false)
+          : url.pathname.includes("('air')")
+            ? project("air", true)
+            : { value: [project("air", true), project("noise", false)] };
+      return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+    });
+    const { items } = await listManifests("org", "projects");
+    expect(items.map((p) => [p.kind, p.metadata.name])).toEqual([["Project", "air"]]);
+    const air = await readManifest("org", "projects", "air");
+    expect([air.kind, manifestEtag(air)]).toEqual(["Project", 'W/"air"']);
+    const hidden = (await readManifest("org", "projects", "noise").catch((e: unknown) => e)) as ApiError;
+    expect([hidden instanceof ApiError, hidden.status]).toEqual([true, 404]);
+    const organizations = await listOrganizations();
+    expect(organizations.items).toEqual([
+      { apiVersion: "joinedcontext.com/v1alpha1", kind: "Organization", metadata: { name: "hel" }, spec: { domain: "hel.fi" }, status: null },
+    ]);
+    expect(manifestEtag(organizations.items[0])).toBe('W/"o"');
+    readsOrganization = false;
+    expect((await listOrganizations()).items).toEqual([]);
+    expect(sent).toEqual([
+      "/api/v1/projects?$select=name,metadata,spec,status",
+      "/api/v1/projects('air')?$select=name,metadata,spec,status",
+      "/api/v1/projects('noise')?$select=name,metadata,spec,status",
+      "/api/v1/Organization?$select=name,spec,status,metadata",
+      "/api/v1/Organization?$select=name,spec,status,metadata",
+    ]);
+    vi.restoreAllMocks();
+  });
+
+  it("reads the Organizations from the REST list on an address that serves several (T-7104)", async () => {
+    const sent: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL((input as Request).url);
+      sent.push(url.pathname);
+      return url.pathname === "/api/v1/Organization"
+        ? odataError(404, "several-organizations", "this address serves several Organizations")
+        : new Response(JSON.stringify({ items: [{ kind: "Organization", metadata: { name: "zilina" } }, { kind: "Organization", metadata: { name: "hel" } }] }), {
+            headers: { "Content-Type": "application/json" },
+          });
+    });
+    const { items } = await listOrganizations();
+    expect(items.map((o) => o.metadata.name)).toEqual(["zilina", "hel"]);
+    expect(sent).toEqual(["/api/v1/Organization", "/api/v1/projects/org/organizations"]);
+    // A person who sees several Organizations reads the list, never the one the service serves.
+    expect((await listOrganizations(true)).items).toHaveLength(2);
+    expect(sent.slice(2)).toEqual(["/api/v1/projects/org/organizations"]);
     vi.restoreAllMocks();
   });
 

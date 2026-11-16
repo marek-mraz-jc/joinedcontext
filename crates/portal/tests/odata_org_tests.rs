@@ -796,6 +796,13 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
         .upsert(envelope("Organization", "hel", ORG_NAMESPACE, json!({})));
     let none = get(&state, Mode::Shared, "root", "/api/v1/projects?$top=5").await;
     assert_eq!(none.status, StatusCode::NOT_FOUND, "{}", none.text);
+    // Its own code, on which the UI reads the REST list of Organizations instead (T-7104).
+    assert_eq!(
+        none.json()["error"]["code"],
+        "several-organizations",
+        "{}",
+        none.text
+    );
     let addressed = get(&state, Mode::Shared, "root", "/api/v1/projects('helsinki')").await;
     assert_eq!(addressed.status, StatusCode::OK, "{}", addressed.text);
 }
@@ -1452,11 +1459,90 @@ async fn a_manifests_spec_status_and_metadata_answer_as_the_rest_door() {
     .await;
     assert_eq!(binding.json()["spec"], rest.json()["spec"], "{}", rest.text);
 
+    // T-7104: a Project's manifest on `projects` and the Organization's on its singleton, each as
+    // the org namespace's REST door hands it to the same caller: null where that door says 404.
+    let (mut org_compared, mut org_refused) = (0, 0);
+    for who in ["hel-only", "hel-editor", "root"] {
+        let cookie = cookies(&state.config, person(who, groups_of(who)), "hel").await;
+        let list = send(
+            &state,
+            mode,
+            &cookie,
+            "/api/v1/projects?$select=name,spec,status,metadata",
+            &[],
+        )
+        .await;
+        assert_eq!(list.status, StatusCode::OK, "{who}: {}", list.text);
+        let mut reads = vec![(
+            "Organization?$select=name,title,spec,status,metadata".to_owned(),
+            format!("/api/v1/projects/{ORG_NAMESPACE}/organizations/hel"),
+        )];
+        for row in list.json()["value"].as_array().cloned().unwrap_or_default() {
+            let name = row["name"].as_str().unwrap_or_default().to_owned();
+            reads.push((
+                format!("projects('{name}')?$select=name,spec,status,metadata"),
+                format!("/api/v1/projects/{ORG_NAMESPACE}/projects/{name}"),
+            ));
+        }
+        assert!(reads.len() > 1, "{who} reads no project: {}", list.text);
+        for (odata, rest_path) in reads {
+            let odata = send(&state, mode, &cookie, &format!("/api/v1/{odata}"), &[]).await;
+            assert_eq!(odata.status, StatusCode::OK, "{who} {}", odata.text);
+            let rest = send(&state, mode, &cookie, &rest_path, &[]).await;
+            org_refused += usize::from(!rest.status.is_success());
+            for member in ["spec", "status", "metadata"] {
+                org_compared += 1;
+                let want = if rest.status.is_success() {
+                    rest.json()[member].clone()
+                } else {
+                    Value::Null
+                };
+                assert_eq!(
+                    odata.json()[member],
+                    want,
+                    "{who} {rest_path} {member}: REST {}",
+                    rest.status
+                );
+            }
+        }
+    }
+    assert!(org_compared >= 18, "only {org_compared} members compared");
+    assert!(
+        (1..org_compared / 3).contains(&org_refused),
+        "{org_refused} of {} reads refused: both a reader and a member who is none",
+        org_compared / 3
+    );
+    let thin = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/Organization?$format=json",
+    )
+    .await
+    .json();
+    assert!(
+        thin.get("spec").is_none() && thin["name"] == "hel",
+        "{thin}"
+    );
+    let wrong = get(&state, mode, "root", "/api/v1/Organization?$select=secret").await;
+    assert_eq!(wrong.status, StatusCode::BAD_REQUEST, "{}", wrong.text);
+    let wrong = get(&state, mode, "root", "/api/v1/Organization?$top=1").await;
+    assert_eq!(wrong.status, StatusCode::BAD_REQUEST, "{}", wrong.text);
+
     // The model says so: untyped properties, which a reader's $metadata declares too.
     let model = get(&state, mode, "hel-only", "/api/v1/$metadata?$format=json").await;
     let space = &model.json()["JoinedContext.Portal"]["ContextSpace"];
     for member in ["spec", "status", "metadata"] {
         assert_eq!(space[member]["$Type"], "Edm.Untyped", "{member}: {space}");
+    }
+    for ty in ["Project", "Organization"] {
+        let entity = &model.json()["JoinedContext.Portal"][ty];
+        for member in ["spec", "status", "metadata"] {
+            assert_eq!(
+                entity[member]["$Type"], "Edm.Untyped",
+                "{ty}.{member}: {entity}"
+            );
+        }
     }
     // Another Organization's key and an unknown one answer the same.
     let foreign = get(

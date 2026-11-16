@@ -292,7 +292,7 @@ const KEYED =
  */
 export function manifestAsRest(
   url: string | URL,
-): { rest: URL; one: boolean } | undefined {
+): { rest: URL; one: boolean; organization?: boolean } | undefined {
   const at = new URL(String(url), "http://localhost");
   if (!(at.searchParams.get("$select") ?? "").split(",").includes("spec"))
     return undefined;
@@ -317,6 +317,9 @@ export function manifestAsRest(
           one: true,
         }
       : { rest: rest("org", keyed[1], unquote(keyed[4])), one: true };
+  // The `Organization` singleton: the Organization of the REST list the service serves (T-7104).
+  if (path === "/api/v1/Organization")
+    return { rest: rest("org", "organizations"), one: true, organization: true };
   const org = ORG_SET.exec(path);
   return org ? { rest: rest("org", org[1]), one: false } : undefined;
 }
@@ -340,10 +343,19 @@ function manifestRow(
 export async function manifestAnswer(
   rest: Response,
   one: boolean,
+  organization = false,
 ): Promise<Response> {
   if (!rest.ok) return asOData(rest);
   const body = (await rest.json()) as Record<string, unknown>;
-  const answer = one
+  const items = (body.items ?? []) as Record<string, unknown>[];
+  // A list of several is the installation's address, which serves no one Organization's service.
+  if (organization && items.length > 1)
+    return odataError(404, "several-organizations", "this address serves several Organizations; read one at its own host");
+  const answer = organization
+    ? items[0]
+      ? manifestRow(items[0])
+      : { name: "org", metadata: null, spec: null, status: null }
+    : one
     ? manifestRow(body)
     : {
         value: ((body.items ?? []) as Record<string, unknown>[]).map(

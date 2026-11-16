@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { api, queryKeys, unwrap } from "./client";
+import { listOrganizations } from "./odata";
 import { asManifests, localized, ORG_NAMESPACE } from "./manifest";
 import type { Manifest } from "./manifest";
 import { useTranslation } from "react-i18next";
@@ -45,6 +46,20 @@ export function useOrganizations() {
       organizations: list.organizations ?? [],
       ownerOf: new Map(list.items.map((item) => [item.name, item.organization])),
     }),
+  });
+}
+
+/**
+ * The `Organization` manifests the person reads, as `GET /projects/org/organizations` lists them:
+ * the service's own Organization when they see one, every one they see when they see several
+ * (T-7104): the service's at once, the list once the projects list shows several.
+ */
+export function useOrganizationManifests() {
+  const owners = useOrganizations();
+  const several = (owners.data?.organizations.length ?? 0) > 1;
+  return useQuery({
+    queryKey: [...queryKeys.list(ORG_NAMESPACE, "organizations"), several ? "several" : "one"],
+    queryFn: async () => listOrganizations(several),
   });
 }
 
@@ -117,16 +132,7 @@ export function useOrganizationName(project: string): string | undefined {
 export function useProjectOrganization(project: string): { organization: Manifest | undefined; settled: boolean } {
   const owners = useOrganizations();
   const name = organizationNameOf(owners.data, project);
-  // Organizations live in the organization's own namespace.
-  const organizations = useQuery({
-    queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "organizations" } },
-        }),
-      ),
-  });
+  const organizations = useOrganizationManifests();
   const items = asManifests(organizations.data?.items ?? []);
   const organization = name !== undefined ? items.find((item) => item.metadata.name === name) : items.length === 1 ? items[0] : undefined;
   return { organization, settled: !owners.isPending && !organizations.isPending };

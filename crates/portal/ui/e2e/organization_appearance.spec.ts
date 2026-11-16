@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // An Organization's administrator sets how its Portal looks (UIX-16, T-6772): Settings → Edit →
 // "How it looks", a colour that is CSS is refused beside its field, a hex colour goes out as a
