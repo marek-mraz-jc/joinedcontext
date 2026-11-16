@@ -39,6 +39,80 @@ pub const STAGE_LABELS: [&str; 4] = [
 #[derive(Debug, Default)]
 pub struct ModelSchemas {
     by_space: RwLock<HashMap<(String, String), Arc<ModelSchema>>>,
+    /// Each space's LinkML model as the broker holds it, by `(project, space)`: written by the
+    /// view sync when Model Tools compiles it, kept across [`ModelSchemas::replace`].
+    linkml: RwLock<HashMap<(String, String), Arc<SpaceLinkml>>>,
+    /// Whether the stage checks with [`SpaceLinkml`] (`JC_PORTAL_PIPELINE_STAGE=linkml`).
+    linkml_stage: bool,
+}
+
+/// A space's model as Model Tools resolved it for the broker (its `brokerSchema`): what the
+/// runner's `linkml_validate` and the gateway's `linkml_model::check` hold a record to (G-19).
+#[derive(Debug)]
+pub struct SpaceLinkml {
+    /// The digest of the model's source, which the rendered stage names: a new version
+    /// re-renders the stream (PL-60).
+    pub revision: String,
+    /// The resolved LinkML JSON, rendered inline into the stage.
+    pub json: String,
+    open: linkml_model::check::Rules,
+    closed: linkml_model::check::Rules,
+}
+
+impl SpaceLinkml {
+    /// Reads `json` as the surfaces read it; `None` for a model they refuse, which then
+    /// validates with the JSON Schema stage as before.
+    pub fn read(revision: String, json: &Value) -> Option<Self> {
+        let text = json.to_string();
+        let model = linkml_model::Model::read(text.as_bytes(), &linkml_model::SURFACE_LIMITS)
+            .map_err(
+                |error| tracing::warn!(%error, "the broker's model is not one the stage reads"),
+            )
+            .ok()?;
+        Some(Self {
+            revision,
+            open: linkml_model::check::Rules::compact(&model, false),
+            closed: linkml_model::check::Rules::compact(&model, true),
+            json: text,
+        })
+    }
+
+    /// The problems of `record` under the model, the stage's verdict in the Portal's words:
+    /// `rule` the SHACL component as `ModelSchema::check` names it (`sh:datatype`, `sh:closed`).
+    pub fn check(&self, record: &Value, closed: bool) -> Vec<Problem> {
+        let rules = if closed { &self.closed } else { &self.open };
+        match linkml_model::check::entity(rules, record, true) {
+            Ok(()) => Vec::new(),
+            Err(violation) => vec![Problem {
+                rule: short_component(violation.component),
+                path: violation.attribute.clone(),
+                message: violation.to_string(),
+            }],
+        }
+    }
+}
+
+/// `sh:MinCountConstraintComponent` as `sh:minCount`, the rule names of `ModelSchema::check`.
+fn short_component(component: &str) -> String {
+    let name = component
+        .trim_start_matches("sh:")
+        .trim_end_matches("ConstraintComponent");
+    let mut chars = name.chars();
+    let first = chars.next().map(|c| c.to_ascii_lowercase());
+    format!(
+        "sh:{}{}",
+        first.map(String::from).unwrap_or_default(),
+        chars.as_str()
+    )
+}
+
+/// Whether the JSON Schema stage closes the model's classes: it does unless the `DataModel` is
+/// `openWorld` (DM-28, `jcctl::model_schema`), and the LinkML stage closes them the same.
+pub fn closed(schema: &ModelSchema) -> bool {
+    schema
+        .classes
+        .values()
+        .any(|class| class.get("additionalProperties") == Some(&Value::Bool(false)))
 }
 
 impl ModelSchemas {
@@ -63,6 +137,54 @@ impl ModelSchemas {
             .collect();
         spaces.sort();
         spaces
+    }
+
+    /// Models that check with the space's LinkML model when `linkml_stage` (G-19).
+    pub fn with_linkml_stage(linkml_stage: bool) -> Self {
+        Self {
+            linkml_stage,
+            ..Self::default()
+        }
+    }
+
+    /// The LinkML model the stage of one space checks with: `None` while the stage is the JSON
+    /// Schema one, or before the view sync has compiled the space's model.
+    pub fn stage_linkml(&self, project: &str, space: &str) -> Option<Arc<SpaceLinkml>> {
+        if !self.linkml_stage {
+            return None;
+        }
+        self.linkml
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&(project.to_owned(), space.to_owned()))
+            .cloned()
+    }
+
+    /// Records the broker's model of one space, read again only when its `revision` moved.
+    pub fn set_linkml(&self, project: &str, space: &str, revision: String, json: &Value) {
+        let key = (project.to_owned(), space.to_owned());
+        let held = self
+            .linkml
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .map(|m| m.revision.clone());
+        if held.as_deref() == Some(revision.as_str()) {
+            return;
+        }
+        let mut linkml = self.linkml.write().unwrap_or_else(|e| e.into_inner());
+        match SpaceLinkml::read(revision, json) {
+            Some(model) => linkml.insert(key, Arc::new(model)),
+            None => linkml.remove(&key),
+        };
+    }
+
+    /// Forgets the LinkML model of every space `keep` answers false for.
+    pub fn retain_linkml(&self, keep: impl Fn(&str, &str) -> bool) {
+        self.linkml
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(project, space), _| keep(project, space));
     }
 
     /// Swaps in what one sync compiled.
@@ -181,7 +303,12 @@ pub(crate) fn beside(root: &Path, manifest: &Path, relative: &str) -> Option<Val
 /// Puts the stage and the rejected sink into a rendered stream, right before the split into
 /// gateway batches, so each record is checked alone and a refused one never reaches a batch
 /// (PL-60, PL-61). Answers whether the stream had the place to put them.
-pub fn insert_stage(stream: &mut Value, schema: &ModelSchema, sink_url: &str) -> bool {
+pub fn insert_stage(
+    stream: &mut Value,
+    schema: &ModelSchema,
+    linkml: Option<&SpaceLinkml>,
+    sink_url: &str,
+) -> bool {
     let Some(processors) = stream
         .pointer_mut("/pipeline/processors")
         .and_then(Value::as_array_mut)
@@ -191,7 +318,10 @@ pub fn insert_stage(stream: &mut Value, schema: &ModelSchema, sink_url: &str) ->
     let Some(split) = processors.iter().rposition(|p| p.get("split").is_some()) else {
         return false;
     };
-    let mut checks = stage(schema);
+    let mut checks = match linkml {
+        Some(linkml) => linkml_stage(schema, linkml),
+        None => stage(schema),
+    };
     checks.push(rejected_sink(sink_url));
     // The quality mapping is there only when a rule rejects on write (DM-88).
     let whole = checks.len() == STAGE_LABELS.len();
@@ -227,19 +357,42 @@ pub fn stage(schema: &ModelSchema) -> Vec<Value> {
             schema.model
         )}]
     }));
+    let mut stage = vec![json!({ "switch": cases }), json!({ "mapping": ID_MAPPING })];
+    stage.extend(quality_mapping(schema));
+    stage
+}
+
+/// The stage with the space's LinkML model in place of one JSON Schema per class (G-19): the
+/// runner's `linkml_validate` with the model inline, then the class, id and quality checks of
+/// [`stage`], each a mapping that throws.
+pub fn linkml_stage(schema: &ModelSchema, linkml: &SpaceLinkml) -> Vec<Value> {
+    let classes: Vec<&String> = schema.classes.keys().collect();
     let mut stage = vec![
-        json!({ "switch": cases }),
-        json!({ "mapping": concat!(
-            "root = this\n",
-            "let prefix = \"urn:ngsi-ld:\" + this.type.string() + \":\"\n",
-            "if !this.id.or(\"\").string().has_prefix($prefix) || this.id.or(\"\").string().length() <= $prefix.length() {\n",
-            "  root = throw(\"the id is not an NGSI-LD URN of its type, urn:ngsi-ld:{type}:{id} (PF-43)\")\n",
-            "}"
+        json!({ "linkml_validate": {
+            "model": linkml.json,
+            "revision": linkml.revision,
+            "closed": closed(schema),
+        }}),
+        // One mapping for the class and the id, so the labels stay those of [`stage`].
+        json!({ "mapping": format!(
+            "if !{}.contains(this.type.or(\"\")) {{\n  root = throw(\"the type is not a class of the space's data model {} (DM-61)\")\n}}\n{}",
+            serde_json::to_string(&classes).unwrap_or_else(|_| "[]".to_owned()),
+            schema.model,
+            ID_MAPPING
         )}),
     ];
     stage.extend(quality_mapping(schema));
     stage
 }
+
+/// The mapping that fails a record whose id is no NGSI-LD URN of its type (PF-43).
+const ID_MAPPING: &str = concat!(
+            "root = this\n",
+            "let prefix = \"urn:ngsi-ld:\" + this.type.string() + \":\"\n",
+            "if !this.id.or(\"\").string().has_prefix($prefix) || this.id.or(\"\").string().length() <= $prefix.length() {\n",
+    "  root = throw(\"the id is not an NGSI-LD URN of its type, urn:ngsi-ld:{type}:{id} (PF-43)\")\n",
+    "}"
+);
 
 /// The stage's mapping for the space's rejecting rules (DM-88): it fails a record that
 /// breaks one, with the rule's name, so the rejected sink lists it. `None` when no rule
@@ -376,6 +529,143 @@ mod tests {
             "refDevice": { "type": "Relationship", "object": "urn:ngsi-ld:Device:banskabystrica.sk:ovzdusie:d-1" },
             "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [19.1, 48.7] } }
         })
+    }
+
+    /// The `brokerSchema` Model Tools renders for [`schema`]'s class (G-19).
+    fn linkml() -> SpaceLinkml {
+        let kind = |k: &str| json!({ "ngsi_ld_kind": { "tag": "ngsi_ld_kind", "value": k } });
+        let json = json!({ "id": "https://e.org/air/", "name": "bb-air-quality",
+            "classes": { "AirQualityObserved": { "slots": ["dateObserved", "pm10", "window", "name", "refDevice", "location"] } },
+            "enums": { "Window": { "permissible_values": { "day": {}, "month": {} } } },
+            "slots": {
+                "dateObserved": { "range": "datetime", "required": true },
+                "pm10": { "range": "float", "minimum_value": 0 },
+                "window": { "range": "Window" },
+                "name": { "annotations": kind("LanguageProperty") },
+                "refDevice": { "range": "uri", "annotations": kind("Relationship") },
+                "location": { "annotations": kind("GeoProperty") }
+            } });
+        SpaceLinkml::read("d1".into(), &json).expect("the surfaces read it")
+    }
+
+    /// G-19: the LinkML stage and the JSON Schema stage give a record one verdict under one rule
+    /// and path, the Portal's rule names; the stage renders the model inline with its revision
+    /// and closes the class as the JSON Schema one does.
+    #[test]
+    fn the_linkml_stage_names_the_rule_the_json_schema_stage_names() {
+        let (json_schema, linkml) = (model(false), linkml());
+        let closed = closed(&json_schema);
+        assert!(closed && !super::closed(&model(true)));
+        let named = |problems: Vec<Problem>| -> Vec<(String, String)> {
+            problems
+                .into_iter()
+                .take(1)
+                .map(|p| (p.rule, p.path))
+                .collect()
+        };
+        let mut cases = vec![valid()];
+        for (attribute, value) in [
+            ("pm10", json!({ "type": "Property", "value": -1 })),
+            ("pm10", json!({ "type": "Property", "value": "high" })),
+            ("window", json!({ "type": "Property", "value": "week" })),
+            ("unlisted", json!({ "type": "Property", "value": 1 })),
+        ] {
+            let mut record = valid();
+            record[attribute] = value;
+            cases.push(record);
+        }
+        let mut missing = valid();
+        missing.as_object_mut().map(|o| o.remove("dateObserved"));
+        cases.push(missing);
+        for record in &cases {
+            assert_eq!(
+                named(linkml.check(record, closed)),
+                named(json_schema.check(record)),
+                "{record}"
+            );
+        }
+        assert_eq!(
+            named(linkml.check(&cases[1], closed))[0].0,
+            "sh:minInclusive"
+        );
+        assert!(
+            linkml.check(&cases[4], false).is_empty(),
+            "an open model takes it"
+        );
+        let message = &linkml.check(&cases[1], closed)[0].message;
+        assert!(
+            message.contains("pm10") && !message.contains("-1"),
+            "{message}"
+        );
+
+        let stage = linkml_stage(&json_schema, &linkml);
+        assert_eq!(stage[0]["linkml_validate"]["revision"], "d1");
+        assert_eq!(stage[0]["linkml_validate"]["closed"], true);
+        assert_eq!(stage[0]["linkml_validate"]["model"], linkml.json);
+        let mapping = stage[1]["mapping"].as_str().expect("a mapping");
+        assert!(
+            mapping.contains(r#"["AirQualityObserved"].contains"#) && mapping.contains("PF-43")
+        );
+        let mut stream = json!({ "pipeline": { "processors": [{ "split": { "size": 1000 } }] } });
+        assert!(insert_stage(
+            &mut stream,
+            &json_schema,
+            Some(&linkml),
+            "http://p/x"
+        ));
+        let labels: Vec<Value> = stream["pipeline"]["processors"]
+            .as_array()
+            .expect("processors")
+            .iter()
+            .map(|p| p["label"].clone())
+            .collect();
+        assert_eq!(
+            labels[..3],
+            [
+                json!("validation"),
+                json!("validation_id"),
+                json!("rejected")
+            ]
+        );
+    }
+
+    /// G-19: the LinkML stage renders only when switched on and once the view sync has handed
+    /// over the space's model; a model read again only when its revision moves, and one the
+    /// surfaces refuse leaves the JSON Schema stage in place.
+    #[test]
+    fn the_linkml_model_is_held_per_space_and_rendered_only_when_switched_on() {
+        let json = serde_json::from_str::<Value>(&linkml().json).expect("json");
+        let off = ModelSchemas::default();
+        off.set_linkml("p", "air", "d1".into(), &json);
+        assert!(
+            off.stage_linkml("p", "air").is_none(),
+            "the JSON Schema stage by default"
+        );
+        let on = ModelSchemas::with_linkml_stage(true);
+        assert!(
+            on.stage_linkml("p", "air").is_none(),
+            "nothing compiled yet"
+        );
+        on.set_linkml("p", "air", "d1".into(), &json);
+        let held = on.stage_linkml("p", "air").expect("held");
+        on.set_linkml("p", "air", "d1".into(), &json!({}));
+        assert!(Arc::ptr_eq(
+            &held,
+            &on.stage_linkml("p", "air").expect("kept")
+        ));
+        on.replace(HashMap::new());
+        assert!(
+            on.stage_linkml("p", "air").is_some(),
+            "a sync's replace keeps it"
+        );
+        on.set_linkml("p", "air", "d2".into(), &json!({ "imports": [] }));
+        assert!(
+            on.stage_linkml("p", "air").is_none(),
+            "a refused model is dropped"
+        );
+        on.set_linkml("p", "air", "d3".into(), &json);
+        on.retain_linkml(|_, space| space != "air");
+        assert!(on.stage_linkml("p", "air").is_none());
     }
 
     /// A model with every shape an attribute can take: a required quantity with its unit, a coded
@@ -648,6 +938,7 @@ mod tests {
         assert!(insert_stage(
             &mut stream,
             &model(false),
+            None,
             "http://p/internal/pipelines/a/b/rejected"
         ));
         let labels: Vec<Value> = stream["pipeline"]["processors"]
@@ -667,7 +958,12 @@ mod tests {
         assert!(stream["pipeline"]["processors"][5].get("split").is_some());
 
         let mut no_split = json!({ "pipeline": { "processors": [{ "mapping": "root = this" }] } });
-        assert!(!insert_stage(&mut no_split, &model(false), "http://p/x"));
+        assert!(!insert_stage(
+            &mut no_split,
+            &model(false),
+            None,
+            "http://p/x"
+        ));
         assert_eq!(
             no_split["pipeline"]["processors"].as_array().map(Vec::len),
             Some(1)
@@ -729,7 +1025,7 @@ mod tests {
     #[test]
     fn the_stage_fails_a_record_a_rule_rejects_and_counts_it_rejected() {
         let mut stream = json!({ "pipeline": { "processors": [{ "split": { "size": 1000 } }] } });
-        assert!(insert_stage(&mut stream, &ruled(), "http://p/x"));
+        assert!(insert_stage(&mut stream, &ruled(), None, "http://p/x"));
         let processors = stream["pipeline"]["processors"]
             .as_array()
             .expect("processors");

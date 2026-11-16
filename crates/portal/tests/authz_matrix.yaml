@@ -1319,6 +1319,17 @@ routes:
     rule: "project-verb:propose:Pipeline"
     expect: [403, 403, allow, allow, 403, allow, 404, 403]
     body: {"ids": []}
+  - route: GET /projects/{project}/pipelines/{name}/rejected/groups
+    rule: "project-verb:read:Pipeline (G-21): the rejected list counted by rule and attribute, as the list reads"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/pipelines/{name}/rejected/export
+    rule: "project-verb:read:Pipeline (G-21): the rejected list as CSV, secrets masked and personalData withheld"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "a reader's 503 is the fixture's: the export withholds personalData by the project's models and the fixture has none it can read"
+  - route: POST /projects/{project}/pipelines/{name}/source-check
+    rule: "project-verb:read:Pipeline (G-21): a dry run that writes nothing, in the project's one pipeline-test slot"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    note: "a 409 or 503 is the fixture's: its pipeline reads no saved http DataSource and it runs no runner; pipeline_source_check_tests holds 401/404 and the run"
   - route: GET /projects/{project}/pipelines/{name}/source-deletes
     rule: "project-verb:read:Pipeline"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]
