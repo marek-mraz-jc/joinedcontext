@@ -214,6 +214,19 @@ export function blankDocument(): boolean {
 export const OWN_ROUTES: ReadonlySet<string> = new Set(["/connectors", "/ai-connectors"]);
 
 /**
+ * An edit form asks for the person's draft of the item first; none yet is the 404 (T-3852), at
+ * the REST draft read or the OData service's jc_draft_get (T-7119). Only that GET: a 404 of any
+ * other read, the draft list included, stays a finding.
+ */
+export function missingDraftRead(status: number, method: string, url: string): boolean {
+  return (
+    status === 404 &&
+    method === "GET" &&
+    /\/drafts\/[A-Za-z]+\/[^/?]+$|\/JoinedContext\.Portal\.jc_draft_get\(/.test(new URL(url).pathname)
+  );
+}
+
+/**
  * A write control the viewer can press, or one refused without a reason (UI-44). A tab is a place
  * to go, and a control that only edits the draft in hand writes nothing: a term added to the filter
  * being tried, a row of the Explore filters (EntityFilters, T-6139), a condition of the grid's filter
