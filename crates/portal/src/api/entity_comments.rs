@@ -312,7 +312,7 @@ pub async fn add_comment(
             crate::permissions::may_read_space(&state.mirror, &project, &space, named, now)
         };
         let readable = reads(&person)
-            || crate::people::realm_id_of(state.people.as_deref(), &person)
+            || crate::people::realm_id_of(state.people_here(), &person)
                 .await
                 .is_some_and(|id| reads(&id));
         if readable {

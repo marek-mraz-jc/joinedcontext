@@ -298,9 +298,7 @@ async fn run(
     let base = state.config.gateway_url.as_deref().ok_or_else(|| {
         ApiError::Unavailable("this Portal has no gateway address (JC_PORTAL_GATEWAY_URL)".into())
     })?;
-    let oidc = state.oidc.as_ref().ok_or_else(|| {
-        ApiError::Unavailable("this Portal has no Keycloak client to write data with".into())
-    })?;
+    let oidc = crate::auth::realms::exchanger(state, &bearer.0).await?;
     let token = oidc.exchange_for_endpoint(&bearer.0, &slug).await?;
     let (path, body) = request_of(&input);
     let mut request = crate::api::pipelines::http()

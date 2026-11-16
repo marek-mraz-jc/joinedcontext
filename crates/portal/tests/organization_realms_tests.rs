@@ -68,6 +68,11 @@ struct World {
 /// each; `ba-only` is bound in ba, `hel-only` in hel. Port 9 (discard) refuses a key fetch at
 /// once, so only the keys installed here verify.
 fn world() -> World {
+    world_at("http://127.0.0.1:9")
+}
+
+/// [`world`] with ba's realm reached at `ba_back` (its keys, tokens and admin API).
+fn world_at(ba_back: &str) -> World {
     let oidc = OidcConfig {
         issuer: INSTALLATION.parse().expect("url"),
         client_id: "portal-api".into(),
@@ -80,11 +85,12 @@ fn world() -> World {
         organization_realms: vec![RealmSetting {
             organization: "ba".into(),
             issuer: BA_REALM.parse().expect("url"),
-            jwks_url: "http://127.0.0.1:9/realms/ba/protocol/openid-connect/certs"
+            jwks_url: format!("{ba_back}/realms/ba/protocol/openid-connect/certs")
                 .parse()
                 .expect("url"),
         }],
         oidc: Some(oidc),
+        keycloak_admin: Some(("portal-reconciler".into(), ClientAuth::Secret("r".into()))),
         bootstrap_admins: ROOTS.to_owned(),
         ..Config::for_tests()
     };
@@ -102,7 +108,7 @@ fn world() -> World {
         "Role",
         "reader",
         ORG_NAMESPACE,
-        json!({ "rules": [{ "kinds": ["Project", "ContextSpace"], "verbs": ["read"] }] }),
+        json!({ "rules": [{ "kinds": ["Project", "ContextSpace", "Person"], "verbs": ["read"] }] }),
     ));
     m.upsert(envelope(
         "Organization",
@@ -308,5 +314,120 @@ async fn a_session_of_an_organizations_realm_opens_on_its_own_host_alone() {
     assert_eq!(
         get(&w.state, BA, ("cookie", &installation)).await,
         StatusCode::OK
+    );
+}
+
+async fn mcp(state: &AppState, at: &str, token: &str) -> StatusCode {
+    let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
+    server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/mcp")
+                .header(header::HOST, at)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(ping.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response")
+        .status()
+}
+
+/// T-7142: the Portal's MCP door takes a token of ba's realm on ba's host, as `/api/v1` does,
+/// and nowhere else.
+#[tokio::test]
+async fn the_mcp_door_takes_an_organizations_realm_on_its_own_host_alone() {
+    let w = world();
+    let own = token(&w.ba, "ba", BA_REALM, "ba-only", &[]);
+    assert_eq!(mcp(&w.state, BA, &own).await, StatusCode::OK, "ba's host");
+    assert_eq!(
+        mcp(&w.state, HEL, &own).await,
+        StatusCode::UNAUTHORIZED,
+        "ba's realm on hel's host"
+    );
+    assert_eq!(
+        mcp(&w.state, "portal.example", &own).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let operator = token(
+        &w.installation,
+        "installation",
+        INSTALLATION,
+        "hel-only",
+        &[],
+    );
+    assert_eq!(
+        mcp(&w.state, HEL, &operator).await,
+        StatusCode::OK,
+        "the control"
+    );
+}
+
+async fn people(state: &AppState, at: &str, token: &str) -> StatusCode {
+    server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/organization/people")
+                .header(header::HOST, at)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response")
+        .status()
+}
+
+/// T-7142: on ba's host the people doors manage ba's realm, as ba's own `portal-reconciler`, and
+/// only there; a reader of hel is refused ba's people, and ba's realm is never asked from
+/// another host.
+#[tokio::test]
+async fn the_people_of_an_organizations_realm_are_managed_in_that_realm_alone() {
+    use wiremock::matchers::{body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let ba = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/ba/protocol/openid-connect/token"))
+        .and(body_string_contains("client_credentials"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "access_token": "ba-admin", "token_type": "Bearer" })),
+        )
+        .expect(1)
+        .mount(&ba)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/ba/users"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .expect(1)
+        .mount(&ba)
+        .await;
+    let w = world_at(&ba.uri());
+    let own = token(&w.ba, "ba", BA_REALM, "ba-only", &[]);
+    assert_eq!(
+        people(&w.state, BA, &own).await,
+        StatusCode::OK,
+        "ba's people on ba's host"
+    );
+    assert_eq!(people(&w.state, HEL, &own).await, StatusCode::UNAUTHORIZED);
+    let hel = token(
+        &w.installation,
+        "installation",
+        INSTALLATION,
+        "hel-only",
+        &[],
+    );
+    assert_eq!(
+        people(&w.state, BA, &hel).await,
+        StatusCode::FORBIDDEN,
+        "a reader of hel on ba's people"
+    );
+    // On hel's host the installation realm's people, which this Portal has no admin client of:
+    // never ba's realm.
+    assert_eq!(
+        people(&w.state, HEL, &hel).await,
+        StatusCode::SERVICE_UNAVAILABLE
     );
 }
