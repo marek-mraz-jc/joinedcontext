@@ -11,7 +11,8 @@ import { useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { doorAction } from "../../api/odata";
 import { readModelSource } from "../../api/datamodelSource";
 import { SchemaForm } from "../../components/forms/SchemaForm";
 import type { JsonSchema } from "../../components/forms/types";
@@ -31,7 +32,7 @@ export function useArtifacts(source: string | undefined) {
     staleTime: Infinity,
     retry: false,
     queryFn: async (): Promise<Artifacts> =>
-      unwrap(await api.POST("/api/v1/tools/generate", { body: { source: source ?? "" } })) as Artifacts,
+      (await doorAction("portal_model_compile", { body: { source: source ?? "" } })) as Artifacts,
   });
 }
 

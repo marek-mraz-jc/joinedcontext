@@ -120,7 +120,7 @@ export function parseManifest(text: string): Parsed {
 type Schema = Record<string, unknown>;
 
 /**
- * The kind's schema (`GET /api/v1/kinds/Dashboard/schema`) with `endpointRef` limited to the
+ * The kind's schema (the `portal_kind_schema` door's, kind `Dashboard`) with `endpointRef` limited to the
  * Endpoints the person may read: the editor completes from that list and marks any other name.
  * The server checks the reference again when the dashboard is proposed.
  */

@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The Portal doors the page calls (T-7173) answer as the REST stubs below.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // My AI connectors (T-5951, AG-142): create from the tick tree, copy the setup line, revoke after an
 // inline confirm, read the activity; and the refusal the server gives beside the field it names.

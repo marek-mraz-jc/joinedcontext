@@ -9,10 +9,11 @@ import { Link } from "@tanstack/react-router";
 import { Suspense, lazy } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { localized } from "../../api/manifest";
 import { mayRead, usePermissions } from "../../api/permissions";
 import { spaceUsageQuery } from "../../api/spaceUsage";
+import { listDrafts } from "../../api/drafts";
 import { useSampleProjects } from "../../api/projects";
 import { useHiddenSections } from "../../branding";
 import { isHiddenSection } from "../../components/layout/navigation";
@@ -92,7 +93,7 @@ export function HomePage({
     queryKey: ["projects", project, "drafts"],
     enabled: role === "editor",
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/drafts", { params: { path: { project } } })) as unknown as Listed,
+    queryFn: async () => (await listDrafts(project)) as unknown as Listed,
   });
   // Only an organization administrator may list the people; anyone else's card is not shown.
   const people = useQuery({

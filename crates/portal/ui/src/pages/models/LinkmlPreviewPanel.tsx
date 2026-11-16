@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { doorAction } from "../../api/odata";
 import { SchemaForm } from "../../components/forms/SchemaForm";
 import type { JsonSchema } from "../../components/forms/types";
 import { CodeBlock,
@@ -188,11 +189,7 @@ export function LinkmlPreviewPanel({
     staleTime: Infinity,
     retry: false,
     queryFn: async (): Promise<Artifacts> =>
-      unwrap(
-        await api.POST("/api/v1/tools/generate", {
-          body: { source: settled },
-        }),
-      ) as Artifacts,
+      (await doorAction("portal_model_compile", { body: { source: settled } })) as Artifacts,
   });
 
   const model = useMemo(() => parseModel(settled), [settled]);

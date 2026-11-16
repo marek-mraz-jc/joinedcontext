@@ -2,7 +2,8 @@ import { useEffect, useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../api/client";
+import { ApiError } from "../api/client";
+import { doorAction } from "../api/odata";
 import { Alert, Button, Checkbox, Dialog, Field, Icon, Textarea } from "./ui";
 
 /** The longest text the API keeps (API/01 §38). */
@@ -119,11 +120,9 @@ export function FeedbackButton({
           setCapturing(false);
         }
       }
-      return unwrap(
-        await api.POST("/api/v1/feedback", {
-          body: { text, page: window.location.pathname, ...(image ? { screenshot: image } : {}) },
-        }),
-      );
+      return doorAction("portal_feedback_send", {
+        body: { text, page: window.location.pathname, ...(image ? { screenshot: image } : {}) },
+      });
     },
     onSuccess: () => {
       setOpen(false);

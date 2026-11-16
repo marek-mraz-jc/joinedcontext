@@ -384,9 +384,10 @@ test.describe("pipeline studio walk (CIVITAS/CORE comparison)", () => {
       } else {
         await expect(hint).toHaveCount(0);
       }
-      const sent = page.waitForRequest((request) => request.url().endsWith("/pipelines/test"));
+      // The test run is the project's Portal door; the REST door's body goes in its `body` (T-7175).
+      const sent = page.waitForRequest((request) => request.url().endsWith("/JoinedContext.Portal.portal_pipeline_test"));
       await page.getByRole("button", { name: "Test mapping" }).click();
-      const body = (await sent).postDataJSON() as { sample: { format: string } };
+      const { body } = (await sent).postDataJSON() as { body: { sample: { format: string } } };
       expect(body.sample.format).toBe(format);
       await dialog.getByTestId("pipeline-studio").getByRole("heading", { name: "Try it on a sample" }).scrollIntoViewIfNeeded();
       await shot(page, `csv-${source}-${width}`);

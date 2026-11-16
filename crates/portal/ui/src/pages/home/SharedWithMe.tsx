@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { localized } from "../../api/manifest";
 import { useBranding } from "../../branding";
 import { Card, PageFailed, safeHref } from "../../components/ui";
@@ -17,7 +17,7 @@ export function SharedWithMe(): JSX.Element {
   const { appsOrigin } = useBranding();
   const shared = useQuery({
     queryKey: ["apps", "shared"],
-    queryFn: async () => unwrap(await api.GET("/api/v1/shared-apps")),
+    queryFn: async () => (await door("portal_shared_app_list", {})) as RestAnswer<"apps_shared_with_me">,
   });
   // A list, or nothing to draw: a page never breaks on an answer of another shape.
   const apps = Array.isArray(shared.data) ? shared.data : [];

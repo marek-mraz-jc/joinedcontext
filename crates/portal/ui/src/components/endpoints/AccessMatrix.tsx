@@ -10,7 +10,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
-import { api, unwrap } from "../../api/client";
+import { door } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { CARD_HEIGHT, CARD_WIDTH, curve } from "../../pages/pipelines/flowMap";
 import { RecordLink } from "../RecordLink";
@@ -61,12 +61,11 @@ const STATE_STYLE: Record<CellState, string> = {
 export function accessMatrixQuery(project: string, name: string, kind: string) {
   return {
     queryKey: ["access-matrix", project, name, kind] as const,
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<Matrix> => {
-      const answer: unknown = await unwrap(
-        await api.GET("/api/v1/projects/{project}/endpoints/{name}/access/matrix", {
-          params: { path: { project, name }, query: kind ? { kind } : {} },
-          signal,
-        }),
+    queryFn: async (): Promise<Matrix> => {
+      const answer: unknown = await door(
+        "portal_endpoint_access_matrix",
+        kind ? { endpoint: name, kind } : { endpoint: name },
+        project,
       );
       // An answer that is no matrix (a proxy's page, an older Portal) is said as such, never drawn.
       const fields = answer as Partial<Record<keyof Matrix, unknown>> | null;

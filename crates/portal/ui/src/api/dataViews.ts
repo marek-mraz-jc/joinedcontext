@@ -2,7 +2,7 @@
  * Saved data views of a space (API/01 §30, T-3104): the Portal's own record of how one entity type
  * is looked at. The rows a view shows are still read with the person's own session.
  */
-import { api, unwrap } from "./client";
+import { door, doorAction, type RestAnswer } from "./odata";
 import type { components } from "./schema";
 
 export type DataView = components["schemas"]["DataView"];
@@ -16,13 +16,10 @@ export type ViewKind = "grid";
 
 export const VIEW_MODES: ViewMode[] = ["personal", "collaborative", "locked"];
 
-const LIST = "/api/v1/projects/{project}/spaces/{space}/views";
-const ONE = "/api/v1/projects/{project}/spaces/{space}/views/{id}";
-
 export const dataViewsKey = (project: string, space: string) => ["data-views", project, space] as const;
 
 export async function listViews(project: string, space: string): Promise<DataView[]> {
-  const answer = await unwrap(await api.GET(LIST, { params: { path: { project, space } } }));
+  const answer = (await door("portal_space_view_list", { space }, project)) as RestAnswer<"list_views">;
   return answer.items;
 }
 
@@ -31,7 +28,7 @@ export async function createView(
   space: string,
   body: { type: string; kind: ViewKind; mode: ViewMode; title: string; config: ViewConfig },
 ): Promise<DataView> {
-  return unwrap(await api.POST(LIST, { params: { path: { project, space } }, body }));
+  return (await doorAction("portal_space_view_create", { space, body }, project)) as RestAnswer<"create_view">;
 }
 
 export async function updateView(
@@ -40,11 +37,11 @@ export async function updateView(
   id: string,
   body: { kind: string; mode: string; title: string; config: ViewConfig; expectedVersion: number },
 ): Promise<DataView> {
-  return unwrap(await api.PUT(ONE, { params: { path: { project, space, id } }, body }));
+  return (await doorAction("portal_space_view_replace", { space, id, body }, project)) as RestAnswer<"update_view">;
 }
 
 export async function deleteView(project: string, space: string, id: string): Promise<void> {
-  await unwrap(await api.DELETE(ONE, { params: { path: { project, space, id } } }));
+  await doorAction("portal_space_view_delete", { space, id }, project);
 }
 
 /** Two configs say the same thing: what a view saved and what the grid shows now. */

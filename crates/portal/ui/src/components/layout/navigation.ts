@@ -1,6 +1,6 @@
 import type { IconName } from "../ui";
 
-/** The plural segments of `/api/v1/projects/{project}/{plural}`, in sidebar order. */
+/** The kinds' plurals (each one's set on the OData service), in sidebar order. */
 export const NAV_SECTIONS = [
   // The project's home: the first-run checklist and what the person's role does next (T-3233).
   { plural: "home", labelKey: "nav.home", icon: "globe" },

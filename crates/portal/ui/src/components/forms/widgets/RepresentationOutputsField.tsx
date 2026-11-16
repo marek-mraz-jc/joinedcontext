@@ -1,10 +1,10 @@
-import { listManifests } from "../../../api/odata";
+import { doorAction, listManifests, type RestAnswer } from "../../../api/odata";
 import { useContext } from "react";
 import type { JSX } from "react";
 import type { FieldProps } from "@rjsf/utils";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, reasonOf } from "../../../api/client";
+import { queryKeys, reasonOf } from "../../../api/client";
 import { asManifests, refName } from "../../../api/manifest";
 import { Button, Card, EmptyState, Field, InlineError, Input, Select, Textarea } from "../../ui";
 import { LIST_BODY, LIST_FIELDSET, ListLegend } from "../theme";
@@ -403,13 +403,13 @@ function readableStart(start: string): string {
 function IcalPreview({ id, output, endpoint }: IcalPreviewProps): JSX.Element {
   const { t } = useTranslation();
   const preview = useMutation({
+    // The button is off while the Endpoint is unsaved, so `endpoint` is there when this runs.
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/endpoints/{name}/ical-preview", {
-          params: { path: endpoint ?? { project: "", name: "" } },
-          body: { output: output as unknown as Record<string, unknown> },
-        }),
-      ),
+      (await doorAction(
+        "portal_endpoint_ical_preview",
+        { name: endpoint?.name ?? "", body: { output: output as unknown as Record<string, unknown> } },
+        endpoint?.project ?? "",
+      )) as RestAnswer<"preview_ical">,
   });
   const answer = preview.data;
   const skipped = answer

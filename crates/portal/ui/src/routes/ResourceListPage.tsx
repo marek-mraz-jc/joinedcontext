@@ -218,7 +218,7 @@ export function hasEditForm(plural: string): boolean {
  */
 const ONE_PER_ORGANIZATION = new Set(["dataspaceparticipants"]);
 
-/** `/api/v1/projects/{project}/{plural}`: a kind's own page, or its resources in a table (MF-11…MF-15). */
+/** A kind's set in a project: its own page, or its resources in a table (MF-11…MF-15). */
 export function ResourceListPage({
   project,
   plural,

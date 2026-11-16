@@ -1,9 +1,9 @@
-import { listManifests, readChange } from "../../api/odata";
+import { listManifests, readChange, doorAction } from "../../api/odata";
 import { useEffect, useId, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { asManifests } from "../../api/manifest";
 import type { Change, ResourceProposal } from "../../api/manifest";
 import { useProposal } from "../../api/proposal";
@@ -96,11 +96,10 @@ export function NewEndpointPanel({
   const render = useMutation({
     mutationFn: async () => {
       setRenderError(null);
-      const rendering = (await unwrap(
-        await api.POST("/api/v1/projects/{project}/assistant/propose-endpoint", {
-          params: { path: { project } },
-          body: newEndpointRequest(name.trim(), space, preset, types) as Record<string, never>,
-        }),
+      const rendering = (await doorAction(
+        "portal_endpoint_render",
+        { body: newEndpointRequest(name.trim(), space, preset, types) },
+        project,
       )) as Rendering;
       setLane(rendering.lane);
       await proposal.mutation.mutateAsync({

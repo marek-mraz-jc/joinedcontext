@@ -3,7 +3,8 @@ import { Fragment, useCallback, useState, useSyncExternalStore } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ApiError, api, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import {
   Alert,
   Badge,
@@ -49,7 +50,7 @@ const KEY = ["ai-connectors"] as const;
 const OPTIONS_KEY = ["ai-connectors", "options"] as const;
 
 function useOptions() {
-  return useQuery({ queryKey: OPTIONS_KEY, queryFn: async () => unwrap(await api.GET("/api/v1/connectors/options")) });
+  return useQuery({ queryKey: OPTIONS_KEY, queryFn: async () => (await door("portal_own_connector_options", {})) as RestAnswer<"connector_options"> });
 }
 
 /**
@@ -59,7 +60,7 @@ function useOptions() {
  */
 export function AiConnectorsPage(): JSX.Element {
   const { t } = useTranslation();
-  const list = useQuery({ queryKey: KEY, queryFn: async () => unwrap(await api.GET("/api/v1/connectors")) });
+  const list = useQuery({ queryKey: KEY, queryFn: async () => (await door("portal_own_connector_list", {})) as RestAnswer<"list_connectors"> });
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<string | null>(null);
   const items = list.data?.items ?? [];
@@ -124,7 +125,7 @@ export function AiConnectorCard({ connector, justCreated }: { connector: AiConne
   const [showActivity, setShowActivity] = useState(false);
   const [editing, setEditing] = useState(false);
   const revoke = useMutation({
-    mutationFn: async () => unwrap(await api.DELETE("/api/v1/connectors/{id}", { params: { path: { id: connector.id } } })),
+    mutationFn: async () => doorAction("portal_own_connector_revoke", { id: connector.id }),
     onSuccess: () => {
       setConfirming(false);
       void client.invalidateQueries({ queryKey: KEY });
@@ -279,7 +280,7 @@ export function ActivityTable({ id, name }: { id: string; name: string }): JSX.E
   const { t, i18n } = useTranslation();
   const calls = useQuery({
     queryKey: [...KEY, id, "activity"],
-    queryFn: async () => unwrap(await api.GET("/api/v1/connectors/{id}/activity", { params: { path: { id } } })),
+    queryFn: async () => (await door("portal_own_connector_activity", { id })) as RestAnswer<"connector_activity">,
   });
   if (calls.isPending) return <PageLoading label={t("aiConnectors.activityLoading")} lines={1} />;
   if (calls.isError) return <PageFailed error={calls.error} onRetry={() => void calls.refetch()} />;
@@ -708,13 +709,11 @@ export function CreateDialog({
       const request = toRequest(current, options.data);
       const { segments, scope, kinds, writes, autonomous, expiresAt, allowedClients } = request;
       return stored
-        ? unwrap(
-            await api.PATCH("/api/v1/connectors/{id}", {
-              params: { path: { id: stored.id } },
-              body: { segments, scope, kinds, writes, autonomous, expiresAt, allowedClients },
-            }),
-          )
-        : unwrap(await api.POST("/api/v1/connectors", { body: request }));
+        ? ((await doorAction("portal_own_connector_edit", {
+            id: stored.id,
+            body: { segments, scope, kinds, writes, autonomous, expiresAt, allowedClients },
+          })) as RestAnswer<"edit_connector">)
+        : ((await doorAction("portal_own_connector_create", { body: request })) as RestAnswer<"create_connector">);
     },
     onSuccess: (connector) => {
       void client.invalidateQueries({ queryKey: KEY });

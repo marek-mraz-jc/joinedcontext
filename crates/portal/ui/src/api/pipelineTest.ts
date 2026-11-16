@@ -1,4 +1,5 @@
-import { api } from "./client";
+import { ApiError } from "./client";
+import { doorAction } from "./odata";
 
 /**
  * One run of a candidate pipeline over a sample (PL-43, API/01 §7a), through the typed client
@@ -43,15 +44,15 @@ export async function testPipeline(
   if (!("sample" in inlined)) {
     return inlined;
   }
-  const { data, error, response } = await api.POST("/api/v1/projects/{project}/pipelines/test", {
-    params: { path: { project } },
-    body: { pipeline, sample: inlined.sample },
-  });
-  if (data !== undefined) {
-    return { trace: data as unknown as Trace };
+  try {
+    return {
+      trace: (await doorAction("portal_pipeline_test", { body: { pipeline, sample: inlined.sample } }, project)) as Trace,
+    };
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    const detail = error.problem?.detail;
+    return { status: error.status, detail: typeof detail === "string" ? detail : undefined };
   }
-  const detail = (error as { detail?: unknown } | undefined)?.detail;
-  return { status: response.status, detail: typeof detail === "string" ? detail : undefined };
 }
 
 /**

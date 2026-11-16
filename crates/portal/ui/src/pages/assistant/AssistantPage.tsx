@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, forPeople, unwrap, reasonOf } from "../../api/client";
+import { forPeople, reasonOf } from "../../api/client";
 import { rememberRun, requestOpen } from "../../assistant/state";
 import {
   Badge,
@@ -21,7 +21,7 @@ import {
 } from "../../components/ui";
 import { ListFailed } from "../../components/forms/widgets/ListFailed";
 import { usePermissions } from "../../api/permissions";
-import { listRuns } from "../../api/odata";
+import { listRuns, doorAction, type RestAnswer } from "../../api/odata";
 import { useIdentity } from "../../auth/AuthProvider";
 import { appDisplayName, useEndpointTitles } from "../apps/appTitle";
 import { TERMINAL_STATES } from "../apps/useAgentRun";
@@ -155,11 +155,11 @@ export function AssistantPage({ project }: { project: string }): JSX.Element {
 
   const continueMutation = useMutation({
     mutationFn: async (priorRunId: string) => {
-      const result = await api.POST("/api/v1/projects/{project}/assistant/conversations", {
-        params: { path: { project } },
-        body: { message: t("assistantPage.continueMessage"), continues: priorRunId },
-      });
-      return unwrap(result);
+      return (await doorAction(
+        "portal_conversation_start",
+        { body: { message: t("assistantPage.continueMessage"), continues: priorRunId } },
+        project,
+      )) as RestAnswer<"start_conversation">;
     },
     onSuccess: (created) => {
       rememberRun({ project, runId: created.id });

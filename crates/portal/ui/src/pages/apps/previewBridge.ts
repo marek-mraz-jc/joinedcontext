@@ -145,7 +145,7 @@ export function functionPathOf(method: unknown, path: unknown, route: string): s
  * framed `javascript:` URL runs with the framing page's origin in browsers that still allow it,
  * and an absolute URL on another host turns the Portal into a frame for somebody else's page.
  *
- * Two shapes are served: a run's own pass, under `/api/v1/projects/…/preview`, and a published
+ * Two shapes are served: a run's own pass, under its project's agent-run `preview` path, and a published
  * app under `/apps/` (AP-14). Both are paths on this origin, and nothing else is accepted. The
  * caller shows the words instead of framing.
  */

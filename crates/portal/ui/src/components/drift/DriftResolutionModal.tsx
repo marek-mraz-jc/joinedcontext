@@ -17,7 +17,7 @@ import {
   TableRow,
 } from "../ui";
 
-/** One drifted seed entity, as `GET /api/v1/projects/{project}/drift` serves it (API/01 §20). */
+/** One drifted seed entity, as the `portal_drift_list` door serves it (API/01 §20). */
 export interface DriftedEntity {
   space: string;
   id: string;
