@@ -1,6 +1,7 @@
 /**
  * The pages behind an MCP write's question (AG-63, T-5699, T-5829): the person whose AI client
- * asked reads what the call would do and accepts or declines it here with their own session. The
+ * asked reads what the call would do and accepts or declines it here with their own session,
+ * through the OData service's Portal doors (T-7132). The
  * client's next call reads this decision; nothing the client says accepts. A Portal call's
  * question lives in a project; a context broker's (T-5829) on the broker, read through the Portal.
  */
@@ -8,7 +9,8 @@ import type { JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import { Alert, Button, EmptyState, PageHeader, PageLoading, safeHref } from "../../components/ui";
 import { ResourcePageFailed } from "../../components/ui/PageState";
 
@@ -182,19 +184,14 @@ export function McpElicitationPage({
     <McpDecision
       queryKey={["mcp-elicitation", project, id]}
       read={async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/mcp-elicitations/{id}", {
-            params: { path: { project, id } },
-          }),
-        )
+        (await door("portal_mcp_elicitation_get", { projectName: project, id })) as RestAnswer<"get_question">
       }
       decide={async (decision) =>
-        unwrap(
-          await api.POST("/api/v1/projects/{project}/mcp-elicitations/{id}/decision", {
-            params: { path: { project, id } },
-            body: { decision },
-          }),
-        )
+        (await doorAction("portal_mcp_elicitation_decide", {
+          projectName: project,
+          id,
+          body: { decision },
+        })) as RestAnswer<"decide_question">
       }
       lead={t("mcpElicitation.lead")}
       rows={(asked) => [[t("mcpElicitation.operation"), <code key="op">{asked.operation}</code>]]}
@@ -221,15 +218,10 @@ export function McpConfirmationPage({ id }: { id: string }): JSX.Element {
     <McpDecision
       queryKey={["mcp-confirmation", id]}
       read={async () =>
-        unwrap(await api.GET("/api/v1/mcp-confirmations/{id}", { params: { path: { id } } }))
+        (await door("portal_mcp_confirmation_get", { id })) as RestAnswer<"get_confirmation">
       }
       decide={async (decision) =>
-        unwrap(
-          await api.POST("/api/v1/mcp-confirmations/{id}/decision", {
-            params: { path: { id } },
-            body: { decision },
-          }),
-        )
+        (await doorAction("portal_mcp_confirmation_decide", { id, body: { decision } })) as RestAnswer<"decide_confirmation">
       }
       lead={t("mcpConfirmation.lead")}
       rows={(asked) => [

@@ -88,6 +88,8 @@ const BROKER: (&str, Place) = ("broker", Place::Path);
 const UID: (&str, Place) = ("uid", Place::Path);
 const NAME: (&str, Place) = ("name", Place::Path);
 const RUN: (&str, Place) = ("id", Place::Path);
+const QUESTION: (&str, Place) = ("id", Place::Path);
+const PROJECT_NAME: (&str, Place) = ("projectName", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -111,7 +113,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 157] = [
+pub static DOORS: [Door; 161] = [
     door(
         "portal_people_remove",
         Org,
@@ -230,6 +232,42 @@ pub static DOORS: [Door; 157] = [
         Method::POST,
         "/preferences/recent",
         &[BODY],
+        Who::Own,
+    ),
+    // An MCP call's question and a broker MCP write's (AG-63, T-5699, T-5829): the person whose
+    // client asked decides it in their own session, so the door is theirs on any Organization,
+    // and the question may be about a project they do not read yet (T-6829): `projectName` is a
+    // parameter, never the binding (T-7132).
+    door(
+        "portal_mcp_elicitation_get",
+        Org,
+        Method::GET,
+        "/projects/{projectName}/mcp-elicitations/{id}",
+        &[PROJECT_NAME, QUESTION],
+        Who::Own,
+    ),
+    door(
+        "portal_mcp_elicitation_decide",
+        Org,
+        Method::POST,
+        "/projects/{projectName}/mcp-elicitations/{id}/decision",
+        &[PROJECT_NAME, QUESTION, BODY],
+        Who::Own,
+    ),
+    door(
+        "portal_mcp_confirmation_get",
+        Org,
+        Method::GET,
+        "/mcp-confirmations/{id}",
+        &[QUESTION],
+        Who::Own,
+    ),
+    door(
+        "portal_mcp_confirmation_decide",
+        Org,
+        Method::POST,
+        "/mcp-confirmations/{id}/decision",
+        &[QUESTION, BODY],
         Who::Own,
     ),
     door(

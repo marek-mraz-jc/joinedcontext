@@ -370,6 +370,11 @@ const OPERATIONS: Record<string, Door> = {
   portal_change_undo: ["POST", "/projects/{project}/changes/{id}/undo"],
   portal_organization_change_restore: ["POST", "/projects/org/changes/{id}/restore"],
   portal_organization_change_undo: ["POST", "/projects/org/changes/{id}/undo"],
+  // An MCP call's question and a broker MCP write's, decided on their pages (T-7132).
+  portal_mcp_elicitation_get: ["GET", "/projects/{projectName}/mcp-elicitations/{id}"],
+  portal_mcp_elicitation_decide: ["POST", "/projects/{projectName}/mcp-elicitations/{id}/decision"],
+  portal_mcp_confirmation_get: ["GET", "/mcp-confirmations/{id}"],
+  portal_mcp_confirmation_decide: ["POST", "/mcp-confirmations/{id}/decision"],
 };
 
 /**
