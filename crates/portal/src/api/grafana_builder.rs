@@ -20,7 +20,8 @@ use serde_json::{json, Value};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::grafana::{
-    is_public, member, model_attribute, readable_endpoint, refused, slug_of, title_of_endpoint,
+    is_public, member, model_attribute, readable_endpoint, refused, slug_of, stored,
+    title_of_endpoint,
 };
 use crate::api::grafana_dashboards::{
     checked_query, client, organization_held, panel_view, person_for, PanelData, VariableOption,
@@ -34,6 +35,7 @@ use crate::grafana_builder::{
     self as builder, check_filter, check_shape, compile, decompile, Board, Source, ValueKind,
 };
 use crate::permissions::Effective;
+use crate::saved_charts::{self, Kept};
 use crate::state::AppState;
 
 /// The kind the builder's rights are judged on, as the visualization page's.
@@ -1103,6 +1105,382 @@ pub async fn builder_get(
     }))
 }
 
+/// One version of a builder dashboard: a commit of its file on the default branch, so one
+/// approved Change (T-7150). History starts at the file's first commit.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardVersion {
+    /// The commit, the `{sha}` of the version's own routes.
+    pub sha: String,
+    /// Who wrote it, as the commit names them; never their e-mail address.
+    pub author: String,
+    /// When, as the forge dates the commit (RFC 3339).
+    pub date: String,
+    /// The first line of its message, e.g. `change dashboard Bike stations`.
+    pub message: String,
+}
+
+/// A builder dashboard's versions, newest first.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DashboardVersions {
+    pub items: Vec<DashboardVersion>,
+}
+
+/// One version read back into choices, to compare with another.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DashboardVersionBoard {
+    pub sha: String,
+    pub board: Board,
+}
+
+/// The most versions a dashboard lists.
+const VERSIONS: usize = 50;
+
+/// The versions of `uid`'s file on the default branch, newest first; 404 for a uid that is not a
+/// builder dashboard's or has no file.
+async fn versions_of(
+    state: &AppState,
+    project: &str,
+    uid: &str,
+) -> Result<Vec<crate::forge::Commit>, ApiError> {
+    if !builder::is_builder_uid(uid) {
+        return Err(no_dashboard(project, uid));
+    }
+    let shako = forge(state, project)?;
+    let base = shako.default_branch().await?;
+    let commits = shako
+        .list_commits(&base, &builder::path_of(project, uid), VERSIONS)
+        .await?;
+    if commits.is_empty() {
+        return Err(no_dashboard(project, uid));
+    }
+    Ok(commits)
+}
+
+/// Version `sha` of `uid` read back into choices. Only a sha the file's own history on the
+/// default branch lists is read, so no other path, branch or project answers through it; the
+/// rest is 404 as an unknown version.
+async fn version_board(
+    state: &AppState,
+    project: &str,
+    uid: &str,
+    sha: &str,
+) -> Result<Board, ApiError> {
+    let listed = versions_of(state, project, uid).await?;
+    if !listed.iter().any(|commit| commit.sha == sha) {
+        return Err(ApiError::NotFound(format!(
+            "dashboard '{uid}' has no version '{sha}'"
+        )));
+    }
+    let shako = forge(state, project)?;
+    let file = shako
+        .get_file(&builder::path_of(project, uid), sha)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("dashboard '{uid}' has no version '{sha}'")))?;
+    let read = builder::read_file(uid, &file.content).map_err(|why| refused("version", why))?;
+    let names = endpoints_by_datasource(state, project).await;
+    decompile(&read, &|uid| names.get(uid).cloned()).map_err(|why| refused("version", why))
+}
+
+/// Refuses a version naming an Endpoint the caller may not read: its choices would name it.
+fn readable_version(
+    state: &AppState,
+    effective: &Effective,
+    project: &str,
+    board: &Board,
+) -> Result<(), ApiError> {
+    let named = board
+        .variables
+        .iter()
+        .map(|variable| variable.endpoint.as_str())
+        .chain(board.panels.iter().map(|panel| panel.endpoint.as_str()))
+        .filter(|name| !name.is_empty());
+    for name in named {
+        if readable_endpoint(state, effective, project, name).is_none() {
+            return Err(ApiError::Denied(
+                "this version reads an Endpoint you may not read; ask a project owner for read access".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project}/grafana/builder/{uid}/versions",
+    summary = "List A Dashboard's Versions",
+    description = "The versions of a builder dashboard, newest first: each approved Change of its file on the project's default branch, with who wrote it and when (at most 50). Needs read on the project. Changes no data.",
+    tag = "grafana",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("uid" = String, Path, description = "Dashboard uid"),
+    ),
+    responses(
+        (status = 200, description = "The versions, newest first", body = DashboardVersions),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 404, description = "No such project, or no builder dashboard of that uid in it", body = ProblemDetails),
+        (status = 503, description = "The forge did not answer", body = ProblemDetails),
+    )
+)]
+pub async fn builder_versions(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, uid)): Path<(String, String)>,
+) -> Result<Json<DashboardVersions>, ApiError> {
+    member(&state, &user.0.identity, &project)?;
+    let items = versions_of(&state, &project, &uid)
+        .await?
+        .into_iter()
+        .map(|commit| DashboardVersion {
+            sha: commit.sha,
+            author: commit.author,
+            date: commit.date,
+            message: commit.message,
+        })
+        .collect();
+    Ok(Json(DashboardVersions { items }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}",
+    summary = "Read A Dashboard Version",
+    description = "One version of a builder dashboard read back into choices, to compare with another. Only a version the dashboard's own history lists is read. Needs read on the project and on every Endpoint the version names. Changes no data.",
+    tag = "grafana",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("uid" = String, Path, description = "Dashboard uid"),
+        ("sha" = String, Path, description = "The version's commit, from the versions list"),
+    ),
+    responses(
+        (status = 200, description = "The version's choices", body = DashboardVersionBoard),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "The version names an Endpoint the caller may not read", body = ProblemDetails),
+        (status = 404, description = "No such project, dashboard or version", body = ProblemDetails),
+        (status = 422, description = "The version's file does not read back into choices", body = ProblemDetails),
+        (status = 503, description = "The forge did not answer", body = ProblemDetails),
+    )
+)]
+pub async fn builder_version(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, uid, sha)): Path<(String, String, String)>,
+) -> Result<Json<DashboardVersionBoard>, ApiError> {
+    let effective = member(&state, &user.0.identity, &project)?;
+    let board = version_board(&state, &project, &uid, &sha).await?;
+    readable_version(&state, &effective, &project, &board)?;
+    Ok(Json(DashboardVersionBoard { sha, board }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore",
+    summary = "Propose Restoring A Dashboard Version",
+    description = "Proposes a Change that writes an earlier version of a builder dashboard back as its newest: the version's choices compiled again, checked as an edit is. Waits for approval like every edit. Needs propose on Dashboard and read on every Endpoint the version names.",
+    tag = "grafana",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("uid" = String, Path, description = "Dashboard uid"),
+        ("sha" = String, Path, description = "The version's commit, from the versions list"),
+    ),
+    responses(
+        (status = 202, description = "Proposed; waits for approval", body = BuilderSaved),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "The caller may not build dashboards, or may not read an Endpoint the version names", body = ProblemDetails),
+        (status = 404, description = "No such project, dashboard or version", body = ProblemDetails),
+        (status = 409, description = "The dashboard is that version already, or a Change of it is open", body = ProblemDetails),
+        (status = 422, description = "The version no longer fits: a source, type or attribute it names is gone; the errors name it", body = ProblemDetails),
+        (status = 503, description = "The forge or the dashboards service did not answer", body = ProblemDetails),
+    )
+)]
+pub async fn builder_restore(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, uid, sha)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<(StatusCode, Json<BuilderSaved>), ApiError> {
+    let identity = &user.0.identity;
+    let effective = proposer(&state, identity, &project)?;
+    let board = version_board(&state, &project, &uid, &sha).await?;
+    let existing = saved_file(&state, &project, &uid)
+        .await?
+        .ok_or_else(|| no_dashboard(&project, &uid))?;
+    let text = file_of(&state, &effective, &headers, &project, &uid, &board).await?;
+    if text == existing.content {
+        return Err(ApiError::Conflict(
+            "the dashboard is this version already; nothing to restore".into(),
+        ));
+    }
+    let change = propose(
+        &state,
+        identity,
+        &project,
+        &uid,
+        board.title.trim(),
+        Some(&text),
+        Some(&existing),
+    )
+    .await?;
+    Ok((StatusCode::ACCEPTED, Json(BuilderSaved { uid, change })))
+}
+
+/// How a move of the saved charts runs: `dryRun` reports and changes nothing.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[schema(example = json!({ "dryRun": true }))]
+pub struct SavedChartsRun {
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// Which step of the move a run took.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SavedChartsStage {
+    /// No Saved charts dashboard is merged yet: the run proposes it.
+    Propose,
+    /// The dashboard is merged: the run removes each chart it draws.
+    Remove,
+}
+
+/// What moving the project's saved charts into the Saved charts dashboard does or did (T-7161).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedChartsMove {
+    /// The Saved charts dashboard's uid, the same on every run.
+    pub uid: String,
+    pub stage: SavedChartsStage,
+    pub dry_run: bool,
+    /// The project's saved charts before the run.
+    pub before: usize,
+    /// The dashboard's panels: planned when proposing, merged when removing.
+    pub panels: usize,
+    /// The charts the dashboard takes (propose) or that were removed, or would be (remove).
+    pub moved: Vec<String>,
+    /// The charts that stay saved, each with the reason.
+    pub kept: Vec<Kept>,
+    /// The Change a proposing run opened.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change: Option<Change>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project}/grafana/builder/saved-charts",
+    summary = "Move Saved Charts Into A Dashboard",
+    description = "Moves the project's charts saved one by one into one builder dashboard, Saved charts. The first run proposes the dashboard as a Change; once it is merged, the next run removes each saved chart the merged file draws (same Endpoint, type, attribute, kind and title) and keeps every other one, with the reason. `dryRun` reports the counts and changes nothing. Needs propose on Dashboard and read on every Endpoint a chart names.",
+    tag = "grafana",
+    params(("project" = String, Path, description = "Project name")),
+    request_body = SavedChartsRun,
+    responses(
+        (status = 200, description = "A dry run, or the removing run", body = SavedChartsMove),
+        (status = 202, description = "Proposed; waits for approval", body = SavedChartsMove),
+        (status = 400, description = "A body that does not parse", body = ProblemDetails),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "The caller may not build dashboards, or may not read an Endpoint a chart names", body = ProblemDetails),
+        (status = 404, description = "No such project the caller has a part in", body = ProblemDetails),
+        (status = 409, description = "No saved chart to move, a Change of the dashboard is open, or no dashboards service for the project", body = ProblemDetails),
+        (status = 422, description = "A chart no longer fits: a source, type or attribute it names is gone; the errors name it", body = ProblemDetails),
+        (status = 503, description = "The forge, the database or the dashboards service did not answer", body = ProblemDetails),
+    )
+)]
+pub async fn builder_saved_charts(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    headers: HeaderMap,
+    sent: Result<Json<SavedChartsRun>, JsonRejection>,
+) -> Result<(StatusCode, Json<SavedChartsMove>), ApiError> {
+    let identity = &user.0.identity;
+    let effective = proposer(&state, identity, &project)?;
+    let SavedChartsRun { dry_run } = body(sent)?;
+    let pool = state.db.as_ref().ok_or_else(|| {
+        ApiError::Unavailable("this Portal has no database that holds saved charts".into())
+    })?;
+    let rows = crate::grafana::list(pool, Some(&project))
+        .await
+        .map_err(stored)?;
+    let uid = saved_charts::uid_of(&project);
+    let before = rows.len();
+    let Some(file) = saved_file(&state, &project, &uid).await? else {
+        let plan = saved_charts::plan(&rows);
+        if plan.board.panels.is_empty() && !dry_run {
+            return Err(ApiError::Conflict(
+                "no saved chart this dashboard can hold; nothing to move".into(),
+            ));
+        }
+        // The dry run checks the dashboard as the proposing run does, so it refuses what that would.
+        let text = if plan.board.panels.is_empty() {
+            None
+        } else {
+            Some(file_of(&state, &effective, &headers, &project, &uid, &plan.board).await?)
+        };
+        let change = match (&text, dry_run) {
+            (Some(text), false) => Some(
+                propose(
+                    &state,
+                    identity,
+                    &project,
+                    &uid,
+                    saved_charts::TITLE,
+                    Some(text),
+                    None,
+                )
+                .await?,
+            ),
+            _ => None,
+        };
+        let status = if change.is_some() {
+            StatusCode::ACCEPTED
+        } else {
+            StatusCode::OK
+        };
+        return Ok((
+            status,
+            Json(SavedChartsMove {
+                uid,
+                stage: SavedChartsStage::Propose,
+                dry_run,
+                before,
+                panels: plan.board.panels.len(),
+                moved: plan.moved,
+                kept: plan.kept,
+                change,
+            }),
+        ));
+    };
+    let read = builder::read_file(&uid, &file.content).map_err(|why| refused("file", why))?;
+    let names = endpoints_by_datasource(&state, &project).await;
+    let merged =
+        decompile(&read, &|uid| names.get(uid).cloned()).map_err(|why| refused("file", why))?;
+    let (gone, kept) = saved_charts::settled(&rows, &merged);
+    if !dry_run && !gone.is_empty() {
+        let client = client(&state)?;
+        let org = organization_held(&client, &project).await?;
+        for row in rows.iter().filter(|row| gone.contains(&row.id)) {
+            // The dashboard first, as a single removal does: a row left behind is removed next run.
+            client.remove(org, &row.uid()).await?;
+            crate::grafana::delete(pool, &row.id)
+                .await
+                .map_err(stored)?;
+        }
+        tracing::info!(%project, removed = gone.len(), kept = kept.len(), "saved charts moved");
+    }
+    Ok((
+        StatusCode::OK,
+        Json(SavedChartsMove {
+            uid,
+            stage: SavedChartsStage::Remove,
+            dry_run,
+            before,
+            panels: merged.panels.len(),
+            moved: gone,
+            kept,
+            change: None,
+        }),
+    ))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route(
@@ -1118,8 +1496,24 @@ pub fn router() -> Router<AppState> {
             post(builder_preview),
         )
         .route(
+            "/projects/{project}/grafana/builder/saved-charts",
+            post(builder_saved_charts),
+        )
+        .route(
             "/projects/{project}/grafana/builder/{uid}",
             get(builder_get).put(builder_update).delete(builder_delete),
+        )
+        .route(
+            "/projects/{project}/grafana/builder/{uid}/versions",
+            get(builder_versions),
+        )
+        .route(
+            "/projects/{project}/grafana/builder/{uid}/versions/{sha}",
+            get(builder_version),
+        )
+        .route(
+            "/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore",
+            post(builder_restore),
         )
 }
 

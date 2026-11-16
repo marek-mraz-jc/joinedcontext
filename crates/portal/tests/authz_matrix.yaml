@@ -308,6 +308,36 @@ routes:
     rule: "signed-in, the runs of each project the caller reads: their own, every person's where they approve; 403 for a caller who reads no project (AG-134)"
     expect: [401, allow, allow, allow, allow, allow, allow, allow]
     note: "the other member reads praha, a project its Project manifest registers (PF-05), so 200 with no run of helsinki (the_other_member_sees_no_agent_and_no_run_of_a_project_it_does_not_read); never a step's arguments or output; Stop is the existing cancel route (API/01 §49, T-4851)"
+  - route: GET /organization/backups/configuration
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the backup target without its secret, and the audit log (T-7154)"
+  - route: PUT /organization/backups/configuration
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
+    body: {"endpoint": "https://s3.example.com", "region": "eu-central-1", "bucket": "bb-backups", "prefix": "", "accessKeyId": "AKIAEXAMPLE", "secretAccessKey": "s", "enabled": false, "everyHours": 24, "keepDays": 90}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "the fixture has no age key, so the administrator gets 503 before any bucket is asked (T-7154)"
+  - route: POST /organization/backups/configuration/run
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "no target in the fixture: 409 for the administrator (T-7154)"
+  - route: GET /organization/backups/configuration/versions
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "no target in the fixture: 409 for the administrator (T-7154)"
+  - route: GET /organization/backups/configuration/versions/{version}
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "no target in the fixture: 409 for the administrator (T-7154)"
+  - route: POST /organization/backups/configuration/versions/{version}/restore
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
+    body: {"apply": false}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "no target in the fixture: 409 for the administrator; apply proposes a Change a second administrator approves (T-7154)"
+  - route: DELETE /organization/backups/configuration/bundle
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "a soft delete (delete marker); no target in the fixture: 409 for the administrator (T-7154)"
   - route: GET /organization/brokers
     rule: "org-admin (approve and delete on RoleBinding, PF-03)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]
@@ -657,6 +687,24 @@ routes:
     rule: "propose on Dashboard"
     values: {"uid": "jcd-0123456789abcdef"}
     note: "the fixture's forge takes the removal: `allow` answers 202"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: POST /projects/{project}/grafana/builder/saved-charts
+    rule: "propose on Dashboard, then read on every Endpoint a saved chart names"
+    note: "the fixture has no database: `allow` answers 503"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/grafana/builder/{uid}/versions
+    rule: "project-read"
+    values: {"uid": "jcd-0123456789abcdef"}
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/builder/{uid}/versions/{sha}
+    rule: "project-read, then read on every Endpoint the version names"
+    values: {"uid": "jcd-0123456789abcdef", "sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"}
+    note: "the fixture's version is no builder file: `allow` answers 422"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/grafana/builder/{uid}/versions/{sha}/restore
+    rule: "propose on Dashboard, then read on every Endpoint the version names"
+    values: {"uid": "jcd-0123456789abcdef", "sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"}
+    note: "the fixture's version is no builder file: `allow` answers 422"
     expect: [403, 403, 403, allow, 403, allow, 404, 403]
   - route: GET /projects/{project}/activity
     rule: "project-read"

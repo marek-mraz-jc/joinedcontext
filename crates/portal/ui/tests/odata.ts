@@ -204,6 +204,8 @@ const OPERATIONS: Record<string, Door> = {
   jc_syncsource_pause: ["POST", "/projects/{project}/syncsources/{name}/pause", ["paused"]],
   jc_ckan_status: ["GET", "/projects/{project}/ckan/status"],
   jc_datasource_discover: ["POST", "/projects/{project}/datasource-discovery", ["kind", "url"]],
+  // A JSON import of manifests (T-7143); its `dryRun` is the REST door's `?dryRun=All`.
+  jc_project_import: ["POST", "/projects/{project}/import", ["manifests", "conflictPolicy", "orgDomain", "spaceMapping"]],
 
   // The Portal doors of a space's person records, its drift and a person's alerts (T-7105).
   portal_space_quality: ["GET", "/projects/{project}/spaces/{space}/quality"],
@@ -276,6 +278,7 @@ const OPERATIONS: Record<string, Door> = {
   portal_app_rename_shapes: ["POST", "/projects/{project}/apps/rename-shapes"],
   portal_app_from_template: ["POST", "/projects/{project}/app-templates/{name}/apps"],
   portal_app_templates: ["GET", "/app-templates"],
+  portal_blueprint_list: ["GET", "/blueprints"],
   portal_access_request_approve: ["POST", "/projects/{project}/access-requests/{id}/approve"],
   portal_access_request_decline: ["POST", "/projects/{project}/access-requests/{id}/decline"],
   portal_access_request_revoke: ["POST", "/projects/{project}/access-requests/{id}/revoke"],
@@ -329,8 +332,12 @@ const OPERATIONS: Record<string, Door> = {
   portal_grafana_builder: ["GET", "/projects/{project}/grafana/builder"],
   portal_grafana_builder_create: ["POST", "/projects/{project}/grafana/builder"],
   portal_grafana_builder_preview: ["POST", "/projects/{project}/grafana/builder/preview"],
+  portal_grafana_builder_saved_charts: ["POST", "/projects/{project}/grafana/builder/saved-charts"],
   portal_grafana_builder_get: ["GET", "/projects/{project}/grafana/builder/{uid}"],
   portal_grafana_builder_update: ["PUT", "/projects/{project}/grafana/builder/{uid}"],
+  portal_grafana_builder_versions: ["GET", "/projects/{project}/grafana/builder/{uid}/versions"],
+  portal_grafana_builder_version: ["GET", "/projects/{project}/grafana/builder/{uid}/versions/{sha}"],
+  portal_grafana_builder_restore: ["POST", "/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore"],
   portal_kpi_check: ["POST", "/projects/{project}/kpis/check"],
   // The publish flow's draft (T-7117): the registry read whose handler is the REST door's.
   jc_catalogue_draft: ["POST", "/projects/{project}/catalogue/drafts", ["endpoint"]],
@@ -438,6 +445,13 @@ const DOORS: Record<string, Door> = {
   ],
   portal_connector_list: ["GET", "/organization/connectors"],
   portal_connector_revoke: ["DELETE", "/organization/connectors/{connector}"],
+  portal_backup_configuration_get: ["GET", "/organization/backups/configuration"],
+  portal_backup_configuration_set: ["PUT", "/organization/backups/configuration"],
+  portal_backup_configuration_run: ["POST", "/organization/backups/configuration/run"],
+  portal_backup_configuration_versions: ["GET", "/organization/backups/configuration/versions"],
+  portal_backup_configuration_download: ["GET", "/organization/backups/configuration/versions/{version}"],
+  portal_backup_configuration_restore: ["POST", "/organization/backups/configuration/versions/{version}/restore"],
+  portal_backup_configuration_delete: ["DELETE", "/organization/backups/configuration/bundle"],
   portal_notification_list: ["GET", "/notifications"],
   portal_notification_read: ["POST", "/notifications/{notification}/read"],
   portal_preferences_get: ["GET", "/preferences"],
@@ -529,7 +543,9 @@ export async function doorAsRest(
       for (const [variable, picked] of Object.entries(value as Record<string, string | string[]>))
         for (const each of [picked].flat()) rest.searchParams.append(`var-${variable}`, each);
     else if (door[2]?.includes(name)) members[name] = value;
-    else rest.searchParams.set(name, String(value));
+    else if (name === "dryRun" && found[2] === "jc_project_import") {
+      if (value === true) rest.searchParams.set(name, "All");
+    } else rest.searchParams.set(name, String(value));
   }
   if (Object.keys(members).length) body = JSON.stringify(members);
   rest.pathname = `/api/v1${path}`;
@@ -559,7 +575,7 @@ const WORKSPACES =
 const RUNS =
   /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)\/runs|runs\(project='((?:[^']|'')*)',id='((?:[^']|'')*)'\))$/;
 /** The REST list's query parameter of each member a runs `$filter` narrows by (api/odata.ts listRuns). */
-const RUN_FILTERS: Record<string, string> = { appName: "app", kind: "kind", createdBy: "mine" };
+const RUN_FILTERS: Record<string, string> = { appName: "app", kind: "kind", createdBy: "mine", origin: "origin" };
 const KEYED =
   /^\/api\/v1\/(\w+)\((?:project='((?:[^']|'')*)',name='((?:[^']|'')*)'|'((?:[^']|'')*)')\)$/;
 
@@ -603,9 +619,13 @@ export function manifestAsRest(
     if (runs[3] !== undefined)
       return { rest: new URL(`/api/v1/projects/${project}/agent-runs/${encodeURIComponent(unquote(runs[3]))}`, at.origin), one: true, row: true };
     const rest = new URL(`/api/v1/projects/${project}/agent-runs`, at.origin);
+    // The set holds every origin (T-7145): no `origin` in `$filter` is the REST list's `origin=all`,
+    // `origin eq 'person'` its default.
+    rest.searchParams.set("origin", "all");
     for (const [, member, value] of (at.searchParams.get("$filter") ?? "").matchAll(/(\w+) eq '((?:[^']|'')*)'/g)) {
       const name = RUN_FILTERS[member];
-      if (name) rest.searchParams.set(name, name === "mine" ? "true" : unquote(value));
+      if (name === "origin" && unquote(value) === "person") rest.searchParams.delete("origin");
+      else if (name) rest.searchParams.set(name, name === "mine" ? "true" : unquote(value));
     }
     const top = at.searchParams.get("$top");
     if (top !== null) rest.searchParams.set("limit", top);

@@ -91,6 +91,7 @@ const NAME: (&str, Place) = ("name", Place::Path);
 const RUN: (&str, Place) = ("id", Place::Path);
 const QUESTION: (&str, Place) = ("id", Place::Path);
 const PROJECT_NAME: (&str, Place) = ("projectName", Place::Path);
+const VERSION: (&str, Place) = ("version", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -114,7 +115,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 161] = [
+pub static DOORS: [Door; 173] = [
     door(
         "portal_people_remove",
         Org,
@@ -193,6 +194,62 @@ pub static DOORS: [Door; 161] = [
         Method::DELETE,
         "/organization/connectors/{connector}",
         &[("connector", Place::Path)],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_get",
+        Org,
+        Method::GET,
+        "/organization/backups/configuration",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_set",
+        Org,
+        Method::PUT,
+        "/organization/backups/configuration",
+        &[BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_run",
+        Org,
+        Method::POST,
+        "/organization/backups/configuration/run",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_versions",
+        Org,
+        Method::GET,
+        "/organization/backups/configuration/versions",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_download",
+        Org,
+        Method::GET,
+        "/organization/backups/configuration/versions/{version}",
+        &[VERSION],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_restore",
+        Org,
+        Method::POST,
+        "/organization/backups/configuration/versions/{version}/restore",
+        &[VERSION, BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_configuration_delete",
+        Org,
+        Method::DELETE,
+        "/organization/backups/configuration/bundle",
+        &[],
         Who::Administrator,
     ),
     door(
@@ -979,6 +1036,16 @@ pub static DOORS: [Door; 161] = [
         &[],
         Who::Own,
     ),
+    // The installation's Blueprints (the `org` namespace) the caller may run, for the flow
+    // gallery and the App generator: every signed-in person read them on REST (T-7143).
+    door(
+        "portal_blueprint_list",
+        Org,
+        Method::GET,
+        "/blueprints",
+        &[],
+        Who::Own,
+    ),
     door(
         "portal_access_request_incoming",
         Project,
@@ -1412,6 +1479,38 @@ pub static DOORS: [Door; 161] = [
         Method::PUT,
         "/projects/{project}/grafana/builder/{uid}",
         &[UID, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_saved_charts",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder/saved-charts",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_versions",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/builder/{uid}/versions",
+        &[UID],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_version",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/builder/{uid}/versions/{sha}",
+        &[UID, ("sha", Place::Path)],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_restore",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore",
+        &[UID, ("sha", Place::Path)],
         Who::ProjectReader,
     ),
     door(

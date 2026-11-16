@@ -17,6 +17,7 @@ import {
   rejectChange,
   listRuns,
 } from "../src/api/odata";
+import { importBody } from "../src/api/proposal";
 import { announceSessionEnded } from "../src/api/sessionEnded";
 import { announceStepUp, stepUpUrl } from "../src/api/stepUp";
 import { manifestAsRest, odataCall, odataError, odataValue } from "./odata";
@@ -179,6 +180,30 @@ describe("the Portal's OData client (T-6812)", () => {
     expect(new URL(sent[2].url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_app_templates()");
   });
 
+  it("imports manifests through the project's jc_project_import with its If-Match, a check as dryRun (T-7143)", async () => {
+    const sent: Request[] = [];
+    // Not vi.stubGlobal: tests/setup.ts would answer the action from the REST import's stub.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      sent.push(request);
+      return request.method === "GET"
+        ? new Response(JSON.stringify({ "@odata.etag": 'W/"p1"', name: "air" }), {
+            headers: { "Content-Type": "application/json" },
+          })
+        : odataValue({ created: ["air"] });
+    });
+    const space = { apiVersion: "joinedcontext.com/v1alpha1", kind: "ContextSpace", metadata: { name: "air" }, spec: {} };
+    await expect(
+      importBody("air", { manifests: [space], conflictPolicy: "fail", spaceMapping: [] }, true),
+    ).resolves.toEqual({ created: ["air"] });
+    expect(new URL(sent[0].url).pathname).toBe("/api/v1/projects('air')");
+    expect(sent[1].method).toBe("POST");
+    expect(new URL(sent[1].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.jc_project_import");
+    expect(sent[1].headers.get("If-Match")).toBe('W/"p1"');
+    // An empty spaceMapping is left out; the REST door's `?dryRun=All` is the action's `dryRun`.
+    await expect(sent[1].json()).resolves.toEqual({ manifests: [space], dryRun: true, conflictPolicy: "fail" });
+  });
+
   it("reads a Change by its key with every member of the REST door, and decides it with its actions or the org namespace's doors (T-7122)", async () => {
     const sent: Request[] = [];
     // Not vi.stubGlobal: tests/setup.ts would answer these from their REST stubs.
@@ -302,8 +327,23 @@ describe("the Portal's OData client (T-6812)", () => {
         "&$select=id,prompt",
       "http://localhost",
     );
-    expect(Object.fromEntries(manifestAsRest(odata)?.rest.searchParams ?? [])).toEqual({ app: "o'neil" });
+    expect(Object.fromEntries(manifestAsRest(odata)?.rest.searchParams ?? [])).toEqual({ origin: "all", app: "o'neil" });
     vi.restoreAllMocks();
+  });
+
+  it("lists people's runs unless the journeys' test runs are asked for, by the run's origin (T-7145)", async () => {
+    // The set holds every origin: people's runs only are `origin eq 'person'` in its `$filter`,
+    // the REST list's default; none there is its `origin=all` (tests/odata.ts manifestAsRest).
+    const sent = serve(() => Response.json({ items: [] }));
+    await listRuns("air", { kind: "application" });
+    await listRuns("air", { kind: "application", origin: "all" });
+    expect(sent.map((request) => Object.fromEntries(new URL(request.url).searchParams))).toEqual([
+      { kind: "application" },
+      { origin: "all", kind: "application" },
+    ]);
+    const journeys = new URL("/api/v1/projects('air')/runs?$filter=" + encodeURIComponent("origin eq 'journey'"), "http://localhost");
+    expect(Object.fromEntries(manifestAsRest(journeys)?.rest.searchParams ?? [])).toEqual({ origin: "journey" });
+    vi.unstubAllGlobals();
   });
 
   it("asks no project for an Organization set: a project holds none of its manifests (T-7118)", async () => {
@@ -432,9 +472,6 @@ describe("the Portal's OData client (T-6812)", () => {
     const { items } = await listOrganizations();
     expect(items.map((o) => o.metadata.name)).toEqual(["zilina", "hel"]);
     expect(sent).toEqual(["/api/v1/Organization", "/api/v1/projects/org/organizations"]);
-    // A person who sees several Organizations reads the list, never the one the service serves.
-    expect((await listOrganizations(true)).items).toHaveLength(2);
-    expect(sent.slice(2)).toEqual(["/api/v1/projects/org/organizations"]);
     vi.restoreAllMocks();
   });
 

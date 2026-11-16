@@ -503,25 +503,22 @@ export async function readManifest(
 /**
  * The Organization this service serves, as the REST door's `GET /projects/org/organizations`
  * lists it (`items`): its `Organization` singleton with `$select` of the manifest's members, none
- * when the caller may not read its manifest; with `several`, or on an address that serves no one
- * Organization, the REST list (T-7104).
+ * when the caller may not read its manifest; on an address that serves no one Organization, the
+ * REST list (T-7104).
  */
-export async function listOrganizations(several = false): Promise<{ items: Manifest[] }> {
+export async function listOrganizations(): Promise<{ items: Manifest[] }> {
   const rest = async () =>
     unwrap(
       await api.GET("/api/v1/projects/{project}/{plural}", {
         params: { path: { project: ORG_NAMESPACE, plural: "organizations" } },
       }),
     );
-  // A person who sees several Organizations chooses among them (`?org=`, ADR-N-058 section 2.7):
-  // the service serves one, so the REST list holds them all.
-  if (several) return rest();
   let row: ManifestRow;
   try {
     row = (await client.singleton(ORGANIZATION, ["name", "spec", "status", "metadata"])) as ManifestRow;
   } catch (error) {
-    // An address of several Organizations serves no one's service: the installation's
-    // administrators choose among them there (`?org=`, ADR-N-058 section 2.7), so its REST list.
+    // An address of several Organizations serves no one's service: the installation's own
+    // pages read its REST list and pick the installation's Organization from it.
     if (error instanceof ODataError && error.code === SEVERAL_ORGANIZATIONS) return rest();
     throw toApiError(error);
   }
@@ -626,13 +623,16 @@ export interface RunFilter {
   kind?: string;
   /** Only the caller's own runs: `me` is the caller's username, as `/me` answers it. */
   createdBy?: string;
+  /** `all` adds the live journeys' test runs to people's runs (AG-93); people's only when absent. */
+  origin?: "person" | "all";
   top?: number;
 }
 
 /**
  * The runs of `project` the caller sees, newest first, as the REST door's `GET …/agent-runs`
- * lists them: the `runs` set with `$filter` of `filter` (T-7134). The set holds the newest 100,
- * the REST list's own ceiling.
+ * lists them: the `runs` set with `$filter` of `filter` (T-7134). The set holds the newest 100
+ * of each origin, the REST list's own ceiling, and a run's `origin` keeps the journeys' test
+ * runs out unless `filter.origin` asks for them (T-7145).
  */
 export async function listRuns<R = unknown>(project: string, filter: RunFilter = {}): Promise<{ items: R[] }> {
   const where = (
@@ -640,6 +640,7 @@ export async function listRuns<R = unknown>(project: string, filter: RunFilter =
       ["appName", filter.app],
       ["kind", filter.kind],
       ["createdBy", filter.createdBy],
+      ["origin", filter.origin === "all" ? undefined : "person"],
     ] as const
   )
     .filter(([, value]) => value !== undefined && value !== "")

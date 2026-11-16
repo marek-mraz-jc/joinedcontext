@@ -68,19 +68,15 @@
     "nothingToUndo": "Zatiaľ nie je čo vrátiť."
   },
   "nav": {
-    "grafana": "Grafana",
+    "grafana": "Dashboardy",
     "approvalsPending": "{count, plural, one {# zmena čaká na vaše schválenie} few {# zmeny čakajú na vaše schválenie} other {# zmien čaká na vaše schválenie}}",
-    "organizationSwitch": "Prepnúť organizáciu, teraz {organization}",
-    "organizationLabel": "Organizácie",
-    "organizationChoose": "Vyberte organizáciu",
-    "organizationHint": "Organizácia, v ktorej projektoch pracujete, napríklad Mesto Žilina",
     "menu": "Menu",
     "projects": "Projekty",
     "spaces": "Kontextové priestory",
     "endpoints": "Endpointy",
     "datasources": "Zdroje údajov",
     "pipelines": "Pipeliny",
-    "dashboards": "Dashboardy",
+    "dashboards": "Stránky prehľadov",
     "apps": "Aplikácie",
     "approvals": "Schvaľovania",
     "access": "Prístup",
@@ -4115,12 +4111,12 @@
   },
   "dashboards": {
     "lead": "Mapy nakreslené z endpointov tohto projektu.",
-    "title": "Dashboardy",
-    "empty": "Projekt zatiaľ nemá dashboard.",
+    "title": "Stránky prehľadov",
+    "empty": "Tento projekt zatiaľ nemá žiadnu stránku prehľadu.",
     "mapUnavailable": "Mapa potrebuje WebGL, ktoré tento prehliadač neponúka.",
     "layerBlocked": "Nezobrazené, lebo verejný dashboard smie čítať len verejné endpointy: {layers}",
     "colouredBy": "farba podľa {property} ({min}–{max})",
-    "add": "Nový dashboard",
+    "add": "Nová stránka prehľadu",
     "edit": "Upraviť",
     "addHint": "Uloženie navrhne zmenu; dashboard sa zobrazí po jej schválení.",
     "propose": "Navrhnúť zmenu",
@@ -4188,7 +4184,7 @@
     "moreHere": "Mimo zoznamu: {n}; priblížte mapu, aby ste ich rozlíšili",
     "stackedHere": "Na tomto mieste: {n}, v zozname {shown}",
     "json": {
-      "newTitle": "Nový dashboard v JSON",
+      "newTitle": "Nová stránka prehľadu v JSON",
       "editTitle": "{name} v JSON",
       "lead": "Napíšte dashboard ako jeho manifest. Náhľad kreslí každý widget z aktuálnych údajov počas písania; Skontrolovať sa opýta servera, Navrhnúť ho pošle ako zmenu.",
       "source": "Manifest v JSON",
@@ -7331,7 +7327,7 @@
   },
   "grafana": {
     "dashboards": {
-      "title": "Dashboardy",
+      "title": "Všetky dashboardy",
       "lead": "Dashboardy projektu, vykreslené tu z údajov, ktoré smiete čítať.",
       "loading": "Načítavajú sa dashboardy",
       "emptyTitle": "Zatiaľ žiadne dashboardy",
@@ -7357,10 +7353,10 @@
       "tree": "Dashboardy podľa priečinkov",
       "inFolder": "{count, plural, one {# dashboard} few {# dashboardy} other {# dashboardov}}"
     },
-    "title": "Grafana",
-    "lead": "Zobrazte údaje z Endpointu ako graf, číslo, tabuľku alebo mapu a uložte ich do priečinka projektu v Grafane.",
-    "notReady": "Požiadajte prevádzkovateľa, aby pre tento projekt zapol Grafanu, a potom sa vráťte.",
-    "notReadyTitle": "Grafana pre tento projekt ešte nie je pripravená",
+    "title": "Dashboardy",
+    "lead": "Dashboardy vášho projektu v priečinkoch. Otvorte jeden a uvidíte jeho vizualizácie, alebo zostavte nový z Endpointov, ktoré smiete čítať.",
+    "notReady": "Požiadajte prevádzkovateľa, aby pre tento projekt zapol dashboardy, a potom sa vráťte.",
+    "notReadyTitle": "Dashboardy pre tento projekt ešte nie sú pripravené",
     "readOnlyTitle": "Iba na čítanie: tieto môžete otvárať, nové pridávať nie",
     "readOnly": "Na ukladanie potrebujete rolu, ktorá v tomto projekte navrhuje dashboardy; požiadajte vlastníka projektu. Uložené vizualizácie môžete naďalej otvárať.",
     "kind": {
@@ -7372,13 +7368,13 @@
     "saved": {
       "title": "Uložené vizualizácie",
       "reads": "{endpoint}: {type}, {attribute}",
-      "openShort": "Otvoriť v Grafane",
+      "openShort": "Otvoriť",
       "removeShort": "Odstrániť",
       "removing": "Odstraňuje sa…",
-      "open": "Otvoriť {title} v Grafane",
+      "open": "Otvoriť {title} na novej karte",
       "remove": "Odstrániť {title}",
-      "confirm": "Odstrániť z Grafany",
-      "removeLead": "Zmizne z priečinka projektu v Grafane a jej odkaz prestane fungovať. Dáta Endpointu zostanú.",
+      "confirm": "Odstrániť graf",
+      "removeLead": "Zmizne z dashboardov projektu a jej odkaz prestane fungovať. Údaje Endpointu zostanú.",
       "emptyTitle": "Zatiaľ nič uložené",
       "empty": "Vyplňte formulár vyššie a uložte prvú vizualizáciu.",
       "emptyReader": "Keď niekto v projekte uloží vizualizáciu, zobrazí sa tu."
@@ -7397,12 +7393,12 @@
       "kind": "Vizualizácia",
       "kindHelp": "Časový rad a Číslo potrebujú číselnú hodnotu, Mapa potrebuje polohu. Tabuľka zoberie akúkoľvek hodnotu.",
       "name": "Názov",
-      "nameHelp": "Zobrazí sa v Grafane, napríklad PM2.5 podľa staníc.",
+      "nameHelp": "Zobrazí sa nad grafom, napríklad PM2.5 podľa stanice.",
       "choose": "Vyberte…",
-      "notReachable": "Zatiaľ nie sú v Grafane: {names}. Požiadajte operátora o ich pridanie.",
-      "save": "Uložiť do Grafany",
+      "notReachable": "Dashboardy ich zatiaľ nevedia čítať: {names}. Požiadajte prevádzkovateľa, aby ich pridal.",
+      "save": "Uložiť graf",
       "incomplete": "Najprv vyplňte všetky polia.",
-      "saved": "Vizualizácia {title} je uložená v Grafane.",
+      "saved": "{title} uložené.",
       "openSaved": "Otvoriť",
       "preview": "Náhľad: riadky, ktoré teraz môžete čítať",
       "previewFailed": "Riadky sa nepodarilo prečítať. Skúste to o chvíľu znova.",
@@ -7411,6 +7407,22 @@
       "previewEmpty": "Vyberte Endpoint, typ a atribút a uvidíte riadky, ktoré vizualizácia zobrazí.",
       "noEndpointsTitle": "Nie je z čoho kresliť",
       "noEndpoints": "V tomto projekte zatiaľ nesmiete čítať žiadny Endpoint. Požiadajte vlastníka projektu o prístup alebo najprv vytvorte Endpoint."
+    },
+    "move": {
+      "title": "Presunúť do dashboardu",
+      "lead": "Vloží každý tu uložený graf ako panel do jedného dashboardu, Saved charts, navrhnutého ako zmena. Po schválení to spustite znova a grafy, ktoré obsahuje, sa tu odstránia. Graf, ktorý neobsahuje, zostane tu.",
+      "check": "Skontrolovať presun",
+      "willPropose": "{before, plural, one {# uložený graf} few {# uložené grafy} other {# uložených grafov}}: dashboard Saved charts dostane {panels, plural, one {# panel} few {# panely} other {# panelov}}. Do schválenia sa nič neodstráni.",
+      "willRemove": "Schválený dashboard Saved charts obsahuje {count, plural, one {# z týchto grafov} few {# z týchto grafov} other {# z týchto grafov}}; ich odstránením tu sa nič nestratí.",
+      "stay": "{count, plural, one {# graf zostáva uložený tu} few {# grafy zostávajú uložené tu} other {# grafov zostáva uložených tu}}:",
+      "propose": "Navrhnúť dashboard Saved charts",
+      "remove": "Odstrániť {count, plural, one {# presunutý graf} few {# presunuté grafy} other {# presunutých grafov}}",
+      "proposedTitle": "Dashboard Saved charts čaká na schválenie",
+      "openChange": "Otvoriť zmenu",
+      "removed": "{count, plural, one {Odstránený # presunutý graf} few {Odstránené # presunuté grafy} other {Odstránených # presunutých grafov}}",
+      "removedLead": "Sú to teraz panely dashboardu Saved charts.",
+      "running": "Presun beží; počkajte na odpoveď.",
+      "refusedTitle": "Presun neprebehol; nič sa nezmenilo"
     }
   },
   "activity": {
@@ -8160,7 +8172,8 @@
       "agents": "Agenti",
       "costs": "Náklady",
       "connectors": "Konektory",
-      "data-access": "Prístup k údajom"
+      "data-access": "Prístup k údajom",
+      "backups": "Zálohy"
     },
     "settings": {
       "title": "Nastavenia",
@@ -8842,7 +8855,7 @@
       "access": "Kto patrí do organizácie a čo smie každý človek, skupina a servisný účet. Každá zmena sa navrhne a schváli.",
       "projects": "Čo držia a zverejňujú všetky projekty organizácie, na jednom mieste.",
       "platform": "Čo inštalácia prevádzkuje pre každý projekt: brokery, prostredia, členstvo v dátovom priestore, stav a náklady.",
-      "settings": "Doména organizácie, jazyky, kontakty, pravidlá a limity a čo ešte chýba v nastavení."
+      "settings": "Doména organizácie, jazyky, kontakty, pravidlá a limity, zálohy konfigurácie a čo ešte chýba v nastavení."
     },
     "kindHidden": "Tu ich vidí len administrátor organizácie, ktorého rola zahŕňa {kinds}. Požiadajte administrátora organizácie, aby ich pridal do vašej roly.",
     "agents": {
@@ -12411,6 +12424,32 @@
     "csvNeedsReason": "Najprv napíšte dôvod.",
     "csvNothing": "Súbor neobsahuje žiadnu novú hodnotu na import."
   },
+  "dashboardHistory": {
+    "title": "História",
+    "lead": "Každá schválená verzia tohto dashboardu, najnovšia prvá. Porovnajte staršiu verziu s aktuálnou alebo ju obnovte: obnovenie je zmena, ktorá čaká na schválenie.",
+    "openApprovals": "Otvoriť Schválenia",
+    "failed": "Históriu sa nepodarilo načítať; skúste to znova alebo obnovte stránku",
+    "emptyTitle": "Zatiaľ žiadne verzie",
+    "empty": "Prvá verzia sa tu zobrazí po schválení jej zmeny. Čakajúce zmeny nájdete v Schváleniach.",
+    "noMessage": "Uložené bez správy",
+    "newest": "(aktuálna)",
+    "byOn": "{author}, {date}",
+    "unknownAuthor": "Neznámy autor",
+    "compare": "Porovnať s aktuálnou",
+    "restore": "Obnoviť",
+    "restoreHint": "Navrhne túto verziu ako najnovšiu; najprv ju schváli posudzovateľ",
+    "readerHint": "Obnovenie verzie vyžaduje právo vytvárať dashboardy v tomto projekte; požiadajte vlastníka projektu.",
+    "confirmTitle": "Obnoviť túto verziu?",
+    "confirmBody": "Verzia od {author} z {date} sa stane najnovšou, keď zmenu schváli posudzovateľ. Dovtedy sa nič nemení.",
+    "confirm": "Áno, navrhnúť obnovenie",
+    "cancel": "Zrušiť",
+    "restoredTitle": "Obnovenie navrhnuté",
+    "restored": "Dashboard sa zmení po schválení zmeny.",
+    "openChange": "Otvoriť zmenu",
+    "restoreFailed": "Verziu sa nepodarilo obnoviť; prečítajte si dôvod nižšie, opravte ho a skúste to znova",
+    "diffTitle": "Čím sa líši {from} od aktuálnej {to}",
+    "cannotCompare": "Tieto verzie sa nedajú porovnať"
+  },
   "dashboardView": {
     "backToList": "Späť na dashboardy",
     "missing": "Možno bol premenovaný alebo odstránený. Vyberte si niektorý z dashboardov projektu.",
@@ -12788,6 +12827,7 @@
     "panels": "Panely",
     "panelsLead": "Panel presuniete potiahnutím za horný pruh, veľkosť zmeníte pravým dolným rohom. Na telefóne nastavte jeho polohu vo formulári panela.",
     "addPanel": "Pridať panel",
+    "addVisualization": "Pridať vizualizáciu",
     "newPanelTitle": "Panel {n}",
     "emptyTitle": "Tento dashboard zatiaľ nemá panely",
     "empty": "Pridajte panel a potom vyberte Endpoint, typ a atribút, ktorý zobrazí.",
@@ -12895,7 +12935,7 @@
     "preview": "Náhľad",
     "previewing": "Číta sa…",
     "previewHelp": "Prečíta tento panel teraz s vašimi oprávneniami.",
-    "previewHelpText": "Zobrazí slová tak, ako ich ukáže stránka dashboardu v Portáli, bez Markdownu; Grafana Markdown vykreslí. Textový panel nečíta žiadne údaje.",
+    "previewHelpText": "Zobrazí slová tak, ako ich ukáže stránka dashboardu v Portáli, bez Markdownu; dashboard Markdown vykreslí. Textový panel nečíta žiadne údaje.",
     "previewFailedTitle": "Náhľad sa nepodarilo prečítať",
     "removePanel": "Odstrániť panel",
     "removePanelAsk": "Odstrániť tento panel?",
@@ -13387,6 +13427,98 @@
     "phase": {
       "merged": "zverejnené",
       "rejected": "zamietnuté"
+    }
+  },
+  "backups": {
+    "loading": "Načítava sa záloha…",
+    "unreadable": "Zálohu sa nepodarilo načítať. Skúste to o minútu.",
+    "lead": "Kópia konfigurácie tejto organizácie ako súbory s ich identifikátormi vo vašom vlastnom S3 buckete: jej nastavenia, roly, priradenia a manifesty každého projektu s ich schémami. Bez údajov entít, bez kódu, bez hodnôt tajomstiev. Bucket uchováva každú verziu, takže aj zmazanú zálohu možno obnoviť.",
+    "runs": {
+      "title": "Behy",
+      "scheduled": "Beží každých {hours} hodín a vždy, keď stlačíte Spustiť teraz.",
+      "off": "Plán je vypnutý: nič nebeží, kým ho nezapnete alebo nestlačíte Spustiť teraz. Bucket a jeho verzie zostávajú.",
+      "now": "Spustiť teraz",
+      "running": "Prebieha…",
+      "failed": "Beh sa nedokončil. Skontrolujte bucket nižšie a stlačte znova Spustiť teraz.",
+      "never": "Zatiaľ žiadny beh. Stlačte Spustiť teraz pre prvú zálohu.",
+      "lastOk": "Posledný beh {at}, spustil {by}: nahraných {size}.",
+      "lastFailed": "Posledný beh {at}, spustil {by}, zlyhal: {reason}. Opravte bucket nižšie a stlačte Spustiť teraz.",
+      "done": "Záloha je nahraná ako nová verzia."
+    },
+    "log": {
+      "title": "Kto čo urobil ({count})",
+      "ok": "Hotovo",
+      "failed": "Zlyhalo: pozrite dôvod vedľa",
+      "action": {
+        "run": "Záloha",
+        "delete": "Zmazanie",
+        "plan": "Kontrola obnovy",
+        "restore": "Obnova"
+      }
+    },
+    "versions": {
+      "title": "Verzie",
+      "lead": "Každá záloha, ktorú bucket uchováva, od najnovšej. Staršie verzie odchádzajú po nastavenej dobe uchovania.",
+      "versioningOn": "Verzovanie zapnuté",
+      "versioningOff": "Verzovanie vypnuté: zálohy sa odmietajú",
+      "lockOn": "Object Lock zapnutý",
+      "lockOff": "Bez Object Lock",
+      "empty": "V buckete zatiaľ nie je žiadna verzia",
+      "emptyHint": "Stlačte vyššie Spustiť teraz a nahrajte prvú.",
+      "deleted": "Zmazaná",
+      "current": "Aktuálna",
+      "download": "Stiahnuť",
+      "restore": "Obnoviť túto verziu",
+      "delete": "Zmazať zálohu",
+      "deleteTitle": "Zmazať aktuálnu zálohu?",
+      "deleteHint": "Bucket zapíše značku zmazania a ponechá každú staršiu verziu, takže ju môžete obnoviť, kým ju neodstráni doba uchovania.",
+      "deletedHint": "Záloha je zmazaná. Každá staršia verzia ostáva: obnovte niektorú nižšie alebo stlačte Spustiť teraz pre novú."
+    },
+    "restore": {
+      "title": "Obnoviť túto verziu",
+      "taken": "Vytvorená {at}.",
+      "planning": "Porovnáva sa táto verzia s dnešnou organizáciou…",
+      "same": "Nie je čo obnoviť: organizácia je taká, aká bola v tejto verzii.",
+      "organization": "Nastavenia organizácie",
+      "counts": "{created} vytvoriť, {changed} zmeniť, {unchanged} bez zmeny",
+      "organizationNote": "Nastavenia organizácie sa odtiaľto nemenia: stiahnite túto verziu a navrhnite jej súbory organization/ na karte Nastavenia.",
+      "proposed": "Navrhnuté ako zmena. Iný správca ju schváli v Zmenách.",
+      "propose": "Navrhnúť obnovu",
+      "close": "Zavrieť",
+      "project": "Projekt {project}"
+    },
+    "form": {
+      "title": "Bucket a plán",
+      "leadNew": "Kam idú zálohy. Bucket musí mať zapnuté verzovanie; stránka to pred uložením overí.",
+      "leadSaved": "Zmeňte, kam idú zálohy, ako často a ako dlho zostávajú staršie verzie.",
+      "emptyTitle": "Záloha ešte nie je nastavená",
+      "emptyHint": "Vyplňte nižšie svoj S3 bucket a uložte. Potom stlačte Spustiť teraz pre prvú zálohu.",
+      "endpoint": "Adresa S3",
+      "region": "Región",
+      "bucket": "Bucket",
+      "prefix": "Priečinok",
+      "accessKeyId": "Identifikátor prístupového kľúča",
+      "secretAccessKey": "Tajný prístupový kľúč",
+      "secretKept": "Uložený; zadajte nový, ak ho chcete nahradiť",
+      "everyHours": "Spúšťať každých (hodín)",
+      "keepDays": "Uchovať staršie verzie (dní)",
+      "enabled": "Plánované zálohy zapnuté",
+      "save": "Uložiť",
+      "saving": "Overuje sa bucket…",
+      "saved": "Uložené. Bucket odpovedal so zapnutým verzovaním.",
+      "failed": "Bucket sa neuložil. Skontrolujte polia vyššie a uložte znova.",
+      "invalid": "Neuložené: pole {field} treba opraviť, pozrite riadok pod ním."
+    },
+    "hint": {
+      "endpoint": "Adresa https služby S3, napríklad https://s3.eu-central-1.amazonaws.com",
+      "region": "Región bucketu, napríklad eu-central-1",
+      "bucket": "Názov bucketu, napríklad mesto-zalohy",
+      "prefix": "Priečinok v buckete končiaci znakom /, napríklad joinedcontext/. Prázdne pre koreň bucketu.",
+      "accessKeyId": "Identifikátor kľúča účtu, ktorý smie zapisovať do bucketu, napríklad AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "Uloží sa zapečatený a už sa nezobrazí. Nechajte prázdne, ak chcete ponechať uložený.",
+      "everyHours": "1 až 672 hodín, napríklad 24 pre raz denne",
+      "keepDays": "1 až 3650 dní, napríklad 90",
+      "enabled": "Vypnutie ponechá bucket aj všetky verzie; Spustiť teraz funguje ďalej."
     }
   }
 }

@@ -118,7 +118,7 @@ pub struct NewVisualization {
     pub kind: Kind,
 }
 
-fn stored(err: sqlx::Error) -> ApiError {
+pub(crate) fn stored(err: sqlx::Error) -> ApiError {
     tracing::warn!(error = %err, "the visualizations could not be read or written");
     ApiError::Unavailable("the saved visualizations could not be read or written".into())
 }
@@ -180,14 +180,14 @@ pub(crate) fn readable_endpoint(
 }
 
 fn no_grafana() -> String {
-    "Grafana is not set up on this installation; ask your operator to turn the grafana component on"
+    "the dashboards service is not set up on this installation; ask your operator to turn it on"
         .into()
 }
 
 fn no_organization(project: &str) -> String {
     format!(
-        "Grafana has no organization for {project} yet; ask your operator to add this project to \
-         Grafana"
+        "the dashboards service has no organization for {project} yet; ask your operator to add \
+         this project to it"
     )
 }
 
@@ -512,8 +512,8 @@ pub async fn save_visualization(
         return Err(refused(
             "endpoint",
             format!(
-                "Grafana cannot read the private Endpoint {} yet; ask your operator to add it to \
-                 this project's Grafana, or choose another",
+                "the dashboards service cannot read the private Endpoint {} yet; ask your operator \
+                 to add it to this project's dashboards, or choose another",
                 title_of_endpoint(&endpoint)
             ),
         ));

@@ -46,6 +46,32 @@ pub async fn import(
     bytes: &[u8],
     dry_run: bool,
 ) -> Result<(StatusCode, Value), ApiError> {
+    // Where the project's files live (CC-87) and the domain they render with (CC-74) are read
+    // from the mirror. Before its first load both read as layout 1 with no domain, so every
+    // file of a layout 2 project would be planned again under `projects/{p}/` of the
+    // organization repository, and `{orgDomain}` judged as the project's name (jc-dev
+    // 2026-11-16, minutes after a restart).
+    if state
+        .syncer
+        .as_ref()
+        .is_some_and(|syncer| !syncer.is_ready())
+    {
+        return Err(ApiError::Unavailable(
+            "the Portal has not read the configuration repositories since it started, so it \
+             cannot tell where these files go; send the same archive again once GET \
+             /api/v1/ready answers ready"
+                .into(),
+        ));
+    }
+    // A layout 2 organization repository holds only the registry entry `projects/{p}.yaml`; a
+    // file under `projects/{p}/` there stops the assembly of every project (CC-85).
+    if state.mirror.layout() == 2 && state.mirror.repository_of(project).is_none() {
+        return Err(ApiError::Conflict(format!(
+            "project '{project}' has no repository of its own in the forge, and the \
+             organization repository holds only its registry entry; register its repository in \
+             projects/{project}.yaml first"
+        )));
+    }
     let files = repository_files(bytes, project)?;
     let domain = crate::api::assistant::org_domain(state, project);
     let rendered: Vec<(String, String)> = files

@@ -68,19 +68,15 @@
     "nothingToUndo": "Nothing to undo yet."
   },
   "nav": {
-    "grafana": "Grafana",
+    "grafana": "Dashboards",
     "approvalsPending": "{count, plural, one {# change waits for your approval} other {# changes wait for your approval}}",
-    "organizationSwitch": "Switch organization, now {organization}",
-    "organizationLabel": "Organizations",
-    "organizationChoose": "Choose an organization",
-    "organizationHint": "The organization whose projects you work in, for example Mesto Žilina",
     "menu": "Menu",
     "projects": "Projects",
     "spaces": "Context Spaces",
     "endpoints": "Endpoints",
     "datasources": "Data sources",
     "pipelines": "Pipelines",
-    "dashboards": "Dashboards",
+    "dashboards": "Report pages",
     "apps": "Applications",
     "approvals": "Approvals",
     "access": "Access",
@@ -4115,12 +4111,12 @@
   },
   "dashboards": {
     "lead": "Maps drawn from the endpoints of this project.",
-    "title": "Dashboards",
-    "empty": "This project has no dashboard yet.",
+    "title": "Report pages",
+    "empty": "This project has no report page yet.",
     "mapUnavailable": "The map needs WebGL, which this browser does not offer.",
     "layerBlocked": "Not shown, because a public dashboard may only read public endpoints: {layers}",
     "colouredBy": "coloured by {property} ({min}–{max})",
-    "add": "New dashboard",
+    "add": "New report page",
     "edit": "Edit",
     "addHint": "Saving proposes a change; the dashboard shows once the change is approved.",
     "propose": "Propose change",
@@ -4188,7 +4184,7 @@
     "moreHere": "{n} not listed: zoom in to tell them apart",
     "stackedHere": "{n} at this spot, {shown} listed",
     "json": {
-      "newTitle": "New dashboard in JSON",
+      "newTitle": "New report page in JSON",
       "editTitle": "{name} in JSON",
       "lead": "Write the dashboard as its manifest. The preview draws each widget from live data as you type; Check asks the server, Propose sends it as a change.",
       "source": "Manifest (JSON)",
@@ -7331,7 +7327,7 @@
   },
   "grafana": {
     "dashboards": {
-      "title": "Dashboards",
+      "title": "All dashboards",
       "lead": "The project's dashboards, drawn here with the data you may read.",
       "loading": "Reading the dashboards",
       "emptyTitle": "No dashboards yet",
@@ -7357,10 +7353,10 @@
       "tree": "Dashboards by folder",
       "inFolder": "{count, plural, one {# dashboard} other {# dashboards}}"
     },
-    "title": "Grafana",
-    "lead": "Draw an Endpoint's data as a chart, a number, a table or a map, and save it into your project's Grafana folder.",
-    "notReady": "Ask your operator to enable Grafana for this project, then come back.",
-    "notReadyTitle": "Grafana is not ready for this project",
+    "title": "Dashboards",
+    "lead": "Your project's dashboards in folders. Open one to see its visualizations, or build a new one from the Endpoints you may read.",
+    "notReady": "Ask your operator to turn on dashboards for this project, then come back.",
+    "notReadyTitle": "Dashboards are not ready for this project",
     "readOnlyTitle": "View only: you can open these, not add new ones",
     "readOnly": "Saving here needs a role that proposes dashboards in this project; ask a project owner. You can still open what is saved.",
     "kind": {
@@ -7372,13 +7368,13 @@
     "saved": {
       "title": "Saved visualizations",
       "reads": "{endpoint}: {type}, {attribute}",
-      "openShort": "Open in Grafana",
+      "openShort": "Open",
       "removeShort": "Remove",
       "removing": "Removing…",
-      "open": "Open {title} in Grafana",
+      "open": "Open {title} in a new tab",
       "remove": "Remove {title}",
-      "confirm": "Remove from Grafana",
-      "removeLead": "It leaves the project's Grafana folder and its link stops working. The Endpoint's data stays.",
+      "confirm": "Remove chart",
+      "removeLead": "It leaves the project's dashboards and its link stops working. The Endpoint's data stays.",
       "emptyTitle": "Nothing saved yet",
       "empty": "Fill in the form above and save your first visualization.",
       "emptyReader": "When someone in this project saves a visualization, it appears here."
@@ -7397,12 +7393,12 @@
       "kind": "Visualization",
       "kindHelp": "Time series and Number need a numeric value, Map needs a location. Table takes any value.",
       "name": "Name",
-      "nameHelp": "Shown in Grafana, for example PM2.5 by station.",
+      "nameHelp": "Shown above the chart, for example PM2.5 by station.",
       "choose": "Choose…",
-      "notReachable": "Not in Grafana yet: {names}. Ask your operator to add them.",
-      "save": "Save to Grafana",
+      "notReachable": "The dashboards cannot read these yet: {names}. Ask your operator to add them.",
+      "save": "Save chart",
       "incomplete": "Fill in every field first.",
-      "saved": "Saved {title} to Grafana.",
+      "saved": "Saved {title}.",
       "openSaved": "Open it",
       "preview": "Preview: the rows you can read now",
       "previewFailed": "The rows could not be read. Try again in a minute.",
@@ -7411,6 +7407,22 @@
       "previewEmpty": "Choose an Endpoint, a type and an attribute to see the rows this visualization will draw.",
       "noEndpointsTitle": "No Endpoint to draw from",
       "noEndpoints": "You may read no Endpoint of this project yet. Ask a project owner for read access, or create an Endpoint first."
+    },
+    "move": {
+      "title": "Move into a dashboard",
+      "lead": "Puts every chart saved here as a panel of one dashboard, Saved charts, proposed as a change. Once it is approved, run this again to remove the charts it holds. A chart it does not hold stays here.",
+      "check": "Check the move",
+      "willPropose": "{before, plural, one {# saved chart} other {# saved charts}}: the Saved charts dashboard gets {panels, plural, one {# panel} other {# panels}}. Nothing is removed until it is approved.",
+      "willRemove": "The approved Saved charts dashboard holds {count, plural, one {# of these charts} other {# of these charts}}; removing them here loses nothing.",
+      "stay": "{count, plural, one {# chart stays saved here} other {# charts stay saved here}}:",
+      "propose": "Propose the Saved charts dashboard",
+      "remove": "Remove {count, plural, one {# moved chart} other {# moved charts}}",
+      "proposedTitle": "The Saved charts dashboard waits for approval",
+      "openChange": "Open the change",
+      "removed": "{count, plural, one {Removed # moved chart} other {Removed # moved charts}}",
+      "removedLead": "They are panels of the Saved charts dashboard now.",
+      "running": "The move is running; wait for its answer.",
+      "refusedTitle": "The move did not run; nothing changed"
     }
   },
   "activity": {
@@ -8160,7 +8172,8 @@
       "agents": "Agents",
       "costs": "Costs",
       "connectors": "Connectors",
-      "data-access": "Data access"
+      "data-access": "Data access",
+      "backups": "Backups"
     },
     "settings": {
       "title": "Settings",
@@ -8842,7 +8855,7 @@
       "access": "Who belongs to the organization and what each person, group and service account may do. Every change is proposed and approved.",
       "projects": "What every project of the organization holds and publishes, in one place.",
       "platform": "What the installation runs for every project: brokers, environments, data space membership, health and costs.",
-      "settings": "The organization's domain, languages, contacts, policies and limits, and what setup still lacks."
+      "settings": "The organization's domain, languages, contacts, policies and limits, its configuration backups, and what setup still lacks."
     },
     "kindHidden": "Only an organization administrator whose role includes {kinds} sees them here. Ask an organization administrator to add them to your role.",
     "agents": {
@@ -12411,6 +12424,32 @@
     "csvNeedsReason": "Write a reason first.",
     "csvNothing": "The file holds no new value to import."
   },
+  "dashboardHistory": {
+    "title": "History",
+    "lead": "Every approved version of this dashboard, newest first. Compare an older version with the newest, or restore it: a restore is a change that waits for approval.",
+    "openApprovals": "Open Approvals",
+    "failed": "The history could not be read; try again, or reload the page",
+    "emptyTitle": "No versions yet",
+    "empty": "The first version appears here once its change is approved. Open Approvals to see changes that wait.",
+    "noMessage": "Saved without a message",
+    "newest": "(current)",
+    "byOn": "{author}, {date}",
+    "unknownAuthor": "Unknown author",
+    "compare": "Compare with current",
+    "restore": "Restore",
+    "restoreHint": "Proposes this version as the newest; a reviewer approves it first",
+    "readerHint": "Restoring a version needs the right to build dashboards in this project; ask a project owner.",
+    "confirmTitle": "Restore this version?",
+    "confirmBody": "The version by {author} from {date} becomes the newest once a reviewer approves the change. Nothing changes until then.",
+    "confirm": "Yes, propose the restore",
+    "cancel": "Cancel",
+    "restoredTitle": "Restore proposed",
+    "restored": "The dashboard changes once the change is approved.",
+    "openChange": "Open the change",
+    "restoreFailed": "The version could not be restored; read the reason below and fix it, then try again",
+    "diffTitle": "What differs from {from} to the current {to}",
+    "cannotCompare": "These versions cannot be compared"
+  },
   "dashboardView": {
     "backToList": "Back to the dashboards",
     "missing": "It may have been renamed or removed. Pick one from the project's dashboards.",
@@ -12788,6 +12827,7 @@
     "panels": "Panels",
     "panelsLead": "Drag a panel by its top bar to move it and by its lower right corner to resize it. On a phone, set its position in the panel form.",
     "addPanel": "Add panel",
+    "addVisualization": "Add visualization",
     "newPanelTitle": "Panel {n}",
     "emptyTitle": "This dashboard has no panels yet",
     "empty": "Add a panel, then choose the Endpoint, type and attribute it shows.",
@@ -12895,7 +12935,7 @@
     "preview": "Preview",
     "previewing": "Reading…",
     "previewHelp": "Reads this panel now with your own permissions.",
-    "previewHelpText": "Shows the words as the Portal's dashboard page does, without the Markdown; Grafana draws the Markdown. A text panel reads no data.",
+    "previewHelpText": "Shows the words as the Portal's dashboard page does, without the Markdown; the dashboard draws the Markdown. A text panel reads no data.",
     "previewFailedTitle": "The preview could not be read",
     "removePanel": "Remove panel",
     "removePanelAsk": "Remove this panel?",
@@ -13387,6 +13427,98 @@
     "phase": {
       "merged": "published",
       "rejected": "rejected"
+    }
+  },
+  "backups": {
+    "loading": "Loading the backup…",
+    "unreadable": "The backup could not be read. Try again in a minute.",
+    "lead": "A copy of this Organization's configuration, as files with their ids, in your own S3 bucket: its settings, roles, bindings and each project's manifests with their schemas. No entity data, no code, no secret values. The bucket keeps every version, so a deleted backup can still be restored.",
+    "runs": {
+      "title": "Runs",
+      "scheduled": "Runs every {hours} hours, and whenever you press Run now.",
+      "off": "The schedule is off: nothing runs until you turn it on or press Run now. The bucket and its versions stay.",
+      "now": "Run now",
+      "running": "Running…",
+      "failed": "The run did not finish. Check the bucket below, then press Run now again.",
+      "never": "No run yet. Press Run now to take the first backup.",
+      "lastOk": "Last run {at} by {by}: {size} uploaded.",
+      "lastFailed": "Last run {at} by {by} failed: {reason}. Fix the bucket below and press Run now.",
+      "done": "Backup uploaded as a new version."
+    },
+    "log": {
+      "title": "Who did what ({count})",
+      "ok": "Done",
+      "failed": "Failed: check the reason beside it",
+      "action": {
+        "run": "Backup",
+        "delete": "Delete",
+        "plan": "Restore check",
+        "restore": "Restore"
+      }
+    },
+    "versions": {
+      "title": "Versions",
+      "lead": "Every backup the bucket keeps, newest first. Older versions go after the retention you set.",
+      "versioningOn": "Versioning on",
+      "versioningOff": "Versioning off: backups are refused",
+      "lockOn": "Object Lock on",
+      "lockOff": "No Object Lock",
+      "empty": "No version in the bucket yet",
+      "emptyHint": "Press Run now above to upload the first one.",
+      "deleted": "Deleted",
+      "current": "Current",
+      "download": "Download",
+      "restore": "Restore this version",
+      "delete": "Delete backup",
+      "deleteTitle": "Delete the current backup?",
+      "deleteHint": "The bucket writes a delete marker and keeps every earlier version, so you can still restore one until the retention removes it.",
+      "deletedHint": "The backup is deleted. Every earlier version is still kept: restore one below, or press Run now to write a new one."
+    },
+    "restore": {
+      "title": "Restore this version",
+      "taken": "Taken {at}.",
+      "planning": "Comparing this version with the Organization today…",
+      "same": "Nothing to restore: the Organization is as it was in this version.",
+      "organization": "Organization settings",
+      "counts": "{created} to create, {changed} to change, {unchanged} as they are",
+      "organizationNote": "Organization settings are not changed from here: download this version and propose its organization/ files on the Settings tab.",
+      "proposed": "Proposed as a Change. Another administrator approves it in Changes.",
+      "propose": "Propose the restore",
+      "close": "Close",
+      "project": "Project {project}"
+    },
+    "form": {
+      "title": "Bucket and schedule",
+      "leadNew": "Where the backups go. The bucket must have versioning on; the page checks it before saving.",
+      "leadSaved": "Change where the backups go, how often and how long earlier versions stay.",
+      "emptyTitle": "No backup is set up yet",
+      "emptyHint": "Fill in your S3 bucket below and save. Then press Run now for the first backup.",
+      "endpoint": "S3 address",
+      "region": "Region",
+      "bucket": "Bucket",
+      "prefix": "Folder",
+      "accessKeyId": "Access key id",
+      "secretAccessKey": "Secret access key",
+      "secretKept": "Saved; type a new one to replace it",
+      "everyHours": "Run every (hours)",
+      "keepDays": "Keep earlier versions (days)",
+      "enabled": "Scheduled backups on",
+      "save": "Save",
+      "saving": "Checking the bucket…",
+      "saved": "Saved. The bucket answered with versioning on.",
+      "failed": "The bucket was not saved. Check the fields above and save again.",
+      "invalid": "Not saved: {field} needs a fix, see the line under it."
+    },
+    "hint": {
+      "endpoint": "The https address of the S3 service, e.g. https://s3.eu-central-1.amazonaws.com",
+      "region": "The bucket's region, e.g. eu-central-1",
+      "bucket": "The bucket's name, e.g. city-backups",
+      "prefix": "A folder in the bucket ending in /, e.g. joinedcontext/. Empty for the bucket's root.",
+      "accessKeyId": "The key id of an account that may write to the bucket, e.g. AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "Stored sealed and never shown again. Leave it empty to keep the saved one.",
+      "everyHours": "1 to 672 hours, e.g. 24 for once a day",
+      "keepDays": "1 to 3650 days, e.g. 90",
+      "enabled": "Off keeps the bucket and every version; Run now still works."
     }
   }
 }

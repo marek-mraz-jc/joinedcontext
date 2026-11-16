@@ -520,7 +520,7 @@
     },
     "src/components/layout/Shell.tsx": {
       "controls": {
-        "Button": 5
+        "Button": 4
       },
       "tests": [
         "addressItem.test.ts",
@@ -1440,6 +1440,22 @@
         "grafana_page.test.tsx"
       ]
     },
+    "src/pages/grafana/DashboardHistory.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "dashboard_history.test.tsx"
+      ]
+    },
+    "src/pages/grafana/SavedChartsMove.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "saved_charts_move.test.tsx"
+      ]
+    },
     "src/pages/grafana/DashboardList.tsx": {
       "controls": {
         "Button": 4
@@ -1887,6 +1903,15 @@
       "tests": [
         "admin_grid_organization.test.tsx",
         "organization_agents.test.tsx"
+      ]
+    },
+    "src/pages/organization/Backups.tsx": {
+      "controls": {
+        "Button": 7,
+        "Switch": 1
+      },
+      "tests": [
+        "organization_backups.test.tsx"
       ]
     },
     "src/pages/organization/Costs.tsx": {

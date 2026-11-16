@@ -68,19 +68,15 @@
     "nothingToUndo": "Zatím není co vrátit."
   },
   "nav": {
-    "grafana": "Grafana",
+    "grafana": "Nástěnky",
     "approvalsPending": "{count, plural, one {# změna čeká na vaše schválení} few {# změny čekají na vaše schválení} other {# změn čeká na vaše schválení}}",
-    "organizationSwitch": "Přepnout organizaci, nyní {organization}",
-    "organizationLabel": "Organizace",
-    "organizationChoose": "Vyberte organizaci",
-    "organizationHint": "Organizace, v jejíchž projektech pracujete, například Mesto Žilina",
     "menu": "Menu",
     "projects": "Projekty",
     "spaces": "Kontextové prostory",
     "endpoints": "Koncové body",
     "datasources": "Zdroje dat",
     "pipelines": "Pipelines",
-    "dashboards": "Přehledy",
+    "dashboards": "Stránky přehledů",
     "apps": "Aplikace",
     "approvals": "Schvalování",
     "access": "Přístup",
@@ -4115,12 +4111,12 @@
   },
   "dashboards": {
     "lead": "Mapy nakreslené z endpointů tohoto projektu.",
-    "title": "Nástěnky",
-    "empty": "Projekt zatím nemá nástěnku.",
+    "title": "Stránky přehledů",
+    "empty": "Tento projekt zatím nemá žádnou stránku přehledu.",
     "mapUnavailable": "Mapa potřebuje WebGL, které tento prohlížeč nenabízí.",
     "layerBlocked": "Nezobrazeno, protože veřejná nástěnka smí číst jen veřejná rozhraní: {layers}",
     "colouredBy": "barva podle {property} ({min}–{max})",
-    "add": "Nová nástěnka",
+    "add": "Nová stránka přehledu",
     "edit": "Upravit",
     "addHint": "Uložení navrhne změnu; nástěnka se zobrazí po jejím schválení.",
     "propose": "Navrhnout změnu",
@@ -4188,7 +4184,7 @@
     "moreHere": "Mimo seznam: {n}; přibližte mapu, abyste je rozlišili",
     "stackedHere": "Na tomto místě: {n}, v seznamu {shown}",
     "json": {
-      "newTitle": "Nový dashboard v JSON",
+      "newTitle": "Nová stránka přehledu v JSON",
       "editTitle": "{name} v JSON",
       "lead": "Napište dashboard jako jeho manifest. Náhled kreslí každý widget z aktuálních dat během psaní; Zkontrolovat se zeptá serveru, Navrhnout jej pošle jako změnu.",
       "source": "Manifest ve formátu JSON",
@@ -7331,7 +7327,7 @@
   },
   "grafana": {
     "dashboards": {
-      "title": "Dashboardy",
+      "title": "Všechny nástěnky",
       "lead": "Dashboardy projektu, vykreslené zde z dat, která smíte číst.",
       "loading": "Načítají se dashboardy",
       "emptyTitle": "Zatím žádné dashboardy",
@@ -7357,10 +7353,10 @@
       "tree": "Dashboardy podle složek",
       "inFolder": "{count, plural, one {# dashboard} few {# dashboardy} other {# dashboardů}}"
     },
-    "title": "Grafana",
-    "lead": "Zobrazte data z Endpointu jako graf, číslo, tabulku nebo mapu a uložte je do složky projektu v Grafaně.",
-    "notReady": "Požádejte provozovatele, aby pro tento projekt zapnul Grafanu, a pak se vraťte.",
-    "notReadyTitle": "Grafana pro tento projekt ještě není připravena",
+    "title": "Nástěnky",
+    "lead": "Nástěnky vašeho projektu ve složkách. Otevřete jednu a uvidíte její vizualizace, nebo sestavte novou z Endpointů, které smíte číst.",
+    "notReady": "Požádejte provozovatele, aby pro tento projekt zapnul nástěnky, a pak se vraťte.",
+    "notReadyTitle": "Nástěnky pro tento projekt ještě nejsou připravené",
     "readOnlyTitle": "Jen ke čtení: tyto můžete otevírat, nové přidávat ne",
     "readOnly": "K ukládání potřebujete roli, která v tomto projektu navrhuje dashboardy; požádejte vlastníka projektu. Uložené vizualizace můžete nadále otevírat.",
     "kind": {
@@ -7372,13 +7368,13 @@
     "saved": {
       "title": "Uložené vizualizace",
       "reads": "{endpoint}: {type}, {attribute}",
-      "openShort": "Otevřít v Grafaně",
+      "openShort": "Otevřít",
       "removeShort": "Odstranit",
       "removing": "Odstraňuje se…",
-      "open": "Otevřít {title} v Grafaně",
+      "open": "Otevřít {title} v nové kartě",
       "remove": "Odstranit {title}",
-      "confirm": "Odstranit z Grafany",
-      "removeLead": "Zmizí ze složky projektu v Grafaně a její odkaz přestane fungovat. Data Endpointu zůstanou.",
+      "confirm": "Odebrat graf",
+      "removeLead": "Zmizí z nástěnek projektu a její odkaz přestane fungovat. Data Endpointu zůstanou.",
       "emptyTitle": "Zatím nic uloženo",
       "empty": "Vyplňte formulář výše a uložte první vizualizaci.",
       "emptyReader": "Když někdo v projektu uloží vizualizaci, zobrazí se zde."
@@ -7397,12 +7393,12 @@
       "kind": "Vizualizace",
       "kindHelp": "Časová řada a Číslo potřebují číselnou hodnotu, Mapa potřebuje polohu. Tabulka vezme jakoukoli hodnotu.",
       "name": "Název",
-      "nameHelp": "Zobrazí se v Grafaně, například PM2.5 podle stanic.",
+      "nameHelp": "Zobrazí se nad grafem, například PM2.5 podle stanice.",
       "choose": "Vyberte…",
-      "notReachable": "Zatím nejsou v Grafaně: {names}. Požádejte operátora o jejich přidání.",
-      "save": "Uložit do Grafany",
+      "notReachable": "Nástěnky je zatím nemohou číst: {names}. Požádejte provozovatele, aby je přidal.",
+      "save": "Uložit graf",
       "incomplete": "Nejprve vyplňte všechna pole.",
-      "saved": "Vizualizace {title} je uložena v Grafaně.",
+      "saved": "{title} uloženo.",
       "openSaved": "Otevřít",
       "preview": "Náhled: řádky, které teď můžete číst",
       "previewFailed": "Řádky se nepodařilo přečíst. Zkuste to za chvíli znovu.",
@@ -7411,6 +7407,22 @@
       "previewEmpty": "Vyberte Endpoint, typ a atribut a uvidíte řádky, které vizualizace zobrazí.",
       "noEndpointsTitle": "Není z čeho kreslit",
       "noEndpoints": "V tomto projektu zatím nesmíte číst žádný Endpoint. Požádejte vlastníka projektu o přístup nebo nejprve vytvořte Endpoint."
+    },
+    "move": {
+      "title": "Přesunout do nástěnky",
+      "lead": "Vloží každý zde uložený graf jako panel do jedné nástěnky, Saved charts, navržené jako změna. Po schválení to spusťte znovu a grafy, které obsahuje, se zde odeberou. Graf, který neobsahuje, zůstane zde.",
+      "check": "Zkontrolovat přesun",
+      "willPropose": "{before, plural, one {# uložený graf} few {# uložené grafy} other {# uložených grafů}}: nástěnka Saved charts dostane {panels, plural, one {# panel} few {# panely} other {# panelů}}. Do schválení se nic neodebere.",
+      "willRemove": "Schválená nástěnka Saved charts obsahuje {count, plural, one {# z těchto grafů} few {# z těchto grafů} other {# z těchto grafů}}; jejich odebráním zde se nic neztratí.",
+      "stay": "{count, plural, one {# graf zůstává uložen zde} few {# grafy zůstávají uloženy zde} other {# grafů zůstává uloženo zde}}:",
+      "propose": "Navrhnout nástěnku Saved charts",
+      "remove": "Odebrat {count, plural, one {# přesunutý graf} few {# přesunuté grafy} other {# přesunutých grafů}}",
+      "proposedTitle": "Nástěnka Saved charts čeká na schválení",
+      "openChange": "Otevřít změnu",
+      "removed": "{count, plural, one {Odebrán # přesunutý graf} few {Odebrány # přesunuté grafy} other {Odebráno # přesunutých grafů}}",
+      "removedLead": "Jsou to nyní panely nástěnky Saved charts.",
+      "running": "Přesun běží; počkejte na odpověď.",
+      "refusedTitle": "Přesun neproběhl; nic se nezměnilo"
     }
   },
   "activity": {
@@ -8160,7 +8172,8 @@
       "agents": "Agenti",
       "costs": "Náklady",
       "connectors": "Konektory",
-      "data-access": "Přístup k datům"
+      "data-access": "Přístup k datům",
+      "backups": "Zálohy"
     },
     "settings": {
       "title": "Nastavení",
@@ -8842,7 +8855,7 @@
       "access": "Kdo patří do organizace a co smí každý člověk, skupina a servisní účet. Každá změna se navrhne a schválí.",
       "projects": "Co drží a zveřejňují všechny projekty organizace, na jednom místě.",
       "platform": "Co instalace provozuje pro každý projekt: brokery, prostředí, členství v datovém prostoru, stav a náklady.",
-      "settings": "Doména organizace, jazyky, kontakty, pravidla a limity a co ještě chybí v nastavení."
+      "settings": "Doména organizace, jazyky, kontakty, pravidla a limity, zálohy konfigurace a co ještě chybí v nastavení."
     },
     "kindHidden": "Zde je vidí jen administrátor organizace, jehož role zahrnuje {kinds}. Požádejte administrátora organizace, aby je přidal do vaší role.",
     "agents": {
@@ -12411,6 +12424,32 @@
     "csvNeedsReason": "Nejprve napište důvod.",
     "csvNothing": "Soubor neobsahuje žádnou novou hodnotu k importu."
   },
+  "dashboardHistory": {
+    "title": "Historie",
+    "lead": "Každá schválená verze tohoto dashboardu, nejnovější první. Porovnejte starší verzi s aktuální nebo ji obnovte: obnovení je změna, která čeká na schválení.",
+    "openApprovals": "Otevřít Schválení",
+    "failed": "Historii se nepodařilo načíst; zkuste to znovu nebo obnovte stránku",
+    "emptyTitle": "Zatím žádné verze",
+    "empty": "První verze se zde zobrazí po schválení její změny. Čekající změny najdete ve Schváleních.",
+    "noMessage": "Uloženo bez zprávy",
+    "newest": "(aktuální)",
+    "byOn": "{author}, {date}",
+    "unknownAuthor": "Neznámý autor",
+    "compare": "Porovnat s aktuální",
+    "restore": "Obnovit",
+    "restoreHint": "Navrhne tuto verzi jako nejnovější; nejprve ji schválí posuzovatel",
+    "readerHint": "Obnovení verze vyžaduje právo vytvářet dashboardy v tomto projektu; požádejte vlastníka projektu.",
+    "confirmTitle": "Obnovit tuto verzi?",
+    "confirmBody": "Verze od {author} z {date} se stane nejnovější, jakmile změnu schválí posuzovatel. Do té doby se nic nemění.",
+    "confirm": "Ano, navrhnout obnovení",
+    "cancel": "Zrušit",
+    "restoredTitle": "Obnovení navrženo",
+    "restored": "Dashboard se změní po schválení změny.",
+    "openChange": "Otevřít změnu",
+    "restoreFailed": "Verzi se nepodařilo obnovit; přečtěte si důvod níže, opravte ho a zkuste to znovu",
+    "diffTitle": "Čím se liší {from} od aktuální {to}",
+    "cannotCompare": "Tyto verze nelze porovnat"
+  },
   "dashboardView": {
     "backToList": "Zpět na dashboardy",
     "missing": "Možná byl přejmenován nebo odstraněn. Vyberte některý z dashboardů projektu.",
@@ -12788,6 +12827,7 @@
     "panels": "Panely",
     "panelsLead": "Panel přesunete tažením za horní pruh, velikost změníte pravým dolním rohem. Na telefonu nastavte jeho polohu ve formuláři panelu.",
     "addPanel": "Přidat panel",
+    "addVisualization": "Přidat vizualizaci",
     "newPanelTitle": "Panel {n}",
     "emptyTitle": "Tento dashboard zatím nemá panely",
     "empty": "Přidejte panel a pak vyberte Endpoint, typ a atribut, který zobrazí.",
@@ -12895,7 +12935,7 @@
     "preview": "Náhled",
     "previewing": "Čte se…",
     "previewHelp": "Přečte tento panel teď s vašimi oprávněními.",
-    "previewHelpText": "Zobrazí slova tak, jak je ukáže stránka nástěnky v Portálu, bez Markdownu; Grafana Markdown vykreslí. Textový panel nečte žádná data.",
+    "previewHelpText": "Zobrazí slova tak, jak je ukáže stránka nástěnky v Portálu, bez Markdownu; nástěnka Markdown vykreslí. Textový panel nečte žádná data.",
     "previewFailedTitle": "Náhled se nepodařilo přečíst",
     "removePanel": "Odebrat panel",
     "removePanelAsk": "Odebrat tento panel?",
@@ -13387,6 +13427,98 @@
     "phase": {
       "merged": "zveřejněno",
       "rejected": "zamítnuto"
+    }
+  },
+  "backups": {
+    "loading": "Načítá se záloha…",
+    "unreadable": "Zálohu se nepodařilo načíst. Zkuste to za minutu.",
+    "lead": "Kopie konfigurace této organizace jako soubory s jejich identifikátory ve vašem vlastním S3 bucketu: její nastavení, role, přiřazení a manifesty každého projektu s jejich schématy. Bez dat entit, bez kódu, bez hodnot tajemství. Bucket uchovává každou verzi, takže i smazanou zálohu lze obnovit.",
+    "runs": {
+      "title": "Běhy",
+      "scheduled": "Běží každých {hours} hodin a vždy, když stisknete Spustit nyní.",
+      "off": "Plán je vypnutý: nic neběží, dokud ho nezapnete nebo nestisknete Spustit nyní. Bucket a jeho verze zůstávají.",
+      "now": "Spustit nyní",
+      "running": "Probíhá…",
+      "failed": "Běh se nedokončil. Zkontrolujte bucket níže a stiskněte znovu Spustit nyní.",
+      "never": "Zatím žádný běh. Stiskněte Spustit nyní pro první zálohu.",
+      "lastOk": "Poslední běh {at}, spustil {by}: nahráno {size}.",
+      "lastFailed": "Poslední běh {at}, spustil {by}, selhal: {reason}. Opravte bucket níže a stiskněte Spustit nyní.",
+      "done": "Záloha je nahrána jako nová verze."
+    },
+    "log": {
+      "title": "Kdo co udělal ({count})",
+      "ok": "Hotovo",
+      "failed": "Selhalo: viz důvod vedle",
+      "action": {
+        "run": "Záloha",
+        "delete": "Smazání",
+        "plan": "Kontrola obnovy",
+        "restore": "Obnova"
+      }
+    },
+    "versions": {
+      "title": "Verze",
+      "lead": "Každá záloha, kterou bucket uchovává, od nejnovější. Starší verze odcházejí po nastavené době uchování.",
+      "versioningOn": "Verzování zapnuto",
+      "versioningOff": "Verzování vypnuto: zálohy se odmítají",
+      "lockOn": "Object Lock zapnut",
+      "lockOff": "Bez Object Lock",
+      "empty": "V bucketu zatím není žádná verze",
+      "emptyHint": "Stiskněte výše Spustit nyní a nahrajte první.",
+      "deleted": "Smazaná",
+      "current": "Aktuální",
+      "download": "Stáhnout",
+      "restore": "Obnovit tuto verzi",
+      "delete": "Smazat zálohu",
+      "deleteTitle": "Smazat aktuální zálohu?",
+      "deleteHint": "Bucket zapíše značku smazání a ponechá každou starší verzi, takže ji můžete obnovit, dokud ji neodstraní doba uchování.",
+      "deletedHint": "Záloha je smazaná. Každá starší verze zůstává: obnovte některou níže nebo stiskněte Spustit nyní pro novou."
+    },
+    "restore": {
+      "title": "Obnovit tuto verzi",
+      "taken": "Vytvořena {at}.",
+      "planning": "Porovnává se tato verze s dnešní organizací…",
+      "same": "Není co obnovit: organizace je taková, jaká byla v této verzi.",
+      "organization": "Nastavení organizace",
+      "counts": "{created} vytvořit, {changed} změnit, {unchanged} beze změny",
+      "organizationNote": "Nastavení organizace se odsud nemění: stáhněte tuto verzi a navrhněte její soubory organization/ na kartě Nastavení.",
+      "proposed": "Navrženo jako změna. Jiný správce ji schválí ve Změnách.",
+      "propose": "Navrhnout obnovu",
+      "close": "Zavřít",
+      "project": "Projekt {project}"
+    },
+    "form": {
+      "title": "Bucket a plán",
+      "leadNew": "Kam jdou zálohy. Bucket musí mít zapnuté verzování; stránka to před uložením ověří.",
+      "leadSaved": "Změňte, kam jdou zálohy, jak často a jak dlouho zůstávají starší verze.",
+      "emptyTitle": "Záloha ještě není nastavena",
+      "emptyHint": "Vyplňte níže svůj S3 bucket a uložte. Potom stiskněte Spustit nyní pro první zálohu.",
+      "endpoint": "Adresa S3",
+      "region": "Region",
+      "bucket": "Bucket",
+      "prefix": "Složka",
+      "accessKeyId": "Identifikátor přístupového klíče",
+      "secretAccessKey": "Tajný přístupový klíč",
+      "secretKept": "Uložen; zadejte nový, chcete-li ho nahradit",
+      "everyHours": "Spouštět každých (hodin)",
+      "keepDays": "Uchovat starší verze (dní)",
+      "enabled": "Plánované zálohy zapnuty",
+      "save": "Uložit",
+      "saving": "Ověřuje se bucket…",
+      "saved": "Uloženo. Bucket odpověděl se zapnutým verzováním.",
+      "failed": "Bucket se neuložil. Zkontrolujte pole výše a uložte znovu.",
+      "invalid": "Neuloženo: pole {field} je třeba opravit, viz řádek pod ním."
+    },
+    "hint": {
+      "endpoint": "Adresa https služby S3, například https://s3.eu-central-1.amazonaws.com",
+      "region": "Region bucketu, například eu-central-1",
+      "bucket": "Název bucketu, například mesto-zalohy",
+      "prefix": "Složka v bucketu končící znakem /, například joinedcontext/. Prázdné pro kořen bucketu.",
+      "accessKeyId": "Identifikátor klíče účtu, který smí zapisovat do bucketu, například AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "Uloží se zapečetěný a už se nezobrazí. Nechte prázdné, chcete-li ponechat uložený.",
+      "everyHours": "1 až 672 hodin, například 24 pro jednou denně",
+      "keepDays": "1 až 3650 dní, například 90",
+      "enabled": "Vypnutí ponechá bucket i všechny verze; Spustit nyní funguje dál."
     }
   }
 }

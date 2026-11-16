@@ -6,6 +6,9 @@
 #
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
+# REHEARSAL_PG_LISTEN: Postgres' listen_addresses (default *; the release e2e stacks keep it on
+# 127.0.0.1).
+#
 # Every secret is a 0600 file under $REHEARSAL_HOME/<env>/secrets (generated once, never printed).
 # kaisatsu, Antares, the Portal, shako, daiya, dataroom and ekiben keep their state in PostgreSQL.
 # The 24 h rule (owner 2026-11-08): `rehearsal.py retain` deletes Antares temporal instances older
@@ -20,7 +23,13 @@ here=$(cd "$(dirname "$0")" && pwd)
 home=${REHEARSAL_HOME:-$HOME/rehearsal}/$env_name
 jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
 # A jc embedding a Portal UI older than the clone's UI sources serves the old UI silently: refuse it.
-"$here/ui-fresh.sh" "$here/../.." "$jc_bin" || exit 1
+# A jc copied out of a release image (bins/jc/e2e/release/stacks.py) embeds that image's UI: the
+# file `image` beside it names the image, and REHEARSAL_JC_IMAGE must name the same one. The stamp
+# is read through jc_dir: test_smoke_yml.py reads every `dirname "$jc_bin")/<name>` as a binary.
+jc_dir=$(dirname "$jc_bin")
+if [ -z "${REHEARSAL_JC_IMAGE:-}" ] || [ "$(cat "$jc_dir/image" 2>/dev/null)" != "$REHEARSAL_JC_IMAGE" ]; then
+  "$here/ui-fresh.sh" "$here/../.." "$jc_bin" || exit 1
+fi
 export_dir=${REHEARSAL_EXPORT:-$home/export}
 bind=${REHEARSAL_BIND:-127.0.0.1}
 # The rehearsal's one origin. kaisatsu names its issuer by the host a request reached it on, and
@@ -52,7 +61,7 @@ if ! docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q t
     -e PGPORT="$pg_port" -e POSTGRES_PASSWORD_FILE=/run/rh/superuser \
     -v "$(secret superuser)":/run/rh/superuser:ro \
     -v "$home/pgdata":/var/lib/postgresql/data \
-    "$pg_image" >/dev/null
+    "$pg_image" -c listen_addresses="${REHEARSAL_PG_LISTEN:-*}" >/dev/null
 fi
 for _ in $(seq 60); do pg_isready -q -h 127.0.0.1 -p "$pg_port" && break; sleep 1; done
 pg_isready -q -h 127.0.0.1 -p "$pg_port"

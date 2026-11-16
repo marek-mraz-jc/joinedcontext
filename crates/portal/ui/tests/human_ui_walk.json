@@ -1711,6 +1711,24 @@
         "evidence/worker-t4849/T-4849/agents-settings-400.png"
       ]
     },
+    "src/pages/organization/Backups.tsx": {
+      "walkedBy": "worker-t7154",
+      "date": "2026-11-16",
+      "screenshots": [
+        "evidence/T-7154/ui/backups-deleted-1440.png",
+        "evidence/T-7154/ui/backups-deleted-400.png",
+        "evidence/T-7154/ui/backups-empty-1440.png",
+        "evidence/T-7154/ui/backups-empty-400.png",
+        "evidence/T-7154/ui/backups-filled-1440.png",
+        "evidence/T-7154/ui/backups-filled-400.png",
+        "evidence/T-7154/ui/backups-refused-1440.png",
+        "evidence/T-7154/ui/backups-refused-400.png",
+        "evidence/T-7154/ui/backups-refused-member-1440.png",
+        "evidence/T-7154/ui/backups-refused-member-400.png",
+        "evidence/T-7154/ui/backups-restore-1440.png",
+        "evidence/T-7154/ui/backups-restore-400.png"
+      ]
+    },
     "src/pages/organization/Costs.tsx": {
       "walkedBy": "worker-t5126",
       "date": "2026-10-22",
@@ -2901,6 +2919,36 @@
         "evidence/jc-grafana-parity/shots/portal/portal-list-tag-400.png",
         "evidence/jc-grafana-parity/shots/portal/portal-list-no-match-1440.png",
         "evidence/jc-grafana-parity/shots/portal/portal-list-no-match-400.png"
+      ]
+    },
+    "src/pages/grafana/DashboardHistory.tsx": {
+      "walkedBy": "worker-t7151 (stub walk, T-7150)",
+      "date": "2026-11-16",
+      "screenshots": [
+        "evidence/T-7150/history-list-1440.png",
+        "evidence/T-7150/history-list-400.png",
+        "evidence/T-7150/history-diff-1440.png",
+        "evidence/T-7150/history-diff-400.png",
+        "evidence/T-7150/history-restore-asked-1440.png",
+        "evidence/T-7150/history-restore-asked-400.png",
+        "evidence/T-7150/history-reader-1440.png",
+        "evidence/T-7150/history-reader-400.png"
+      ]
+    },
+    "src/pages/grafana/SavedChartsMove.tsx": {
+      "walkedBy": "worker-t7159 (stub walk, T-7161)",
+      "date": "2026-11-16",
+      "screenshots": [
+        "evidence/T-7161/move-checked-1440.png",
+        "evidence/T-7161/move-checked-400.png",
+        "evidence/T-7161/move-proposed-1440.png",
+        "evidence/T-7161/move-proposed-400.png",
+        "evidence/T-7161/move-remove-checked-1440.png",
+        "evidence/T-7161/move-remove-checked-400.png",
+        "evidence/T-7161/move-removed-1440.png",
+        "evidence/T-7161/move-removed-400.png",
+        "evidence/T-7161/move-refused-1440.png",
+        "evidence/T-7161/move-refused-400.png"
       ]
     },
     "src/components/forms/SchemaForm.tsx": {

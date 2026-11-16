@@ -1,0 +1,666 @@
+{
+ "journeys": [
+  {
+   "id": "J001",
+   "file": "signin.spec.ts",
+   "title": "a person signs in with a password and a one-time code and reaches the Portal",
+   "requirements": [
+    "PF-128"
+   ],
+   "pages": [
+    "/projects/helsinki/home"
+   ]
+  },
+  {
+   "id": "J002",
+   "file": "signin.spec.ts",
+   "title": "a wrong password is refused and the person stays on the sign-in form",
+   "requirements": [],
+   "pages": [
+    "/api/v1/auth/login"
+   ]
+  },
+  {
+   "id": "J003",
+   "file": "signin.spec.ts",
+   "title": "a wrong one-time code is refused after a right password",
+   "requirements": [
+    "PF-128"
+   ],
+   "pages": [
+    "/api/v1/auth/login"
+   ]
+  },
+  {
+   "id": "J004",
+   "file": "signin.spec.ts",
+   "title": "a person signs out from the account menu and the session is gone",
+   "requirements": [],
+   "pages": [
+    "/settings"
+   ]
+  },
+  {
+   "id": "J010",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Home from the main navigation",
+   "nav": "Home",
+   "heading": "Home",
+   "text": "What waits for your approval",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/home"
+   ]
+  },
+  {
+   "id": "J011",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Context Spaces from the main navigation",
+   "nav": "Context Spaces",
+   "heading": "Context Spaces",
+   "text": "Helsinki city context",
+   "requirements": [
+    "PF-08"
+   ],
+   "pages": [
+    "/projects/helsinki/spaces"
+   ]
+  },
+  {
+   "id": "J012",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Data models from the main navigation",
+   "nav": "Data models",
+   "heading": "Data models",
+   "text": "Helsinki city context",
+   "requirements": [
+    "DM-79"
+   ],
+   "pages": [
+    "/projects/helsinki/models"
+   ]
+  },
+  {
+   "id": "J013",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Endpoints from the main navigation",
+   "nav": "Endpoints",
+   "heading": "Endpoints",
+   "text": "Helsinki open data",
+   "requirements": [
+    "EP-86"
+   ],
+   "pages": [
+    "/projects/helsinki/endpoints"
+   ]
+  },
+  {
+   "id": "J014",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Subscriptions from the main navigation",
+   "nav": "Subscriptions",
+   "heading": "Subscriptions",
+   "text": "",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/subscriptions"
+   ]
+  },
+  {
+   "id": "J015",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Data sources from the main navigation",
+   "nav": "Data sources",
+   "heading": "Data sources",
+   "text": "Air quality stations",
+   "requirements": [
+    "MF-35"
+   ],
+   "pages": [
+    "/projects/helsinki/datasources"
+   ]
+  },
+  {
+   "id": "J016",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Context sources from the main navigation",
+   "nav": "Context sources",
+   "heading": "Context sources",
+   "text": "",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/csrs"
+   ]
+  },
+  {
+   "id": "J017",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens MQTT brokers from the main navigation",
+   "nav": "MQTT brokers",
+   "heading": "MQTT brokers",
+   "text": "",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/mqttbrokers"
+   ]
+  },
+  {
+   "id": "J018",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Pipelines from the main navigation",
+   "nav": "Pipelines",
+   "heading": "Pipelines",
+   "text": "Air quality around Helsinki",
+   "requirements": [
+    "PL-39"
+   ],
+   "pages": [
+    "/projects/helsinki/pipelines"
+   ]
+  },
+  {
+   "id": "J019",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Scripts from the main navigation",
+   "nav": "Scripts",
+   "heading": "Scripts",
+   "text": "",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/scripts"
+   ]
+  },
+  {
+   "id": "J020",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Grafana from the main navigation",
+   "nav": "Grafana",
+   "heading": "Grafana",
+   "text": "Dashboards",
+   "requirements": [
+    "UI-17"
+   ],
+   "pages": [
+    "/projects/helsinki/grafana"
+   ]
+  },
+  {
+   "id": "J021",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Applications from the main navigation",
+   "nav": "Applications",
+   "heading": "Applications",
+   "text": "Start from a template",
+   "requirements": [
+    "SDK-19"
+   ],
+   "pages": [
+    "/projects/helsinki/apps"
+   ]
+  },
+  {
+   "id": "J022",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Sync from the main navigation",
+   "nav": "Sync",
+   "heading": "Sync sources",
+   "text": "",
+   "requirements": [
+    "MF-27"
+   ],
+   "pages": [
+    "/projects/helsinki/syncsources"
+   ]
+  },
+  {
+   "id": "J023",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Assistant from the main navigation",
+   "nav": "Assistant",
+   "heading": "Assistant",
+   "text": "Agent access",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/assistant"
+   ]
+  },
+  {
+   "id": "J024",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Copies from the main navigation",
+   "nav": "Copies",
+   "heading": "Copies",
+   "text": "",
+   "requirements": [
+    "UI-61",
+    "CC-84"
+   ],
+   "pages": [
+    "/projects/helsinki/workspaces"
+   ]
+  },
+  {
+   "id": "J025",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Approvals from the main navigation",
+   "nav": "Approvals",
+   "heading": "Approvals",
+   "text": "",
+   "requirements": [
+    "UI-23",
+    "CC-34"
+   ],
+   "pages": [
+    "/projects/helsinki/approvals"
+   ]
+  },
+  {
+   "id": "J026",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Activity from the main navigation",
+   "nav": "Activity",
+   "heading": "Activity",
+   "text": "",
+   "requirements": [
+    "OPS-49"
+   ],
+   "pages": [
+    "/projects/helsinki/activity"
+   ]
+  },
+  {
+   "id": "J027",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Health from the main navigation",
+   "nav": "Health",
+   "heading": "Health",
+   "text": "",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/health"
+   ]
+  },
+  {
+   "id": "J028",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Policies from the main navigation",
+   "nav": "Policies",
+   "heading": "Policies",
+   "text": "app-air-quality-1",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/policies"
+   ]
+  },
+  {
+   "id": "J029",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Project settings from the main navigation",
+   "nav": "Project settings",
+   "heading": "Project settings",
+   "text": "General",
+   "requirements": [
+    "PF-61"
+   ],
+   "pages": [
+    "/projects/helsinki/settings/general"
+   ]
+  },
+  {
+   "id": "J030",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Explore data from the main navigation",
+   "nav": "Explore data",
+   "heading": "Explore data",
+   "text": "Context space",
+   "requirements": [
+    "UI-33"
+   ],
+   "pages": [
+    "/projects/helsinki/explore"
+   ]
+  },
+  {
+   "id": "J031",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Open data from the main navigation",
+   "nav": "Open data",
+   "heading": "",
+   "text": "",
+   "requirements": [
+    "EP-118"
+   ],
+   "pages": [
+    "/projects/helsinki/ckan"
+   ]
+  },
+  {
+   "id": "J032",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Knowledge sources from the main navigation",
+   "nav": "Knowledge sources",
+   "heading": "Knowledge sources",
+   "text": "",
+   "requirements": [
+    "UI-99"
+   ],
+   "pages": [
+    "/projects/helsinki/knowledge"
+   ]
+  },
+  {
+   "id": "J033",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Repositories from the main navigation",
+   "nav": "Repositories",
+   "heading": "Repositories",
+   "text": "",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/repositories"
+   ]
+  },
+  {
+   "id": "J034",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens MCP servers from the main navigation",
+   "nav": "MCP servers",
+   "heading": "MCP servers",
+   "text": "Helsinki, open data",
+   "requirements": [
+    "CC-45"
+   ],
+   "pages": [
+    "/projects/helsinki/mcp"
+   ]
+  },
+  {
+   "id": "J035",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Catalogue from the main navigation",
+   "nav": "Catalogue",
+   "heading": "Catalogue",
+   "text": "Datasets you may read",
+   "requirements": [
+    "EP-118"
+   ],
+   "pages": [
+    "/catalogue"
+   ]
+  },
+  {
+   "id": "J036",
+   "file": "pages.spec.ts",
+   "persona": "admin",
+   "title": "the administrator opens Import from the main navigation",
+   "nav": "Import",
+   "heading": "Import configuration",
+   "text": "",
+   "requirements": [
+    "MF-46"
+   ],
+   "pages": [
+    "/projects/helsinki/import"
+   ]
+  },
+  {
+   "id": "J040",
+   "file": "refusals.spec.ts",
+   "title": "the viewer of Žilina opens Helsinki's project and is refused",
+   "requirements": [
+    "PF-61"
+   ],
+   "pages": [
+    "/projects/helsinki/home"
+   ]
+  },
+  {
+   "id": "J041",
+   "file": "refusals.spec.ts",
+   "title": "the viewer opens the Organization's administration and is sent to an administrator",
+   "requirements": [
+    "PF-03"
+   ],
+   "pages": [
+    "/organization"
+   ]
+  },
+  {
+   "id": "J042",
+   "file": "refusals.spec.ts",
+   "title": "the API refuses the viewer Helsinki's spaces",
+   "requirements": [
+    "PF-61"
+   ],
+   "pages": []
+  },
+  {
+   "id": "J043",
+   "file": "refusals.spec.ts",
+   "title": "the viewer reads Žilina's Context Spaces and finds no control that writes",
+   "requirements": [
+    "PF-61"
+   ],
+   "pages": [
+    "/projects/zilina/spaces"
+   ]
+  },
+  {
+   "id": "J044",
+   "file": "refusals.spec.ts",
+   "title": "a signed-in outsider sees only their own settings",
+   "requirements": [],
+   "pages": [
+    "/settings"
+   ]
+  },
+  {
+   "id": "J045",
+   "file": "refusals.spec.ts",
+   "title": "the outsider opens Helsinki's project and is refused, in the page and by the API",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/spaces"
+   ]
+  },
+  {
+   "id": "J046",
+   "file": "refusals.spec.ts",
+   "title": "the outsider is refused the Organization's administration",
+   "requirements": [],
+   "pages": [
+    "/organization"
+   ]
+  },
+  {
+   "id": "J047",
+   "file": "refusals.spec.ts",
+   "title": "an anonymous visitor gets the public catalogue, and a project address asks for the sign-in",
+   "requirements": [
+    "EP-118"
+   ],
+   "pages": [
+    "/catalogue",
+    "/login"
+   ]
+  },
+  {
+   "id": "J050",
+   "file": "details.spec.ts",
+   "title": "the administrator opens the Endpoint Helsinki open data from the Endpoints list",
+   "requirements": [
+    "EP-86",
+    "EP-98"
+   ],
+   "pages": [
+    "/projects/helsinki/endpoints"
+   ]
+  },
+  {
+   "id": "J051",
+   "file": "details.spec.ts",
+   "title": "the administrator opens the data model of Helsinki's city context and its types",
+   "requirements": [
+    "DM-79"
+   ],
+   "pages": [
+    "/projects/helsinki/models/helsinki"
+   ]
+  },
+  {
+   "id": "J052",
+   "file": "details.spec.ts",
+   "title": "the administrator opens a pipeline from the Pipelines list",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/pipelines/air-quality"
+   ]
+  },
+  {
+   "id": "J053",
+   "file": "details.spec.ts",
+   "title": "the administrator opens the Policy app-air-quality-1 and reads whom it grants what",
+   "requirements": [],
+   "pages": [
+    "/projects/helsinki/policies/app-air-quality-1"
+   ]
+  },
+  {
+   "id": "J054",
+   "file": "details.spec.ts",
+   "title": "the administrator opens the data source Air quality stations (FMI open data)",
+   "requirements": [
+    "MF-35"
+   ],
+   "pages": [
+    "/projects/helsinki/datasources/fmi-air-quality/edit"
+   ]
+  },
+  {
+   "id": "J055",
+   "file": "details.spec.ts",
+   "title": "the administrator opens the Context Space Helsinki city context",
+   "requirements": [
+    "PF-08"
+   ],
+   "pages": [
+    "/projects/helsinki/spaces/helsinki"
+   ]
+  },
+  {
+   "id": "J056",
+   "file": "details.spec.ts",
+   "title": "the administrator searches the catalogue for Žilina's datasets",
+   "requirements": [
+    "EP-118"
+   ],
+   "pages": [
+    "/catalogue"
+   ]
+  },
+  {
+   "id": "J057",
+   "file": "details.spec.ts",
+   "title": "the administrator opens a public dataset of the catalogue",
+   "requirements": [
+    "EP-118"
+   ],
+   "pages": [
+    "/catalogue/zilina-dataset"
+   ]
+  },
+  {
+   "id": "J058",
+   "file": "details.spec.ts",
+   "title": "the administrator opens the public connect page of the MCP server Helsinki, open data",
+   "requirements": [
+    "CC-45"
+   ],
+   "pages": [
+    "/connect/helsinki/otvorene-data"
+   ]
+  },
+  {
+   "id": "J059",
+   "file": "details.spec.ts",
+   "title": "the administrator explores the entities of the space Helsinki, all of it in a table",
+   "requirements": [
+    "UI-33"
+   ],
+   "pages": [
+    "/projects/helsinki/explore"
+   ]
+  },
+  {
+   "id": "J060",
+   "file": "writes.spec.ts",
+   "title": "a person creates a personal AI connector, finds it listed, and revokes it",
+   "requirements": [],
+   "pages": [
+    "/ai-connectors"
+   ]
+  },
+  {
+   "id": "J061",
+   "file": "writes.spec.ts",
+   "title": "the administrator grants a person of the organization the viewer role in Helsinki, proposed for approval",
+   "requirements": [
+    "PF-108"
+   ],
+   "pages": [
+    "/projects/helsinki/settings/members/new"
+   ]
+  },
+  {
+   "id": "J062",
+   "file": "writes.spec.ts",
+   "title": "the administrator proposes a Context Space, the approver approves it, and it is listed",
+   "requirements": [
+    "PF-08",
+    "UI-23",
+    "CC-34"
+   ],
+   "pages": [
+    "/projects/helsinki/spaces/new",
+    "/projects/helsinki/approvals/chg"
+   ]
+  },
+  {
+   "id": "J063",
+   "file": "writes.spec.ts",
+   "title": "the administrator cannot approve their own change",
+   "requirements": [
+    "CC-34"
+   ],
+   "pages": [
+    "/projects/helsinki/approvals/chg"
+   ]
+  }
+ ]
+}

@@ -85,11 +85,12 @@ describe("proposeBundle (PF-57, F-UI2-013)", () => {
     const sent = stubFetch({ created: ["air-filter"] });
     await proposeBundle("helsinki", [DRAWN]);
 
-    expect(sent.map(({ path, dryRun }) => [path, dryRun])).toEqual([
+    // The project's row is read first: its ETag is the import action's If-Match (T-7143).
+    expect(sent.filter(({ path }) => path.endsWith("/import")).map(({ path, dryRun }) => [path, dryRun])).toEqual([
       ["/api/v1/projects/helsinki/import", true],
       ["/api/v1/projects/helsinki/import", false],
     ]);
-    for (const { body } of sent) {
+    for (const { body } of sent.filter(({ path }) => path.endsWith("/import"))) {
       expect(JSON.parse(body).conflictPolicy).toBe("fail");
     }
   });

@@ -40,6 +40,7 @@ import { KindList } from "../../routes/ResourceListPage";
 import { ValidationHealth } from "./ValidationHealth";
 import { OrganizationConnectors } from "./OrganizationConnectors";
 import { OpendataPages } from "./OpendataPages";
+import { Backups } from "./Backups";
 import { AskAdmins } from "./AskAdmins";
 import { DataAccessMatrix } from "./DataAccess";
 import { HealthLog } from "../health/HealthLog";
@@ -341,6 +342,7 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         ) : null}
         {tab === "connectors" ? <OrganizationConnectors /> : null}
         {tab === "opendata-pages" ? <OpendataPages /> : null}
+        {tab === "backups" ? <Backups /> : null}
         {tab === "blueprints" ? <OrganizationKind plural="blueprints" kind="Blueprint" /> : null}
         {tab === "agentprofiles" ? <OrganizationKind plural="agentprofiles" kind="AgentProfile" /> : null}
         {tab === "dataspaceparticipants" ? <OrganizationKind plural="dataspaceparticipants" kind="DataSpaceParticipant" /> : null}

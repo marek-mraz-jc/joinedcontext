@@ -837,6 +837,103 @@ async fn a_repository_files_land_as_one_change_as_they_were_written() {
     );
 }
 
+/// T-6972, jc-dev 2026-11-16: a project of layout 2 keeps its files at its own repository's
+/// root. A file already there is replaced in that repository, never created a second time under
+/// `projects/{p}/` of the organization repository, and `{orgDomain}` is judged as the domain.
+#[tokio::test]
+async fn a_layout_two_project_files_are_replaced_in_its_own_repository() {
+    use wiremock::matchers::query_param;
+    let (server, state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    Mock::given(method("GET"))
+        .and(path("/odata/Repositories(Owner='bb',Name='bbproj')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='bbproj')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param("@p", format!("'{FILES_ENDPOINT_PATH}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-endpoint",
+            "Content": base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                FILES_ENDPOINT_ON_MAIN,
+            ),
+        })))
+        .mount(&server)
+        .await;
+    state.mirror.set_layout(2);
+    state
+        .mirror
+        .set_repositories(std::collections::BTreeMap::from([(
+            PROJECT.to_owned(),
+            "bbproj".to_owned(),
+        )]));
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files&dryRun=All");
+    let (status, report) = send(state, &cookie, &content_type, body, &uri).await;
+
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(
+        report["replaced"],
+        json!([format!("projects/{PROJECT}/{FILES_ENDPOINT_PATH}")])
+    );
+    assert!(
+        forge_calls(&server)
+            .await
+            .iter()
+            .all(|call| !call.contains("Name='org')/Shako.File")),
+        "a layout 2 project's file is read from its own repository"
+    );
+}
+
+/// CC-85: in layout 2 a project without a repository of its own gets no files under
+/// `projects/{p}/` of the organization repository, where they would stop every project's
+/// assembly.
+#[tokio::test]
+async fn a_layout_two_project_without_its_own_repository_is_refused() {
+    let (server, state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    state.mirror.set_layout(2);
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files&dryRun=All");
+    let (status, problem) = send(state, &cookie, &content_type, body, &uri).await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    assert!(problem.to_string().contains("registry entry"), "{problem}");
+    assert!(forge_calls(&server).await.is_empty(), "{problem}");
+}
+
+/// T-6972, jc-dev 2026-11-16: before the mirror's first load a layout 2 project reads as
+/// layout 1 with no domain, so the files door answers 503 and plans nothing, rather than a plan
+/// that writes every file again under `projects/{p}/` of the organization repository.
+#[tokio::test]
+async fn a_files_import_before_the_first_sync_is_refused_and_reads_nothing() {
+    use joinedcontext_portal::reconciler::Syncer;
+    let (server, mut state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    let shako = ShakoClient::new(
+        server.uri().parse().expect("forge url"),
+        "bb",
+        "org",
+        "token",
+    )
+    .expect("shako client");
+    state.syncer = Some(Arc::new(Syncer::new(
+        Arc::new(shako),
+        Arc::clone(&state.mirror),
+    )));
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files&dryRun=All");
+    let (status, problem) = send(state, &cookie, &content_type, body, &uri).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert!(problem.to_string().contains("/api/v1/ready"), "{problem}");
+    assert!(
+        forge_calls(&server).await.is_empty(),
+        "nothing is read or planned"
+    );
+}
+
 /// PF-50 at the files door: each manifest is asked of the person's bindings, and a refusal
 /// writes nothing.
 #[tokio::test]
@@ -976,6 +1073,78 @@ async fn a_dry_run_asked_for_in_the_query_writes_nothing_either() {
         written(&server).await.is_empty(),
         "the check wrote to the repository"
     );
+}
+
+/// T-7143: the pages import JSON manifests through the service's `jc_project_import` action with
+/// the project's `If-Match`, and it answers the REST door's plan, then its Change; `bundle` and
+/// `manifests` together are a 422 naming `bundle` before anything is read.
+#[tokio::test]
+async fn manifests_import_through_the_odata_action_as_through_the_rest_door() {
+    let server = forge().await;
+    // The service lists a project its Organization's registry holds.
+    let registered = json!({
+        "apiVersion": API_VERSION,
+        "kind": "Project",
+        "metadata": { "name": PROJECT, "namespace": ORG_NAMESPACE },
+        "spec": { "organizationRef": "bb" },
+    });
+    let (state, cookie) = state_as(&server, vec![], &["portal-approver"], vec![registered]);
+    let manifest: Value = serde_norway::from_str(SPACE).expect("the space parses");
+    let action = format!("/api/v1/projects('{PROJECT}')/JoinedContext.Portal.jc_project_import");
+    let call = |body: Value, if_match: Option<String>| {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri(&action)
+            .header(header::COOKIE, &cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(CSRF_HEADER, CSRF);
+        if let Some(tag) = if_match {
+            request = request.header(header::IF_MATCH, tag);
+        }
+        let app = server::app(state.clone());
+        async move {
+            let response = app
+                .oneshot(request.body(Body::from(body.to_string())).unwrap())
+                .await
+                .expect("response");
+            let status = response.status();
+            let headers = response.headers().clone();
+            let bytes = response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
+            (
+                status,
+                headers,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
+        }
+    };
+    let input = json!({ "manifests": [manifest], "dryRun": true });
+    let (status, headers, _) = call(input.clone(), Some("\"stale\"".into())).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+    let etag = headers
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("a 412 names the project's ETag")
+        .to_owned();
+
+    let (status, _, plan) = call(input, Some(etag.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{plan}");
+    assert_eq!(plan["value"]["created"], json!(["ovzdusie"]), "{plan}");
+    assert!(written(&server).await.is_empty(), "the check wrote");
+
+    let both = json!({ "manifests": [manifest], "bundle": "kind: List" });
+    let (status, _, refused) = call(both, Some(etag.clone())).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["error"]["target"], "bundle", "{refused}");
+
+    let (status, _, change) = call(json!({ "manifests": [manifest] }), Some(etag)).await;
+    assert!(status.is_success(), "{status}: {change}");
+    assert!(change["value"]["metadata"]["name"].is_string(), "{change}");
+    assert_eq!(written(&server).await.len(), 1);
 }
 
 // --- the conflict policy (MF-23) ---------------------------------------------------------

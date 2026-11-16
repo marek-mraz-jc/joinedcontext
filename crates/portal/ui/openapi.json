@@ -3179,6 +3179,382 @@
         }
       }
     },
+    "/api/v1/organization/backups/configuration": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Read Configuration Backup",
+        "description": "The Organization's configuration backup target (never its secret key) and the newest runs, deletes and restores (T-7154).",
+        "operationId": "organization_backup_overview",
+        "responses": {
+          "200": {
+            "description": "Target and log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupOverview"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the request's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Set Configuration Backup Target",
+        "description": "Saves the bucket, schedule and retention. The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154).",
+        "operationId": "organization_backup_save",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetInput"
+              },
+              "example": {
+                "accessKeyId": "backup-writer",
+                "bucket": "bb-backups",
+                "enabled": true,
+                "endpoint": "https://s3.eu-central-1.amazonaws.com",
+                "everyHours": 24,
+                "keepDays": 30,
+                "prefix": "joinedcontext/",
+                "region": "eu-central-1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Target"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The bucket's versioning is not on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is not valid; `errors` names it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No age key to seal the secret, or the bucket cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/bundle": {
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Delete Configuration Backup",
+        "description": "A soft delete: the bucket keeps every version behind a delete marker until retention removes them, and any version can still be restored (T-7154).",
+        "operationId": "organization_backup_soft_delete",
+        "responses": {
+          "204": {
+            "description": "Delete marker written"
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target, or its versioning is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/run": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Run Configuration Backup Now",
+        "description": "Builds the Organization's configuration bundle and uploads it as a new version, whether the schedule is on or off (T-7154).",
+        "operationId": "organization_backup_run_now",
+        "responses": {
+          "200": {
+            "description": "The run's log entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogEntry"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target, or its bucket's versioning is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The bucket cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/versions": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Configuration Backup Versions",
+        "description": "Every version and delete marker of the Organization's bundle in its bucket, newest first, with the bucket's versioning and Object Lock state (T-7154).",
+        "operationId": "organization_backup_versions",
+        "responses": {
+          "200": {
+            "description": "Versions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The bucket cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/versions/{version}": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Download Configuration Backup Version",
+        "description": "One version of the Organization's bundle, as the zip that was uploaded (T-7154).",
+        "operationId": "organization_backup_download",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "description": "S3 version id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The zip",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/versions/{version}/restore": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Restore Configuration Backup Version",
+        "description": "Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. A bundle of another Organization is refused (T-7154).",
+        "operationId": "organization_backup_restore",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "description": "S3 version id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreInput"
+              },
+              "example": {
+                "apply": false
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The plan, and the Changes once applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestorePlan"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A bundle of another Organization, or of a project it no longer has",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization/brokers": {
       "get": {
         "tags": [
@@ -14161,6 +14537,129 @@
         }
       }
     },
+    "/api/v1/projects/{project}/grafana/builder/saved-charts": {
+      "post": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Move Saved Charts Into A Dashboard",
+        "description": "Moves the project's charts saved one by one into one builder dashboard, Saved charts. The first run proposes the dashboard as a Change; once it is merged, the next run removes each saved chart the merged file draws (same Endpoint, type, attribute, kind and title) and keeps every other one, with the reason. `dryRun` reports the counts and changes nothing. Needs propose on Dashboard and read on every Endpoint a chart names.",
+        "operationId": "builder_saved_charts",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedChartsRun"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A dry run, or the removing run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedChartsMove"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Proposed; waits for approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedChartsMove"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A body that does not parse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards, or may not read an Endpoint a chart names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project the caller has a part in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No saved chart to move, a Change of the dashboard is open, or no dashboards service for the project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A chart no longer fits: a source, type or attribute it names is gone; the errors name it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge, the database or the dashboards service did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/grafana/builder/values": {
       "get": {
         "tags": [
@@ -14559,6 +15058,290 @@
           },
           "503": {
             "description": "The forge did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/builder/{uid}/versions": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "List A Dashboard's Versions",
+        "description": "The versions of a builder dashboard, newest first: each approved Change of its file on the project's default branch, with who wrote it and when (at most 50). Needs read on the project. Changes no data.",
+        "operationId": "builder_versions",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The versions, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardVersions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, or no builder dashboard of that uid in it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Read A Dashboard Version",
+        "description": "One version of a builder dashboard read back into choices, to compare with another. Only a version the dashboard's own history lists is read. Needs read on the project and on every Endpoint the version names. Changes no data.",
+        "operationId": "builder_version",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sha",
+            "in": "path",
+            "description": "The version's commit, from the versions list",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The version's choices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardVersionBoard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The version names an Endpoint the caller may not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, dashboard or version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The version's file does not read back into choices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore": {
+      "post": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Propose Restoring A Dashboard Version",
+        "description": "Proposes a Change that writes an earlier version of a builder dashboard back as its newest: the version's choices compiled again, checked as an edit is. Waits for approval like every edit. Needs propose on Dashboard and read on every Endpoint the version names.",
+        "operationId": "builder_restore",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sha",
+            "in": "path",
+            "description": "The version's commit, from the versions list",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Proposed; waits for approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuilderSaved"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards, or may not read an Endpoint the version names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, dashboard or version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The dashboard is that version already, or a Change of it is open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The version no longer fits: a source, type or attribute it names is gone; the errors name it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge or the dashboards service did not answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -30594,9 +31377,7 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "example": {
-                "bundle": "example"
-              },
+              "example": {},
               "schema": {
                 "additionalProperties": false,
                 "properties": {
@@ -30619,15 +31400,46 @@
                     "description": "Answer the plan and write nothing",
                     "type": "boolean"
                   },
+                  "manifests": {
+                    "description": "Instead of a bundle",
+                    "items": {
+                      "maxProperties": 5,
+                      "type": "object"
+                    },
+                    "maxItems": 1000,
+                    "type": "array"
+                  },
                   "orgDomain": {
                     "description": "Organisation ids are rewritten to; this one when absent",
                     "maxLength": 253,
                     "type": "string"
+                  },
+                  "spaceMapping": {
+                    "description": "Space `from` lands on the project's `to`",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "description": "Space in the manifests",
+                          "maxLength": 253,
+                          "type": "string"
+                        },
+                        "to": {
+                          "description": "Space of this project",
+                          "maxLength": 253,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 1000,
+                    "type": "array"
                   }
                 },
-                "required": [
-                  "bundle"
-                ],
                 "type": "object"
               }
             }
@@ -34649,6 +35461,10 @@
                     "kind": {
                       "type": "string"
                     },
+                    "origin": {
+                      "description": "person, or journey for a live journey's test run",
+                      "type": "string"
+                    },
                     "previewUrl": {
                       "description": "The preview once a version is built",
                       "type": "string"
@@ -34782,6 +35598,14 @@
                     "description": "Only the runs this caller started",
                     "type": "boolean"
                   },
+                  "origin": {
+                    "description": "Whose runs; journey is a live test",
+                    "enum": [
+                      "person",
+                      "journey",
+                      "all"
+                    ]
+                  },
                   "status": {
                     "description": "Only runs in this state",
                     "enum": [
@@ -34829,6 +35653,10 @@
                             "type": "string"
                           },
                           "kind": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "description": "person, or journey for a live journey's test run",
                             "type": "string"
                           },
                           "previewUrl": {
@@ -48676,6 +49504,31 @@
           }
         }
       },
+      "BackupOverview": {
+        "type": "object",
+        "description": "The page's state: the target (never its secret), the newest acts on it.",
+        "required": [
+          "log"
+        ],
+        "properties": {
+          "log": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogEntry"
+            }
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Target"
+              }
+            ]
+          }
+        }
+      },
       "BarChartOptions": {
         "type": "object",
         "description": "A bar chart's own choices: the text attribute that names each bar, one bar per entity.",
@@ -49335,6 +50188,37 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "BundleVersion": {
+        "type": "object",
+        "required": [
+          "versionId",
+          "lastModified",
+          "size",
+          "isLatest",
+          "deleteMarker"
+        ],
+        "properties": {
+          "deleteMarker": {
+            "type": "boolean",
+            "description": "A soft delete: the bundle reads as gone until a version is restored."
+          },
+          "isLatest": {
+            "type": "boolean"
+          },
+          "lastModified": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "versionId": {
+            "type": "string"
           }
         }
       },
@@ -52175,6 +53059,65 @@
           },
           "uid": {
             "type": "string"
+          }
+        }
+      },
+      "DashboardVersion": {
+        "type": "object",
+        "description": "One version of a builder dashboard: a commit of its file on the default branch, so one\napproved Change (T-7150). History starts at the file's first commit.",
+        "required": [
+          "sha",
+          "author",
+          "date",
+          "message"
+        ],
+        "properties": {
+          "author": {
+            "type": "string",
+            "description": "Who wrote it, as the commit names them; never their e-mail address."
+          },
+          "date": {
+            "type": "string",
+            "description": "When, as the forge dates the commit (RFC 3339)."
+          },
+          "message": {
+            "type": "string",
+            "description": "The first line of its message, e.g. `change dashboard Bike stations`."
+          },
+          "sha": {
+            "type": "string",
+            "description": "The commit, the `{sha}` of the version's own routes."
+          }
+        }
+      },
+      "DashboardVersionBoard": {
+        "type": "object",
+        "description": "One version read back into choices, to compare with another.",
+        "required": [
+          "sha",
+          "board"
+        ],
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/Board"
+          },
+          "sha": {
+            "type": "string"
+          }
+        }
+      },
+      "DashboardVersions": {
+        "type": "object",
+        "description": "A builder dashboard's versions, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardVersion"
+            }
           }
         }
       },
@@ -55231,6 +56174,26 @@
         },
         "additionalProperties": false
       },
+      "Kept": {
+        "type": "object",
+        "description": "A row that stays where it is, and why.",
+        "required": [
+          "id",
+          "title",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "Kind": {
         "type": "string",
         "description": "What a visualization draws.",
@@ -55522,6 +56485,64 @@
               "null"
             ],
             "minimum": 0
+          }
+        }
+      },
+      "LogEntry": {
+        "type": "object",
+        "description": "One audited act on an Organization's backup.",
+        "required": [
+          "id",
+          "organization",
+          "kind",
+          "action",
+          "actor",
+          "at",
+          "ok",
+          "bytes",
+          "objectKey",
+          "versionId",
+          "message"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`run`, `delete`, `restore-plan` or `restore`."
+          },
+          "actor": {
+            "type": "string",
+            "description": "Who: a username, or `schedule`."
+          },
+          "at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "description": "What happened, in words; never a credential."
+          },
+          "objectKey": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "organization": {
+            "type": "string"
+          },
+          "versionId": {
+            "type": "string"
           }
         }
       },
@@ -57075,7 +58096,7 @@
       },
       "OrganizationSummary": {
         "type": "object",
-        "description": "One Organization a caller sees (PF-124): its name, the `?org=` value, and its title.",
+        "description": "The Organization of the Portal host: its name and its title.",
         "required": [
           "name"
         ],
@@ -58602,6 +59623,47 @@
           }
         }
       },
+      "PlanGroup": {
+        "type": "object",
+        "required": [
+          "name",
+          "created",
+          "changed",
+          "unchanged"
+        ],
+        "properties": {
+          "change": {
+            "description": "The Change the restore proposed for this project, once applied; a second administrator\napproves it as any other Change."
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "`organization`, or a project's name."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this group needs done by hand: an Organization-level manifest is restored through\nthe Organization's own repository, never by this door."
+          },
+          "unchanged": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "PlanSummary": {
         "type": "object",
         "description": "Counts of planned resource mutations.",
@@ -59501,7 +60563,7 @@
             "items": {
               "$ref": "#/components/schemas/OrganizationSummary"
             },
-            "description": "The Organizations that own a listed project, by name, when the installation holds more\nthan one (PF-124, ADR-N-058 section 2.7): what the organization switcher offers. Empty\nwith one Organization, so a person who sees one gets no switcher."
+            "description": "The Organization whose own Portal host the request reached, its one entry; empty on\nevery other address. No Portal lists Organizations (T-7151): each runs on its own host,\nand an operator finds them under `GET /organization/addresses`."
           }
         }
       },
@@ -60704,6 +61766,50 @@
         ],
         "description": "What a proposal of one resource sends: the manifest, and beside it the draft the form holds\n(AG-61) and the files the manifest names but cannot contain (DM-39). Both are taken out of the\nbody before it is read as an envelope; the type is what the OpenAPI document says, so the\ngenerated client sends them without a cast (T-1488)."
       },
+      "RestoreInput": {
+        "type": "object",
+        "properties": {
+          "apply": {
+            "type": "boolean",
+            "description": "`false` (the default) plans only; `true` proposes one Change per project, which another\nadministrator approves."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RestorePlan": {
+        "type": "object",
+        "description": "What restoring one version would change, per project and for the Organization's own\nmanifests: manifests that would be created or changed, and how many are as they are.",
+        "required": [
+          "organization",
+          "versionId",
+          "takenAt",
+          "groups",
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "integer",
+            "description": "Manifests created or changed in all groups: 0 means the Organization is as it was then.",
+            "minimum": 0
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanGroup"
+            }
+          },
+          "organization": {
+            "type": "string"
+          },
+          "takenAt": {
+            "type": "string",
+            "description": "When the bundle was taken."
+          },
+          "versionId": {
+            "type": "string"
+          }
+        }
+      },
       "RestoreRequest": {
         "type": "object",
         "required": [
@@ -61123,6 +62229,87 @@
             "type": "object"
           }
         }
+      },
+      "SavedChartsMove": {
+        "type": "object",
+        "description": "What moving the project's saved charts into the Saved charts dashboard does or did (T-7161).",
+        "required": [
+          "uid",
+          "stage",
+          "dryRun",
+          "before",
+          "panels",
+          "moved",
+          "kept"
+        ],
+        "properties": {
+          "before": {
+            "type": "integer",
+            "description": "The project's saved charts before the run.",
+            "minimum": 0
+          },
+          "change": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Change",
+                "description": "The Change a proposing run opened."
+              }
+            ]
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "kept": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Kept"
+            },
+            "description": "The charts that stay saved, each with the reason."
+          },
+          "moved": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The charts the dashboard takes (propose) or that were removed, or would be (remove)."
+          },
+          "panels": {
+            "type": "integer",
+            "description": "The dashboard's panels: planned when proposing, merged when removing.",
+            "minimum": 0
+          },
+          "stage": {
+            "$ref": "#/components/schemas/SavedChartsStage"
+          },
+          "uid": {
+            "type": "string",
+            "description": "The Saved charts dashboard's uid, the same on every run."
+          }
+        }
+      },
+      "SavedChartsRun": {
+        "type": "object",
+        "description": "How a move of the saved charts runs: `dryRun` reports and changes nothing.",
+        "properties": {
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "dryRun": true
+        }
+      },
+      "SavedChartsStage": {
+        "type": "string",
+        "description": "Which step of the move a run took.",
+        "enum": [
+          "propose",
+          "remove"
+        ]
       },
       "Scope": {
         "oneOf": [
@@ -62465,6 +63652,126 @@
           }
         }
       },
+      "Target": {
+        "type": "object",
+        "description": "Where an Organization's backup goes and when it runs. The secret access key is sealed with\nthe Portal's age key and never leaves this struct: it is not serialised.",
+        "required": [
+          "organization",
+          "kind",
+          "endpoint",
+          "region",
+          "bucket",
+          "prefix",
+          "accessKeyId",
+          "enabled",
+          "everyHours",
+          "keepDays",
+          "updatedBy",
+          "updatedAt"
+        ],
+        "properties": {
+          "accessKeyId": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "`https://s3.eu-central-1.amazonaws.com`, a MinIO or Ceph address."
+          },
+          "everyHours": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "keepDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "lastRunAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339; the start of the last scheduled or manual run."
+          },
+          "organization": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string",
+            "description": "The folder of the bucket every object of this backup lands under, e.g. `jc/`."
+          },
+          "region": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "updatedBy": {
+            "type": "string"
+          }
+        }
+      },
+      "TargetInput": {
+        "type": "object",
+        "description": "What an administrator sets. `secretAccessKey` is written only: absent keeps the saved one.",
+        "required": [
+          "endpoint",
+          "region",
+          "bucket",
+          "accessKeyId",
+          "enabled",
+          "everyHours",
+          "keepDays"
+        ],
+        "properties": {
+          "accessKeyId": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string",
+            "description": "`bb-backups`"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "`https://s3.eu-central-1.amazonaws.com`"
+          },
+          "everyHours": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "keepDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "prefix": {
+            "type": "string",
+            "description": "`joinedcontext/`; empty for the bucket's root."
+          },
+          "region": {
+            "type": "string",
+            "description": "`eu-central-1`"
+          },
+          "secretAccessKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "Template": {
         "type": "object",
         "description": "One template as a person picks it (T-3263, AP-141): what it is for, for whom, and the data\nit needs; the source stays the model's.",
@@ -63227,6 +64534,30 @@
                 "description": "`None` when the bundle is unreachable or carries no `version.json`."
               }
             ]
+          }
+        }
+      },
+      "VersionList": {
+        "type": "object",
+        "description": "The versions of the bundle in the bucket, and what the bucket says of itself.",
+        "required": [
+          "versioning",
+          "objectLock",
+          "versions"
+        ],
+        "properties": {
+          "objectLock": {
+            "type": "boolean"
+          },
+          "versioning": {
+            "type": "string",
+            "description": "`Enabled`, `Suspended` or empty (never versioned)."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleVersion"
+            }
           }
         }
       },
