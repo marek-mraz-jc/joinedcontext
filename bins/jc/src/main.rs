@@ -31,6 +31,17 @@ fn main() -> ExitCode {
             return ExitCode::from(jc::doctor::command(&args[1..]));
         }
     }
+    // `jc kaisatsu split-realm --config jc.toml [--apply|--retire|--restore]`: people into their
+    // Organization's realm (T-7128).
+    #[cfg(feature = "kaisatsu")]
+    {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if args.first().map(String::as_str) == Some("kaisatsu")
+            && args.get(1).map(String::as_str) == Some("split-realm")
+        {
+            return ExitCode::from(jc::split_realm::command(&args[2..]));
+        }
+    }
     // `jc validate --as-portal ...`: the Portal's judge over a checkout, offline (P-15), so the
     // seed CI runs the rules of the image it pins.
     #[cfg(feature = "portal")]
