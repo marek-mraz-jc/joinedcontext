@@ -24,6 +24,7 @@ spec:
         - ContextSourceRegistration
         - ServiceAccount
         - Pipeline
+        - Script
         - DataSource
         - App
         # No CkanInstance: an instance is the administrator's, handed out per instance by its

@@ -377,6 +377,7 @@ use crate::tools::model_tools::{
         crate::tools::model_tools::import_sdm,
         crate::tools::model_tools::infer_schema,
         crate::api::pipeline_test::test_pipeline,
+        crate::api::script_test::test_script,
         crate::api::pipeline_source_check::check_source,
         crate::api::datasource_test::test_datasource,
         crate::api::datasource_webhook::webhook_info,

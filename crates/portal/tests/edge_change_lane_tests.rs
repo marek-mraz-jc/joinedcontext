@@ -38,6 +38,7 @@ const RED_WHATEVER_THEY_HOLD: &[&str] = &[
     "Organization",
     "Project",
     "DelegationPolicy", // the connector ceiling: access, like a Role (AG-151)
+    "Script",           // code the runner executes in every pipeline that pins it (PL-121)
 ];
 
 /// Green: a change nobody needs to review, because undoing it costs nothing.

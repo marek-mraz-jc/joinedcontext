@@ -413,6 +413,8 @@ mod tests {
                 "Layer",
                 // One open data portal of an Organization (ODP-08, T-6873).
                 "Portal",
+                // A stored, versioned JavaScript transformation pipelines pin (PL-118, T-7083).
+                "Script",
             ],
             "jc-core's catalogue changed: check PORTAL_ONLY_KINDS and the UI navigation"
         );

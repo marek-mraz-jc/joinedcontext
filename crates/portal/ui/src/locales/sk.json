@@ -122,7 +122,8 @@
     "layers": "Mapové vrstvy",
     "csrs": "Kontextové zdroje",
     "health": "Zdravie",
-    "repositories": "Repozitáre"
+    "repositories": "Repozitáre",
+    "scripts": "Skripty"
   },
   "auth": {
     "lead": "Prihláste sa účtom svojej organizácie a spravujte túto platformu.",
@@ -13227,5 +13228,83 @@
     "signIn": "Tento konektor vyžaduje prihlásenie: keď sa asistent spýta na spôsob prihlásenia, zvoľte OAuth a prihláste sa účtom Portálu.",
     "list": "Postup pre jednotlivých asistentov",
     "other": "Iný klient MCP"
+  },
+  "scripts": {
+    "workbench": {
+      "title": "Dielňa skriptov",
+      "purpose": "Napíšte ďalšiu verziu uloženého skriptu, spustite jeho testy na runneri projektu a navrhnite ju na posúdenie."
+    },
+    "empty": "Zatiaľ žiadny skript: pomenujte ho nižšie, napíšte kód a testy a navrhnite verziu 1.0.0.",
+    "field": {
+      "script": "Skript",
+      "newScript": "Nový skript",
+      "name": "Názov",
+      "code": "Kód",
+      "tests": "Testy",
+      "timeout": "Čas na záznam (ms)",
+      "memory": "Pamäť na záznam (MiB)",
+      "version": "Verzia",
+      "target": "Presunúť pripnutia na"
+    },
+    "hint": {
+      "script": "Vyberte skript projektu a upravte jeho ďalšiu verziu, alebo začnite nový.",
+      "name": "Malé písmená, číslice a pomlčky, napr. sjtsk-to-wgs84.",
+      "code": "Kód, ktorý číta záznam a zapisuje ho späť, napr. record.checked = true. Nedosiahne sieť, súbory ani tajomstvá.",
+      "tests": "Zoznam testov v JSON, každý s názvom, vstupným a očakávaným záznamom, napr. úvodný zoznam v poli.",
+      "timeout": "1 až 200, napr. 50. Prázdne znamená 50.",
+      "memory": "1 až 64, napr. 32. Prázdne znamená 32.",
+      "version": "MAJOR.MINOR.PATCH vyššia než najnovšia verzia, napr. {version}.",
+      "target": "Zverejnená verzia, napr. 1.1.0. Každá presunutá pipeline ju spustí po schválení zmeny."
+    },
+    "reason": {
+      "name": "Pomenujte skript malými písmenami, číslicami a pomlčkami.",
+      "code": "Napíšte 1 až 65536 bajtov kódu.",
+      "tests": "Napíšte testy ako zoznam JSON objektov s name, input a expected.",
+      "run": "Najprv spustite testy.",
+      "versionFormat": "Napíšte verziu ako MAJOR.MINOR.PATCH, napr. 1.1.0.",
+      "versionOrder": "Vyberte verziu vyššiu než {version}.",
+      "timeout": "Napíšte celé číslo od 1 do 200.",
+      "memory": "Napíšte celé číslo od 1 do 64.",
+      "limits": "Najprv opravte limity.",
+      "pipelineRights": "Vaša rola v tomto projekte nenavrhuje pipelines.",
+      "pick": "Vyberte pipelines na presun.",
+      "failing": "{count, plural, one {# test zlyhal: opravte kód alebo test.} few {# testy zlyhali: opravte kód alebo testy.} other {# testov zlyhalo: opravte kód alebo testy.}}",
+      "runner": "Runner projektu neodpovedal. Skúste to znova o minútu; ak to stále zlyháva, požiadajte správcu, aby runner skontroloval.",
+      "rightsNext": "Vaša rola v tomto projekte nenavrhuje skripty, preto nemôže spúšťať ani ich testy. Požiadajte správcu projektu o rolu, ktorá navrhuje skripty, ako je pipeline-editor.",
+      "proposed": "Upravte kód a napíšte ďalšiu verziu.",
+      "runFailed": "Testy sa nespustili: opravte, čo hovorí správa vyššie, a spustite ich znova."
+    },
+    "action": {
+      "run": "Spustiť testy",
+      "propose": "Navrhnúť verziu {version}",
+      "move": "{count, plural, one {Presunúť # pipeline na {version}} few {Presunúť # pipelines na {version}} other {Presunúť # pipelines na {version}}}"
+    },
+    "results": {
+      "caption": "Výsledky testov",
+      "test": "Názov testu",
+      "verdict": "Výsledok",
+      "output": "Výstup",
+      "time": "Čas",
+      "pass": "Prešiel",
+      "fail": "Zlyhal",
+      "changed": "Zmenené",
+      "outputOf": "Výstup testu {test}",
+      "empty": "Spustite testy a výsledok každého sa zobrazí tu.",
+      "emptyTitle": "Zatiaľ bez výsledku",
+      "millis": "{count} ms",
+      "changedNote": "Test označený Zmenené zapíše iný výstup než najnovšia uložená verzia {version}."
+    },
+    "proposed": "Verzia {version} je navrhnutá. Schváli ju druhá osoba na stránke Schválenia; pipelines si pripnutia nechajú, kým ich nepresuniete.",
+    "used": {
+      "title": "Pipelines používajúce {name}",
+      "caption": "Pipelines, ktoré pripínajú {name}",
+      "emptyTitle": "Tento skript nepoužíva žiadna pipeline",
+      "empty": "Pridajte do pipeline krok skriptu s názvom {name} alebo ho použite v jej skriptoch a objaví sa tu.",
+      "pipeline": "Pipeline",
+      "pinned": "Pripnutá verzia",
+      "already": "Už je na {version}.",
+      "moved": "Navrhnutá jedna zmena presúvajúca {names} na {version}.",
+      "onTarget": "Na cieľovej verzii"
+    }
   }
 }

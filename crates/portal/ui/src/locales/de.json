@@ -122,7 +122,8 @@
     "layers": "Kartenebenen",
     "csrs": "Kontextquellen",
     "health": "Zustand",
-    "repositories": "Repositories"
+    "repositories": "Repositories",
+    "scripts": "Skripte"
   },
   "auth": {
     "lead": "Melden Sie sich mit dem Konto Ihrer Organisation an, um diese Plattform zu verwalten.",
@@ -13227,5 +13228,83 @@
     "signIn": "Dieser Connector braucht eine Anmeldung: Wo der Assistent nach der Anmeldung fragt, wählen Sie OAuth und melden sich mit Ihrem Portal-Konto an.",
     "list": "Einrichtung je Assistent",
     "other": "Anderer MCP-Client"
+  },
+  "scripts": {
+    "workbench": {
+      "title": "Skript-Werkstatt",
+      "purpose": "Schreiben Sie die nächste Version eines gespeicherten Skripts, führen Sie seine Tests auf dem Runner des Projekts aus und schlagen Sie sie zur Prüfung vor."
+    },
+    "empty": "Noch kein Skript: Benennen Sie es unten, schreiben Sie Code und Tests und schlagen Sie Version 1.0.0 vor.",
+    "field": {
+      "script": "Skript",
+      "newScript": "Neues Skript",
+      "name": "Name",
+      "code": "Code",
+      "tests": "Testfälle",
+      "timeout": "Zeit pro Datensatz (ms)",
+      "memory": "Speicher pro Datensatz (MiB)",
+      "version": "Version",
+      "target": "Bindungen verschieben auf"
+    },
+    "hint": {
+      "script": "Wählen Sie ein Skript des Projekts, um seine nächste Version zu bearbeiten, oder beginnen Sie ein neues.",
+      "name": "Kleinbuchstaben, Ziffern und Bindestriche, z. B. sjtsk-to-wgs84.",
+      "code": "Code, der den Datensatz liest und zurückschreibt, z. B. record.checked = true. Er erreicht kein Netzwerk, keine Dateien und keine Geheimnisse.",
+      "tests": "Eine JSON-Liste von Tests, jeder mit Namen, Eingabe- und erwartetem Datensatz, z. B. die Startliste im Feld.",
+      "timeout": "1 bis 200, z. B. 50. Leer bedeutet 50.",
+      "memory": "1 bis 64, z. B. 32. Leer bedeutet 32.",
+      "version": "MAJOR.MINOR.PATCH über der neuesten Version, z. B. {version}.",
+      "target": "Eine veröffentlichte Version, z. B. 1.1.0. Jede verschobene Pipeline führt sie nach Genehmigung der Änderung aus."
+    },
+    "reason": {
+      "name": "Benennen Sie das Skript mit Kleinbuchstaben, Ziffern und Bindestrichen.",
+      "code": "Schreiben Sie 1 bis 65536 Bytes Code.",
+      "tests": "Schreiben Sie die Tests als JSON-Liste von Objekten mit name, input und expected.",
+      "run": "Führen Sie zuerst die Tests aus.",
+      "versionFormat": "Schreiben Sie die Version als MAJOR.MINOR.PATCH, z. B. 1.1.0.",
+      "versionOrder": "Wählen Sie eine Version über {version}.",
+      "timeout": "Schreiben Sie eine ganze Zahl von 1 bis 200.",
+      "memory": "Schreiben Sie eine ganze Zahl von 1 bis 64.",
+      "limits": "Korrigieren Sie zuerst die Grenzen.",
+      "pipelineRights": "Ihre Rolle schlägt in diesem Projekt keine Pipelines vor.",
+      "pick": "Wählen Sie die zu verschiebenden Pipelines.",
+      "failing": "{count, plural, one {# Test schlägt fehl: Korrigieren Sie den Code oder den Test.} other {# Tests schlagen fehl: Korrigieren Sie den Code oder die Tests.}}",
+      "runner": "Der Runner des Projekts hat nicht geantwortet. Versuchen Sie es in einer Minute erneut; scheitert es weiter, bitten Sie Ihre Administration, den Runner zu prüfen.",
+      "rightsNext": "Ihre Rolle schlägt in diesem Projekt keine Skripte vor und kann daher auch ihre Tests nicht ausführen. Bitten Sie eine Projektadministration um eine Rolle, die Skripte vorschlägt, etwa pipeline-editor.",
+      "proposed": "Bearbeiten Sie den Code, um die nächste Version zu schreiben.",
+      "runFailed": "Die Tests liefen nicht: Beheben Sie, was die Meldung oben sagt, und führen Sie sie erneut aus."
+    },
+    "action": {
+      "run": "Tests ausführen",
+      "propose": "Version {version} vorschlagen",
+      "move": "{count, plural, one {# Pipeline auf {version} verschieben} other {# Pipelines auf {version} verschieben}}"
+    },
+    "results": {
+      "caption": "Testergebnisse",
+      "test": "Testname",
+      "verdict": "Ergebnis",
+      "output": "Ausgabe",
+      "time": "Zeit",
+      "pass": "Bestanden",
+      "fail": "Fehlgeschlagen",
+      "changed": "Geändert",
+      "outputOf": "Ausgabe von {test}",
+      "empty": "Führen Sie die Tests aus, um hier das Ergebnis jedes Tests zu sehen.",
+      "emptyTitle": "Noch kein Ergebnis",
+      "millis": "{count} ms",
+      "changedNote": "Ein als Geändert markierter Test schreibt eine andere Ausgabe als die neueste gespeicherte Version {version}."
+    },
+    "proposed": "Version {version} ist vorgeschlagen. Eine zweite Person genehmigt sie auf der Seite Genehmigungen; Pipelines behalten ihre Bindungen, bis Sie sie verschieben.",
+    "used": {
+      "title": "Pipelines, die {name} nutzen",
+      "caption": "Pipelines, die {name} binden",
+      "emptyTitle": "Keine Pipeline nutzt dieses Skript",
+      "empty": "Fügen Sie einer Pipeline einen Skriptschritt mit {name} hinzu oder wenden Sie es in ihren Skripten an, um sie hier zu sehen.",
+      "pipeline": "Pipeline",
+      "pinned": "Gebundene Version",
+      "already": "Bereits auf {version}.",
+      "moved": "Eine Änderung vorgeschlagen, die {names} auf {version} verschiebt.",
+      "onTarget": "Auf der Zielversion"
+    }
   }
 }

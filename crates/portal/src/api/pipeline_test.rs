@@ -420,8 +420,12 @@ pub(crate) fn harnessed(
     capture: &str,
     max: usize,
 ) -> Result<Value, ApiError> {
-    let mut config =
-        harness_of(spec, sample, capture, max).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    // A Script pin runs its version's code, as the live stream does (PL-120): the trace names
+    // the step by its index.
+    let mut inlined = spec.clone();
+    crate::scripts::inline(mirror, project, &mut inlined).map_err(ApiError::BadRequest)?;
+    let mut config = harness_of(&inlined, sample, capture, max)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     crate::reconciler::streams::StreamSpaces::of(mirror, project, spec).inject(&mut config);
     Ok(config)
 }
@@ -1149,6 +1153,62 @@ mod tests {
         }))
         .expect("spec");
         harness(&spec, &sample, "http://portal-internal:9090/x").expect("harness")
+    }
+
+    /// PL-43/PL-120 (T-7083): a script step is tested as the version's `javascript` code, and a
+    /// pin of a draft is refused before the runner sees it.
+    #[test]
+    fn the_harness_runs_a_pinned_script_as_its_code() {
+        let code = "bento.v0_msg_set_string('tested')";
+        let script = |state: &str| {
+            serde_json::from_value::<crate::resource::ResourceEnvelope>(json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Script",
+                "metadata": { "name": "flag", "namespace": "helsinki" },
+                "spec": { "language": "javascript", "versions": [{ "version": "1.0.0",
+                    "state": state, "code": code, "sha256": jc_core::kinds::script::digest(code) }] }
+            }))
+            .expect("script")
+        };
+        let spec: PipelineSpec = serde_json::from_value(json!({
+            "class": "auto",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+            "steps": [{ "kind": "script", "scriptRef": { "name": "flag", "version": "1.0.0" } }],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:intake" }]
+        }))
+        .expect("spec");
+        let sample = Sample {
+            text: Some("{}".into()),
+            url: None,
+            format: SampleFormat::Json,
+            records: None,
+            sheet: None,
+        };
+        let mirror = crate::store::Mirror::new();
+        mirror.upsert(script("published"));
+        let config = harnessed(
+            &mirror,
+            "helsinki",
+            &spec,
+            &sample,
+            "http://portal-internal:9090/x",
+            MAX_MESSAGES,
+        )
+        .expect("harness");
+        let text = config.to_string();
+        assert!(
+            text.contains("javascript") && text.contains("tested"),
+            "{text}"
+        );
+        mirror.upsert(script("draft"));
+        assert!(harnessed(
+            &mirror,
+            "helsinki",
+            &spec,
+            &sample,
+            "http://x",
+            MAX_MESSAGES
+        )
+        .is_err());
     }
 
     /// T-4840: the test runs the lifetime step where a live stream does, after the author's

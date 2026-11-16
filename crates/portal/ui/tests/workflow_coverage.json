@@ -761,6 +761,16 @@
           "POST /api/v1/projects/{project}/kpis/check"
         ]
       },
+      "script-test": {
+        "live": {
+          "spec": "scripts.spec.ts",
+          "test": "a script version is written, tested on the runner, proposed and approved by a second person"
+        },
+        "assistant": "jc_script_test",
+        "routes": [
+          "POST /api/v1/projects/{project}/scripts/test"
+        ]
+      },
       "target": {
         "live": {
           "spec": "assistant-paths.spec.ts",
