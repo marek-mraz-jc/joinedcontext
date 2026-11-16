@@ -304,6 +304,9 @@ pub fn input_of(spec: &DataSourceSpec, context: &InputContext) -> Value {
         DataSourceType::GtfsRt => {
             input.insert(key("http_client"), Value::Mapping(gtfs(spec)));
         }
+        DataSourceType::Webhook => {
+            input.insert(key("http_server"), Value::Mapping(webhook(spec, context)));
+        }
         DataSourceType::Runner(name) => {
             let runner_val = spec
                 .input
@@ -781,6 +784,44 @@ fn websocket(spec: &DataSourceSpec) -> Mapping {
         out.insert(key("open_message"), text(message));
         out.insert(key("open_message_type"), text("text"));
     }
+    out
+}
+
+/// The managed `http_server` of a webhook (PL-122, ADR-N-071): on the runner's shared ingest
+/// listener at `/{source}` of the stream, POST only, authenticated and capped. Never an
+/// `address`, a certificate or `public: true`, whatever the manifest holds.
+fn webhook(spec: &DataSourceSpec, context: &InputContext) -> Mapping {
+    let Some(connection) = &spec.webhook else {
+        return Mapping::new();
+    };
+    let mut auth = Mapping::new();
+    if let Some(hmac) = &connection.auth.hmac {
+        let mut block = Mapping::new();
+        block.insert(key("header"), text(&hmac.header));
+        block.insert(
+            key("secret"),
+            text(&interpolation(context.source, &hmac.secret_ref)),
+        );
+        block.insert(key("algorithm"), text("sha256"));
+        auth.insert(key("hmac"), Value::Mapping(block));
+    } else if let Some(bearer) = &connection.auth.bearer {
+        auth.insert(
+            key("bearer"),
+            text(&interpolation(context.source, &bearer.token_ref)),
+        );
+    }
+    let mut out = Mapping::new();
+    out.insert(key("path"), text(&format!("/{}", context.source)));
+    out.insert(key("allowed_verbs"), Value::Sequence(vec![text("POST")]));
+    out.insert(key("auth"), Value::Mapping(auth));
+    out.insert(
+        key("max_body_bytes"),
+        Value::Number(connection.max_body_bytes().into()),
+    );
+    out.insert(
+        key("max_in_flight"),
+        Value::Number(u64::from(connection.max_in_flight()).into()),
+    );
     out
 }
 

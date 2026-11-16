@@ -27,8 +27,9 @@ spec:
       hinterlegten Secrets.
   # The form shows one connection at a time, the one the person picked; the others are
   # arranged here all the same and passed over while they are not on the form.
-  variants: [mqtt, http, webSocket, gtfsRt]
-  order: [name, title, mqtt, http, webSocket, gtfsRt, tls]
+  # A webhook carries no tls: the sender calls the installation's own HTTPS edge (PL-122).
+  variants: [mqtt, http, webSocket, gtfsRt, webhook, tls]
+  order: [name, title, mqtt, http, webSocket, gtfsRt, webhook, tls]
   groups:
     - title:
         en: Basics
@@ -51,7 +52,7 @@ spec:
         sk: Nastavenia pripojenia a vzdialeného rozhrania pre vybraný typ zdroja.
         cs: Nastavení připojení a vzdáleného rozhraní pro vybraný typ zdroje.
         de: Verbindungseinstellungen und Konfiguration der Gegenstelle für den gewählten Feed-Typ.
-      fields: [mqtt, http, webSocket, gtfsRt]
+      fields: [mqtt, http, webSocket, gtfsRt, webhook]
     - title:
         en: TLS certificates
         sk: Certifikáty TLS
@@ -361,6 +362,24 @@ spec:
         sk: Typ informácií o verejnej doprave v reálnom čase obsiahnutých v zdroji.
         cs: Typ informací o veřejné dopravě v reálném čase obsažených ve zdroji.
         de: Art der im Feed enthaltenen Echtzeit-Verkehrsinformationen.
+    webhook.auth:
+      help:
+        en: How the sender proves itself. Pick what it supports; a signed body, such as GitHub's X-Hub-Signature-256, is safer than a token because nobody can change it on the way.
+        sk: Ako sa odosielateľ preukazuje. Vyberte, čo podporuje; podpísané telo, napríklad X-Hub-Signature-256 z GitHubu, je bezpečnejšie ako token, lebo ho cestou nikto nezmení.
+        cs: Jak se odesílatel prokazuje. Vyberte, co podporuje; podepsané tělo, například X-Hub-Signature-256 z GitHubu, je bezpečnější než token, protože ho cestou nikdo nezmění.
+        de: Wie sich der Absender ausweist. Wählen Sie, was er unterstützt; ein signierter Inhalt, etwa GitHubs X-Hub-Signature-256, ist sicherer als ein Token, weil ihn unterwegs niemand ändern kann.
+    webhook.maxBodyBytes:
+      help:
+        en: The largest event accepted, in bytes; a larger one is refused with 413. 1 to 16777216, for example 1048576 (1 MiB, the default).
+        sk: Najväčšia prijatá udalosť v bajtoch; väčšia je odmietnutá s 413. 1 až 16777216, napríklad 1048576 (1 MiB, predvolené).
+        cs: Největší přijatá událost v bajtech; větší je odmítnuta s 413. 1 až 16777216, například 1048576 (1 MiB, výchozí).
+        de: Das größte angenommene Ereignis in Bytes; ein größeres wird mit 413 abgelehnt. 1 bis 16777216, zum Beispiel 1048576 (1 MiB, Standard).
+    webhook.maxInFlight:
+      help:
+        en: How many events may wait for the pipeline at once; more are told to retry with 503. 1 to 1024, for example 64 (the default).
+        sk: Koľko udalostí môže naraz čakať na pipeline; ďalšie dostanú 503 a pokyn skúsiť znova. 1 až 1024, napríklad 64 (predvolené).
+        cs: Kolik událostí smí najednou čekat na pipeline; další dostanou 503 a pokyn zkusit znovu. 1 až 1024, například 64 (výchozí).
+        de: Wie viele Ereignisse gleichzeitig auf die Pipeline warten dürfen; weitere erhalten 503 und sollen es erneut versuchen. 1 bis 1024, zum Beispiel 64 (Standard).
     tls.caCertRef.name:
       help:
         en: Name of the secret containing a custom certificate authority file.

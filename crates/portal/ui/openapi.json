@@ -11382,6 +11382,190 @@
         }
       }
     },
+    "/api/v1/projects/{project}/datasources/{name}/test-event": {
+      "post": {
+        "tags": [
+          "datasources"
+        ],
+        "summary": "Webhook Test Event",
+        "description": "Posts the body to one reading pipeline's webhook through the runner's ingest handler, signed with the source's credential, and answers the status a sender would see. The event runs through the pipeline like a real one.",
+        "operationId": "test_event",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "DataSource name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestEvent"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the runner answered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestEventAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant proposes a DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The source is no webhook, `pipeline` reads no such source, or `body` is empty or over the cap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The runner does not run in this process, or holds no credential for the source yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/datasources/{name}/webhook": {
+      "get": {
+        "tags": [
+          "datasources"
+        ],
+        "summary": "Webhook Addresses",
+        "description": "The URL each reading pipeline is posted to, the header a sender sets and the body cap. Never the credential.",
+        "operationId": "webhook_info",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "DataSource name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The addresses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant reads this DataSource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The DataSource is not of type webhook",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/drafts": {
       "get": {
         "tags": [
@@ -61921,6 +62105,49 @@
           }
         }
       },
+      "TestEvent": {
+        "type": "object",
+        "description": "A test event: the body posted to one reading pipeline's address.",
+        "required": [
+          "pipeline",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The body, as the provider would send it, such as `{\"temperature\": 21.5}`."
+          },
+          "pipeline": {
+            "type": "string",
+            "description": "A pipeline that reads this source, such as `ttn-uplinks`."
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "body": "{\"temperature\": 21.5}",
+          "pipeline": "ttn-uplinks"
+        }
+      },
+      "TestEventAnswer": {
+        "type": "object",
+        "description": "What the runner answered a test event.",
+        "required": [
+          "status",
+          "answer"
+        ],
+        "properties": {
+          "answer": {
+            "type": "string",
+            "description": "The first 2048 bytes of the answer's body."
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The HTTP status the sender would have seen: 200 once the pipeline took the event.",
+            "minimum": 0
+          }
+        }
+      },
       "TestPublish": {
         "type": "object",
         "description": "One message a ServiceAccount would publish (API/01 §44a).",
@@ -62612,6 +62839,64 @@
           },
           "refusalsRead": {
             "type": "boolean"
+          }
+        }
+      },
+      "WebhookAddress": {
+        "type": "object",
+        "description": "Where one pipeline reading the source is posted to.",
+        "required": [
+          "pipeline"
+        ],
+        "properties": {
+          "pipeline": {
+            "type": "string",
+            "description": "The reading pipeline."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The URL a sender posts to, or `None` when this installation publishes no ingest listener."
+          }
+        }
+      },
+      "WebhookInfo": {
+        "type": "object",
+        "description": "What a sender needs to post to a webhook DataSource.",
+        "required": [
+          "auth",
+          "header",
+          "maxBodyBytes",
+          "addresses",
+          "published"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookAddress"
+            },
+            "description": "One address per reading pipeline, by pipeline name; empty when no pipeline reads it."
+          },
+          "auth": {
+            "type": "string",
+            "description": "`hmac` or `bearer`."
+          },
+          "header": {
+            "type": "string",
+            "description": "The header the sender sets: the signature header, or `Authorization`."
+          },
+          "maxBodyBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The largest body accepted, in bytes.",
+            "minimum": 0
+          },
+          "published": {
+            "type": "boolean",
+            "description": "Whether this installation publishes the ingest listener at all."
           }
         }
       },

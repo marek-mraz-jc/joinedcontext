@@ -2410,7 +2410,8 @@
       "mqtt": "MQTT broker",
       "http": "HTTP endpoint",
       "websocket": "WebSocket prúd",
-      "gtfs-rt": "GTFS-realtime zdroj"
+      "gtfs-rt": "GTFS-realtime zdroj",
+      "webhook": "Webhook (zasielané udalosti)"
     },
     "dialog": {
       "create": "Nový zdroj údajov",
@@ -2418,7 +2419,8 @@
       "mqtt": "Odoberá témy na brokeri a každú správu odovzdá pipeline, ktorá naň odkazuje.",
       "http": "Periodicky sťahuje URL v perióde samotnej pipeline.",
       "websocket": "Drží otvorený socket a číta správy, ktoré server posiela.",
-      "gtfs-rt": "Číta GTFS-realtime feed; protobuf sa dekóduje ešte pred pipeline."
+      "gtfs-rt": "Číta GTFS-realtime feed; protobuf sa dekóduje ešte pred pipeline.",
+      "webhook": "Čaká, kým odosielateľ pošle udalosti; keď zdroj číta pipeline, stránka ukáže adresu, ktorú mu dáte."
     },
     "field": {
       "type": "Typ",
@@ -2453,7 +2455,12 @@
       "externalBroker": "Externý broker (URL a secret nižšie)",
       "records": "Záznamy sú v",
       "recordsHelp": "Pre JSON odpoveď, ktorá má záznamy v poli, cesta k nemu, napríklad data.stations; každá položka je jeden záznam. Prázdne pole číta celú odpoveď ako jeden záznam.",
-      "format": "Formát odpovede"
+      "format": "Formát odpovede",
+      "webhookAuth": "Ako sa odosielateľ preukazuje",
+      "webhookHmac": "Podpísané telo (HMAC SHA-256)",
+      "webhookBearer": "Token nositeľa (Bearer)",
+      "maxBodyBytes": "Najväčšie telo (bajty)",
+      "maxInFlight": "Udalostí naraz"
     },
     "sheet": {
       "label": "Hárok",
@@ -2692,6 +2699,45 @@
       "rowsHint": "Každý riadok CSV príde do pipeline ako jeden záznam s názvami stĺpcov z hlavičky.",
       "handoff": "Spustiť pipeline nad {name}",
       "picked": "Vybraté: {value}. Vyplniť formulár a skontrolovať ho zapíše do formulára nižšie."
+    },
+    "webhook": {
+      "title": "Kam odosielatelia posielajú",
+      "hint": "Adresu pipeline vložte do odosielateľa. Posiela požiadavky POST s hlavičkou nižšie.",
+      "header": "Hlavička: {header}",
+      "maxBody": "Najväčšie telo: {bytes} bajtov",
+      "noReaders": "Tento zdroj zatiaľ nečíta žiadna pipeline, preto nemá adresu. Vytvorte pipeline, ktorá ho číta, a vráťte sa.",
+      "unpublished": "Táto inštalácia nezverejňuje adresu pre webhooky. Požiadajte administrátora, aby do nasadenia pridal vstupný záznam.",
+      "copy": "Kopírovať adresu",
+      "copied": "Adresa skopírovaná",
+      "test": {
+        "title": "Poslať testovaciu udalosť",
+        "hint": "Pošle telo nižšie vybranej pipeline, podpísané tak, ako ho podpisuje váš odosielateľ. Udalosť prejde pipeline ako skutočná.",
+        "button": "Poslať testovaciu udalosť",
+        "running": "Posielam…",
+        "accepted": "Prijaté ({status}): pipeline udalosť prevzala.",
+        "refused": "Bežec odpovedal {status}: {answer}",
+        "unauthorized": "Tajomstvo alebo hlavička, ktoré tento zdroj uvádza, nezodpovedajú tomu, čo má bežec: skontrolujte obe a pošlite znova."
+      },
+      "testPipeline": {
+        "label": "Pipeline",
+        "help": "Jedna z pipeline, ktoré čítajú tento zdroj, napríklad ttn-uplinks."
+      },
+      "testBody": {
+        "label": "Telo",
+        "help": "Udalosť tak, ako by ju poslal odosielateľ, napríklad JSON jedného uplinku podľa dokumentácie poskytovateľa."
+      }
+    },
+    "signatureHeader": {
+      "label": "Hlavička s podpisom",
+      "help": "Hlavička, do ktorej odosielateľ zapisuje podpis, napríklad X-Hub-Signature-256."
+    },
+    "signingSecret": {
+      "label": "Podpisové tajomstvo",
+      "help": "Tajomstvo so zdieľaným podpisovým kľúčom, napríklad ttn-webhook s kľúčom secret. Najprv ho pridajte v časti Tajomstvá."
+    },
+    "bearerToken": {
+      "label": "Prístupový token",
+      "help": "Tajomstvo s tokenom, ktorý odosielateľ píše za Bearer, napríklad chirpstack s kľúčom token."
     }
   },
   "pipelines": {

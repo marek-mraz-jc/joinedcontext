@@ -257,6 +257,14 @@ configMap:
       host = "localhost:8080"
       path_prefix = "/streams"
 
+      # Webhook senders post to ekiben's shared ingest listener here (PL-122, ADR-N-071): this
+      # entry answers only the ingest router, /default/{project}.{pipeline}/{dataSource}, each
+      # route behind its source's hmac or bearer; never the /streams API. jc tells the Portal
+      # the address (JC_PORTAL_INGEST_URL) from this entry.
+      [[mounts.ekiben]]
+      host = "portal.{{ $global.domain }}"
+      path_prefix = "/ingest"
+
       [[mounts.antares]]
       host = "localhost:8080"
       path_prefix = "/broker"

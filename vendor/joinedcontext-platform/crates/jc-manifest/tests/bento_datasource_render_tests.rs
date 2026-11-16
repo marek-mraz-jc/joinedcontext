@@ -155,6 +155,55 @@ fn an_http_connection_becomes_an_http_client_poll() {
     assert_eq!(rendered(&source(HTTP), "aq-opendata"), HTTP_INPUT);
 }
 
+/// PL-122: a webhook becomes the managed `http_server` on the shared ingest listener: POST
+/// only at `/{source}`, the credential as an interpolation, both caps and no `sync_response` (the listener answers 200); never an
+/// `address`, a certificate or `public`.
+#[test]
+fn a_webhook_becomes_the_managed_http_server_of_the_ingest_listener() {
+    const HMAC: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata: { name: ttn-uplinks, namespace: bb-ovzdusie }
+spec:
+  type: webhook
+  webhook:
+    auth:
+      hmac: { header: X-Hub-Signature-256, secretRef: { name: ttn, key: secret } }
+    maxBodyBytes: 65536
+"#;
+    assert_eq!(
+        rendered(&source(HMAC), "ttn-uplinks"),
+        r#"http_server:
+  path: /ttn-uplinks
+  allowed_verbs:
+  - POST
+  auth:
+    hmac:
+      header: X-Hub-Signature-256
+      secret: ${DS_TTN_UPLINKS_SECRET}
+      algorithm: sha256
+  max_body_bytes: 65536
+  max_in_flight: 64
+"#
+    );
+    const BEARER: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata: { name: chirpstack, namespace: bb-ovzdusie }
+spec:
+  type: webhook
+  webhook:
+    auth:
+      bearer: { tokenRef: { name: chirpstack, key: token } }
+"#;
+    let text = rendered(&source(BEARER), "chirpstack");
+    assert!(
+        text.contains("  auth:\n    bearer: ${DS_CHIRPSTACK_TOKEN}\n"),
+        "{text}"
+    );
+    for never in ["address", "cert_file", "key_file", "ws_path", "public"] {
+        assert!(!text.contains(never), "{never}: {text}");
+    }
+}
+
 /// T-7056: `spec.http.paging` becomes the runner's `paginate` option, its fields in the
 /// runner's snake_case and `records` taken from `spec.http.records`.
 const ARCGIS: &str = r#"apiVersion: joinedcontext.com/v1alpha1

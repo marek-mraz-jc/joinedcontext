@@ -1240,6 +1240,15 @@ routes:
     rule: "project-verb:propose:DataSource"
     expect: [403, 403, allow, allow, 403, allow, 404, 403]
     note: "a saved source read once on the runner (T-4819); the fixture runs no runner, so an allowed caller gets its 503; a caller who may not read the project gets 404, as for every named resource"
+  - route: GET /projects/{project}/datasources/{name}/webhook
+    rule: "project-verb:read:DataSource"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "a webhook source's public addresses and header, never its credential (PL-122, T-7088); a caller who may not read the source gets 404"
+  - route: POST /projects/{project}/datasources/{name}/test-event
+    rule: "project-verb:propose:DataSource"
+    expect: [403, 403, allow, allow, 403, allow, 404, 403]
+    body: {"pipeline": "existing", "body": "{}"}
+    note: "a test event signed server-side and posted to the in-process runner's ingest route (PL-122, T-7088); the fixture's source is no webhook, so an allowed caller gets 422"
   - route: POST /projects/{project}/datasource-discovery
     rule: "project-verb:propose:DataSource"
     expect: [403, 403, allow, allow, 403, allow, 403, 403]
