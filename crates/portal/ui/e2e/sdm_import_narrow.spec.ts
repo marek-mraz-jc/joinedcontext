@@ -1,5 +1,10 @@
 // T-3251: the picker's two columns at phone width; the source's long lines used to widen the page.
 import { expect, test } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The Portal doors the page calls (T-7173) answer as the REST stubs below.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
+
 const PROJECT = "banskabystrica";
 const IDENTITY = { subject: "s", username: "jana", name: "Jana", email: "jana@bb.sk", roles: ["portal-editor"] };
 const LINKML = "id: https://github.com/smart-data-models/dataModel.Environment/AirQualityObserved\nname: AirQualityObserved\nannotations:\n  spec.source.repository: https://github.com/smart-data-models/dataModel.Environment\n  spec.source.path: AirQualityObserved\n  spec.source.commit: 9f1c2b7d4e6a8c0b2d4f6a8c0e2b4d6f8a0c2e4b\nclasses:\n  AirQualityObserved:\n    slots: [pm10, pm25, dateObserved]\nslots:\n  pm10: { range: float }\n  pm25: { range: float }\n  dateObserved: { range: datetime, required: true }\n";

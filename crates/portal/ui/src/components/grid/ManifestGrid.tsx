@@ -18,6 +18,7 @@ import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { api, queryKeys, unwrap } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { isChange } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -507,7 +508,7 @@ function CellPanel<T>({
     staleTime: 60 * 60_000,
     retry: false,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/kinds/{kind}/schema", { params: { path: { kind: edit?.kind ?? "" } } })),
+      (await door("portal_kind_schema", { kind: edit?.kind ?? "" })) as RestAnswer<"kind_schema">,
   });
   return (
     <Dialog

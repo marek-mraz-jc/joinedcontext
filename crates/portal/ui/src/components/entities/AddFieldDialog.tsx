@@ -8,6 +8,7 @@ import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { api, unwrap } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import { importChecked } from "../../api/proposal";
 import { writeModelSource } from "../../api/datamodelSource";
 import { isChange } from "../../api/manifest";
@@ -45,10 +46,10 @@ export interface AddFieldDialogProps {
 
 /** The official model's class of the same name, or nothing when the catalogue has none. */
 async function officialModel(type: string): Promise<LinkmlModel | null> {
-  const catalogue = (await unwrap(await api.GET("/api/v1/tools/sdm-catalog", {}))) as Catalogue;
+  const catalogue = (await door("portal_model_catalogue", {})) as Catalogue;
   const entry = (catalogue.subjects ?? []).flatMap((s) => s.models ?? []).find((m) => m.name === type);
   if (!entry) return null;
-  const artifacts = (await unwrap(await api.POST("/api/v1/tools/import-sdm", { body: { model: entry.id } }))) as Artifacts;
+  const artifacts = (await doorAction("portal_model_import", { body: { model: entry.id } })) as Artifacts;
   return artifacts.linkml ? parseModel(artifacts.linkml) : null;
 }
 

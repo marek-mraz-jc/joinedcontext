@@ -7,7 +7,8 @@
 import { useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { doorAction } from "../../api/odata";
 import type { Change, ResourceProposal } from "../../api/manifest";
 import { useProposal } from "../../api/proposal";
 import { ChangeNotice } from "../../components/ChangeNotice";
@@ -68,13 +69,11 @@ export function SharePanel({
   const publish = async () => {
     setFailed(null);
     try {
-      const rendering = (await unwrap(
-        await api.POST("/api/v1/projects/{project}/assistant/propose-endpoint", {
-          params: { path: { project } },
-          // The route documents its body as an object of no named members (API/01 §19).
-          body: publishRequest(space, name, type, attributes, shown) as Record<string, never>,
-        }),
-      )) as unknown as Rendering;
+      const rendering = (await doorAction(
+        "portal_endpoint_render",
+        { body: publishRequest(space, name, type, attributes, shown) },
+        project,
+      )) as Rendering;
       setSlug(rendering.slug ?? null);
       proposal.mutation.mutate({ body: rendering.endpoint, create: true, bundle: rendering.policies });
     } catch (error) {

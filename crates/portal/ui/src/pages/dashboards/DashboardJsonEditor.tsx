@@ -1,4 +1,4 @@
-import { listManifests, proposeManifest } from "../../api/odata";
+import { listManifests, proposeManifest, door } from "../../api/odata";
 /**
  * A dashboard written as JSON (T-6791): the manifest on the left, completed and checked against the
  * Dashboard kind's schema, its widgets drawn on the right as the dashboards page draws them. A
@@ -10,7 +10,7 @@ import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { api, ApiError, problemLines, queryKeys, unwrap } from "../../api/client";
+import { ApiError, problemLines, queryKeys } from "../../api/client";
 import { useIsPhone } from "../../phone";
 import { asManifests, refName } from "../../api/manifest";
 import type { Change, ResourceProposal } from "../../api/manifest";
@@ -57,7 +57,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
   const schema = useQuery({
     queryKey: ["kinds", "Dashboard", "schema"],
     queryFn: async () =>
-      (await unwrap(await api.GET("/api/v1/kinds/{kind}/schema", { params: { path: { kind: "Dashboard" } } }))) as Record<
+      (await door("portal_kind_schema", { kind: "Dashboard" })) as Record<
         string,
         unknown
       >,

@@ -1,5 +1,6 @@
 import { api, ApiError, unwrap } from "./client";
 import type { components } from "./schema";
+import { doorAction, type RestAnswer } from "./odata";
 
 /**
  * How much a space holds (T-2889, API/01 §29): the broker's entity count of the space, which the
@@ -96,9 +97,5 @@ export function bytesOfType(byType: Record<string, number> | undefined, type: st
  * an answer under 30 s old stands, so a second click costs the broker nothing.
  */
 export async function recalculateSpaceUsage(project: string, space: string): Promise<SpaceUsage> {
-  return unwrap(
-    await api.POST("/api/v1/projects/{project}/spaces/{space}/usage/recalculate", {
-      params: { path: { project, space } },
-    }),
-  );
+  return (await doorAction("portal_space_usage_recalculate", { space }, project)) as RestAnswer<"recalculate_usage">;
 }
