@@ -158,8 +158,11 @@ fn admit_on(
     if federated && gateway.is_caller_member(&endpoint.slug) {
         audiences.push(gateway.broker_audience(endpoint));
     }
+    // The Endpoint's Organization decides which own realm may have signed it (T-7131): a token
+    // of another Organization's realm is refused here, whatever audience it names.
+    let organization = gateway.organization_of(&endpoint.project);
     let claims = verifier
-        .verify(raw, &audiences)
+        .verify_for(organization.as_deref(), raw, &audiences)
         .map_err(|rejected| Box::new(ProblemDetails::from(rejected)))?;
     if claims.names_audience(&endpoint_audiences) {
         return subject_from(gateway, endpoint, &claims);

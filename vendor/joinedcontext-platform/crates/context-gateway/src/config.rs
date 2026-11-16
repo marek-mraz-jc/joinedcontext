@@ -94,6 +94,10 @@ pub struct Config {
     /// loopback address and port): `jc` in host mode serves its realm on its own listener by the
     /// host the request names.
     pub oidc_jwks_reach: Option<std::net::SocketAddr>,
+    /// The realm of each Organization with its own sign-in host (`JC_OIDC_ORGANIZATION_REALMS`,
+    /// T-7131): its tokens count only on that Organization's Endpoints and hosts. Their keys are
+    /// read like the installation realm's, through `JC_OIDC_JWKS_REACH`.
+    pub oidc_organizations: Vec<OrganizationRealm>,
     /// Where the gateway asks for its own token (`JC_OIDC_TOKEN_URL`), for the same reason
     /// `JC_OIDC_JWKS_URL` exists: the issuer is the address a *browser* uses, and a pod that dials
     /// its own cluster's public hostname leaves through the ingress or not at all. The realm's
@@ -166,6 +170,70 @@ pub struct Config {
     /// [`PUBLIC_MAX_AGE_LIMIT`]). A public grant revoked or a value changed is served stale at most
     /// this long (T-5900).
     pub public_max_age: u32,
+}
+
+/// One Organization's own realm (`JC_OIDC_ORGANIZATION_REALMS`, a JSON list of these).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrganizationRealm {
+    /// The Organization (`[[organizations]] name`).
+    pub organization: String,
+    /// The `iss` its tokens carry (`https://idm.bbsk.sk/realms/bbsk`).
+    pub issuer: String,
+    /// Where its signing keys are read.
+    pub jwks_url: String,
+}
+
+/// `JC_OIDC_ORGANIZATION_REALMS`: each Organization once, each issuer once and never the
+/// installation realm's, both URLs absolute; set only beside the installation realm.
+fn organization_realms(
+    raw: Option<String>,
+    installation: Option<&str>,
+) -> Result<Vec<OrganizationRealm>, ConfigError> {
+    let Some(raw) = raw.filter(|raw| !raw.trim().is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let invalid = |reason: String| ConfigError::Invalid {
+        name: "JC_OIDC_ORGANIZATION_REALMS",
+        reason,
+    };
+    let Some(installation) = installation else {
+        return Err(invalid(
+            "set JC_OIDC_ISSUER first: an Organization's realm sits beside the installation's"
+                .to_owned(),
+        ));
+    };
+    let realms: Vec<OrganizationRealm> = serde_json::from_str(&raw).map_err(|e| {
+        invalid(format!(
+            "a JSON list like [{{\"organization\":\"bbsk\",\"issuer\":\"https://idm.bbsk.sk/realms/bbsk\",\"jwks_url\":\"...\"}}]: {e}"
+        ))
+    })?;
+    let mut seen = std::collections::BTreeSet::new();
+    for realm in &realms {
+        let org = &realm.organization;
+        if org.trim().is_empty() || !seen.insert(org.as_str()) {
+            return Err(invalid(format!(
+                "Organization '{org}' is empty or listed twice"
+            )));
+        }
+        for url in [&realm.issuer, &realm.jwks_url] {
+            if reqwest::Url::parse(url).map_or(true, |u| !matches!(u.scheme(), "http" | "https")) {
+                return Err(invalid(format!("{org}: '{url}' is not an http(s) URL")));
+            }
+        }
+        let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
+        if same(&realm.issuer, installation)
+            || realms
+                .iter()
+                .any(|other| other.organization != *org && same(&other.issuer, &realm.issuer))
+        {
+            return Err(invalid(format!(
+                "{org}: its issuer is the installation's or another Organization's, which would \
+                 let one realm's tokens count for two"
+            )));
+        }
+    }
+    Ok(realms)
 }
 
 /// Why the environment does not describe a runnable gateway.
@@ -256,6 +324,10 @@ impl Config {
                 }
             },
         };
+        let oidc_organizations = organization_realms(
+            non_empty("JC_OIDC_ORGANIZATION_REALMS"),
+            oidc_issuer.as_deref(),
+        )?;
         let credential = match (
             non_empty("JC_OIDC_CLIENT_SECRET"),
             non_empty("JC_OIDC_CLIENT_ASSERTION_FILE"),
@@ -435,6 +507,7 @@ impl Config {
             oidc_issuer,
             oidc_jwks_url,
             oidc_jwks_reach,
+            oidc_organizations,
             oidc_token_url: var("JC_OIDC_TOKEN_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
@@ -667,6 +740,62 @@ fn token_endpoint(named: Option<&str>, issuer: Option<&str>) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// T-7131: each Organization's realm once, never the installation's issuer or another's, and
+    /// only beside the installation realm.
+    #[test]
+    fn organization_realms_are_checked() {
+        let one = |org: &str, iss: &str| {
+            format!(
+                r#"{{"organization":"{org}","issuer":"{iss}","jwks_url":"http://idm.{org}.test/realms/{org}/protocol/openid-connect/certs"}}"#
+            )
+        };
+        let inst = Some("https://idm.city.test/realms/jc");
+        let ok = format!(
+            "[{},{}]",
+            one("a", "https://idm.a.test/realms/a"),
+            one("b", "https://idm.b.test/realms/b")
+        );
+        let realms = organization_realms(Some(ok.clone()), inst).expect("two realms");
+        assert_eq!(realms.len(), 2);
+        assert_eq!(realms[1].issuer, "https://idm.b.test/realms/b");
+        assert_eq!(organization_realms(None, None), Ok(Vec::new()));
+        assert_eq!(organization_realms(Some(" ".into()), inst), Ok(Vec::new()));
+        for bad in [
+            format!(
+                "[{},{}]",
+                one("a", "https://idm.a.test/realms/a"),
+                one("a", "https://idm.x.test/realms/x")
+            ),
+            format!("[{}]", one("a", "https://idm.city.test/realms/jc/")),
+            format!(
+                "[{},{}]",
+                one("a", "https://idm.a.test/realms/a"),
+                one("b", "https://idm.a.test/realms/a")
+            ),
+            format!("[{}]", one("", "https://idm.a.test/realms/a")),
+            format!("[{}]", one("a", "idm.a.test/realms/a")),
+            r#"[{"organization":"a","issuer":"https://x","jwks_url":"http://y","extra":1}]"#
+                .to_owned(),
+            "{}".to_owned(),
+        ] {
+            let err = organization_realms(Some(bad.clone()), inst).expect_err(&bad);
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        name: "JC_OIDC_ORGANIZATION_REALMS",
+                        ..
+                    }
+                ),
+                "{bad}"
+            );
+        }
+        assert!(
+            organization_realms(Some(ok), None).is_err(),
+            "without JC_OIDC_ISSUER"
+        );
+    }
+
     /// A configuration carrying the gateway's own client and its secret.
     fn config_with_a_client_secret() -> Config {
         Config {
@@ -695,6 +824,7 @@ mod tests {
                 "http://keycloak/realms/dev/protocol/openid-connect/certs".to_owned(),
             ),
             oidc_jwks_reach: None,
+            oidc_organizations: Vec::new(),
             oidc_token_url: None,
             oidc_client: Some((
                 "context-gateway".to_owned(),

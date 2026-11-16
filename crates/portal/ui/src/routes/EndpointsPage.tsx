@@ -889,9 +889,14 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     if (!policyChoices.some((choice) => choice.const === held)) policyChoices.push({ const: held, title: held });
   }
   // An Endpoint naming no Policy binds every Policy of its space: its edit shows all of them
-  // ticked, so proposing it keeps what it serves today (T-6740).
+  // ticked, so proposing it keeps what it serves today (T-6740). Only once the Organization has
+  // answered: a URN minted under the project's name meanwhile names no Policy (T-7122).
   const served = (form: EndpointForm): EndpointForm =>
-    !isNew && form.policyRefs === undefined && policiesQuery.isSuccess && spacesQuery.isSuccess
+    !isNew &&
+    form.policyRefs === undefined &&
+    policiesQuery.isSuccess &&
+    spacesQuery.isSuccess &&
+    organization.settled
       ? { ...form, policyRefs: policyChoices.map((choice) => choice.const) }
       : form;
   const projectionNameOf = (form: EndpointForm) =>
