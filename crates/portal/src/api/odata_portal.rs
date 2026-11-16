@@ -114,7 +114,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 167] = [
+pub static DOORS: [Door; 177] = [
     door(
         "portal_people_remove",
         Org,
@@ -178,6 +178,97 @@ pub static DOORS: [Door; 167] = [
         "/organization/people/{person}/consents/{client}",
         &[PERSON, ("client", Place::Path)],
         PEOPLE_WRITE,
+    ),
+    // The People page, the person pickers and a steward's home read and edit people through the
+    // REST handlers, which check `Person` with the verb themselves (T-7167).
+    door(
+        "portal_people_list",
+        Org,
+        Method::GET,
+        "/organization/people",
+        &[
+            ("search", Place::Query("Edm.String")),
+            ("first", Place::Query("Edm.Int32")),
+            ("max", Place::Query("Edm.Int32")),
+        ],
+        Who::People(jc_core::kinds::Verb::Read),
+    ),
+    door(
+        "portal_person_create",
+        Org,
+        Method::POST,
+        "/organization/people",
+        &[BODY],
+        Who::People(jc_core::kinds::Verb::Create),
+    ),
+    door(
+        "portal_person_get",
+        Org,
+        Method::GET,
+        "/organization/people/{person}",
+        &[PERSON],
+        Who::People(jc_core::kinds::Verb::Read),
+    ),
+    door(
+        "portal_person_edit",
+        Org,
+        Method::PATCH,
+        "/organization/people/{person}",
+        &[PERSON, BODY],
+        PEOPLE_WRITE,
+    ),
+    // The Organization reads of any page: the open data portals' hosts, the home page's widgets,
+    // the Organization's data models; each handler answers only what the person may read (T-7167).
+    door(
+        "portal_portal_host_list",
+        Org,
+        Method::GET,
+        "/organization/portal-hosts",
+        &[],
+        Who::Person,
+    ),
+    door(
+        "portal_widget_list",
+        Org,
+        Method::GET,
+        "/organization/widgets",
+        &[],
+        Who::Person,
+    ),
+    door(
+        "portal_organization_model_list",
+        Org,
+        Method::GET,
+        "/organization/datamodels",
+        &[("search", Place::Query("Edm.String"))],
+        Who::Person,
+    ),
+    // A project's own row (its usage, quota and repository) and its deletion, which opens the
+    // red-lane Change; the handlers check the read and the `org` namespace's rule (T-7167).
+    door(
+        "portal_project_get",
+        Project,
+        Method::GET,
+        "/projects/{project}",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_project_delete",
+        Project,
+        Method::DELETE,
+        "/projects/{project}",
+        &[],
+        Who::ProjectReader,
+    ),
+    // One project's health log: the checks of the resources the person reads (T-7167).
+    door(
+        "portal_health_check_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/health-checks",
+        &[],
+        Who::ProjectReader,
     ),
     door(
         "portal_connector_list",

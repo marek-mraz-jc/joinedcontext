@@ -1,4 +1,4 @@
-import { listChanges, listManifests } from "../../api/odata";
+import { door, listChanges, listManifests, type RestAnswer } from "../../api/odata";
 /**
  * A project's home page (T-3233, T-3235): the first-run checklist while the person has not put it
  * away, and the cards of what their role can do next. Every step and every card reads the
@@ -79,7 +79,7 @@ export function HomePage({
     queryKey: ["organization", "widgets"],
     enabled: dashboardsShown,
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/widgets", {})),
+    queryFn: async () => (await door("portal_widget_list", {})) as RestAnswer<"list_widgets">,
   });
   const changes = useQuery({
     queryKey: queryKeys.changes(project),
@@ -99,7 +99,7 @@ export function HomePage({
     queryKey: ["organization", "people"],
     enabled: role === "steward",
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/people", {})) as unknown as Listed,
+    queryFn: async () => (await door("portal_people_list", {})) as Listed,
   });
 
   const spaceNames = (spaces.data?.items ?? []).map((item) => item.metadata?.name ?? "").filter(Boolean);

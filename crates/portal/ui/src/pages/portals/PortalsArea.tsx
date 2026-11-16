@@ -1,10 +1,10 @@
-import { readManifest } from "../../api/odata";
+import { door, readManifest, type RestAnswer } from "../../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { isChange, ORG_NAMESPACE } from "../../api/manifest";
 import type { Change, ResourceProposal } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -85,7 +85,7 @@ export function usePortalHosts() {
   return useQuery({
     queryKey: ["portalHosts"],
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/portal-hosts")),
+    queryFn: async () => (await door("portal_portal_host_list", {})) as RestAnswer<"list_portal_hosts">,
   });
 }
 

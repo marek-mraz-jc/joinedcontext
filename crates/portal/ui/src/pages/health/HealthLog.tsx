@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ManifestGrid } from "../../components/grid/ManifestGrid";
-import { api, unwrap } from "../../api/client";
+import { door, organizationReading, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import type { BadgeTone } from "../../components/ui/Badge";
 import {
@@ -89,11 +89,9 @@ export function HealthLog({ project }: { project?: string }): JSX.Element {
   const checks = useQuery({
     queryKey: project ? ["projects", project, "health-checks"] : ["organization", "health-checks"],
     queryFn: async () =>
-      unwrap(
-        project
-          ? await api.GET("/api/v1/projects/{project}/health-checks", { params: { path: { project } } })
-          : await api.GET("/api/v1/organization/health-checks"),
-      ),
+      project
+        ? ((await door("portal_health_check_list", {}, project)) as RestAnswer<"list_project">)
+        : organizationReading("healthChecks"),
     refetchInterval: 60_000,
   });
 
