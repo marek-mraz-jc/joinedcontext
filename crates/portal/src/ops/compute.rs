@@ -14,6 +14,7 @@ use super::{Finding, Level, Verdict};
 use crate::agents::kpi;
 use crate::api::assistant;
 use crate::api::pipeline_test;
+use crate::api::script_test;
 use crate::change::Lane;
 use crate::error::ApiError;
 use crate::tools::model_tools;
@@ -496,6 +497,29 @@ pub fn operations() -> Vec<Operation> {
             },
         },
         Operation {
+            name: "jc_script_test",
+            title: "Script Test",
+            description: "Runs a Script version's tests on the runner",
+            input: script_test_input_schema,
+            output: script_test_output_schema,
+            annotations: OperationAnnotations {
+                read_only_hint: true,
+                destructive_hint: false,
+                idempotent_hint: true,
+            },
+            kind: "Script",
+            verb: Some(Verb::Propose),
+            lane: Lane::Green,
+            validate: |val| parse_input::<script_test::ScriptTestRequest>(val.clone()).map(|_| ()),
+            run: |_caller, state, project, val| {
+                Box::pin(async move {
+                    let request: script_test::ScriptTestRequest = parse_input(val)?;
+                    let answer = script_test::run(state, project, &request).await?;
+                    Ok(serde_json::to_value(answer)?)
+                })
+            },
+        },
+        Operation {
             name: "jc_model_infer",
             title: "Infer Schema",
             description: "Infers a draft LinkML data model from sample data bytes or text",
@@ -550,6 +574,58 @@ pub fn operations() -> Vec<Operation> {
             },
         },
     ]
+}
+
+/// jc_script_test's input: the body of `POST /projects/{project}/scripts/test` (PL-118).
+fn script_test_input_schema() -> Value {
+    use bounds::*;
+    use jc_core::kinds::script::{MAX_CODE_BYTES, MAX_MEMORY_MB, MAX_TESTS, MAX_TIMEOUT_MS};
+    let record = |description: &str| json!({ "type": "object", "description": description, "maxProperties": RECORD_MEMBERS });
+    json!({
+        "type": "object",
+        "properties": {
+            "code": text("JavaScript", MAX_CODE_BYTES as u64),
+            "limits": {
+                "type": "object",
+                "description": "Run limits",
+                "properties": {
+                    "timeoutMs": { "type": "integer", "description": "ms per run", "minimum": 1, "maximum": MAX_TIMEOUT_MS },
+                    "memoryMb": { "type": "integer", "description": "MiB heap", "minimum": 1, "maximum": MAX_MEMORY_MB }
+                },
+                "additionalProperties": false
+            },
+            "tests": {
+                "type": "array",
+                "description": "In/out cases",
+                "minItems": 1,
+                "maxItems": MAX_TESTS,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": text("Test name", 63),
+                        "input": record("In"),
+                        "expected": record("Expected out")
+                    },
+                    "required": ["name", "input", "expected"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["code", "tests"],
+        "additionalProperties": false
+    })
+}
+
+fn script_test_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "results": {
+                "type": "array",
+                "description": "Per test: name, ok, the output or the error, and millis"
+            }
+        }
+    })
 }
 
 /// `jc_pipeline_test` (PL-43, T-4840): the harness on the runner, the static output types, each

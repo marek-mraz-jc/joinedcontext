@@ -149,7 +149,7 @@ pub const ENTITY_BOUND: [&str; 4] = [
 ];
 
 /// API/13 §2b, other action: no Change; keeps its registry permission and lane.
-pub const OTHER_ACTIONS: [&str; 33] = [
+pub const OTHER_ACTIONS: [&str; 34] = [
     "jc_run_create",
     "jc_run_cancel",
     "jc_run_publish",
@@ -171,6 +171,7 @@ pub const OTHER_ACTIONS: [&str; 33] = [
     "jc_datasource_check",
     "jc_datasource_discover",
     "jc_pipeline_test",
+    "jc_script_test",
     "jc_pipeline_sample_source",
     "jc_pipeline_try_mapping",
     "jc_mqtt_test_publish",

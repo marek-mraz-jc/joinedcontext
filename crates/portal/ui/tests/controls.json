@@ -2374,6 +2374,15 @@
         "workspaces_ui.test.tsx"
       ]
     },
+    "src/pages/scripts/ScriptsPage.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 1
+      },
+      "tests": [
+        "scripts_page.test.tsx"
+      ]
+    },
     "src/pages/secrets/SecretFormPage.tsx": {
       "controls": {
         "Button": 2

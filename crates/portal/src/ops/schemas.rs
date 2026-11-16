@@ -681,6 +681,10 @@ const EXAMPLES: &[(&str, &str)] = &[
         "Portal",
         r#"{"spec":{"organizationRef":"example","path":"mobility"}}"#,
     ),
+    (
+        "Script",
+        r#"{"spec":{"language":"javascript","versions":[{"version":"1.0.0","state":"draft","code":"bento.v0_msg_set_string('ok')","sha256":"d3ae421372cbdcbd29cfcee7f875a15671f3864305053e980af6f0ea813c4046"}]}}"#,
+    ),
 ];
 
 /// The smallest value a schema accepts that has every required member.

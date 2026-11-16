@@ -105,6 +105,7 @@ pub mod projects;
 pub mod quality;
 pub mod resources;
 pub mod restore;
+pub mod script_test;
 pub mod secrets;
 pub mod setup;
 pub mod space_move;
@@ -142,6 +143,7 @@ pub fn router() -> Router<AppState> {
         .merge(app_share::router())
         .merge(assistant::router())
         .merge(pipeline_test::router())
+        .merge(script_test::router())
         .merge(pipeline_source_check::router())
         .merge(datasource_test::router())
         .merge(datasource_webhook::router())

@@ -1236,6 +1236,10 @@ routes:
     rule: "project-verb:propose:Pipeline"
     expect: [403, 403, allow, allow, 403, allow, 403, 403]
     body: {"pipeline": {"apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline", "metadata": {"name": "existing"}, "spec": {"class": "auto", "source": {"endpointRef": "existing"}, "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:existing"}}, "sample": {}}
+  - route: POST /projects/{project}/scripts/test
+    rule: "project-verb:propose:Script"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    body: {"code": "bento.v0_msg_set_string('x')", "tests": [{"name": "a", "input": {}, "expected": {}}]}
   - route: POST /projects/{project}/datasources/{name}/test
     rule: "project-verb:propose:DataSource"
     expect: [403, 403, allow, allow, 403, allow, 404, 403]

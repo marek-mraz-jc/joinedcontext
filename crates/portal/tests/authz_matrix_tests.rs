@@ -55,7 +55,7 @@ const ROLES: [&str; 8] = [
 ];
 
 /// What every person reads (deployment's helsinki-role-viewer.yaml, verbatim).
-const READ_KINDS: [&str; 32] = [
+const READ_KINDS: [&str; 33] = [
     "Organization",
     "Project",
     "ContextSpace",
@@ -69,6 +69,7 @@ const READ_KINDS: [&str; 32] = [
     "ContextSourceRegistration",
     "ServiceAccount",
     "Pipeline",
+    "Script",
     "DataSource",
     "MqttBroker",
     "App",
@@ -91,7 +92,7 @@ const READ_KINDS: [&str; 32] = [
 ];
 /// What the steward proposes and approves and the approver approves (helsinki-role-steward.yaml):
 /// every project kind but `CkanInstance`, which the administrator hands out per instance (PF-107).
-const STEWARD_KINDS: [&str; 25] = [
+const STEWARD_KINDS: [&str; 26] = [
     "ContextSpace",
     "DataModel",
     "Mapping",
@@ -103,6 +104,7 @@ const STEWARD_KINDS: [&str; 25] = [
     "ContextSourceRegistration",
     "ServiceAccount",
     "Pipeline",
+    "Script",
     "DataSource",
     "MqttBroker",
     "App",
@@ -119,7 +121,7 @@ const STEWARD_KINDS: [&str; 25] = [
     "Layer",
 ];
 /// What the editor proposes and approves (helsinki-role-editor.yaml).
-const EDITOR_KINDS: [&str; 8] = [
+const EDITOR_KINDS: [&str; 9] = [
     "ContextSpace",
     "DataModel",
     "Mapping",
@@ -127,10 +129,11 @@ const EDITOR_KINDS: [&str; 8] = [
     "Endpoint",
     "ModelProjection",
     "Pipeline",
+    "Script",
     "DataSource",
 ];
 /// What the org-admin proposes, approves and deletes (helsinki-role-org-admin.yaml).
-const ADMIN_KINDS: [&str; 35] = [
+const ADMIN_KINDS: [&str; 36] = [
     "Organization",
     "Project",
     "ContextSpace",
@@ -144,6 +147,7 @@ const ADMIN_KINDS: [&str; 35] = [
     "ContextSourceRegistration",
     "ServiceAccount",
     "Pipeline",
+    "Script",
     "DataSource",
     "MqttBroker",
     "App",

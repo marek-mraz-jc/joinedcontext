@@ -728,6 +728,13 @@ impl StreamDeployer {
                         continue;
                     }
                 };
+                // Each Script pin becomes its version's `javascript` processor, digest checked
+                // (PL-120); a pin that does not hold renders no stream.
+                let mut spec = spec;
+                if let Err(err) = crate::scripts::inline(mirror, &ns, &mut spec) {
+                    outcomes.push((ns.clone(), name, StreamOutcome::Error(err)));
+                    continue;
+                }
 
                 let first = spec.sources().into_iter().next();
                 let ds_ref_name = first
@@ -766,7 +773,6 @@ impl StreamDeployer {
                 let stream_spaces = StreamSpaces::of(mirror, &ns, &spec);
                 let spaces = &stream_spaces.spaces;
                 // `unitCode: model` (G-15) is written as the code the space's model declares.
-                let mut spec = spec;
                 if let Some(schemas) = self.model_schemas().filter(|_| !spec.attributes.is_empty())
                 {
                     for space in spaces {
@@ -5496,6 +5502,7 @@ output:
             bloblang: None,
             kpi: None,
             datacube: None,
+            script_ref: None,
         })];
         assert!(!eligible(&wasm));
     }

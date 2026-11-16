@@ -66,6 +66,8 @@ const ORDER: &[(u8, &str)] = &[
     (WAVE_FEDERATION, "Portal"),
     // A DataSource converges before the pipelines that render their input from it.
     (WAVE_RUNTIME, "DataSource"),
+    // A pipeline inlines the Script versions it pins, so the Script stands first (PL-120).
+    (WAVE_RUNTIME, "Script"),
     (WAVE_RUNTIME, "Pipeline"),
     (WAVE_RUNTIME, "App"),
     (WAVE_RUNTIME, "SyncSource"),

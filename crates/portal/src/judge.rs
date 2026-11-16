@@ -54,7 +54,7 @@ type Check = fn(&Ground<'_>, &str, &ResourceEnvelope) -> Result<(), ApiError>;
 
 /// Every check, by name, in the order a proposal meets them. A deletion is never judged here:
 /// the propose door checks what a deletion leaves behind itself.
-pub const CHECKS: [(&str, Check); 20] = [
+pub const CHECKS: [(&str, Check); 21] = [
     ("literal-secret", literal_secret),
     ("kind", kind),
     ("organization-name", organization_name),
@@ -75,6 +75,7 @@ pub const CHECKS: [(&str, Check); 20] = [
     ("mqtt-allowance", mqtt_allowance),
     ("catalogue-publication", catalogue_publication),
     ("portal", portal),
+    ("scripts", crate::scripts::check),
 ];
 
 /// A Portal's Organization, path, host and the deployment's `portals.max` (ODP-08, ODP-09).
@@ -839,6 +840,32 @@ mod tests {
                     json!({ "audience": "organization", "publish": { "ckan": { "instanceRef": "opendata" } } }),
                 )),
             ),
+            "scripts" => {
+                let code = "bento.v0_msg_set_string('x')";
+                let script = envelope(
+                    "Script",
+                    "flag",
+                    "ovzdusie",
+                    json!({ "language": "javascript", "versions": [{ "version": "1.0.0",
+                        "state": "draft", "code": code,
+                        "sha256": jc_core::kinds::script::digest(code) }] }),
+                );
+                (
+                    vec![script],
+                    envelope(
+                        "Pipeline",
+                        "p",
+                        "ovzdusie",
+                        json!({
+                            "class": "resident",
+                            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } }],
+                            "steps": [{ "kind": "script",
+                                        "scriptRef": { "name": "flag", "version": "1.0.0" } }],
+                            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:ovzdusie:air" }]
+                        }),
+                    ),
+                )
+            }
             other => panic!("no fixture for check {other}"),
         }
     }

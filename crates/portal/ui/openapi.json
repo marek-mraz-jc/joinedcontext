@@ -35282,7 +35282,8 @@
                       "Environment",
                       "Dashboard",
                       "Layer",
-                      "Portal"
+                      "Portal",
+                      "Script"
                     ],
                     "examples": [
                       "Pipeline"
@@ -35406,6 +35407,183 @@
           "checkedBy": "project",
           "kind": "*",
           "verb": "read"
+        }
+      }
+    },
+    "/api/v1/projects/{project}/ops/jc_script_test": {
+      "post": {
+        "description": "Runs a Script version's tests on the runner",
+        "operationId": "jc_script_test",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "code": "example",
+                "tests": [
+                  {
+                    "expected": {},
+                    "input": {},
+                    "name": "example"
+                  }
+                ]
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "description": "JavaScript",
+                    "maxLength": 65536,
+                    "type": "string"
+                  },
+                  "limits": {
+                    "additionalProperties": false,
+                    "description": "Run limits",
+                    "properties": {
+                      "memoryMb": {
+                        "description": "MiB heap",
+                        "maximum": 64,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "timeoutMs": {
+                        "description": "ms per run",
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "tests": {
+                    "description": "In/out cases",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expected": {
+                          "description": "Expected out",
+                          "maxProperties": 512,
+                          "type": "object"
+                        },
+                        "input": {
+                          "description": "In",
+                          "maxProperties": 512,
+                          "type": "object"
+                        },
+                        "name": {
+                          "description": "Test name",
+                          "maxLength": 63,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "input",
+                        "expected"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "code",
+                  "tests"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "results": {
+                      "description": "Per test: name, ok, the output or the error, and millis",
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Script Test",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "registry",
+          "kind": "Script",
+          "verb": "propose"
         }
       }
     },
@@ -40494,6 +40672,125 @@
           },
           "503": {
             "description": "No repository configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/scripts/test": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Script Test",
+        "description": "Runs a Script version's tests on the project's runner, in the sandbox the live stream uses, without writing.",
+        "operationId": "test_script",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "`code`: the version's source. `limits`: `timeoutMs` and `memoryMb`. `tests`: 1 to 20 `{name, input, expected}`.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptTestRequest"
+              },
+              "example": {
+                "code": "let m = bento.v0_msg_as_structured(); m.ok = true; bento.v0_msg_set_structured(m);",
+                "tests": [
+                  {
+                    "expected": {
+                      "id": 1,
+                      "ok": true
+                    },
+                    "input": {
+                      "id": 1
+                    },
+                    "name": "flags-one"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Each test's result, in the order sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptTestAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant proposes a Script in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A test of this project is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The code, a limit or a test is outside its bounds, naming the field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No pipeline runner is configured, or it did not answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -60823,6 +61120,135 @@
           }
         },
         "additionalProperties": false
+      },
+      "ScriptLimitsBody": {
+        "type": "object",
+        "description": "jc-core's `ScriptLimits` as the document publishes it (PL-118).",
+        "properties": {
+          "memoryMb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "MiB per message, 1 to 64, e.g. `32`.",
+            "minimum": 0
+          },
+          "timeoutMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Milliseconds per message, 1 to 200, e.g. `50`.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScriptTestAnswer": {
+        "type": "object",
+        "description": "Every test's result, in the order the tests were sent.",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptTestResult"
+            }
+          }
+        }
+      },
+      "ScriptTestBody": {
+        "type": "object",
+        "description": "jc-core's `ScriptTest` as the document publishes it (PL-118); only the schema reads it.",
+        "required": [
+          "name",
+          "input",
+          "expected"
+        ],
+        "properties": {
+          "expected": {
+            "description": "The message the script must produce, as JSON."
+          },
+          "input": {
+            "description": "The input message, as JSON."
+          },
+          "name": {
+            "type": "string",
+            "description": "A short name, e.g. `converts-one-point`."
+          }
+        }
+      },
+      "ScriptTestRequest": {
+        "type": "object",
+        "description": "What a Script test runs: the code of one version, its limits and its tests.",
+        "required": [
+          "code",
+          "tests"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The version's source, at most 64 KiB."
+          },
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScriptLimitsBody",
+                "description": "Time and memory per message; absent, the runner's defaults."
+              }
+            ]
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptTestBody"
+            },
+            "description": "One to 20 tests, each `{name, input, expected}`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScriptTestResult": {
+        "type": "object",
+        "description": "One test's result.",
+        "required": [
+          "name",
+          "ok",
+          "millis"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the script failed on the input (a throw, the time or memory limit)."
+          },
+          "millis": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The run on the runner, stream start to answer, in milliseconds.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The test's name."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Whether the script made exactly `expected` of `input`."
+          },
+          "output": {
+            "description": "What the script made of the input, when it made something."
+          }
+        }
       },
       "SecretList": {
         "type": "object",

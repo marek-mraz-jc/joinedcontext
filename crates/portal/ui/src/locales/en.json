@@ -122,7 +122,8 @@
     "layers": "Map layers",
     "csrs": "Context sources",
     "health": "Health",
-    "repositories": "Repositories"
+    "repositories": "Repositories",
+    "scripts": "Scripts"
   },
   "auth": {
     "lead": "Sign in with your organisation account to manage this platform.",
@@ -13225,5 +13226,83 @@
     "signIn": "This connector needs sign-in: where the assistant asks how to sign in, choose OAuth, then sign in with your Portal account.",
     "list": "Setup steps per assistant",
     "other": "Any other MCP client"
+  },
+  "scripts": {
+    "workbench": {
+      "title": "Script workbench",
+      "purpose": "Write the next version of a stored script, run its tests on the project's runner and propose it for review."
+    },
+    "empty": "No script yet: name one below, write its code and tests, then propose version 1.0.0.",
+    "field": {
+      "script": "Script",
+      "newScript": "New script",
+      "name": "Name",
+      "code": "Code",
+      "tests": "Tests",
+      "timeout": "Time per record (ms)",
+      "memory": "Memory per record (MiB)",
+      "version": "Version",
+      "target": "Move pins to"
+    },
+    "hint": {
+      "script": "Pick a script of this project to edit its next version, or start a new one.",
+      "name": "Lower-case letters, digits and dashes, e.g. sjtsk-to-wgs84.",
+      "code": "Code that reads the record and writes it back, e.g. record.checked = true. It reaches no network, file or secret.",
+      "tests": "A JSON list of tests, each with a name, an input record and the expected record, e.g. the starter list in the box.",
+      "timeout": "1 to 200, e.g. 50. Empty uses 50.",
+      "memory": "1 to 64, e.g. 32. Empty uses 32.",
+      "version": "MAJOR.MINOR.PATCH above the newest version, e.g. {version}.",
+      "target": "A published version, e.g. 1.1.0. Each moved pipeline runs it after the Change is approved."
+    },
+    "reason": {
+      "name": "Name the script with lower-case letters, digits and dashes.",
+      "code": "Write 1 to 65536 bytes of code.",
+      "tests": "Write the tests as a JSON list of objects with name, input and expected.",
+      "run": "Run the tests first.",
+      "versionFormat": "Write the version as MAJOR.MINOR.PATCH, e.g. 1.1.0.",
+      "versionOrder": "Pick a version above {version}.",
+      "timeout": "Write a whole number from 1 to 200.",
+      "memory": "Write a whole number from 1 to 64.",
+      "limits": "Fix the limits first.",
+      "pipelineRights": "Your role does not propose pipelines in this project.",
+      "pick": "Pick the pipelines to move.",
+      "failing": "{count, plural, one {# test fails: fix the code or the test.} other {# tests fail: fix the code or the tests.}}",
+      "runner": "The project's runner did not answer. Try again in a minute; if it keeps failing, ask your administrator to check the runner.",
+      "rightsNext": "Your role does not propose scripts in this project, so it cannot run their tests either. Ask a project administrator for a role that proposes Scripts, such as pipeline-editor.",
+      "proposed": "Edit the code to write the next version.",
+      "runFailed": "The tests did not run: fix what the message above says, then run them again."
+    },
+    "action": {
+      "run": "Run tests",
+      "propose": "Propose version {version}",
+      "move": "{count, plural, one {Move # pipeline to {version}} other {Move # pipelines to {version}}}"
+    },
+    "results": {
+      "caption": "Test results",
+      "test": "Test",
+      "verdict": "Result",
+      "output": "Output",
+      "time": "Time",
+      "pass": "Pass",
+      "fail": "Fail",
+      "changed": "Changed",
+      "outputOf": "Output of {test}",
+      "empty": "Run the tests to see each one's result here.",
+      "emptyTitle": "No result yet",
+      "millis": "{count} ms",
+      "changedNote": "A test marked Changed writes a different output than the newest stored version, {version}."
+    },
+    "proposed": "Version {version} is proposed. A second person approves it on the Approvals page; pipelines keep their pins until you move them.",
+    "used": {
+      "title": "Pipelines using {name}",
+      "caption": "Pipelines pinning {name}",
+      "emptyTitle": "No pipeline uses this script",
+      "empty": "Add a script step naming {name} to a pipeline, or apply it in the pipeline's scripts, to see it here.",
+      "pipeline": "Pipeline",
+      "pinned": "Pinned version",
+      "already": "Already on {version}.",
+      "moved": "Proposed one Change moving {names} to {version}.",
+      "onTarget": "On the target"
+    }
   }
 }

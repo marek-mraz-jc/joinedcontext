@@ -6134,6 +6134,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/ops/jc_script_test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Script Test
+         * @description Runs a Script version's tests on the runner
+         */
+        post: operations["jc_script_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/ops/jc_serviceaccount_access": {
         parameters: {
             query?: never;
@@ -6948,6 +6968,26 @@ export interface paths {
         get: operations["revisions"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/scripts/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Script Test
+         * @description Runs a Script version's tests on the project's runner, in the sandbox the live stream uses, without writing.
+         */
+        post: operations["test_script"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13453,6 +13493,56 @@ export interface components {
         ScopedResource: {
             kind: string;
             name: string;
+        };
+        /** @description jc-core's `ScriptLimits` as the document publishes it (PL-118). */
+        ScriptLimitsBody: {
+            /**
+             * Format: int32
+             * @description MiB per message, 1 to 64, e.g. `32`.
+             */
+            memoryMb?: number | null;
+            /**
+             * Format: int32
+             * @description Milliseconds per message, 1 to 200, e.g. `50`.
+             */
+            timeoutMs?: number | null;
+        };
+        /** @description Every test's result, in the order the tests were sent. */
+        ScriptTestAnswer: {
+            results: components["schemas"]["ScriptTestResult"][];
+        };
+        /** @description jc-core's `ScriptTest` as the document publishes it (PL-118); only the schema reads it. */
+        ScriptTestBody: {
+            /** @description The message the script must produce, as JSON. */
+            expected: unknown;
+            /** @description The input message, as JSON. */
+            input: unknown;
+            /** @description A short name, e.g. `converts-one-point`. */
+            name: string;
+        };
+        /** @description What a Script test runs: the code of one version, its limits and its tests. */
+        ScriptTestRequest: {
+            /** @description The version's source, at most 64 KiB. */
+            code: string;
+            limits?: null | components["schemas"]["ScriptLimitsBody"];
+            /** @description One to 20 tests, each `{name, input, expected}`. */
+            tests: components["schemas"]["ScriptTestBody"][];
+        };
+        /** @description One test's result. */
+        ScriptTestResult: {
+            /** @description Why the script failed on the input (a throw, the time or memory limit). */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description The run on the runner, stream start to answer, in milliseconds.
+             */
+            millis: number;
+            /** @description The test's name. */
+            name: string;
+            /** @description Whether the script made exactly `expected` of `input`. */
+            ok: boolean;
+            /** @description What the script made of the input, when it made something. */
+            output?: unknown;
         };
         /** @description The project's secrets, by name. */
         SecretList: {
@@ -37877,7 +37967,7 @@ export interface operations {
                      * @example Pipeline
                      * @enum {string}
                      */
-                    kind: "Organization" | "Project" | "ContextSpace" | "DataModel" | "Mapping" | "Policy" | "ScopeDefinition" | "Endpoint" | "ModelProjection" | "SharedSpaceReference" | "ContextSourceRegistration" | "Subscription" | "ServiceAccount" | "Pipeline" | "DataSource" | "App" | "CkanInstance" | "KnowledgeSource" | "AssistantDeployment" | "McpServer" | "MqttBroker" | "Blueprint" | "AgentProfile" | "DataSpaceParticipant" | "DataOffer" | "DataAgreement" | "SyncSource" | "Bundle" | "UiSchema" | "Role" | "RoleBinding" | "Group" | "DelegationPolicy" | "ContextBroker" | "Environment" | "Dashboard" | "Layer" | "Portal";
+                    kind: "Organization" | "Project" | "ContextSpace" | "DataModel" | "Mapping" | "Policy" | "ScopeDefinition" | "Endpoint" | "ModelProjection" | "SharedSpaceReference" | "ContextSourceRegistration" | "Subscription" | "ServiceAccount" | "Pipeline" | "DataSource" | "App" | "CkanInstance" | "KnowledgeSource" | "AssistantDeployment" | "McpServer" | "MqttBroker" | "Blueprint" | "AgentProfile" | "DataSpaceParticipant" | "DataOffer" | "DataAgreement" | "SyncSource" | "Bundle" | "UiSchema" | "Role" | "RoleBinding" | "Group" | "DelegationPolicy" | "ContextBroker" | "Environment" | "Dashboard" | "Layer" | "Portal" | "Script";
                     /** @description JSON pointer */
                     path?: string;
                 };
@@ -37899,6 +37989,112 @@ export interface operations {
                         path?: string;
                         required?: string[];
                         schema?: Record<string, never>;
+                    };
+                };
+            };
+            /** @description The change the operation opened, waiting for a person's approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden: the caller lacks what x-jc-requires names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The project or an object the input names is not there */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The input does not match the schema; the problem names the path */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    jc_script_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "code": "example",
+                 *       "tests": [
+                 *         {
+                 *           "expected": {},
+                 *           "input": {},
+                 *           "name": "example"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": {
+                    /** @description JavaScript */
+                    code: string;
+                    /** @description Run limits */
+                    limits?: {
+                        /** @description MiB heap */
+                        memoryMb?: number;
+                        /** @description ms per run */
+                        timeoutMs?: number;
+                    };
+                    /** @description In/out cases */
+                    tests: {
+                        /** @description Expected out */
+                        expected: Record<string, never>;
+                        /** @description In */
+                        input: Record<string, never>;
+                        /** @description Test name */
+                        name: string;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description The operation's answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Per test: name, ok, the output or the error, and millis */
+                        results?: unknown[];
                     };
                 };
             };
@@ -41310,6 +41506,105 @@ export interface operations {
                 };
             };
             /** @description No repository configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_script: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        /** @description `code`: the version's source. `limits`: `timeoutMs` and `memoryMb`. `tests`: 1 to 20 `{name, input, expected}`. */
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "code": "let m = bento.v0_msg_as_structured(); m.ok = true; bento.v0_msg_set_structured(m);",
+                 *       "tests": [
+                 *         {
+                 *           "expected": {
+                 *             "id": 1,
+                 *             "ok": true
+                 *           },
+                 *           "input": {
+                 *             "id": 1
+                 *           },
+                 *           "name": "flags-one"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["ScriptTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Each test's result, in the order sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScriptTestAnswer"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a Script in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The code, a limit or a test is outside its bounds, naming the field */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
             503: {
                 headers: {
                     [name: string]: unknown;

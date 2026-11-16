@@ -24,6 +24,7 @@ spec:
         - ContextSourceRegistration
         - ServiceAccount
         - Pipeline
+        - Script
         - DataSource
         - MqttBroker
         - App
