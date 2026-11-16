@@ -158,10 +158,12 @@ export function manifestReadsAsRest(page: Page): void {
 /**
  * The same for the Portal doors `tests/odata.ts` DOORS names (T-7110): a spec whose stub answers
  * a door's REST address calls this before its `page.route`; a spec answering the service itself
- * does not.
+ * does not, or names in `only` the doors its stub answers by their REST address, e.g.
+ * `doorsAsRest(page, ["portal_permissions_me"])` (T-7176).
  */
-export function doorsAsRest(page: Page): void {
-  asRest(page, portalDoor);
+export function doorsAsRest(page: Page, only?: readonly string[]): void {
+  // `only` names the doors to translate, for a spec that answers the other doors as the service.
+  asRest(page, only ? async (request) => (only.includes(odataCall(request.url())?.name ?? "") ? portalDoor(request) : undefined) : portalDoor);
 }
 
 function asRest(page: Page, translate: Translate): void {

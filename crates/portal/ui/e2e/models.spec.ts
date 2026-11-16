@@ -439,7 +439,7 @@ test.describe("a model change is proposed, and read back (T-4830)", () => {
         route.fulfill({ status: 200, contentType: "application/json", body: odataBody(list([PUBLISHED_CHANGE])) }),
       );
       await page.route(restOrDoor("/projects/helsinki/datamodels/helsinki-kpi/source", "portal_model_source"), (route) =>
-        route.fulfill({ status: 200, contentType: "text/plain", body: KPI_LINKML }),
+        route.fulfill({ status: 200, contentType: "text/yaml", body: KPI_LINKML }),
       );
 
       await page.goto("/projects/helsinki/models/helsinki-kpi?tab=form&lang=en");

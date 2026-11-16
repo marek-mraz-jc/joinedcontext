@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { doorsAsRest } from "./manifestReads";
+
+// T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me"]));
 
 // T-6339, DM-153: the Policy form's attribute capability matrix, at 1440 and 400 px in English
 // and Slovak. `vite preview` has no Portal API, so the API is answered in the browser.

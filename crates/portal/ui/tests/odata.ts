@@ -762,7 +762,7 @@ export async function manifestAnswer(
     ? manifestRow(body, rest.headers.get("ETag"))
     : {
         value: ((body.items ?? []) as Record<string, unknown>[]).map(
-          manifestRow,
+          (item) => manifestRow(item),
         ),
       };
   return new Response(JSON.stringify(answer), {
