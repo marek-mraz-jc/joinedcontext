@@ -7,6 +7,7 @@ import { reasonOf, unwrap } from "../../api/client";
 import { door, doorAction, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { DashboardList } from "./DashboardList";
+import { SavedChartsMove } from "./SavedChartsMove";
 import {
   Alert,
   Badge,
@@ -516,6 +517,7 @@ export function GrafanaPage({ project }: { project: string }): JSX.Element {
               ))}
             </ul>
           )}
+          {mayCreate && items.length > 0 ? <SavedChartsMove project={project} /> : null}
         </Card>
       ) : null}
     </div>

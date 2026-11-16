@@ -329,6 +329,7 @@ const OPERATIONS: Record<string, Door> = {
   portal_grafana_builder: ["GET", "/projects/{project}/grafana/builder"],
   portal_grafana_builder_create: ["POST", "/projects/{project}/grafana/builder"],
   portal_grafana_builder_preview: ["POST", "/projects/{project}/grafana/builder/preview"],
+  portal_grafana_builder_saved_charts: ["POST", "/projects/{project}/grafana/builder/saved-charts"],
   portal_grafana_builder_get: ["GET", "/projects/{project}/grafana/builder/{uid}"],
   portal_grafana_builder_update: ["PUT", "/projects/{project}/grafana/builder/{uid}"],
   portal_grafana_builder_versions: ["GET", "/projects/{project}/grafana/builder/{uid}/versions"],

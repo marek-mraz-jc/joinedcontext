@@ -7407,6 +7407,20 @@
       "previewEmpty": "Vyberte Endpoint, typ a atribút a uvidíte riadky, ktoré vizualizácia zobrazí.",
       "noEndpointsTitle": "Nie je z čoho kresliť",
       "noEndpoints": "V tomto projekte zatiaľ nesmiete čítať žiadny Endpoint. Požiadajte vlastníka projektu o prístup alebo najprv vytvorte Endpoint."
+    },
+    "move": {
+      "title": "Presunúť do dashboardu",
+      "lead": "Vloží každý tu uložený graf ako panel do jedného dashboardu, Saved charts, navrhnutého ako zmena. Po schválení to spustite znova a grafy, ktoré obsahuje, sa tu odstránia. Graf, ktorý neobsahuje, zostane tu.",
+      "check": "Skontrolovať presun",
+      "willPropose": "{before, plural, one {# uložený graf} few {# uložené grafy} other {# uložených grafov}}: dashboard Saved charts dostane {panels, plural, one {# panel} few {# panely} other {# panelov}}. Do schválenia sa nič neodstráni.",
+      "willRemove": "Schválený dashboard Saved charts obsahuje {count, plural, one {# z týchto grafov} few {# z týchto grafov} other {# z týchto grafov}}; ich odstránením tu sa nič nestratí.",
+      "stay": "{count, plural, one {# graf zostáva uložený tu} few {# grafy zostávajú uložené tu} other {# grafov zostáva uložených tu}}:",
+      "propose": "Navrhnúť dashboard Saved charts",
+      "remove": "Odstrániť {count, plural, one {# presunutý graf} few {# presunuté grafy} other {# presunutých grafov}}",
+      "proposedTitle": "Dashboard Saved charts čaká na schválenie",
+      "openChange": "Otvoriť zmenu",
+      "removed": "{count, plural, one {Odstránený # presunutý graf} few {Odstránené # presunuté grafy} other {Odstránených # presunutých grafov}}",
+      "removedLead": "Sú to teraz panely dashboardu Saved charts."
     }
   },
   "activity": {

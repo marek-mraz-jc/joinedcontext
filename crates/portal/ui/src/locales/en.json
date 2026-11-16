@@ -7407,6 +7407,20 @@
       "previewEmpty": "Choose an Endpoint, a type and an attribute to see the rows this visualization will draw.",
       "noEndpointsTitle": "No Endpoint to draw from",
       "noEndpoints": "You may read no Endpoint of this project yet. Ask a project owner for read access, or create an Endpoint first."
+    },
+    "move": {
+      "title": "Move into a dashboard",
+      "lead": "Puts every chart saved here as a panel of one dashboard, Saved charts, proposed as a change. Once it is approved, run this again to remove the charts it holds. A chart it does not hold stays here.",
+      "check": "Check the move",
+      "willPropose": "{before, plural, one {# saved chart} other {# saved charts}}: the Saved charts dashboard gets {panels, plural, one {# panel} other {# panels}}. Nothing is removed until it is approved.",
+      "willRemove": "The approved Saved charts dashboard holds {count, plural, one {# of these charts} other {# of these charts}}; removing them here loses nothing.",
+      "stay": "{count, plural, one {# chart stays saved here} other {# charts stay saved here}}:",
+      "propose": "Propose the Saved charts dashboard",
+      "remove": "Remove {count, plural, one {# moved chart} other {# moved charts}}",
+      "proposedTitle": "The Saved charts dashboard waits for approval",
+      "openChange": "Open the change",
+      "removed": "{count, plural, one {Removed # moved chart} other {Removed # moved charts}}",
+      "removedLead": "They are panels of the Saved charts dashboard now."
     }
   },
   "activity": {
