@@ -324,6 +324,62 @@ describe("the shell against the UI contract", () => {
     expect(within(trail).getByRole("link", { name: "banskabystrica" })).toBeInTheDocument();
   });
 
+  // T-7148 (owner screenshot 2026-11-16): the switcher and its sidebar-wide menu cut every name
+  // ("banskabystrica-m…"), the badge was the slug's first two letters and an untitled project
+  // kept an empty second line.
+  const LONG = "banskabystrica-mestsky-urad-odbor-dopravy-a-zivotneho-prostredia";
+  const LONG_TITLE = "Mestský úrad Banská Bystrica, odbor dopravy a životného prostredia";
+
+  it("keeps a long project name whole in the menu and in the hint, wrapped rather than cut", async () => {
+    const { user } = await shell(`/projects/${LONG}/spaces`, {
+      "/api/v1/projects": { ...PROJECTS, items: [{ name: "helsinki" }, { name: LONG, title: { en: LONG_TITLE } }] },
+    });
+
+    const switcher = screen.getByRole("button", { name: i18n.t("nav.projects") });
+    await waitFor(() => expect(switcher).toHaveAttribute("title", `${LONG_TITLE} (${LONG})`));
+    await user.click(switcher);
+    const menu = await screen.findByRole("menu");
+    expect(menu.className).toContain("24rem");
+    const row = within(menu).getByRole("menuitem", { name: new RegExp(LONG_TITLE) });
+    expect(row).toHaveAttribute("title", `${LONG_TITLE} (${LONG})`);
+    expect(within(row).getByText(LONG_TITLE)).toBeInTheDocument();
+    expect(within(row).getByText(LONG)).toBeInTheDocument();
+    expect(row.querySelector(".truncate")).toBeNull();
+    // The router marks the open project's link `aria-current="page"`; the row's colour keys on it.
+    expect(row).toHaveAttribute("aria-current");
+    expect(row.className).toContain("[&[aria-current]]:bg-primary-soft");
+  });
+
+  it("gives an untitled project one line and no empty second one", async () => {
+    const { user } = await shell();
+
+    const switcher = screen.getByRole("button", { name: i18n.t("nav.projects") });
+    expect(switcher).toHaveAttribute("title", "banskabystrica");
+    expect(switcher.textContent).not.toContain("\u00a0");
+    expect(switcher.querySelector(".font-mono")).toBeNull();
+    await user.click(switcher);
+    const menu = await screen.findByRole("menu");
+    for (const row of within(menu).getAllByRole("menuitem")) {
+      expect(row.textContent).not.toContain("\u00a0");
+      expect(row.querySelector(".font-mono")).toBeNull();
+    }
+  });
+
+  it("marks the project with its title's initials, not the slug's first letters", async () => {
+    await shell("/projects/banskabystrica/spaces", {
+      "/api/v1/projects": { ...PROJECTS, items: [{ name: "banskabystrica", title: { en: "Banská Bystrica city data" } }] },
+    });
+    await waitFor(() => expect(screen.getByTestId("project-initials")).toHaveTextContent(/^BB$/));
+    expect(screen.getByTestId("project-initials")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("takes an untitled slug's words for its initials", async () => {
+    await shell("/projects/mesto-zvolen/spaces", {
+      "/api/v1/projects": { ...PROJECTS, items: [{ name: "mesto-zvolen" }] },
+    });
+    expect(screen.getByTestId("project-initials")).toHaveTextContent(/^MZ$/);
+  });
+
   it("writes the installation's address as a mail link, never as whatever the file said", async () => {
     // A branding file is edited by hand, so the footer's address is untrusted text (UI-48).
     branding = { ...BRANDING, contactEmail: "javascript:alert(1)" };
