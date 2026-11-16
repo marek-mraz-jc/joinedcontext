@@ -593,6 +593,8 @@ where
 /// slot when the Portal is in the role set.
 pub struct Built {
     pub router: Router,
+    /// The router's host table, swapped at run time from the host registry (T-7136).
+    pub hosts: Option<jc_router::HostSwap>,
     /// The in-pod listener's router: every host-mounted module of
     /// [`crate::siblings::IN_POD`] at `/{slug}`, `None` when none is (T-6705).
     pub in_pod: Option<Router>,
@@ -788,8 +790,10 @@ pub async fn build_router(
         Some(inner) => Some(inner.build()?.into_axum_router()),
         None => None,
     };
+    let router = builder.build()?;
     Ok(Built {
-        router: builder.build()?.into_axum_router(),
+        hosts: router.host_swap(),
+        router: router.into_axum_router(),
         in_pod,
         apps,
         portal,
@@ -1308,6 +1312,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         let (secrets, door) = (Arc::new(secrets), door);
         let shutdown = running.shutdown.clone();
         let gateway = built.gateway;
+        let hosts = built.hosts;
         let attempt = {
             let (cfg, setup, siblings, secrets, door, shutdown) = (
                 cfg.clone(),
@@ -1326,6 +1331,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
                         secrets: secrets.clone(),
                         door: door.clone(),
                         portal_internal: portal_internal.clone(),
+                        hosts: hosts.clone(),
                     },
                     mount.clone(),
                     shutdown.clone(),
@@ -1345,6 +1351,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
                     secrets,
                     door,
                     portal_internal: None,
+                    hosts: None,
                 };
                 let built = gateway_attempt(cfg, shared, late.mount, late.hop, internal);
                 match built.await {
@@ -1382,6 +1389,8 @@ struct Shared {
     secrets: Arc<crate::config::Secrets>,
     door: Option<Arc<crate::door::Door>>,
     portal_internal: Option<Arc<std::net::TcpListener>>,
+    /// The router's host table, which the Portal keeps on the host registry (T-7136).
+    hosts: Option<jc_router::HostSwap>,
 }
 
 impl Shared {
@@ -1430,6 +1439,7 @@ async fn portal_attempt(
                     .chain(modules::portal::reconciler_vars(&cfg))
                     .collect(),
                 modules::portal::registry_seed(&cfg),
+                shared.hosts.clone(),
                 mount,
                 &shutdown,
             ));

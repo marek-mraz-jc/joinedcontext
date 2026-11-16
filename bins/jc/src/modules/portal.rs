@@ -58,6 +58,7 @@ pub async fn build(
     orgs: &[crate::config::OrganizationSection],
     organizations: BTreeMap<String, String>,
     registry: Vec<SeedHost>,
+    hosts: Option<jc_router::HostSwap>,
     mount: Mount,
     shutdown: &CancellationToken,
 ) -> Result<(Router, Option<std::net::SocketAddr>), StartError> {
@@ -119,6 +120,9 @@ pub async fn build(
     }
     let _ = super::PORTAL_STATE.set(state.clone());
     server::spawn_background(&state);
+    if let (Some(pool), Some(hosts)) = (&state.db, hosts) {
+        tokio::spawn(watch_registry(pool.clone(), hosts, shutdown.clone()));
+    }
     let token = shutdown.clone();
     let internal = listener
         .map(|l| server::serve_internal_listener(&state, l, async move { token.cancelled().await }))
@@ -129,6 +133,89 @@ pub async fn build(
         .await
         .map_err(|e| err(format!("build listener: {e}")))?;
     Ok((server::app(state), internal))
+}
+
+/// How often jc rebuilds its host table from the registry without a notification.
+const REGISTRY_REBUILD: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Keeps the router's host table on the registry's `served` rows (T-7129 §1, T-7136): a rebuild
+/// at once, on every `NOTIFY organization_hosts` and every [`REGISTRY_REBUILD`]. A rebuild that
+/// fails keeps the table that answers and sets `jc_host_registry_stale` to 1 until one succeeds.
+async fn watch_registry(
+    pool: sqlx::PgPool,
+    hosts: jc_router::HostSwap,
+    shutdown: CancellationToken,
+) {
+    let mut listener: Option<sqlx::postgres::PgListener> = None;
+    loop {
+        if listener.is_none() {
+            listener = listen_registry(&pool).await;
+        }
+        let stale = match rebuild_hosts(&pool, &hosts).await {
+            Ok(served) => {
+                tracing::debug!(served, "host registry: host table rebuilt");
+                0.0
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "host registry: host table kept, the rebuild failed");
+                1.0
+            }
+        };
+        metrics::gauge!("jc_host_registry_stale").set(stale);
+        tokio::select! {
+            () = shutdown.cancelled() => return,
+            () = tokio::time::sleep(REGISTRY_REBUILD) => {}
+            woke = async {
+                match listener.as_mut() {
+                    Some(l) => l.recv().await.map(drop),
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Err(e) = woke {
+                    tracing::warn!(error = %e, "host registry: notifications lost, listening again");
+                    listener = None;
+                }
+            }
+        }
+    }
+}
+
+/// A listener on `organization_hosts`; `None` (logged) when the database refuses one, so the
+/// timed rebuild carries on alone.
+async fn listen_registry(pool: &sqlx::PgPool) -> Option<sqlx::postgres::PgListener> {
+    let mut listener = match sqlx::postgres::PgListener::connect_with(pool).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!(error = %e, "host registry: no notifications, rebuilding on the timer");
+            return None;
+        }
+    };
+    match listener.listen("organization_hosts").await {
+        Ok(()) => Some(listener),
+        Err(e) => {
+            tracing::warn!(error = %e, "host registry: no notifications, rebuilding on the timer");
+            None
+        }
+    }
+}
+
+/// Rebuilds the host table from every registry row; the number of `served` rows.
+async fn rebuild_hosts(pool: &sqlx::PgPool, hosts: &jc_router::HostSwap) -> Result<usize, String> {
+    let rows = joinedcontext_portal::host_registry::rows(pool)
+        .await
+        .map_err(|e| format!("the registry could not be read: {e}"))?;
+    let registry: Vec<jc_router::RegistryHost<'_>> = rows
+        .iter()
+        .map(|r| jc_router::RegistryHost {
+            host: &r.host,
+            organization: &r.organization,
+            organization_id: r.organization_id.as_deref(),
+            role: &r.role,
+            served: r.state == "served",
+        })
+        .collect();
+    hosts.rebuild(&registry).map_err(|e| e.to_string())?;
+    Ok(registry.iter().filter(|r| r.served).count())
 }
 
 /// The host registry's seed (T-7129 §1): every host of its own each `[[organizations]]` entry
