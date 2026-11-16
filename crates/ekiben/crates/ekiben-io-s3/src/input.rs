@@ -101,7 +101,7 @@ impl Input for S3Input {
                 .conn
                 .get_object(&ctx.org, &key, self.max_object_bytes)
                 .await?;
-            let mut parts = self.scanner.scan(body.to_vec())?;
+            let mut parts = self.scanner.scan(&body, &key)?;
             let header = |name: &str| {
                 headers
                     .get(name)

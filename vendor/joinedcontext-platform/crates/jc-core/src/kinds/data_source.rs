@@ -184,9 +184,14 @@ pub struct HttpConnection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive: Option<HttpArchive>,
     /// How the body becomes messages: `csv` or `xlsx` hands each row to the steps as one message
-    /// keyed by the header's column names; absent, the whole body is one message (PL-114).
+    /// keyed by the header's column names, `shapefile` each record of a zipped shapefile as a
+    /// WGS 84 GeoJSON Feature; absent, the whole body is one message (PL-114).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<HttpBodyFormat>,
+    /// The sheet of an `xlsx` body to read, by its name as the workbook's tab shows it
+    /// (`Stations 2026`); absent, the first sheet (T-7086).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
     /// Where the records sit in a JSON body: a dotted path to an array, `data.stations` for a
     /// GBFS feed. The runner hands each element to the steps as one message; absent, the whole
     /// body is one message. Names only, never an expression (PL-114).
@@ -268,6 +273,29 @@ pub enum HttpBodyFormat {
     /// keyed by the header row, each value as text the way the sheet's CSV export writes it,
     /// dates in RFC 3339 (the runner's `unarchive` format `xlsx`, T-7058).
     Xlsx,
+    /// A zip holding one ESRI shapefile layer (`.shp`, `.dbf`, `.prj`): one GeoJSON Feature per
+    /// record, reprojected from the `.prj`'s CRS to WGS 84, properties from the `.dbf` (the
+    /// runner's `unarchive` format `shapefile`, T-7089).
+    Shapefile,
+}
+
+/// Why `name` cannot be the `sheet` of an `xlsx` body, or `None`: the rules a spreadsheet's own
+/// tab names keep (1 to 31 characters, none of `: \ / ? * [ ]`, no control character, not
+/// starting or ending with `'`), so the name the runner is handed is one a workbook can hold.
+pub fn sheet_name_gap(name: &str) -> Option<&'static str> {
+    let length = name.chars().count();
+    if !(1..=31).contains(&length) {
+        Some("a sheet name is 1 to 31 characters, such as Stations 2026")
+    } else if name
+        .chars()
+        .any(|c| c.is_control() || matches!(c, ':' | '\\' | '/' | '?' | '*' | '[' | ']'))
+    {
+        Some("a sheet name holds no control character and none of : \\ / ? * [ ]")
+    } else if name.starts_with('\'') || name.ends_with('\'') || name.trim() != name {
+        Some("a sheet name neither starts nor ends with ' or a space")
+    } else {
+        None
+    }
 }
 
 /// The named members of the archive an `http` connection serves (PL-72, Architecture/08 §6).
@@ -609,13 +637,14 @@ impl HttpPaging {
                 "page and offset paging, total and maxRecords count the records: name their array in records",
             );
         }
-        if http.archive.is_some() || http.format == Some(HttpBodyFormat::Csv) {
+        if http.archive.is_some() || http.format.is_some() {
             return refuse(
                 "spec.http.paging",
-                if http.archive.is_some() {
-                    "archive"
-                } else {
-                    "csv"
+                match http.format {
+                    _ if http.archive.is_some() => "archive",
+                    Some(HttpBodyFormat::Xlsx) => "xlsx",
+                    Some(HttpBodyFormat::Shapefile) => "shapefile",
+                    _ => "csv",
                 }
                 .to_string(),
                 "paging reads JSON pages; an archive or a csv body is read whole",
@@ -1337,7 +1366,7 @@ impl DataSourceSpec {
         match &self.source_type {
             DataSourceType::Http | DataSourceType::GtfsRt => true,
             DataSourceType::Mqtt | DataSourceType::WebSocket | DataSourceType::Webhook => false,
-            DataSourceType::Runner(name) => bento_inputs::TERMINATING.contains(&name.as_str()),
+            DataSourceType::Runner(name) => input_terminates(name),
         }
     }
 
@@ -1412,7 +1441,7 @@ impl DataSourceSpec {
                 }
             }
             DataSourceType::Runner(name) => {
-                if !bento_inputs::INPUTS.contains(&name.as_str()) {
+                if !known_input(name) {
                     let mut accepted = vec!["mqtt", "http", "websocket", "gtfs-rt", "webhook"];
                     accepted.extend(runner_inputs());
                     return Err(Error::Invalid {
@@ -1511,7 +1540,21 @@ impl DataSourceSpec {
                         return Err(Error::Name {
                             field: "spec.http.records",
                             value: records.clone(),
-                            reason: "records splits a JSON body; a body of format csv or xlsx is split by its rows already",
+                            reason: "records splits a JSON body; a body of format csv, xlsx or shapefile is split by its rows already",
+                        });
+                    }
+                }
+                if let Some(sheet) = &http.sheet {
+                    let reason = if http.format != Some(HttpBodyFormat::Xlsx) {
+                        Some("sheet names the sheet of an xlsx body: set format: xlsx, or drop sheet")
+                    } else {
+                        sheet_name_gap(sheet)
+                    };
+                    if let Some(reason) = reason {
+                        return Err(Error::Name {
+                            field: "spec.http.sheet",
+                            value: sheet.clone(),
+                            reason,
                         });
                     }
                 }
@@ -1655,6 +1698,12 @@ impl DataSourceSpec {
             .iter()
             .find(|(n, _)| *n == runner_name)
             .map(|(_, paths)| *paths)
+            .or_else(|| {
+                EKIBEN_ONLY_INPUTS
+                    .iter()
+                    .find(|(n, _, _)| *n == runner_name)
+                    .map(|(_, paths, _)| *paths)
+            })
             .unwrap_or(&[]);
 
         let input_val = self.input.as_ref().expect("checked above");
@@ -1906,6 +1955,14 @@ const REFUSED_INPUTS: &[&str] = &[
     "subprocess",
 ];
 
+/// The inputs only the pipeline runner (ekiben) builds, which the generated Bento tables
+/// (`bento_inputs`) do not list (T-7087): per input the fields that hold a credential, so they
+/// take only a `${VAR}` of spec.secrets as a Bento-documented secret does (MF-35), and whether
+/// it ends on its own once it has read what there is. The Portal's form reads the same inputs
+/// from ui/src/schemas/ekiben-inputs.json; tests/runner_lists.test.ts keeps the two equal.
+const EKIBEN_ONLY_INPUTS: &[(&str, &[&str], bool)] =
+    &[("ftp", &["password"], true), ("imap", &["password"], true)];
+
 /// The inputs that carry inputs of their own, and the field that holds them.
 const WRAPPER_INPUTS: &[(&str, &str)] = &[
     ("batched", "child"),
@@ -1928,12 +1985,32 @@ fn refused_input(field: &'static str, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// The runner inputs an author may name: the Bento catalog's, less the refused ones, that the
-/// pipeline runner (ekiben) also builds (T-6825).
+/// Whether the runner input `name` ends on its own once it has read what there is: Bento's
+/// `TERMINATING` list or ekiben's own table (PL-04).
+pub fn input_terminates(name: &str) -> bool {
+    bento_inputs::TERMINATING.contains(&name)
+        || EKIBEN_ONLY_INPUTS
+            .iter()
+            .any(|(n, _, ends)| *n == name && *ends)
+}
+
+/// Whether `name` is an input the Bento catalog or ekiben's own table (`EKIBEN_ONLY_INPUTS`)
+/// knows.
+fn known_input(name: &str) -> bool {
+    bento_inputs::INPUTS.contains(&name) || EKIBEN_ONLY_INPUTS.iter().any(|(n, _, _)| *n == name)
+}
+
+/// The runner inputs an author may name: the Bento catalog's and ekiben's own
+/// (`EKIBEN_ONLY_INPUTS`), less the refused ones, that the pipeline runner (ekiben) builds
+/// (T-6825).
 pub fn runner_inputs() -> impl Iterator<Item = &'static str> {
-    bento_inputs::INPUTS.iter().copied().filter(|name| {
-        !REFUSED_INPUTS.contains(name) && super::ekiben_components::INPUTS.contains(name)
-    })
+    bento_inputs::INPUTS
+        .iter()
+        .copied()
+        .chain(EKIBEN_ONLY_INPUTS.iter().map(|(name, _, _)| *name))
+        .filter(|name| {
+            !REFUSED_INPUTS.contains(name) && super::ekiben_components::INPUTS.contains(name)
+        })
 }
 
 /// Refuses an input the Bento catalog knows and the pipeline runner does not build, at save
@@ -2009,7 +2086,7 @@ fn validate_input_tree(
             .iter()
             .filter(|(key, _)| !matches!(key.as_str(), "label" | "processors"))
         {
-            if !bento_inputs::INPUTS.contains(&child_name.as_str()) {
+            if !known_input(child_name) {
                 return Err(Error::Invalid {
                     field: "spec.input".to_owned(),
                     reason: format!("unknown input `{child_name}` inside `{name}`"),
@@ -2614,14 +2691,14 @@ mod runner_registry_tests {
         );
 
         let nested = source(
-            "  type: broker\n  input:\n    inputs:\n      - nats: { urls: [\"nats://broker.example.fi:4222\"], subject: a }\n      - amqp_0_9: { urls: [\"amqp://broker.example.fi:5672\"], queue: a }\n",
+            "  type: broker\n  input:\n    inputs:\n      - nats: { urls: [\"nats://broker.example.fi:4222\"], subject: a }\n      - kafka_franz: { seed_brokers: [\"broker.example.fi:9092\"], topics: [a] }\n",
         );
         let err = crate::registry::validate_yaml("DataSource", &nested)
             .expect("a kind")
-            .expect_err("amqp_0_9 is not built by the runner")
+            .expect_err("kafka_franz is not built by the runner")
             .to_string();
         assert!(
-            err.contains("spec.input") && err.contains("`amqp_0_9`"),
+            err.contains("spec.input") && err.contains("`kafka_franz`"),
             "{err}"
         );
 
@@ -2631,6 +2708,14 @@ mod runner_registry_tests {
         crate::registry::validate_yaml("DataSource", &nats)
             .expect("a kind")
             .expect("nats is built by the runner");
+
+        // T-7090: the runner builds amqp_0_9.
+        let amqp = source(
+            "  type: amqp_0_9\n  input:\n    urls: [\"amqps://broker.example.fi:5671/\"]\n    queue: vehicles\n",
+        );
+        crate::registry::validate_yaml("DataSource", &amqp)
+            .expect("a kind")
+            .expect("amqp_0_9 is built by the runner");
     }
 
     /// Every input offered is one the Bento catalog draws a form for and the runner builds.
@@ -2643,8 +2728,47 @@ mod runner_registry_tests {
                 super::super::ekiben_components::INPUTS.contains(name),
                 "{name}"
             );
-            assert!(super::bento_inputs::INPUTS.contains(name), "{name}");
+            assert!(
+                super::bento_inputs::INPUTS.contains(name)
+                    || super::EKIBEN_ONLY_INPUTS.iter().any(|(n, _, _)| n == name),
+                "{name}"
+            );
         }
+        assert!(offered.contains(&"ftp") && offered.contains(&"imap"));
         assert!(!offered.contains(&"kafka") && !offered.contains(&"stdin"));
+    }
+
+    /// T-7092: an ftp or imap password is a `${VAR}` naming a spec.secrets entry, as a
+    /// Bento-documented secret is; a password typed in is refused naming the field, and both
+    /// inputs end on their own, so a schedule may run them.
+    #[test]
+    fn an_ekiben_input_password_is_a_secret_reference_only() {
+        let ftp = |password: &str| {
+            source(&format!(
+                "  type: ftp\n  input:\n    address: files.example.org:21\n    username: exports\n    password: {password}\n    path: /exports/*.csv\n  secrets:\n    - name: ftp-login\n      key: password\n      envVar: FTP_PASSWORD\n"
+            ))
+        };
+        let err = crate::registry::validate_yaml("DataSource", &ftp("hunter2"))
+            .expect("a kind")
+            .expect_err("a literal password")
+            .to_string();
+        assert!(err.contains("spec.input.password"), "{err}");
+        crate::registry::validate_yaml("DataSource", &ftp("\"${FTP_PASSWORD}\""))
+            .expect("a kind")
+            .expect("a password from the source's secret");
+        let imap = source(
+            "  type: imap\n  input:\n    address: imap.example.org:993\n    username: exports@city.example.org\n    password: \"${OTHER}\"\n  secrets:\n    - name: imap-login\n      key: password\n      envVar: IMAP_PASSWORD\n",
+        );
+        let err = crate::registry::validate_yaml("DataSource", &imap)
+            .expect("a kind")
+            .expect_err("a variable no secret declares")
+            .to_string();
+        assert!(err.contains("spec.input.password"), "{err}");
+        for yaml in [ftp("\"${FTP_PASSWORD}\""), imap] {
+            let source =
+                crate::envelope::ResourceEnvelope::<super::DataSourceSpec>::from_yaml(&yaml)
+                    .expect("parses");
+            assert!(source.spec.terminates(), "{yaml}");
+        }
     }
 }

@@ -326,7 +326,11 @@ pub const SECRET_FIELDS: &[(&str, &[&str])] = &[
     ("sequence", &[]),
     (
         "sftp",
-        &["credentials.password", "credentials.private_key_pass"],
+        &[
+            "credentials.password",
+            "credentials.private_key_pass",
+            "credentials.private_key",
+        ],
     ),
     ("socket", &[]),
     ("socket_server", &[]),

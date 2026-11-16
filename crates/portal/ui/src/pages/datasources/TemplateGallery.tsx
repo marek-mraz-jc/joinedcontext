@@ -43,6 +43,7 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
   const [url, setUrl] = useState("");
   const [layer, setLayer] = useState("");
   const [records, setRecords] = useState("");
+  const [sheet, setSheet] = useState("");
   const [rows, setRows] = useState(true);
   const [allPages, setAllPages] = useState(true);
   const [secretName, setSecretName] = useState(NO_SECRET);
@@ -53,7 +54,9 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
   const [problem, setProblem] = useState<TemplateProblem | null>(null);
   const shownName = named ? name : nameFrom(url);
   const errorsFor = (field: TemplateProblem | TemplateProblem[]) =>
-    problem && ([] as TemplateProblem[]).concat(field).includes(problem) ? [t(`datasources.template.problem.${problem}`)] : undefined;
+    problem && ([] as TemplateProblem[]).concat(field).includes(problem)
+      ? [t(problem === "sheet" ? "datasources.sheet.problem" : `datasources.template.problem.${problem}`)]
+      : undefined;
   // An open data API's block as the discovery reads and writes it: the typed URL until a pick.
   const presetHttp = picked?.preset ? (http ?? { url: url.trim(), preset: { kind: picked.preset } }) : undefined;
   const values = () => ({
@@ -61,6 +64,7 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
     url,
     layer,
     records,
+    sheet,
     rows,
     http: presetHttp,
     paging: allPages ? (guess.data?.paging as Record<string, unknown> | undefined) : undefined,
@@ -208,6 +212,8 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
                 value={url}
                 onChange={(e) => {
                   setUrl(e.target.value);
+                  // The name derives from the address, so a new address answers both refusals.
+                  if (problem === "url" || problem === "ckanDataset" || (problem === "name" && !named)) setProblem(null);
                   setHttp(undefined);
                   guess.reset();
                 }}
@@ -308,7 +314,7 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
               <p className="text-caption text-fg-muted">{t("datasources.wizard.oneRead")}</p>
             )}
           </section>
-          {picked.group === "file" && (picked.id === "csv" || picked.asksRecords) ? (
+          {picked.group === "file" && (picked.id === "csv" || picked.asksRecords || picked.asksSheet) ? (
             <section className="flex flex-col gap-2">
               {step(t("datasources.wizard.format"))}
               {picked.id === "csv" ? (
@@ -318,7 +324,8 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
                   checked={rows}
                   onChange={(event) => setRows(event.target.checked)}
                 />
-              ) : (
+              ) : null}
+              {picked.asksRecords ? (
                 <Field
                   id="template-records"
                   label={t("datasources.field.records")}
@@ -335,7 +342,20 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
                     }}
                   />
                 </Field>
-              )}
+              ) : null}
+              {picked.asksSheet ? (
+                <Field id="template-sheet" label={t("datasources.sheet.label")} help={t("datasources.sheet.help")} errors={errorsFor("sheet")}>
+                  <Input
+                    id="template-sheet"
+                    maxLength={31}
+                    value={sheet}
+                    onChange={(e) => {
+                      setSheet(e.target.value);
+                      if (problem === "sheet") setProblem(null);
+                    }}
+                  />
+                </Field>
+              ) : null}
             </section>
           ) : null}
           <section className="flex flex-col gap-2">

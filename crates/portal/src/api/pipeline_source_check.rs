@@ -245,6 +245,7 @@ fn whole_source(
         url: None,
         format: SampleFormat::Text,
         records: None,
+        sheet: None,
     };
     let mut config = harnessed(&state.mirror, project, spec, &sample, capture, RECORDS)?;
     with_lifetime(&mut config, spec, attributes)?;

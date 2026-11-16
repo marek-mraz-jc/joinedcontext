@@ -50,6 +50,14 @@
    "reason": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)"
   },
   {
+   "name": "inputs/ftp",
+   "reason": "files under a path glob of an FTP server, explicit FTPS unless the allow_plain_ftp quota (ekiben-io-remote, T-7087 G-11)"
+  },
+  {
+   "name": "inputs/imap",
+   "reason": "attachments of the unread mails of an IMAPS mailbox, marked or moved after the ack (ekiben-io-remote, T-7087 G-11)"
+  },
+  {
    "name": "inputs/ngsi_ld",
    "reason": "E7 NGSI-LD component (ekiben-io-ngsild), the runner's own way to an Endpoint"
   },
@@ -84,7 +92,6 @@
   "caches/memcached",
   "caches/mongodb",
   "caches/ristretto",
-  "inputs/amqp_0_9",
   "inputs/amqp_1",
   "inputs/aws_kinesis",
   "inputs/aws_sqs",
@@ -125,7 +132,6 @@
   "inputs/redis_scan",
   "inputs/redis_streams",
   "inputs/s2",
-  "inputs/sftp",
   "inputs/socket_server",
   "inputs/subprocess",
   "inputs/twitter_search",
@@ -213,8 +219,7 @@
   "processors/template",
   "processors/wasm",
   "rate-limits/redis",
-  "scanners/avro",
-  "scanners/switch"
+  "scanners/avro"
  ],
  "refused": [
   {

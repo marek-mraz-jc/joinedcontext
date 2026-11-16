@@ -102,6 +102,7 @@ pub(crate) fn page_read(url: &Url, capture: &str) -> Result<Value, ApiError> {
         url: None,
         format: SampleFormat::Text,
         records: None,
+        sheet: None,
     };
     let mut config =
         harness(&probe, &sample, capture).map_err(|e| ApiError::Internal(e.to_string()))?;

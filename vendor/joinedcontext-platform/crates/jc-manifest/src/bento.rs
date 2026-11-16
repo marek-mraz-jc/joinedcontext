@@ -324,7 +324,8 @@ pub fn input_of(spec: &DataSourceSpec, context: &InputContext) -> Value {
 /// GTFS-realtime prepends its protobuf decoder: the feed arrives as protobuf and every pipeline
 /// reading it would otherwise decode it again in its own mapping. An `http` connection refuses a
 /// body over its `maxBytes` (`body_bound`), then, with an `archive`, reads its named members
-/// (`archive_processors`), with `format: csv` or `xlsx` splits it into one message per row and with
+/// (`archive_processors`), with `format: csv` or `xlsx` splits it into one message per row (a
+/// `shapefile` into one GeoJSON Feature per record) and with
 /// `records` into one message per element of that array (PL-114).
 pub fn prepended_processors(spec: &DataSourceSpec, context: &InputContext) -> Vec<Value> {
     if let (DataSourceType::Http, Some(http)) = (&spec.source_type, spec.http.as_ref()) {
@@ -335,7 +336,13 @@ pub fn prepended_processors(spec: &DataSourceSpec, context: &InputContext) -> Ve
         }
         match http.format {
             Some(HttpBodyFormat::Csv) => processors.push(rows_of("csv")),
-            Some(HttpBodyFormat::Xlsx) => processors.push(rows_of("xlsx")),
+            // A named sheet goes as `xlsx:<sheet>`, which validate keeps to a tab name a workbook
+            // can hold (`sheet_name_gap`), so no `:` splits it again (T-7086).
+            Some(HttpBodyFormat::Xlsx) => processors.push(rows_of(&match &http.sheet {
+                Some(sheet) => format!("xlsx:{sheet}"),
+                None => "xlsx".to_string(),
+            })),
+            Some(HttpBodyFormat::Shapefile) => processors.push(rows_of("shapefile")),
             None => {}
         }
         if let Some(mapping) = http

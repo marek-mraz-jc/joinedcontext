@@ -1356,12 +1356,14 @@ async fn pipeline_verdict(
             url: None,
             format: sample_format(filename),
             records: None,
+            sheet: None,
         },
         (None, Some(url)) => Sample {
             text: None,
             url: Some(url.to_owned()),
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         },
         (None, None) => return Some(red(m, "no sample to test the mapping on".into())),
     };
