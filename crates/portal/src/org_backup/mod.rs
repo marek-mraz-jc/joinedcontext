@@ -16,6 +16,8 @@
 //! Every run, delete and restore is written to `organization_backup_log` with who and when: that
 //! table is the audit, kept as long as the Organization's target exists.
 
+pub mod data;
+pub mod restore;
 pub mod s3;
 
 use std::collections::BTreeMap;
@@ -32,8 +34,10 @@ use crate::resource::ResourceEnvelope;
 use crate::state::AppState;
 use crate::store::{ListOptions, Mirror};
 
-/// The backup this module runs. `data` is T-7155's and has no exporter yet.
+/// The configuration backup: manifests, schemas, no database rows.
 pub const CONFIGURATION: &str = "configuration";
+/// The data backup: the Organization's database rows, age-encrypted ([`data`], T-7168).
+pub const DATA: &str = "data";
 
 /// Hours between scheduled runs: at least one, at most four weeks.
 pub const EVERY_HOURS: std::ops::RangeInclusive<i32> = 1..=672;
@@ -59,6 +63,9 @@ pub struct Target {
     pub enabled: bool,
     pub every_hours: i32,
     pub keep_days: i32,
+    /// The age recipients (`age1…`, public keys) a data archive is encrypted to: the working
+    /// one first, then the recovery one. Empty for the configuration backup.
+    pub recipients: Vec<String>,
     pub updated_by: String,
     /// RFC 3339.
     pub updated_at: String,
@@ -67,9 +74,18 @@ pub struct Target {
 }
 
 impl Target {
-    /// The folder of this Organization's bundles: `{prefix}{organization}/configuration/`.
+    /// The folder of this Organization's bundles: `{prefix}{organization}/{kind}/`.
     pub fn folder(&self) -> String {
         format!("{}{}/{}/", self.prefix, self.organization, self.kind)
+    }
+
+    /// The one object every run writes a new version of.
+    pub fn object_key(&self) -> String {
+        if self.kind == DATA {
+            format!("{}archive.zip.age", self.folder())
+        } else {
+            format!("{}bundle.zip", self.folder())
+        }
     }
 }
 
@@ -92,6 +108,10 @@ pub struct LogEntry {
     pub version_id: String,
     /// What happened, in words; never a credential.
     pub message: String,
+    /// The SHA-256 (hex) of the object a run uploaded; empty for every other act. A restore
+    /// opens only these bytes.
+    #[serde(skip)]
+    pub sha256: String,
 }
 
 /// What a new log entry says; the store stamps `id` and `at`.
@@ -105,6 +125,7 @@ pub struct NewEntry<'a> {
     pub object_key: &'a str,
     pub version_id: &'a str,
     pub message: &'a str,
+    pub sha256: &'a str,
 }
 
 fn rfc3339(at: time::OffsetDateTime) -> String {
@@ -137,6 +158,7 @@ type TargetRow = (
     bool,
     i32,
     i32,
+    Vec<String>,
     String,
     time::OffsetDateTime,
     Option<time::OffsetDateTime>,
@@ -155,9 +177,10 @@ fn target_of(row: TargetRow) -> Target {
         enabled: row.8,
         every_hours: row.9,
         keep_days: row.10,
-        updated_by: row.11,
-        updated_at: rfc3339(row.12),
-        last_run_at: row.13.map(rfc3339),
+        recipients: row.11,
+        updated_by: row.12,
+        updated_at: rfc3339(row.13),
+        last_run_at: row.14.map(rfc3339),
     }
 }
 
@@ -170,6 +193,7 @@ type LogRow = (
     time::OffsetDateTime,
     bool,
     i64,
+    String,
     String,
     String,
     String,
@@ -200,8 +224,8 @@ impl BackupStore {
             Inner::Postgres(pool) => {
                 let row: Option<TargetRow> = sqlx::query_as(
                     "SELECT organization, kind, endpoint, region, bucket, prefix, access_key_id, \
-                     sealed_secret, enabled, every_hours, keep_days, updated_by, updated_at, \
-                     last_run_at FROM organization_backup_targets \
+                     sealed_secret, enabled, every_hours, keep_days, recipients, updated_by, \
+                     updated_at, last_run_at FROM organization_backup_targets \
                      WHERE organization = $1 AND kind = $2",
                 )
                 .bind(organization)
@@ -233,12 +257,12 @@ impl BackupStore {
                 sqlx::query(
                     "INSERT INTO organization_backup_targets (organization, kind, endpoint, \
                      region, bucket, prefix, access_key_id, sealed_secret, enabled, every_hours, \
-                     keep_days, updated_by, updated_at) \
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now()) \
+                     keep_days, updated_by, recipients, updated_at) \
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now()) \
                      ON CONFLICT (organization, kind) DO UPDATE SET endpoint = $3, region = $4, \
                      bucket = $5, prefix = $6, access_key_id = $7, sealed_secret = $8, \
                      enabled = $9, every_hours = $10, keep_days = $11, updated_by = $12, \
-                     updated_at = now()",
+                     recipients = $13, updated_at = now()",
                 )
                 .bind(&target.organization)
                 .bind(&target.kind)
@@ -252,6 +276,7 @@ impl BackupStore {
                 .bind(target.every_hours)
                 .bind(target.keep_days)
                 .bind(&target.updated_by)
+                .bind(&target.recipients)
                 .execute(pool)
                 .await
                 .map_err(db)?;
@@ -295,8 +320,8 @@ impl BackupStore {
                      WHERE enabled AND (last_run_at IS NULL \
                      OR last_run_at <= now() - make_interval(hours => every_hours)) \
                      RETURNING organization, kind, endpoint, region, bucket, prefix, \
-                     access_key_id, sealed_secret, enabled, every_hours, keep_days, updated_by, \
-                     updated_at, last_run_at",
+                     access_key_id, sealed_secret, enabled, every_hours, keep_days, recipients, \
+                     updated_by, updated_at, last_run_at",
                 )
                 .fetch_all(pool)
                 .await
@@ -352,14 +377,15 @@ impl BackupStore {
                     object_key: entry.object_key.to_owned(),
                     version_id: entry.version_id.to_owned(),
                     message: entry.message.to_owned(),
+                    sha256: entry.sha256.to_owned(),
                 });
                 Ok(())
             }
             Inner::Postgres(pool) => {
                 sqlx::query(
                     "INSERT INTO organization_backup_log (organization, kind, action, actor, ok, \
-                     bytes, object_key, version_id, message) \
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+                     bytes, object_key, version_id, message, sha256) \
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
                 )
                 .bind(entry.organization)
                 .bind(entry.kind)
@@ -370,6 +396,7 @@ impl BackupStore {
                 .bind(entry.object_key)
                 .bind(entry.version_id)
                 .bind(entry.message)
+                .bind(entry.sha256)
                 .execute(pool)
                 .await
                 .map_err(db)?;
@@ -399,7 +426,7 @@ impl BackupStore {
             Inner::Postgres(pool) => {
                 let rows: Vec<LogRow> = sqlx::query_as(
                     "SELECT id, organization, kind, action, actor, at, ok, bytes, object_key, \
-                     version_id, message FROM organization_backup_log \
+                     version_id, message, sha256 FROM organization_backup_log \
                      WHERE organization = $1 AND kind = $2 ORDER BY id DESC LIMIT $3",
                 )
                 .bind(organization)
@@ -422,6 +449,7 @@ impl BackupStore {
                         object_key: r.8,
                         version_id: r.9,
                         message: r.10,
+                        sha256: r.11,
                     })
                     .collect())
             }
@@ -616,6 +644,54 @@ pub struct Index {
     pub items: Vec<IndexItem>,
 }
 
+/// Where the Organization's people sit in a bundle (T-7164).
+pub const PEOPLE_PATH: &str = "organization/people.yaml";
+
+/// One person of `organization/people.yaml`: the id, username and e-mail and nothing else, so no
+/// credential, second factor, session or attribute of the realm reaches a bundle (T-7164).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Person {
+    pub id: String,
+    pub username: String,
+    pub email: Option<String>,
+}
+
+/// The people of `organization`: everyone in its own realm when it has one (T-7142), else the
+/// members of `/{organization}/members` in the installation realm. `None` when this Portal has no
+/// admin client for that realm, or the installation realm has no members group for it.
+pub async fn people_of(
+    state: &AppState,
+    organization: &str,
+) -> Result<Option<Vec<Person>>, ApiError> {
+    let users = match state.organization_realms.get(organization) {
+        Some(realm) => match realm.people.as_ref() {
+            Some(people) => Some(people.admin().await?.everyone().await?),
+            None => None,
+        },
+        None => match state.people.as_deref() {
+            Some(people) => people.admin().await?.members_of(organization).await?,
+            None => None,
+        },
+    };
+    Ok(users.map(persons))
+}
+
+/// The column allow-list of a person, sorted by id, each person once.
+fn persons(users: Vec<crate::people::KcUser>) -> Vec<Person> {
+    let mut people: Vec<Person> = users
+        .into_iter()
+        .map(|user| Person {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+        })
+        .collect();
+    people.sort_by(|a, b| a.id.cmp(&b.id));
+    people.dedup_by(|a, b| a.id == b.id);
+    people
+}
+
 /// Where an Organization-level manifest sits in the bundle.
 fn organization_path(envelope: &ResourceEnvelope) -> String {
     let plural = crate::resource::by_kind(&envelope.kind)
@@ -632,24 +708,34 @@ const README_LEFT_OUT: &str = "\
   blocks, pipeline stream bodies (`bento.yaml`). The Pipeline and App manifests stay and name
   what they run by id and version.
 - Secret values: a credential field stays with an empty value, a `secretRef` stays as it is.
-- People's credentials, second factors and sessions: people are not in this bundle.
+- People's credentials, second factors, sessions and every other field of a person:
+  `organization/people.yaml` holds each person's id, username and e-mail only. A restore never
+  creates a person: the plan lists the people missing today, to invite by hand.
 - Other Organizations, and the installation's own settings.
 ";
 
 /// The README of a bundle: what each folder holds, and what is left out on purpose.
-fn readme(index: &Index, projects: &[(String, String)]) -> String {
+fn readme(index: &Index, projects: &[(String, String)], has_people: bool) -> String {
     let mut text = format!(
         "# Configuration backup of {}\n\nTaken {} by {}. `index.yaml` lists every manifest with \
          its kind, id, path and revision.\n\n## What is inside\n\n\
          - `organization/`: the Organization's own manifests (the Organization, its Portal hosts \
          and branding, roles, role bindings, groups, catalogue connections and the other \
          settings of the Administration page), one file per manifest named by its id.\n\
+         - `organization/people.yaml`: the Organization's people, each as id, username and \
+         e-mail.\n\
          - `schemas/kinds/`: the JSON Schema of every Organization-level kind in `organization/`.\n\
          - `projects/<name>/`: each project's configuration export at the commit `index.yaml` \
          names, with its own `bundle.yaml`, README and schemas (kinds and data models: LinkML \
          and JSON Schema).\n\n",
         index.organization, index.taken_at, index.taken_by
     );
+    if !has_people {
+        text.push_str(
+            "This bundle holds no `organization/people.yaml`: the Portal that took it reads no \
+             people of this Organization (no Keycloak admin client, or no members group).\n\n",
+        );
+    }
     if !projects.is_empty() {
         text.push_str("Projects:\n\n");
         for (project, commit) in projects {
@@ -690,6 +776,12 @@ pub async fn build_bundle(
             path,
             revision: String::new(),
         });
+    }
+    let people = people_of(state, organization).await?;
+    if let Some(people) = &people {
+        let text = serde_norway::to_string(people).map_err(zip_error)?;
+        writer.start_file(PEOPLE_PATH, options).map_err(zip_error)?;
+        writer.write_all(text.as_bytes()).map_err(zip_error)?;
     }
     for kind in &kinds {
         if let Some(schema) = jc_core::registry::schema_of(kind) {
@@ -753,7 +845,7 @@ pub async fn build_bundle(
         .map_err(zip_error)?;
     writer.start_file("README.md", options).map_err(zip_error)?;
     writer
-        .write_all(readme(&index, &projects).as_bytes())
+        .write_all(readme(&index, &projects, people.is_some()).as_bytes())
         .map_err(zip_error)?;
     let cursor = writer.finish().map_err(zip_error)?;
     Ok((cursor.into_inner(), index))
@@ -784,8 +876,8 @@ pub async fn require_versioning(
 /// target's retention removed, the outcome logged. Answers the log entry's message.
 pub async fn run(state: &AppState, target: &Target, actor: &str) -> Result<LogEntry, ApiError> {
     let outcome = upload(state, target, actor).await;
-    let (ok, bytes, key, version, message) = match &outcome {
-        Ok((bytes, key, version, pruned)) => (
+    let (ok, bytes, key, version, message, sha256) = match &outcome {
+        Ok((bytes, key, version, pruned, sha256)) => (
             true,
             i64::try_from(*bytes).unwrap_or(i64::MAX),
             key.clone(),
@@ -798,8 +890,16 @@ pub async fn run(state: &AppState, target: &Target, actor: &str) -> Result<LogEn
             } else {
                 "uploaded".to_owned()
             },
+            sha256.clone(),
         ),
-        Err(err) => (false, 0, String::new(), String::new(), err.to_string()),
+        Err(err) => (
+            false,
+            0,
+            String::new(),
+            String::new(),
+            err.to_string(),
+            String::new(),
+        ),
     };
     if !ok {
         tracing::warn!(organization = %target.organization, %message, "organization backup failed");
@@ -816,6 +916,7 @@ pub async fn run(state: &AppState, target: &Target, actor: &str) -> Result<LogEn
             object_key: &key,
             version_id: &version,
             message: &message,
+            sha256: &sha256,
         })
         .await?;
     let entries = state
@@ -833,14 +934,19 @@ async fn upload(
     state: &AppState,
     target: &Target,
     actor: &str,
-) -> Result<(usize, String, String, usize), ApiError> {
+) -> Result<(usize, String, String, usize, String), ApiError> {
     let http = &state.org_backup_egress.http;
     let bucket = bucket(state, target)?;
     require_versioning(http, &bucket).await?;
-    let (bytes, _index) = build_bundle(state, &target.organization, actor).await?;
+    let bytes = if target.kind == DATA {
+        data::encrypted_archive(state, target, actor).await?
+    } else {
+        build_bundle(state, &target.organization, actor).await?.0
+    };
     let size = bytes.len();
+    let sha256 = sha256_hex(&bytes);
     // One key: every run is a new version of it, which is what "the versions" of the page lists.
-    let key = format!("{}bundle.zip", target.folder());
+    let key = target.object_key();
     let version = bucket
         .put(http, &key, bytes)
         .await
@@ -849,7 +955,16 @@ async fn upload(
         tracing::warn!(organization = %target.organization, error = %err, "old backup versions not removed");
         0
     });
-    Ok((size, key, version, pruned))
+    Ok((size, key, version, pruned, sha256))
+}
+
+/// The SHA-256 of `bytes`, lower-case hex: what the run log binds a version's bytes by.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Removes the noncurrent versions (and delete markers) of the target's folder that became
@@ -889,7 +1004,7 @@ pub fn spawn_schedule(state: AppState) {
                     continue;
                 }
             };
-            for target in due.into_iter().filter(|t| t.kind == CONFIGURATION) {
+            for target in due {
                 if let Err(err) = run(&state, &target, "schedule").await {
                     tracing::warn!(organization = %target.organization, error = %err, "scheduled organization backup failed");
                 }
@@ -1024,5 +1139,125 @@ mod tests {
         }
         let fine = url::Url::parse("https://s3.eu-central-1.amazonaws.com").ok();
         assert!(fine.is_some_and(|url| egress.check(&url).is_ok()));
+    }
+
+    /// A realm of the installation with the members groups of two Organizations, `hel` and
+    /// `esp`, and one person in both. Keycloak answers each user with more than the three fields.
+    async fn two_organizations() -> wiremock::MockServer {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/jc/protocol/openid-connect/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "access_token": "t" })),
+            )
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/jc/groups"))
+            .and(query_param("search", "members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": "g-esp", "path": "/esp", "subGroups": [
+                    { "id": "g-esp-members", "path": "/esp/members" } ] },
+                { "id": "g-hel", "path": "/hel", "subGroups": [
+                    { "id": "g-hel-members", "path": "/hel/members" } ] }
+            ])))
+            .mount(&realm)
+            .await;
+        let user = |id: &str, name: &str| {
+            serde_json::json!({
+                "id": id, "username": name, "email": format!("{name}@example.org"),
+                "firstName": "First", "lastName": "Last", "enabled": true,
+                "totp": true, "credentials": [{ "type": "password", "value": "hunter2" }],
+                "attributes": { "phone": ["+358 40 123"] }, "requiredActions": ["CONFIGURE_TOTP"]
+            })
+        };
+        for (group, users) in [
+            (
+                "g-hel-members",
+                vec![user("u-hel", "aino"), user("u-both", "kai")],
+            ),
+            (
+                "g-esp-members",
+                vec![user("u-both", "kai"), user("u-esp", "eero")],
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(format!("/admin/realms/jc/groups/{group}/members")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(Value::Array(users)))
+                .mount(&realm)
+                .await;
+        }
+        realm
+    }
+
+    async fn people_yaml(realm: &wiremock::MockServer, organization: &str) -> Option<String> {
+        let people = crate::people::People::new(
+            &format!("{}/realms/jc", realm.uri()),
+            "portal".into(),
+            crate::auth::client_auth::ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        let admin = people.admin().await.expect("a token");
+        let users = admin
+            .members_of(organization)
+            .await
+            .expect("the realm answers")?;
+        Some(serde_norway::to_string(&persons(users)).expect("yaml"))
+    }
+
+    #[tokio::test]
+    async fn an_organization_bundle_holds_its_people_as_id_username_and_email_only() {
+        let realm = two_organizations().await;
+        let hel = people_yaml(&realm, "hel")
+            .await
+            .expect("hel has a members group");
+        let esp = people_yaml(&realm, "esp")
+            .await
+            .expect("esp has a members group");
+
+        // No person of the other Organization, by id, username or e-mail.
+        for other in ["u-esp", "eero"] {
+            assert!(!hel.contains(other), "{other} in hel's people: {hel}");
+        }
+        assert!(!esp.contains("u-hel") && !esp.contains("aino"), "{esp}");
+
+        // Each entry holds the three allowed keys and nothing else.
+        for text in [&hel, &esp] {
+            let entries: Vec<serde_json::Map<String, Value>> =
+                serde_norway::from_str(text).expect("a list of people");
+            assert_eq!(entries.len(), 2, "{text}");
+            for entry in &entries {
+                let keys: std::collections::BTreeSet<&str> =
+                    entry.keys().map(String::as_str).collect();
+                assert_eq!(keys, ["email", "id", "username"].into(), "{text}");
+            }
+            for secret in [
+                "hunter2",
+                "totp",
+                "credentials",
+                "phone",
+                "First",
+                "CONFIGURE_TOTP",
+            ] {
+                assert!(!text.contains(secret), "{secret} in {text}");
+            }
+        }
+
+        // A member of both Organizations is in both bundles under the same id.
+        let kai = |text: &str| -> Vec<Person> {
+            serde_norway::from_str::<Vec<Person>>(text)
+                .expect("people")
+                .into_iter()
+                .filter(|p| p.username == "kai")
+                .collect()
+        };
+        assert_eq!(kai(&hel), kai(&esp));
+        assert_eq!(kai(&hel)[0].id, "u-both");
+
+        // An Organization without a members group has no people here: no file, never everyone.
+        assert_eq!(people_yaml(&realm, "turku").await, None);
     }
 }

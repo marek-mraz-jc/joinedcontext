@@ -294,6 +294,10 @@ struct World {
 /// `bravo-town`). ada administers `installation`, bob administers the other one, mia only reads
 /// alfa-city.
 async fn world(installation: &str, versioning: &str) -> World {
+    world_with(installation, versioning, None).await
+}
+
+async fn world_with(installation: &str, versioning: &str, db: Option<sqlx::PgPool>) -> World {
     let identity = age::x25519::Identity::generate();
     let dir = std::env::temp_dir().join(format!(
         "org-backup-{}-{}",
@@ -315,7 +319,11 @@ async fn world(installation: &str, versioning: &str) -> World {
     let (endpoint, bucket) = fake_s3(versioning).await;
     let shako =
         ShakoClient::new(forge.uri().parse().expect("url"), "jc", "org", "token").expect("shako");
-    let state = AppState::new(config, None)
+    let mut state = AppState::new(config, None);
+    if let Some(db) = db {
+        state = state.with_db(db);
+    }
+    let state = state
         .with_shako(Arc::new(shako))
         .with_org_backup_egress(reqwest::Client::new());
     let other = if installation == "alfa" {
@@ -526,6 +534,820 @@ async fn only_the_organizations_administrators_reach_its_backup() {
         );
     }
     assert!(world.bucket.lock().expect("bucket").objects.is_empty());
+}
+
+const DATA_DOOR: &str = "/api/v1/organization/backups/data";
+const DATA_KEY: &str = "jc/alfa/data/archive.zip.age";
+
+/// Rows of both Organizations in the Portal's tables, each with a mark the archive is searched
+/// for, and secret material in the columns that must never leave.
+const PORTAL_SEED: &str = "
+INSERT INTO activity (time, project, kind, source, summary, severity) VALUES (now(), 'alfa-city', 'pipeline', 'portal', 'alfa-activity-mark', 'info');
+INSERT INTO entity_comments (project, space, urn, author, author_name, body) VALUES ('alfa-city', 'air', 'urn:ngsi-ld:X:alfa-1', 'ada', 'Ada', 'alfa-comment-mark');
+INSERT INTO agent_runs (id, project, app_name, endpoint_name, endpoint_slug, profile, app_class, visibility, prompt, prompt_digest, data_needs, branch, path_prefix, status, ticket_hash, created_by, expires_at) VALUES ('run-alfa-1', 'alfa-city', 'a', 'e', 's', 'p', 'static', 'private', 'alfa-prompt-mark', 'd', '[]', 'b', 'x/', 'queued', 'ALFA_TICKET_HASH_SECRET', 'ada', now());
+INSERT INTO agent_run_events (run_id, seq, kind, payload) VALUES ('run-alfa-1', 1, 'step', '{}');
+INSERT INTO app_builds (project, app, commit, class, trigger, state, token_sha256) VALUES ('alfa-city', 'app', 'c', 'node', 'push', 'pending', 'ALFA_BUILD_TOKEN_SECRET');
+INSERT INTO workspaces (name, project, owner, base_revision, scope, expires_at, preview_salt) VALUES ('ws-alfa', 'alfa-city', 'ada', 'r', '{}', now(), 'ALFA_PREVIEW_SALT_SECRET');
+INSERT INTO domain_verifications (organization, domain, challenge, state) VALUES ('alfa', 'alfa.example', 'ALFA_DNS_CHALLENGE_SECRET', 'pending');
+";
+
+/// A database of its own for one test, migrated and seeded with both Organizations' rows; `None`
+/// (the test says it skipped) without `JC_PORTAL_TEST_DATABASE_URL`.
+async fn seeded_portal_db() -> Option<sqlx::PgPool> {
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+    else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return None;
+    };
+    let name = format!("org_data_{}", common::unique::unique().replace('-', "_"));
+    let admin = sqlx::PgPool::connect(&url)
+        .await
+        .expect("the test database");
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(&admin)
+        .await
+        .expect("a fresh database");
+    let mut own = url::Url::parse(&url).expect("url");
+    own.set_path(&format!("/{name}"));
+    let pool = joinedcontext_portal::db::connect(own.as_str())
+        .await
+        .expect("migrated");
+    let bravo = PORTAL_SEED
+        .replace("alfa-city", "bravo-town")
+        .replace("alfa", "bravo")
+        .replace("ALFA", "BRAVO");
+    for statement in PORTAL_SEED.split(";\n").chain(bravo.split(";\n")) {
+        if !statement.trim().is_empty() {
+            sqlx::query(sqlx::AssertSqlSafe(statement))
+                .execute(&pool)
+                .await
+                .expect(statement);
+        }
+    }
+    Some(pool)
+}
+
+/// Two age identities: the working one and the recovery one.
+fn identities() -> [age::x25519::Identity; 2] {
+    [
+        age::x25519::Identity::generate(),
+        age::x25519::Identity::generate(),
+    ]
+}
+
+fn data_target(endpoint: &str, ids: &[age::x25519::Identity; 2]) -> Value {
+    let mut body = target(endpoint);
+    body["workingRecipient"] = json!(ids[0].to_public().to_string());
+    body["recoveryRecipient"] = json!(ids[1].to_public().to_string());
+    body
+}
+
+fn decrypt(sealed: &[u8], identity: &age::x25519::Identity) -> Vec<u8> {
+    let decryptor = age::Decryptor::new(sealed).expect("an age file");
+    let mut reader = decryptor
+        .decrypt(std::iter::once(identity as &dyn age::Identity))
+        .expect("the identity opens it");
+    let mut plain = Vec::new();
+    reader.read_to_end(&mut plain).expect("read");
+    plain
+}
+
+async fn data_saved_and_run(world: &World, ids: &[age::x25519::Identity; 2]) -> Value {
+    let saved = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DATA_DOOR,
+        Some(data_target(&world.endpoint, ids)),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.text);
+    let run = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DATA_DOOR}/run"),
+        None,
+    )
+    .await;
+    assert_eq!(run.status, StatusCode::OK, "{}", run.text);
+    body(&run)
+}
+
+#[tokio::test]
+async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let world = world_with("alfa", "Enabled", Some(db)).await;
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    assert_eq!(run["ok"], true, "{run}");
+    let sealed = latest(&world.bucket, DATA_KEY);
+    assert!(
+        zip::ZipArchive::new(std::io::Cursor::new(&sealed)).is_err(),
+        "the stored archive is encrypted"
+    );
+    // Either key opens it: losing the working one loses no backup.
+    assert_eq!(decrypt(&sealed, &ids[0]), decrypt(&sealed, &ids[1]));
+    let files = unzip(&decrypt(&sealed, &ids[0]));
+
+    for (path, text) in &files {
+        for foreign in ["bravo", "BRAVO", "bob@"] {
+            assert!(
+                !path.contains(foreign) && !text.contains(foreign),
+                "{foreign} in {path}"
+            );
+        }
+        for secret in [
+            "ALFA_TICKET_HASH_SECRET",
+            "ALFA_BUILD_TOKEN_SECRET",
+            "ALFA_PREVIEW_SALT_SECRET",
+            "ALFA_DNS_CHALLENGE_SECRET",
+            "ticket_hash",
+            "token_sha256",
+            "preview_salt",
+            "challenge",
+            "sealed_secret",
+            SECRET,
+        ] {
+            assert!(!text.contains(secret), "{secret} in {path}");
+        }
+    }
+    let all: String = files.values().cloned().collect();
+    for mark in [
+        "alfa-activity-mark",
+        "alfa-comment-mark",
+        "alfa-prompt-mark",
+        "ws-alfa",
+        "alfa.example",
+    ] {
+        assert!(all.contains(mark), "{mark} is missing");
+    }
+    assert!(files["module/portal/agent_run_events.jsonl"].contains("run-alfa-1"));
+    let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
+    assert_eq!(index["formatVersion"], 1);
+    assert_eq!(index["organization"], "alfa");
+    assert_eq!(index["modules"]["portal"]["exported"], true);
+    assert_eq!(
+        index["modules"]["portal"]["keys"]["projects"],
+        json!(["alfa-city"])
+    );
+    assert_eq!(index["modules"]["portal"]["tables"]["activity"], 1);
+    assert!(index["modules"]["portal"]["snapshot"]
+        .as_str()
+        .is_some_and(|s| !s.is_empty()));
+    assert!(files["README.md"].contains("consistent in itself"));
+}
+
+#[tokio::test]
+async fn every_portal_table_is_exported_or_left_out_on_purpose() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name::text FROM information_schema.tables WHERE table_schema = 'public'",
+    )
+    .fetch_all(&db)
+    .await
+    .expect("tables");
+    use joinedcontext_portal::org_backup::data::{PORTAL_LEFT_OUT, PORTAL_TABLES};
+    for table in &tables {
+        assert!(
+            PORTAL_TABLES.iter().any(|t| t.name == table)
+                || PORTAL_LEFT_OUT.iter().any(|(t, _)| t == table),
+            "jc_portal table {table} is neither exported nor left out on purpose: decide it in \
+             org_backup/data.rs"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_data_archive_without_a_database_says_what_it_left_out() {
+    let world = world("alfa", "Enabled").await;
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    assert_eq!(run["ok"], true, "{run}");
+    let files = unzip(&decrypt(&latest(&world.bucket, DATA_KEY), &ids[1]));
+    let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
+    assert_eq!(index["modules"]["portal"]["exported"], false);
+    assert_eq!(index["modules"]["antares"]["exported"], false);
+    assert!(
+        files["README.md"].contains("`portal`: not exported: this Portal runs without a database")
+    );
+    let overview = send(&world.state, person("ada"), "GET", DATA_DOOR, None).await;
+    assert_eq!(overview.status, StatusCode::OK, "{}", overview.text);
+    let fingerprints = &body(&overview)["fingerprints"];
+    assert_eq!(
+        fingerprints.as_array().map(Vec::len),
+        Some(2),
+        "{fingerprints}"
+    );
+    assert!(!overview.text.contains(SECRET));
+}
+
+#[tokio::test]
+async fn only_the_organizations_administrators_reach_its_data_backup() {
+    let world = world("alfa", "Enabled").await;
+    let ids = identities();
+    for who in ["mia", "bob"] {
+        for (http, door, payload) in [
+            ("GET", DATA_DOOR.to_owned(), None),
+            (
+                "PUT",
+                DATA_DOOR.to_owned(),
+                Some(data_target(&world.endpoint, &ids)),
+            ),
+            ("POST", format!("{DATA_DOOR}/run"), None),
+            ("GET", format!("{DATA_DOOR}/versions"), None),
+            ("GET", format!("{DATA_DOOR}/versions/v1"), None),
+            ("DELETE", format!("{DATA_DOOR}/archive"), None),
+            (
+                "POST",
+                format!("{DATA_DOOR}/versions/v1/restore"),
+                Some(json!({ "identity": "AGE-SECRET-KEY-1" })),
+            ),
+            ("GET", format!("{DATA_DOOR}/restores"), None),
+            (
+                "POST",
+                format!("{DATA_DOOR}/restores/1/approve"),
+                Some(json!({ "identity": "AGE-SECRET-KEY-1" })),
+            ),
+            ("POST", format!("{DATA_DOOR}/restores/1/decline"), None),
+        ] {
+            let answer = send(&world.state, person(who), http, &door, payload).await;
+            assert_eq!(
+                answer.status,
+                StatusCode::FORBIDDEN,
+                "{who} {http} {door}: {}",
+                answer.text
+            );
+        }
+    }
+    assert!(world.bucket.lock().expect("bucket").objects.is_empty());
+}
+
+#[tokio::test]
+async fn a_recipient_that_is_not_an_age_key_is_refused_naming_the_field() {
+    let world = world("alfa", "Enabled").await;
+    let ids = identities();
+    let good = data_target(&world.endpoint, &ids);
+    let mut not_age = good.clone();
+    not_age["workingRecipient"] = json!("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA");
+    let mut missing = good.clone();
+    missing["recoveryRecipient"] = Value::Null;
+    let mut twice = good.clone();
+    twice["recoveryRecipient"] = good["workingRecipient"].clone();
+    let mut on_configuration = target(&world.endpoint);
+    on_configuration["recoveryRecipient"] = good["recoveryRecipient"].clone();
+    for (door, payload, field) in [
+        (DATA_DOOR, not_age, "workingRecipient"),
+        (DATA_DOOR, missing, "recoveryRecipient"),
+        (DATA_DOOR, twice, "recoveryRecipient"),
+        (DOOR, on_configuration, "recoveryRecipient"),
+    ] {
+        let answer = send(&world.state, person("ada"), "PUT", door, Some(payload)).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            answer.text
+        );
+        assert!(
+            body(&answer)["errors"][0]["path"] == field,
+            "{door} {field}: {}",
+            answer.text
+        );
+    }
+    let unversioned = world_with("alfa", "Suspended", None).await;
+    let refused = send(
+        &unversioned.state,
+        person("ada"),
+        "PUT",
+        DATA_DOOR,
+        Some(data_target(&unversioned.endpoint, &ids)),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
+}
+
+/// Every log line written while the guard lives, at every level.
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .map_err(|_| std::io::Error::other("poisoned"))?
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn secret_of(identity: &age::x25519::Identity) -> String {
+    identity.to_string().expose_secret().to_owned()
+}
+
+fn version_ids(bucket: &FakeS3, key: &str) -> Vec<String> {
+    bucket.lock().expect("bucket").objects[key]
+        .iter()
+        .map(|(id, _, _)| id.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_person_stays_erased()
+{
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    // A second comment, kept; the seeded one names the Entity an erasure removes later.
+    sqlx::query(
+        "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \
+         VALUES ('alfa-city', 'air', 'urn:ngsi-ld:X:alfa-2', 'ada', 'Ada', 'alfa-kept-mark')",
+    )
+    .execute(&db)
+    .await
+    .expect("a second comment");
+    let world = world_with("alfa", "Enabled", Some(db.clone())).await;
+    world.state.mirror.upsert(org(
+        "RoleBinding",
+        "cid-admin",
+        json!({ "subjects": [{ "user": "cid@hel.fi" }], "role": "org-admin", "scope": { "organization": "alfa" } }),
+    ));
+    let log = Captured::default();
+    let writer = log.clone();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish(),
+    );
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    assert_eq!(run["ok"], true, "{run}");
+    let version = run["versionId"].as_str().expect("a version").to_owned();
+
+    // Data lost after the backup, then the backup soft-deleted.
+    sqlx::query("DELETE FROM entity_comments WHERE project IN ('alfa-city', 'bravo-town')")
+        .execute(&db)
+        .await
+        .expect("lost");
+    sqlx::query(
+        "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \
+         VALUES ('bravo-town', 'air', 'urn:ngsi-ld:X:bravo-9', 'bob', 'Bob', 'bravo-after-mark')",
+    )
+    .execute(&db)
+    .await
+    .expect("bravo writes on");
+    let deleted = send(
+        &world.state,
+        person("ada"),
+        "DELETE",
+        &format!("{DATA_DOOR}/archive"),
+        None,
+    )
+    .await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.text);
+    assert_eq!(
+        version_ids(&world.bucket, DATA_KEY).len(),
+        2,
+        "the version stays behind its marker"
+    );
+    // The person behind urn:ngsi-ld:X:alfa-1 is erased since the backup.
+    sqlx::query(
+        "INSERT INTO erasures (id, project, space, subject, reason, actor, groups, stores, approval) \
+         VALUES ('er-alfa-1', 'alfa-city', 'air', '0123456789abcdef0123456789abcdef', 'asked', 'ada', \
+         '[{\"class\":\"X\",\"entities\":[\"urn:ngsi-ld:X:alfa-1\"],\"attrs\":null}]', '{}', 'approved')",
+    )
+    .execute(&db)
+    .await
+    .expect("an erasure");
+
+    let door = format!("{DATA_DOOR}/versions/{version}/restore");
+    let wrong = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&age::x25519::Identity::generate()) })),
+    )
+    .await;
+    assert_eq!(
+        wrong.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        wrong.text
+    );
+    assert!(wrong.text.contains("identity"), "{}", wrong.text);
+
+    let check = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[0]) })),
+    )
+    .await;
+    assert_eq!(check.status, StatusCode::OK, "{}", check.text);
+    let plan = &body(&check)["plan"];
+    assert_eq!(
+        plan["modules"]["portal"]["entity_comments"]["create"], 2,
+        "{plan}"
+    );
+    assert_eq!(
+        plan["modules"]["portal"]["activity"]["unchanged"], 1,
+        "{plan}"
+    );
+    assert!(plan["notRestored"]["portal/access_requests"].is_string());
+    let still_lost: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM entity_comments WHERE project = 'alfa-city'")
+            .fetch_one(&db)
+            .await
+            .expect("count");
+    assert_eq!(still_lost, 0, "a check writes nothing");
+
+    let asked = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[0]), "request": true })),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.text);
+    let id = body(&asked)["request"]["id"].as_i64().expect("a request");
+    let approve = format!("{DATA_DOOR}/restores/{id}/approve");
+    let own = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[0]) })),
+    )
+    .await;
+    assert_eq!(own.status, StatusCode::FORBIDDEN, "{}", own.text);
+    let foreign = send(
+        &world.state,
+        person("bob"),
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(foreign.status, StatusCode::FORBIDDEN, "{}", foreign.text);
+
+    let approved = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.text);
+    assert_eq!(body(&approved)["state"], "applied", "{}", approved.text);
+    assert_eq!(body(&approved)["plan"]["erasuresReplayed"], 1);
+
+    let bodies: Vec<String> = sqlx::query_scalar("SELECT body FROM entity_comments ORDER BY body")
+        .fetch_all(&db)
+        .await
+        .expect("comments");
+    assert_eq!(
+        bodies,
+        ["alfa-kept-mark", "bravo-after-mark"],
+        "the kept comment is back, the erased one stays gone, bravo's is untouched"
+    );
+    let again = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::NOT_FOUND, "{}", again.text);
+
+    let overview = send(&world.state, person("ada"), "GET", DATA_DOOR, None).await;
+    let requests = send(
+        &world.state,
+        person("ada"),
+        "GET",
+        &format!("{DATA_DOOR}/restores"),
+        None,
+    )
+    .await;
+    let audit: Vec<String> = sqlx::query_scalar("SELECT message FROM organization_backup_log")
+        .fetch_all(&db)
+        .await
+        .expect("audit");
+    let logged = String::from_utf8_lossy(&log.0.lock().expect("log")).into_owned();
+    for id in &ids {
+        let secret = secret_of(id);
+        for (place, text) in [
+            ("overview", &overview.text),
+            ("requests", &requests.text),
+            ("log lines", &logged),
+            ("audit", &audit.join("\n")),
+        ] {
+            assert!(!text.contains(&secret), "the identity is in the {place}");
+            // The prefix alone may name the format in a message; a key is the prefix and its body.
+            assert!(
+                !text.split("AGE-SECRET-KEY-1").skip(1).any(|rest| rest
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())),
+                "an identity is in the {place}"
+            );
+        }
+    }
+    for action in ["restore-plan", "restore-request", "restore"] {
+        assert!(
+            body(&overview)["log"]
+                .as_array()
+                .is_some_and(|log| log.iter().any(|e| e["action"] == action)),
+            "{action} is audited"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_restore_request_holds_its_target_and_bytes_and_writes_tables_without_an_id() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    for statement in [
+        "INSERT INTO drafts (project, kind, name, manifest, touched_by, touched_kind) \
+         VALUES ('alfa-city', 'Pipeline', 'alfa-draft', '{}', 'ada', 'user')",
+        "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
+         VALUES ('sub-ada', 'alfa-city', 'pipeline', 'air', '{failed}', 'portal')",
+    ] {
+        sqlx::query(statement).execute(&db).await.expect(statement);
+    }
+    let world = world_with("alfa", "Enabled", Some(db.clone())).await;
+    world.state.mirror.upsert(org(
+        "RoleBinding",
+        "cid-admin",
+        json!({ "subjects": [{ "user": "cid@hel.fi" }], "role": "org-admin", "scope": { "organization": "alfa" } }),
+    ));
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    let version = run["versionId"].as_str().expect("a version").to_owned();
+
+    // Lost since: the draft (a table keyed without an `id`), and a subscription made again under
+    // a new id with the same subject, project, scope and target.
+    for statement in [
+        "DELETE FROM drafts WHERE project = 'alfa-city'",
+        "DELETE FROM alert_subscriptions WHERE project = 'alfa-city'",
+        "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
+         VALUES ('sub-ada', 'alfa-city', 'pipeline', 'air', '{failed,stale}', 'digest')",
+    ] {
+        sqlx::query(statement).execute(&db).await.expect(statement);
+    }
+    let door = format!("{DATA_DOOR}/versions/{version}/restore");
+    let asked = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[0]), "request": true })),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.text);
+    let plan = &body(&asked)["plan"]["modules"]["portal"];
+    assert_eq!(plan["drafts"]["create"], 1, "{plan}");
+    assert_eq!(plan["alert_subscriptions"]["create"], 0, "{plan}");
+    assert_eq!(plan["alert_subscriptions"]["refused"], 1, "{plan}");
+    let id = body(&asked)["request"]["id"].as_i64().expect("a request");
+    let approve = format!("{DATA_DOOR}/restores/{id}/approve");
+
+    // While it waits, the bucket and the keys it was checked on stay.
+    let repointed = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DATA_DOOR,
+        Some(data_target(&world.endpoint, &identities())),
+    )
+    .await;
+    assert_eq!(repointed.status, StatusCode::CONFLICT, "{}", repointed.text);
+    assert!(repointed.text.contains("pending"), "{}", repointed.text);
+
+    // The asker under another username is still the asker.
+    let mut renamed = person("cid");
+    renamed.subject = "sub-ada".into();
+    let own = send(
+        &world.state,
+        renamed,
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(own.status, StatusCode::FORBIDDEN, "{}", own.text);
+
+    // Other bytes under the same version id (a bucket another admin points at) are refused.
+    let second = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DATA_DOOR}/run"),
+        None,
+    )
+    .await;
+    assert_eq!(second.status, StatusCode::OK, "{}", second.text);
+    let swap = |bucket: &FakeS3, from: &str, to: &str| {
+        let mut bucket = bucket.lock().expect("bucket");
+        let versions = bucket.objects.get_mut(DATA_KEY).expect("archive");
+        let bytes = versions
+            .iter()
+            .find(|v| v.0 == from)
+            .and_then(|v| v.1.clone())
+            .expect("bytes");
+        let slot = versions.iter_mut().find(|v| v.0 == to).expect("version");
+        slot.1.replace(bytes)
+    };
+    let newer = body(&second)["versionId"]
+        .as_str()
+        .expect("a version")
+        .to_owned();
+    let original = swap(&world.bucket, &newer, &version);
+    let checked = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(
+        checked.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a check reads only the bytes the run uploaded: {}",
+        checked.text
+    );
+    let swapped = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(
+        swapped.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        swapped.text
+    );
+    assert!(swapped.text.contains("version"), "{}", swapped.text);
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .objects
+        .get_mut(DATA_KEY)
+        .and_then(|v| v.iter_mut().find(|v| v.0 == version))
+        .expect("version")
+        .1 = original;
+
+    let approved = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.text);
+    assert_eq!(body(&approved)["state"], "applied", "{}", approved.text);
+    let drafts: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM drafts WHERE project = 'alfa-city'")
+            .fetch_all(&db)
+            .await
+            .expect("drafts");
+    assert_eq!(drafts, ["alfa-draft"], "the draft is back");
+    let deliveries: Vec<String> =
+        sqlx::query_scalar("SELECT delivery FROM alert_subscriptions WHERE project = 'alfa-city'")
+            .fetch_all(&db)
+            .await
+            .expect("subscriptions");
+    assert_eq!(deliveries, ["digest"], "today's subscription stands");
+    let changed = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DATA_DOOR,
+        Some(data_target(&world.endpoint, &ids)),
+    )
+    .await;
+    assert_eq!(
+        changed.status,
+        StatusCode::OK,
+        "decided: the target is free again"
+    );
+}
+
+#[tokio::test]
+async fn an_archive_of_another_organization_is_not_restored_into_it() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let alfa = world_with("alfa", "Enabled", Some(db.clone())).await;
+    let ids = identities();
+    let run = data_saved_and_run(&alfa, &ids).await;
+    let version = run["versionId"].as_str().expect("a version").to_owned();
+
+    // bravo's administrator, on the same database, aims at the bucket holding alfa's archive.
+    let bravo = world_with("bravo", "Enabled", Some(db)).await;
+    let saved = send(
+        &bravo.state,
+        person("ada"),
+        "PUT",
+        DATA_DOOR,
+        Some(data_target(&alfa.endpoint, &ids)),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.text);
+    let door = format!("{DATA_DOOR}/versions/{version}/restore");
+    let refused = send(
+        &bravo.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[0]) })),
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(
+        refused.text.contains("not a backup of this Organization"),
+        "{}",
+        refused.text
+    );
+
+    // Even copied under bravo's key, with a run of bravo's that names the version, the archive
+    // says whose it is and is refused.
+    let copied_bytes = {
+        let mut bucket = alfa.bucket.lock().expect("bucket");
+        let copied = bucket.objects[DATA_KEY].clone();
+        let bytes = copied
+            .iter()
+            .find(|v| v.0 == version)
+            .and_then(|v| v.1.clone())
+            .expect("the version's bytes");
+        bucket
+            .objects
+            .insert("jc/bravo/data/archive.zip.age".into(), copied);
+        bytes
+    };
+    bravo
+        .state
+        .org_backups
+        .log(joinedcontext_portal::org_backup::NewEntry {
+            organization: "bravo",
+            kind: "data",
+            action: "run",
+            actor: "ada",
+            ok: true,
+            bytes: 1,
+            object_key: "jc/bravo/data/archive.zip.age",
+            version_id: &version,
+            message: "uploaded",
+            sha256: &joinedcontext_portal::org_backup::sha256_hex(&copied_bytes),
+        })
+        .await
+        .expect("logged");
+    let refused = send(
+        &bravo.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[0]), "request": true })),
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(
+        refused.text.contains("another Organization"),
+        "{}",
+        refused.text
+    );
 }
 
 #[tokio::test]

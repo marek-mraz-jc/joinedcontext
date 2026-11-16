@@ -3325,14 +3325,14 @@ async fn door_answer(state: &AppState, response: Response) -> Response {
 
 /// A REST answer's body as the door's `value`: its JSON, the text of a file it answers (a
 /// pipeline's bento.yaml) as a JSON string (T-7120), or a zip archive (an Organization's backup
-/// bundle, T-7154) as its standard base64.
+/// bundle, T-7154) or other bytes (its encrypted data archive, T-7168) as their standard base64.
 fn door_value(content_type: Option<&HeaderValue>, bytes: &[u8]) -> Value {
     let media = content_type
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     if media.starts_with("text/") {
         Value::String(String::from_utf8_lossy(bytes).into_owned())
-    } else if media == "application/zip" {
+    } else if media == "application/zip" || media == "application/octet-stream" {
         Value::String(base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
             bytes,
@@ -3446,6 +3446,8 @@ mod tests {
         assert_eq!(door_value(None, b""), Value::Null);
         let zip = HeaderValue::from_static("application/zip");
         assert_eq!(door_value(Some(&zip), b"PK\x03\x04"), json!("UEsDBA=="));
+        let bytes = HeaderValue::from_static("application/octet-stream");
+        assert_eq!(door_value(Some(&bytes), b"age"), json!("YWdl"));
     }
 
     #[test]
