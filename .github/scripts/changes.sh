@@ -47,8 +47,6 @@ map() {
     # the two lists the ekiben portal_catalog test writes from its registry and checks (T-6825)
     /^vendor\/joinedcontext-platform\/crates\/jc-core\/src\/kinds\/ekiben_components\.rs$/ || /^crates\/portal\/ui\/src\/schemas\/ekiben-components\.json$/ { on["ekiben"] = "true" }
     /^crates\/portal\/(ui|sdk)\// { on["ui"] = "true" }
-    # The committed explorer bundle is checked against the build of the UI in the ui job (T-6739).
-    /^vendor\/viz\/explorer\// { on["ui"] = "true" }
     /^crates\/portal\/ui\// { next }
     /^crates\/portal\// || /^vendor\// { on["portal"] = "true" }
     # jc links every module, the nested workspaces included, so any other build input reaches it
@@ -194,7 +192,7 @@ if [ "${1:-}" = --selftest ]; then
   check 'crates/portal/Dockerfile' 'root portal dockerfiles'
   check 'crates/portal/builder/Dockerfile' 'root portal dockerfiles'
   check 'vendor/ngsild/x.rs' 'root portal'
-  check 'vendor/viz/explorer/explorer.js' 'root portal ui'
+  check 'vendor/viz/site/explore.html' 'root portal'
   check 'vendor/joinedcontext-platform/crates/context-gateway/src/lib.rs' 'root portal platform'
   check 'vendor/joinedcontext-platform/crates/assistant/src/lib.rs' 'root portal'
   check 'bins/jc/Dockerfile' 'root image dockerfiles'
