@@ -13437,7 +13437,9 @@
         "run": "Záloha",
         "delete": "Zmazanie",
         "plan": "Kontrola obnovy",
-        "restore": "Obnova"
+        "restore": "Obnova",
+        "restore-request": "Obnova vyžiadaná",
+        "restore-decline": "Obnova zamietnutá"
       }
     },
     "versions": {
@@ -13491,7 +13493,9 @@
       "saving": "Overuje sa bucket…",
       "saved": "Uložené. Bucket odpovedal so zapnutým verzovaním.",
       "failed": "Bucket sa neuložil. Skontrolujte polia vyššie a uložte znova.",
-      "invalid": "Neuložené: pole {field} treba opraviť, pozrite riadok pod ním."
+      "invalid": "Neuložené: pole {field} treba opraviť, pozrite riadok pod ním.",
+      "workingRecipient": "Pracovný kľúč (verejný kľúč age)",
+      "recoveryRecipient": "Záložný kľúč (verejný kľúč age)"
     },
     "hint": {
       "endpoint": "Adresa https služby S3, napríklad https://s3.eu-central-1.amazonaws.com",
@@ -13502,7 +13506,53 @@
       "secretAccessKey": "Uloží sa zapečatený a už sa nezobrazí. Nechajte prázdne, ak chcete ponechať uložený.",
       "everyHours": "1 až 672 hodín, napríklad 24 pre raz denne",
       "keepDays": "1 až 3650 dní, napríklad 90",
-      "enabled": "Vypnutie ponechá bucket aj všetky verzie; Spustiť teraz funguje ďalej."
+      "enabled": "Vypnutie ponechá bucket aj všetky verzie; Spustiť teraz funguje ďalej.",
+      "workingRecipient": "Verejný kľúč identity, ktorú používajú vaši správcovia, z age-keygen, napr. age1ql3z7hjy54pw3hyw…",
+      "recoveryRecipient": "Druhý verejný kľúč, ktorý offline uchováva iná osoba, napr. age1syrvza6xvtvsr9f0…. Každý archív otvorí ktorýkoľvek z nich."
+    },
+    "section": {
+      "jump": "Prejsť na zálohu",
+      "configuration": "Záloha nastavení",
+      "data": "Záloha dát"
+    },
+    "data": {
+      "lead": "Kópia vlastných databázových záznamov tejto organizácie vo vašom buckete S3: aktivita, komentáre, protokoly pipeline, zmeny, upozornenia a ďalšie záznamy jej projektov. Nič z inej organizácie. Archív je zašifrovaný pre dva kľúče, ktoré máte vy, takže ho bez jedného z nich nikto neprečíta, ani tento Portál.",
+      "versionsLead": "Všetky dátové archívy, ktoré bucket uchováva, od najnovšieho. Stiahnutý súbor zostáva zašifrovaný: otvorte ho pracovným alebo záložným kľúčom.",
+      "workingFingerprint": "Odtlačok pracovného kľúča",
+      "recoveryFingerprint": "Odtlačok záložného kľúča",
+      "identity": "Identita, ktorá otvorí archív",
+      "identityHint": "Vložte pracovnú alebo záložnú identitu age, jeden riadok, napr. AGE-SECRET-KEY-1… (riadok z vášho súboru s kľúčom). Použije sa len pre túto požiadavku a nikdy sa neuloží.",
+      "identityFirst": "Najprv vložte identitu",
+      "restoreLead": "Najprv kontrola: archív sa otvorí vaším kľúčom a porovná s dnešným stavom organizácie. Nič sa nezapíše, kým to neschváli druhý správca.",
+      "check": "Skontrolovať túto verziu",
+      "request": "Požiadať druhého správcu o schválenie",
+      "requested": "Požiadané. Iný správca to nižšie schváli kľúčom a až potom sa záznamy zapíšu.",
+      "planSame": "Nie je čo obnoviť: každý záznam je ako v tejto verzii.",
+      "planSummary": "{writes} záznamov na zápis, {refused} odmietnutých",
+      "planCaption": "Záznamy podľa tabuliek, ktoré by obnova zapísala",
+      "table": "Tabuľka",
+      "create": "Vytvoriť",
+      "update": "Zmeniť",
+      "unchanged": "Bez zmeny",
+      "refused": "Odmietnuté",
+      "notInArchive": "Moduly, ktoré tento archív neobsahuje ({count})",
+      "notRestored": "Tabuľky, ktoré obnova nikdy nezapisuje ({count})",
+      "requestsTitle": "Obnovy",
+      "requestsLead": "Obnova tu čaká na druhého správcu. Zapíše späť záznamy svojej verzie, ponechá všetko pridané odvtedy a znovu použije výmazy.",
+      "requestsEmpty": "Žiadna obnova nebola vyžiadaná",
+      "requestsEmptyHint": "Vyberte verziu vyššie a stlačte Obnoviť túto verziu, najprv sa skontroluje.",
+      "requestLine": "Vyžiadané {at} používateľom {by}: {rows} záznamov na zápis",
+      "decidedLine": "Rozhodol(a) {by}, {at}.",
+      "waitsForOther": "Čaká, kým ju schváli iný správca tejto organizácie.",
+      "approve": "Schváliť a obnoviť",
+      "decline": "Zamietnuť",
+      "withdraw": "Stiahnuť moju požiadavku",
+      "state": {
+        "pending": "Čaká na schválenie",
+        "applied": "Obnovené",
+        "declined": "Zamietnuté",
+        "failed": "Neobnovené: dôvod je pod tým"
+      }
     }
   }
 }

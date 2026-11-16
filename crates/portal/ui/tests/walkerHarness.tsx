@@ -20,6 +20,7 @@ import en from "../src/locales/en.json";
 import { NAV_SECTIONS } from "../src/components/layout/navigation";
 import { ORGANIZATION_TABS } from "../src/pages/organization/OrganizationPage";
 import { PROJECT_SETTINGS_TABS } from "../src/pages/projectSettings/tabs";
+import { odataValue } from "./odata";
 import { pageFindings, unexcused } from "./pageChecks";
 import type { Excused } from "./pageChecks";
 import { jsonResponse, problem, renderRoute } from "./pageHarness";
@@ -128,6 +129,10 @@ const SETUP_NOTHING_DONE = {
 function answer(path: string): Response | undefined {
   // The setup read (API/01 §25) is one object, not a list: a new organization with nothing done.
   if (path === "/api/v1/organization/setup") return jsonResponse(SETUP_NOTHING_DONE);
+  // A backup's overview is one object (T-7154, T-7168): an Organization with no bucket set up yet.
+  if (/JoinedContext\.Portal\.portal_backup_(configuration|data)_get\b/.test(decodeURIComponent(path))) {
+    return odataValue({ target: null, log: [], fingerprints: [] });
+  }
   // The catalogue is a page of its own shape, not a list: empty, as an installation with no
   // published dataset answers it.
   // What the signed-in person may read (T-6411): nothing internal, as a new member sees it.

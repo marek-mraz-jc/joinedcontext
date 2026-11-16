@@ -13437,7 +13437,9 @@
         "run": "Backup",
         "delete": "Delete",
         "plan": "Restore check",
-        "restore": "Restore"
+        "restore": "Restore",
+        "restore-request": "Restore asked",
+        "restore-decline": "Restore declined"
       }
     },
     "versions": {
@@ -13491,7 +13493,9 @@
       "saving": "Checking the bucket…",
       "saved": "Saved. The bucket answered with versioning on.",
       "failed": "The bucket was not saved. Check the fields above and save again.",
-      "invalid": "Not saved: {field} needs a fix, see the line under it."
+      "invalid": "Not saved: {field} needs a fix, see the line under it.",
+      "workingRecipient": "Working key (age public key)",
+      "recoveryRecipient": "Recovery key (age public key)"
     },
     "hint": {
       "endpoint": "The https address of the S3 service, e.g. https://s3.eu-central-1.amazonaws.com",
@@ -13502,7 +13506,53 @@
       "secretAccessKey": "Stored sealed and never shown again. Leave it empty to keep the saved one.",
       "everyHours": "1 to 672 hours, e.g. 24 for once a day",
       "keepDays": "1 to 3650 days, e.g. 90",
-      "enabled": "Off keeps the bucket and every version; Run now still works."
+      "enabled": "Off keeps the bucket and every version; Run now still works.",
+      "workingRecipient": "The public key of the identity your administrators use, from age-keygen, e.g. age1ql3z7hjy54pw3hyw…",
+      "recoveryRecipient": "A second public key, kept offline by another person, e.g. age1syrvza6xvtvsr9f0…. Either key opens every archive."
+    },
+    "section": {
+      "jump": "Jump to a backup",
+      "configuration": "Configuration backup",
+      "data": "Data backup"
+    },
+    "data": {
+      "lead": "A copy of this Organization's own database rows in your S3 bucket: activity, comments, pipeline logs, Changes, alerts and the other records of its projects. Nothing of another Organization. The archive is encrypted to two keys you hold, so nobody without one of them can read it, this Portal included.",
+      "versionsLead": "Every data archive the bucket keeps, newest first. A download stays encrypted: open it with the working or the recovery key.",
+      "workingFingerprint": "Working key fingerprint",
+      "recoveryFingerprint": "Recovery key fingerprint",
+      "identity": "Identity that opens the archive",
+      "identityHint": "Paste the working or the recovery age identity, one line, e.g. AGE-SECRET-KEY-1… (the line in your key file). It is used for this request only and never stored.",
+      "identityFirst": "Paste the identity first",
+      "restoreLead": "Check first: the archive is opened with your key and compared with the Organization today. Nothing is written until a second administrator approves.",
+      "check": "Check this version",
+      "request": "Ask a second administrator to approve",
+      "requested": "Asked. Another administrator approves it below with the key, and only then are rows written.",
+      "planSame": "Nothing to restore: every row is as it is in this version.",
+      "planSummary": "{writes} rows to write, {refused} refused",
+      "planCaption": "Rows per table the restore would write",
+      "table": "Table",
+      "create": "Create",
+      "update": "Update",
+      "unchanged": "As they are",
+      "refused": "Refused",
+      "notInArchive": "Modules this archive does not hold ({count})",
+      "notRestored": "Tables a restore never writes ({count})",
+      "requestsTitle": "Restores",
+      "requestsLead": "A restore waits here for a second administrator. It writes the rows of its version back, keeps every row added since, and applies the erasures again.",
+      "requestsEmpty": "No restore asked",
+      "requestsEmptyHint": "Pick a version above and press Restore this version to check it first.",
+      "requestLine": "Asked {at} by {by}: {rows} rows to write",
+      "decidedLine": "Decided by {by}, {at}.",
+      "waitsForOther": "Waits for another administrator of this Organization to approve it.",
+      "approve": "Approve and restore",
+      "decline": "Decline",
+      "withdraw": "Withdraw my request",
+      "state": {
+        "pending": "Waiting for approval",
+        "applied": "Restored",
+        "declined": "Declined",
+        "failed": "Not restored: check the reason under it"
+      }
     }
   }
 }

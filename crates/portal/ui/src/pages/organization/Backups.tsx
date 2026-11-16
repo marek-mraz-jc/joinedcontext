@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { ApiError, reasonOf } from "../../api/client";
 import { door, doorAction } from "../../api/odata";
 import { useAdministers } from "../../api/permissions";
+import { useIdentity } from "../../auth/AuthProvider";
 import type { components } from "../../api/schema";
 import {
   Alert,
@@ -18,15 +19,54 @@ import {
   Field,
   Input,
   Switch,
+  Table,
+  Textarea,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+  TableRowHeaderCell,
 } from "../../components/ui";
 
 type Overview = components["schemas"]["BackupOverview"];
 type Target = components["schemas"]["Target"];
 type VersionList = components["schemas"]["VersionList"];
 type RestorePlan = components["schemas"]["RestorePlan"];
+type DataRestoreAnswer = components["schemas"]["DataRestoreAnswer"];
+type RestoreRequest = components["schemas"]["DataRestoreRequest"];
+type DataPlan = components["schemas"]["DataPlan"];
 
-const OVERVIEW = ["organizationBackup"] as const;
-const VERSIONS = ["organizationBackup", "versions"] as const;
+/** The configuration backup (manifests, T-7154) and the data backup (database rows, encrypted, T-7168). */
+type Kind = "configuration" | "data";
+const overviewKey = (kind: Kind) => ["organizationBackup", kind] as const;
+const versionsKey = (kind: Kind) => ["organizationBackup", kind, "versions"] as const;
+const RESTORES = ["organizationBackup", "data", "restores"] as const;
+
+// Each backup's doors (API/13 §2b): the Portal answers both through OData.
+async function readOverview(kind: Kind): Promise<Overview> {
+  return (await door(kind === "data" ? "portal_backup_data_get" : "portal_backup_configuration_get", {})) as Overview;
+}
+
+async function runNow(kind: Kind): Promise<unknown> {
+  return doorAction(kind === "data" ? "portal_backup_data_run" : "portal_backup_configuration_run", {});
+}
+
+async function readVersions(kind: Kind): Promise<VersionList> {
+  return (await door(kind === "data" ? "portal_backup_data_versions" : "portal_backup_configuration_versions", {})) as VersionList;
+}
+
+async function softDelete(kind: Kind): Promise<unknown> {
+  return doorAction(kind === "data" ? "portal_backup_data_delete" : "portal_backup_configuration_delete", {});
+}
+
+/** One version's bytes: the door answers the file as its base64 (OData answers JSON only). */
+async function downloadVersion(kind: Kind, version: string, unreadable: string): Promise<Blob> {
+  const base64 = await door(kind === "data" ? "portal_backup_data_download" : "portal_backup_configuration_download", { version });
+  if (typeof base64 !== "string" || base64 === "") throw new ApiError(502, unreadable);
+  const type = kind === "data" ? "application/octet-stream" : "application/zip";
+  return new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type });
+}
 
 /** The form's fields, in the server's names: a 422 names one of them and the page marks it. */
 const FIELDS = [
@@ -38,6 +78,8 @@ const FIELDS = [
   "secretAccessKey",
   "everyHours",
   "keepDays",
+  "workingRecipient",
+  "recoveryRecipient",
 ] as const;
 type FieldName = (typeof FIELDS)[number];
 
@@ -51,6 +93,8 @@ interface Form {
   enabled: boolean;
   everyHours: string;
   keepDays: string;
+  workingRecipient: string;
+  recoveryRecipient: string;
 }
 
 function formOf(target: Target | null | undefined): Form {
@@ -64,6 +108,8 @@ function formOf(target: Target | null | undefined): Form {
     enabled: target?.enabled ?? false,
     everyHours: String(target?.everyHours ?? 24),
     keepDays: String(target?.keepDays ?? 90),
+    workingRecipient: target?.recipients[0] ?? "",
+    recoveryRecipient: target?.recipients[1] ?? "",
   };
 }
 
@@ -103,33 +149,56 @@ export function Backups(): JSX.Element {
   const { t } = useTranslation();
   const { known, administers, own } = useAdministers();
   const allowed = administers || own !== undefined;
-  const overview = useQuery({
-    queryKey: OVERVIEW,
-    enabled: allowed,
-    queryFn: async () => (await door("portal_backup_configuration_get", {})) as Overview,
-  });
   if (!known) return <p className="text-body text-fg-muted">{t("backups.loading")}</p>;
   if (!allowed) return <Alert tone="info">{t("organization.adminOnly")}</Alert>;
-  if (overview.isLoading) return <p className="text-body text-fg-muted">{t("backups.loading")}</p>;
-  if (overview.isError) return <Alert tone="danger">{reasonOf(overview.error, t("backups.unreadable"))}</Alert>;
-  const target = overview.data?.target ?? null;
   return (
-    <div className="flex flex-col gap-6" data-testid="organization-backups">
-      <p className="text-body text-fg-muted">{t("backups.lead")}</p>
-      {target ? <Runs target={target} overview={overview.data} /> : null}
-      {target ? <Versions /> : null}
-      <TargetForm key={target?.updatedAt ?? "new"} target={target} />
+    <div className="flex flex-col gap-10" data-testid="organization-backups">
+      <nav aria-label={t("backups.section.jump")} className="flex flex-wrap gap-x-4 gap-y-1 text-body">
+        <a className="focus-ring text-primary-soft-fg underline hover:no-underline" href="#backup-configuration-title">
+          {t("backups.section.configuration")}
+        </a>
+        <a className="focus-ring text-primary-soft-fg underline hover:no-underline" href="#backup-data-title">
+          {t("backups.section.data")}
+        </a>
+      </nav>
+      <Section kind="configuration" />
+      <Section kind="data" />
     </div>
   );
 }
 
-function Runs({ target, overview }: { target: Target; overview: Overview | undefined }): JSX.Element {
+/** One backup: its runs, its versions and its bucket form. */
+function Section({ kind }: { kind: Kind }): JSX.Element {
+  const { t } = useTranslation();
+  const overview = useQuery({ queryKey: overviewKey(kind), queryFn: () => readOverview(kind) });
+  const target = overview.data?.target ?? null;
+  return (
+    <section className="flex flex-col gap-6" aria-labelledby={`backup-${kind}-title`} data-testid={`backup-${kind}`}>
+      <div className="flex flex-col gap-1">
+        <h2 id={`backup-${kind}-title`} className="text-title font-semibold">
+          {t(`backups.section.${kind}`)}
+        </h2>
+        <p className="text-body text-fg-muted">{kind === "data" ? t("backups.data.lead") : t("backups.lead")}</p>
+      </div>
+      {overview.isLoading ? <p className="text-body text-fg-muted">{t("backups.loading")}</p> : null}
+      {overview.isError ? <Alert tone="danger">{reasonOf(overview.error, t("backups.unreadable"))}</Alert> : null}
+      {target ? <Runs kind={kind} target={target} overview={overview.data} /> : null}
+      {target ? <Versions kind={kind} /> : null}
+      {target && kind === "data" ? <RestoreRequests /> : null}
+      {overview.data ? (
+        <TargetForm key={target?.updatedAt ?? "new"} kind={kind} target={target} fingerprints={overview.data.fingerprints} />
+      ) : null}
+    </section>
+  );
+}
+
+function Runs({ kind, target, overview }: { kind: Kind; target: Target; overview: Overview | undefined }): JSX.Element {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? "en";
   const client = useQueryClient();
   const run = useMutation({
-    mutationFn: async () => doorAction("portal_backup_configuration_run", {}),
-    onSettled: async () => client.invalidateQueries({ queryKey: OVERVIEW }),
+    mutationFn: () => runNow(kind),
+    onSettled: async () => client.invalidateQueries({ queryKey: overviewKey(kind) }),
   });
   const log = overview?.log ?? [];
   const lastRun = log.find((entry) => entry.action === "run");
@@ -179,33 +248,27 @@ function Runs({ target, overview }: { target: Target; overview: Overview | undef
   );
 }
 
-function Versions(): JSX.Element {
+function Versions({ kind }: { kind: Kind }): JSX.Element {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? "en";
   const client = useQueryClient();
   const [deleting, setDeleting] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
-  const versions = useQuery({
-    queryKey: VERSIONS,
-    queryFn: async () => (await door("portal_backup_configuration_versions", {})) as VersionList,
-  });
+  const versions = useQuery({ queryKey: versionsKey(kind), queryFn: () => readVersions(kind) });
   const remove = useMutation({
-    mutationFn: async () => doorAction("portal_backup_configuration_delete", {}),
+    mutationFn: () => softDelete(kind),
     onSettled: async () => {
       setDeleting(false);
-      await client.invalidateQueries({ queryKey: OVERVIEW });
-      await client.invalidateQueries({ queryKey: VERSIONS });
+      await client.invalidateQueries({ queryKey: overviewKey(kind) });
+      await client.invalidateQueries({ queryKey: versionsKey(kind) });
     },
   });
   const save = async (version: string) => {
-    // The door answers the zip as its base64 (OData answers JSON only).
-    const base64 = await door("portal_backup_configuration_download", { version });
-    if (typeof base64 !== "string" || base64 === "") throw new ApiError(502, t("backups.unreadable"));
-    const blob = new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type: "application/zip" });
+    const blob = await downloadVersion(kind, version, t("backups.unreadable"));
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
-    link.download = `configuration-${version}.zip`;
+    link.download = kind === "data" ? `data-${version}.zip.age` : `configuration-${version}.zip`;
     link.click();
     URL.revokeObjectURL(href);
   };
@@ -215,7 +278,7 @@ function Versions(): JSX.Element {
     <Card>
       <CardHeader
         title={t("backups.versions.title")}
-        description={t("backups.versions.lead")}
+        description={kind === "data" ? t("backups.data.versionsLead") : t("backups.versions.lead")}
         actions={
           current && !current.deleteMarker ? (
             <Button variant="danger" onClick={() => setDeleting(true)}>
@@ -276,7 +339,8 @@ function Versions(): JSX.Element {
         pending={remove.isPending}
         onConfirm={() => remove.mutate()}
       />
-      {restoring ? <Restore version={restoring} onClose={() => setRestoring(null)} /> : null}
+      {restoring && kind === "configuration" ? <Restore version={restoring} onClose={() => setRestoring(null)} /> : null}
+      {restoring && kind === "data" ? <DataRestore version={restoring} onClose={() => setRestoring(null)} /> : null}
     </Card>
   );
 }
@@ -290,7 +354,7 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
   const plan = useQuery({ queryKey: ["organizationBackup", "plan", version], queryFn: () => call(false) });
   const apply = useMutation({
     mutationFn: () => call(true),
-    onSettled: async () => client.invalidateQueries({ queryKey: OVERVIEW }),
+    onSettled: async () => client.invalidateQueries({ queryKey: overviewKey("configuration") }),
   });
   const shown = apply.data ?? plan.data;
   const projectChanges = (shown?.groups ?? []).filter(
@@ -349,28 +413,291 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
   );
 }
 
-function TargetForm({ target }: { target: Target | null }): JSX.Element {
+/** The identity field of a data restore: a password field, never kept past the request. */
+function IdentityField({ id, value, onChange, error }: { id: string; value: string; onChange: (v: string) => void; error?: string }): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <Field id={id} label={t("backups.data.identity")} help={t("backups.data.identityHint")} errors={error ? [error] : undefined}>
+      <Input id={id} type="password" autoComplete="off" spellCheck={false} value={value} onChange={(e) => onChange(e.target.value)} />
+    </Field>
+  );
+}
+
+/** The reason a 422 gives for the identity field, without the field's name. */
+function identityError(error: unknown): string | undefined {
+  if (!(error instanceof ApiError) || error.status !== 422) return undefined;
+  const line = error.problem?.errors?.[0] ?? "";
+  return line.startsWith("identity:") ? line.slice("identity:".length).trim() : undefined;
+}
+
+function PlanTable({ plan }: { plan: DataPlan }): JSX.Element {
+  const { t } = useTranslation();
+  const rows = Object.entries(plan.modules).flatMap(([module, tables]) =>
+    Object.entries(tables).map(([table, counts]) => ({ name: `${module}/${table}`, counts })),
+  );
+  const changed = rows.filter((row) => row.counts.create + row.counts.update + row.counts.refused > 0);
+  const writes = rows.reduce((sum, row) => sum + row.counts.create + row.counts.update, 0);
+  const refused = rows.reduce((sum, row) => sum + row.counts.refused, 0);
+  return (
+    <div className="flex flex-col gap-3">
+      {changed.length > 0 ? <p className="text-body font-medium">{t("backups.data.planSummary", { writes, refused })}</p> : null}
+      {changed.length === 0 ? (
+        <Alert tone="success">{t("backups.data.planSame")}</Alert>
+      ) : (
+        <Table caption={t("backups.data.planCaption")} stack>
+          <TableHead>
+            <TableHeaderCell>{t("backups.data.table")}</TableHeaderCell>
+            <TableHeaderCell className="text-right">{t("backups.data.create")}</TableHeaderCell>
+            <TableHeaderCell className="text-right">{t("backups.data.update")}</TableHeaderCell>
+            <TableHeaderCell className="text-right">{t("backups.data.unchanged")}</TableHeaderCell>
+            <TableHeaderCell className="text-right">{t("backups.data.refused")}</TableHeaderCell>
+          </TableHead>
+          <TableBody>
+            {changed.map((row) => (
+              <TableRow key={row.name}>
+                <TableRowHeaderCell className="font-mono">{row.name}</TableRowHeaderCell>
+                <TableCell className="text-right" data-label={t("backups.data.create")}>
+                  {row.counts.create}
+                </TableCell>
+                <TableCell className="text-right" data-label={t("backups.data.update")}>
+                  {row.counts.update}
+                </TableCell>
+                <TableCell className="text-right" data-label={t("backups.data.unchanged")}>
+                  {row.counts.unchanged}
+                </TableCell>
+                <TableCell className="text-right" data-label={t("backups.data.refused")}>
+                  {row.counts.refused}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+      {Object.keys(plan.notInArchive).length > 0 ? (
+        <details>
+          <summary className="cursor-pointer text-caption text-fg-muted">{t("backups.data.notInArchive", { count: Object.keys(plan.notInArchive).length })}</summary>
+          <ul className="mt-1 list-disc pl-5 text-caption">
+            {Object.entries(plan.notInArchive).map(([module, why]) => (
+              <li key={module}>
+                {module}: {why}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      <details>
+        <summary className="cursor-pointer text-caption text-fg-muted">{t("backups.data.notRestored", { count: Object.keys(plan.notRestored).length })}</summary>
+        <ul className="mt-1 list-disc pl-5 text-caption">
+          {Object.entries(plan.notRestored).map(([table, why]) => (
+            <li key={table}>
+              {table}: {why}
+            </li>
+          ))}
+        </ul>
+      </details>
+    </div>
+  );
+}
+
+/** A data restore: the identity, the dry run, then the request a second administrator approves. */
+function DataRestore({ version, onClose }: { version: string; onClose: () => void }): JSX.Element {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage ?? "en";
+  const client = useQueryClient();
+  const [identity, setIdentity] = useState("");
+  const call = useMutation({
+    mutationFn: async (request: boolean): Promise<DataRestoreAnswer> =>
+      (await doorAction("portal_backup_data_restore", {
+        version,
+        body: { identity: identity.trim(), request },
+      })) as DataRestoreAnswer,
+    onSuccess: async (answer) => {
+      if (answer.request) setIdentity("");
+      await client.invalidateQueries({ queryKey: overviewKey("data") });
+      await client.invalidateQueries({ queryKey: RESTORES });
+    },
+  });
+  const answer = call.data;
+  const keyError = identityError(call.error);
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => (open ? undefined : onClose())}
+      title={t("backups.restore.title")}
+      closeLabel={t("backups.restore.close")}
+      description={answer ? t("backups.restore.taken", { at: when(answer.plan.takenAt, locale) }) : t("backups.data.restoreLead")}
+    >
+      <form
+        className="flex flex-col gap-3"
+        data-testid="backup-data-restore"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          call.mutate(false);
+        }}
+      >
+        {answer?.request ? null : <IdentityField id="backup-data-identity" value={identity} onChange={setIdentity} error={keyError} />}
+        {call.isError && !keyError ? <Alert tone="danger">{reasonOf(call.error, t("backups.unreadable"))}</Alert> : null}
+        {answer ? <PlanTable plan={answer.plan} /> : null}
+        {answer?.request ? <Alert tone="success">{t("backups.data.requested")}</Alert> : null}
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="secondary" type="button" onClick={onClose}>
+            {t("backups.restore.close")}
+          </Button>
+          {answer?.request ? null : (
+            <Button variant={answer ? "secondary" : "primary"} type="submit" disabled={call.isPending || identity.trim() === ""} disabledReason={identity.trim() === "" ? t("backups.data.identityFirst") : t("app.busyReason")}>
+              {t("backups.data.check")}
+            </Button>
+          )}
+          {answer && !answer.request && answer.plan.modules.portal ? (
+            <Button variant="primary" type="button" onClick={() => call.mutate(true)} disabled={call.isPending || identity.trim() === ""} disabledReason={t("app.busyReason")}>
+              {t("backups.data.request")}
+            </Button>
+          ) : null}
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/** Restores waiting for a second administrator, and the ones decided. */
+function RestoreRequests(): JSX.Element | null {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage ?? "en";
+  const me = useIdentity()?.username;
+  const requests = useQuery({
+    queryKey: RESTORES,
+    queryFn: async () => (await door("portal_backup_data_restores", {})) as RestoreRequest[],
+  });
+  const list = requests.data ?? [];
+  if (requests.isLoading) return null;
+  return (
+    <Card>
+      <CardHeader title={t("backups.data.requestsTitle")} description={t("backups.data.requestsLead")} />
+      {requests.isError ? <Alert tone="danger">{reasonOf(requests.error, t("backups.unreadable"))}</Alert> : null}
+      {list.length === 0 && !requests.isError ? <EmptyState bare title={t("backups.data.requestsEmpty")} description={t("backups.data.requestsEmptyHint")} /> : null}
+      {list.length > 0 ? (
+        <ul className="flex flex-col divide-y divide-border" aria-label={t("backups.data.requestsTitle")}>
+          {list.map((request) => (
+            <RestoreRow key={request.id} request={request} mine={request.requestedBy === me} locale={locale} />
+          ))}
+        </ul>
+      ) : null}
+    </Card>
+  );
+}
+
+function RestoreRow({ request, mine, locale }: { request: RestoreRequest; mine: boolean; locale: string }): JSX.Element {
   const { t } = useTranslation();
   const client = useQueryClient();
-  const [form, setForm] = useState<Form>(() => formOf(target));
-  const save = useMutation({
+  const [identity, setIdentity] = useState("");
+  const settle = async () => {
+    await client.invalidateQueries({ queryKey: RESTORES });
+    await client.invalidateQueries({ queryKey: overviewKey("data") });
+  };
+  const approve = useMutation({
     mutationFn: async () =>
-      doorAction("portal_backup_configuration_set", {
-        body: {
-            endpoint: form.endpoint.trim(),
-            region: form.region.trim(),
-            bucket: form.bucket.trim(),
-            prefix: form.prefix.trim(),
-            accessKeyId: form.accessKeyId.trim(),
-            secretAccessKey: form.secretAccessKey === "" ? null : form.secretAccessKey,
-            enabled: form.enabled,
-            everyHours: Number(form.everyHours),
-            keepDays: Number(form.keepDays),
-          },
+      doorAction("portal_backup_data_restore_approve", {
+        id: String(request.id),
+        body: { identity: identity.trim() },
         }),
     onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: OVERVIEW });
-      await client.invalidateQueries({ queryKey: VERSIONS });
+      setIdentity("");
+      await settle();
+    },
+  });
+  const decline = useMutation({
+    mutationFn: async () => doorAction("portal_backup_data_restore_decline", { id: String(request.id) }),
+    onSuccess: settle,
+  });
+  const writes = Object.values(request.plan.modules)
+    .flatMap((tables) => Object.values(tables))
+    .reduce((sum, c) => sum + c.create + c.update, 0);
+  const tone = request.state === "applied" ? "success" : request.state === "pending" ? "primary" : request.state === "declined" ? "neutral" : "danger";
+  return (
+    <li className="flex flex-col gap-2 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={tone}>{t(`backups.data.state.${request.state}`)}</Badge>
+        <span className="text-body">{t("backups.data.requestLine", { at: when(request.requestedAt, locale), by: request.requestedBy, rows: writes })}</span>
+      </div>
+      {request.decidedBy ? (
+        <p className="text-caption text-fg-muted">
+          {t("backups.data.decidedLine", { by: request.decidedBy, at: when(request.decidedAt, locale) })}
+          {request.message ? ` ${request.message}` : ""}
+        </p>
+      ) : null}
+      {request.state === "pending" && mine ? <p className="text-caption text-fg-muted">{t("backups.data.waitsForOther")}</p> : null}
+      {request.state === "pending" && !mine ? (
+        <form
+          className="flex flex-col gap-2"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            approve.mutate();
+          }}
+        >
+          <IdentityField id={`backup-approve-${request.id}`} value={identity} onChange={setIdentity} error={identityError(approve.error)} />
+          {approve.isError && !identityError(approve.error) ? <Alert tone="danger">{reasonOf(approve.error, t("backups.unreadable"))}</Alert> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" type="submit" disabled={approve.isPending || identity.trim() === ""} disabledReason={identity.trim() === "" ? t("backups.data.identityFirst") : t("app.busyReason")}>
+              {t("backups.data.approve")}
+            </Button>
+            <Button variant="secondary" type="button" onClick={() => decline.mutate()} disabled={decline.isPending} disabledReason={t("app.busyReason")}>
+              {t("backups.data.decline")}
+            </Button>
+          </div>
+        </form>
+      ) : null}
+      {request.state === "pending" && mine ? (
+        <div>
+          <Button size="sm" variant="secondary" onClick={() => decline.mutate()} disabled={decline.isPending} disabledReason={t("app.busyReason")}>
+            {t("backups.data.withdraw")}
+          </Button>
+        </div>
+      ) : null}
+      {decline.isError ? <Alert tone="danger">{reasonOf(decline.error, t("backups.unreadable"))}</Alert> : null}
+    </li>
+  );
+}
+
+function TargetForm({
+  kind,
+  target,
+  fingerprints,
+}: {
+  kind: Kind;
+  target: Target | null;
+  fingerprints: string[];
+}): JSX.Element {
+  const { t } = useTranslation();
+  const client = useQueryClient();
+  // A new data target starts from the configuration backup's bucket, if one is saved: most
+  // Organizations keep both in one bucket. The secret key is never prefilled.
+  const [form, setForm] = useState<Form>(() =>
+    formOf(target ?? (kind === "data" ? client.getQueryData<Overview>(overviewKey("configuration"))?.target : null)),
+  );
+  const save = useMutation({
+    mutationFn: async () => {
+      const body = {
+        endpoint: form.endpoint.trim(),
+        region: form.region.trim(),
+        bucket: form.bucket.trim(),
+        prefix: form.prefix.trim(),
+        accessKeyId: form.accessKeyId.trim(),
+        secretAccessKey: form.secretAccessKey === "" ? null : form.secretAccessKey,
+        enabled: form.enabled,
+        everyHours: Number(form.everyHours),
+        keepDays: Number(form.keepDays),
+      };
+      return kind === "data"
+        ? doorAction("portal_backup_data_set", {
+            body: { ...body, workingRecipient: form.workingRecipient.trim(), recoveryRecipient: form.recoveryRecipient.trim() },
+          })
+        : doorAction("portal_backup_configuration_set", { body });
+    },
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: overviewKey(kind) });
+      await client.invalidateQueries({ queryKey: versionsKey(kind) });
     },
   });
   const invalid = fieldError(save.error);
@@ -382,14 +709,28 @@ function TargetForm({ target }: { target: Target | null }): JSX.Element {
     save.mutate();
   };
   const text = (name: FieldName, label: string, help: string, type = "text") => (
-    <Field id={`backup-${name}`} label={label} help={help} errors={errorsOf(name)}>
+    <Field id={`backup-${kind}-${name}`} label={label} help={help} errors={errorsOf(name)}>
       <Input
-        id={`backup-${name}`}
+        id={`backup-${kind}-${name}`}
         type={type}
         value={form[name]}
         onChange={set(name)}
         autoComplete="off"
         placeholder={name === "secretAccessKey" && target ? t("backups.form.secretKept") : undefined}
+      />
+    </Field>
+  );
+  // An age public key is 62 characters: two lines show it whole on a phone.
+  const recipient = (name: FieldName, label: string, help: string) => (
+    <Field id={`backup-${kind}-${name}`} label={label} help={help} errors={errorsOf(name)}>
+      <Textarea
+        id={`backup-${kind}-${name}`}
+        rows={2}
+        className="font-mono"
+        spellCheck={false}
+        value={form[name]}
+        onChange={set(name)}
+        autoComplete="off"
       />
     </Field>
   );
@@ -408,11 +749,30 @@ function TargetForm({ target }: { target: Target | null }): JSX.Element {
         {text("secretAccessKey", t("backups.form.secretAccessKey"), t("backups.hint.secretAccessKey"), "password")}
         {text("everyHours", t("backups.form.everyHours"), t("backups.hint.everyHours"), "number")}
         {text("keepDays", t("backups.form.keepDays"), t("backups.hint.keepDays"), "number")}
+        {kind === "data" ? (
+          <>
+            {recipient("workingRecipient", t("backups.form.workingRecipient"), t("backups.hint.workingRecipient"))}
+            {recipient("recoveryRecipient", t("backups.form.recoveryRecipient"), t("backups.hint.recoveryRecipient"))}
+            {fingerprints.length === 2 ? (
+              <dl className="md:col-span-2 grid grid-cols-1 gap-3 text-caption sm:grid-cols-2" data-testid="backup-fingerprints">
+                {fingerprints.map((print, i) => (
+                  <div key={print} className="flex flex-col">
+                    <dt className="text-fg-muted">
+                      {i === 0 ? t("backups.data.workingFingerprint") : t("backups.data.recoveryFingerprint")}
+                    </dt>
+                    <dd className="font-mono break-all">{print}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+          </>
+        ) : null}
         <div className="md:col-span-2">
           <Switch
             checked={form.enabled}
             onCheckedChange={(enabled) => setForm((current) => ({ ...current, enabled }))}
             label={t("backups.form.enabled")}
+            id={`backup-${kind}-enabled`}
           />
           <p className="mt-1 text-caption text-fg-muted">{t("backups.hint.enabled")}</p>
         </div>

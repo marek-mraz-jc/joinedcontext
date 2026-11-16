@@ -115,7 +115,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 171] = [
+pub static DOORS: [Door; 181] = [
     door(
         "portal_people_remove",
         Org,
@@ -250,6 +250,86 @@ pub static DOORS: [Door; 171] = [
         Method::DELETE,
         "/organization/backups/configuration/bundle",
         &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_get",
+        Org,
+        Method::GET,
+        "/organization/backups/data",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_set",
+        Org,
+        Method::PUT,
+        "/organization/backups/data",
+        &[BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_run",
+        Org,
+        Method::POST,
+        "/organization/backups/data/run",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_versions",
+        Org,
+        Method::GET,
+        "/organization/backups/data/versions",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_download",
+        Org,
+        Method::GET,
+        "/organization/backups/data/versions/{version}",
+        &[VERSION],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_restore",
+        Org,
+        Method::POST,
+        "/organization/backups/data/versions/{version}/restore",
+        &[VERSION, BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_delete",
+        Org,
+        Method::DELETE,
+        "/organization/backups/data/archive",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_restores",
+        Org,
+        Method::GET,
+        "/organization/backups/data/restores",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_restore_approve",
+        Org,
+        Method::POST,
+        "/organization/backups/data/restores/{id}/approve",
+        &[RUN, BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_restore_decline",
+        Org,
+        Method::POST,
+        "/organization/backups/data/restores/{id}/decline",
+        &[RUN],
         Who::Administrator,
     ),
     door(
