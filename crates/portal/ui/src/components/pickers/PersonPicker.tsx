@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { queryKeys, reasonOf } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { mayRead, usePermissions } from "../../api/permissions";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import { emailsIn } from "../../pages/apps/members";
@@ -72,7 +73,7 @@ export function PersonPicker(props: PersonPickerProps): JSX.Element {
     queryKey: queryKeys.peoplePage(search, 0),
     enabled: reads,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/organization/people", { params: { query: { max: 100, ...(search ? { search } : {}) } } })),
+      (await door("portal_people_list", { max: 100, ...(search ? { search } : {}) })) as RestAnswer<"list_people">,
   });
   const options = useMemo<PickerOption[]>(() => {
     const taken = new Set(exclude);
@@ -151,8 +152,10 @@ export async function idsOf(text: string, reads: boolean): Promise<{ ids: string
     const lower = word.toLowerCase();
     if (isPersonId(lower)) return lower;
     if (!reads) return undefined;
-    const answer = await api.GET("/api/v1/organization/people", { params: { query: { search: lower, max: 5 } } });
-    return answer.data?.items.find((person) => person.email.toLowerCase() === lower)?.id;
+    const answer = (await door("portal_people_list", { search: lower, max: 5 }).catch(() => undefined)) as
+      | RestAnswer<"list_people">
+      | undefined;
+    return answer?.items.find((person) => person.email.toLowerCase() === lower)?.id;
   };
   // A few at a time, not one round trip after another (F-R2UI2-010), nor fifty at once at the edge.
   const found: (string | undefined)[] = [];
