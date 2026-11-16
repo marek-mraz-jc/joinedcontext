@@ -16,7 +16,6 @@ import { App } from "../src/App";
 import { isPortalRoute, rememberPrefill, settlePrefill, takePrefill } from "../src/assistant/state";
 import { expectDenied } from "./checks";
 import { findFormPage } from "./formPage";
-import { deniedWords } from "../src/components/ui/PermissionGuard";
 
 const PROJECT = "banskabystrica";
 const RUN_ID = "01J8ZQ4T7K9M2N3P4Q5R6S7T8V";
@@ -552,7 +551,7 @@ describe("the assistant dock", () => {
       );
       expectDenied(
         screen.getByRole("button", { name: pathName(path) }),
-        deniedWords(i18n.t, "propose", kind),
+        i18n.t("permissions.denied", { verb: "propose", kind }),
       );
     }
     // A disabled path starts nothing.

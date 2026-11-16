@@ -14,7 +14,6 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { LOCALES, jsonResponse, list, renderRoute } from "./pageHarness";
 import { findFormPage } from "./formPage";
-import { deniedWords } from "../src/components/ui/PermissionGuard";
 
 const PROJECT = "helsinki";
 
@@ -162,7 +161,10 @@ describe("the card headers that still carried a loose pair", () => {
       [en.resourceDelete.button, "delete"],
     ] as const) {
       const item = within(menu).getByRole("menuitem", { name: new RegExp(label) });
-      const reason = deniedWords(i18n.t, verb, "App");
+      const reason = en.permissions.denied
+        .replace("{verb}", verb)
+        .replace("{kind}", "App")
+        .replaceAll("''", "'");
       expect(item).toHaveAttribute("aria-disabled", "true");
       expect(item).toHaveAttribute("title", reason);
       // And the sentence is in the item itself, so a screen reader reads it with the action.

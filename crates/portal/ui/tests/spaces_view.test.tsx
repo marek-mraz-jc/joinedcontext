@@ -531,7 +531,7 @@ describe("a viewer on the spaces list", () => {
     });
     expectDenied(
       screen.getByRole("button", { name: en.spaces.add }),
-      "Your role in this project cannot add or change Context Spaces.",
+      "Disabled: your role does not permit 'propose' on 'ContextSpace' in this project",
     );
     // Delete lives in the row's menu now (T-2279); it is listed there, disabled, with the reason,
     // because a role that is too narrow has to be readable and not merely absent (UI-44).
@@ -540,7 +540,7 @@ describe("a viewer on the spaces list", () => {
     expect(denied).toHaveAttribute("aria-disabled", "true");
     expect(denied).toHaveAttribute(
       "title",
-      "Your role in this project cannot delete Context Spaces.",
+      "Disabled: your role does not permit 'delete' on 'ContextSpace' in this project",
     );
   });
 

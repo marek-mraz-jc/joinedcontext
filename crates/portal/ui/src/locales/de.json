@@ -7194,7 +7194,7 @@
   "permissions": {
     "unchecked": "Ihre Berechtigungen konnten gerade nicht geprüft werden. Sie können das Formular trotzdem ausfüllen: Der Server prüft Ihre Rechte erneut, wenn Sie die Änderung vorschlagen.",
     "checking": "Ihr Zugriff wird geprüft…",
-    "denied": "Ihre Rolle in diesem Projekt kann {kinds} nicht {action}.",
+    "denied": "Deaktiviert: Ihre Rolle erlaubt ''{verb}'' auf ''{kind}'' in diesem Projekt nicht",
     "deniedOrganization": "Nur die Organisationsadministration kann {kinds} {action}.",
     "action": {
       "read": "sehen",

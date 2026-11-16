@@ -310,7 +310,7 @@ describe("endpoint sharing", () => {
     await waitFor(() => {
       expect(use).toHaveAttribute("aria-disabled", "true");
     });
-    expect(use).toHaveTextContent("Your role in this project cannot add or change shared spaces.");
+    expect(use).toHaveTextContent("your role does not permit 'propose' on 'SharedSpaceReference' in this project");
     await userEvent.click(use);
     expect(writes(fetchMock)).toHaveLength(0);
   });

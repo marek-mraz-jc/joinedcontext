@@ -29,7 +29,6 @@ import { entityTypesOf } from "../spaces/spaceFacts";
 
 import { spaceOfModel, usageCounts, usesOfModel } from "./modelUsage";
 import type { ProjectManifests, UsingKind } from "./modelUsage";
-import { deniedWords } from "../../components/ui/PermissionGuard";
 
 /** Types a row names before "+N": a model of 27 classes was a four-line wall (T-6254). */
 export const TYPES_SHOWN = 6;
@@ -101,7 +100,7 @@ export function ProposeLink({
 }): JSX.Element {
   const { t } = useTranslation();
   const { can } = usePermissions(project);
-  const reason = can("DataModel", "propose") ? unavailable : deniedWords(t, "propose", "DataModel");
+  const reason = can("DataModel", "propose") ? unavailable : t("permissions.denied", { verb: "propose", kind: "DataModel" });
   if (reason !== undefined) {
     return (
       <Button size="sm" variant={variant} disabled disabledReason={reason}>

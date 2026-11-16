@@ -7194,7 +7194,7 @@
   "permissions": {
     "unchecked": "Vaše oprávnenia sa teraz nepodarilo overiť. Formulár môžete vyplniť aj tak: server vaše práva overí znova, keď zmenu navrhnete.",
     "checking": "Overuje sa váš prístup…",
-    "denied": "Vaša rola v tomto projekte nemôže {action}: {kinds}.",
+    "denied": "Vypnuté: vaša rola nedovoľuje ''{verb}'' na ''{kind}'' v tomto projekte",
     "deniedOrganization": "Len administrátor organizácie môže {action}: {kinds}.",
     "action": {
       "read": "vidieť",

@@ -247,7 +247,7 @@ test("a viewer meets the model buttons refused with the reason, and the source r
   const { page, context } = await signIn(browser, VIEWER, `/projects/${PROJECT}/models?lang=en`);
   const create = page.getByRole("button", { name: "New data model" }).first();
   await expect(create).toHaveAttribute("aria-disabled", "true", { timeout: 60_000 });
-  await expect(create).toHaveAccessibleDescription("Your role in this project cannot add or change data models.");
+  await expect(create).toHaveAccessibleDescription(/does not permit 'propose' on 'DataModel'/);
 
   // A save of a model the project has: the route checks the role before it reads the source.
   const listed = await page.request.get(`/api/v1/projects/${PROJECT}/datamodels`);

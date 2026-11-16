@@ -9,7 +9,6 @@ import { App } from "../src/App";
 import { draftState, openBlockedReason } from "../src/pages/apps/AppsCatalog";
 import type { Manifest } from "../src/api/manifest";
 import { renderRoute } from "./pageHarness";
-import { deniedWords } from "../src/components/ui/PermissionGuard";
 
 const IDENTITY = {
   subject: "b7c1e0f4",
@@ -377,7 +376,7 @@ describe("apps catalog", () => {
     });
 
     await user.click(within(await cardOf("Air quality map")).getByRole("button", { name: more("Air quality map") }));
-    const denied = deniedWords(i18n.t, "propose", "App");
+    const denied = i18n.t("permissions.denied", { verb: "propose", kind: "App" });
     for (const label of [en.apps.publishAction, en.resourceEdit.button, en.saveAs.button]) {
       const item = await screen.findByRole("menuitem", { name: new RegExp(`^${label}`) });
       expect(item).toHaveAttribute("aria-disabled", "true");

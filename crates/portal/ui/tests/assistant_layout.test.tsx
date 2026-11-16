@@ -24,7 +24,6 @@ import { expectDenied } from "./checks";
 import en from "../src/locales/en.json";
 import { AssistantDock } from "../src/assistant/AssistantDock";
 import { rememberRun } from "../src/assistant/state";
-import { deniedWords } from "../src/components/ui/PermissionGuard";
 
 const PROJECT = "helsinki";
 const RUN_ID = "01J8ZQ4T7K9M2N3P4Q5R6S7T8V";
@@ -315,7 +314,7 @@ describe("where the assistant's input sits", () => {
       );
       expectDenied(
         within(paths).getByRole("button", { name: pathName(path) }),
-        deniedWords(i18n.t, "propose", kind),
+        i18n.t("permissions.denied", { verb: "propose", kind }),
       );
     }
     // A refused path starts nothing.

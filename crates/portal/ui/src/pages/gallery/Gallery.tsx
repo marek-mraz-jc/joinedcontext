@@ -148,7 +148,7 @@ export function Gallery(): JSX.Element {
         </State>
         <State is="refused, with the reason">
           {/* Both: `Button` explains itself only when it is disabled *and* carries a reason. */}
-          <Button disabled disabledReason="Your role in this project cannot add or change endpoints.">
+          <Button disabled disabledReason="Your role does not permit 'propose' on 'Endpoint'">
             Propose the change
           </Button>
         </State>
@@ -264,7 +264,7 @@ export function Gallery(): JSX.Element {
           />
         </State>
         <State is="refused, with the reason">
-          <Checkbox label={SHORT} checked={false} readOnly disabled disabledReason="Your role in this project cannot add or change this." />
+          <Checkbox label={SHORT} checked={false} readOnly disabled disabledReason="Your role does not permit 'propose'" />
         </State>
         <State is="on">
           <Switch checked={checked} onCheckedChange={setChecked} label={LONG} />
@@ -346,7 +346,7 @@ export function Gallery(): JSX.Element {
                         label: "Remove",
                         tone: "danger",
                         onSelect: () => undefined,
-                        disabledReason: "Your role in this project cannot delete this.",
+                        disabledReason: "Your role does not permit 'delete'",
                       },
                     ]}
                   />

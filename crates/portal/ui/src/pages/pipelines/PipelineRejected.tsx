@@ -6,7 +6,6 @@ import { api, ApiError, queryKeys, unwrap } from "../../api/client";
 import type { components } from "../../api/schema";
 import { usePermissions } from "../../api/permissions";
 import { download } from "../models/diagramExport";
-import { deniedWords } from "../../components/ui/PermissionGuard";
 import { RecordView,
   Alert,
   Badge,
@@ -129,7 +128,7 @@ export function PipelineRejectedDialog({
   const listed = page.isSuccess && (items.length > 0 || before !== undefined);
   const mayRetry = permissions.can("Pipeline", "propose");
   const retryRefusal = !mayRetry
-    ? deniedWords(t, "propose", "Pipeline")
+    ? t("permissions.denied", { verb: "propose", kind: "Pipeline" })
     : selected.size === 0
       ? t("pipelines.rejected.pickFirst")
       : selected.size > 100

@@ -81,7 +81,7 @@ for (const width of [1440, 400]) {
 
     // The greyed actions say why, in a line one reads at any width.
     await expect(page.getByRole("button", { name: "Change these settings" })).toHaveAttribute("aria-disabled", "true");
-    await expect(page.getByText("Your role in this project cannot add or change endpoints.").first()).toBeVisible();
+    await expect(page.getByText("Disabled: your role does not permit 'propose' on 'Endpoint' in this project").first()).toBeVisible();
 
     const wide = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(wide).toBeLessThanOrEqual(width);

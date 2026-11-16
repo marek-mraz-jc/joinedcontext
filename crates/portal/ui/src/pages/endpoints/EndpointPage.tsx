@@ -22,7 +22,7 @@ import { WorkOnCopyAction } from "../../components/WorkOnCopyDialog";
 import { ExportButton } from "../../components/export/ExportButton";
 import { EndpointQuality } from "./EndpointQuality";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
-import { PermissionGuard, deniedWords } from "../../components/ui/PermissionGuard";
+import { PermissionGuard } from "../../components/ui/PermissionGuard";
 import { RowActions } from "../../components/ui/RowActions";
 import type { RowAction } from "../../components/ui/RowActions";
 import { usePermissions } from "../../api/permissions";
@@ -114,7 +114,7 @@ export function EndpointPage({
   // An action a role cannot take stays in the menu with its reason; UI-44 does not stop at a menu's
   // edge (T-2279).
   const denied = (verb: "propose" | "delete") =>
-    permissions.can("Endpoint", verb) ? undefined : deniedWords(t, verb, "Endpoint");
+    permissions.can("Endpoint", verb) ? undefined : t("permissions.denied", { verb, kind: "Endpoint" });
   const [openAction, setOpenAction] = useState<"saveAs" | "workOnCopy" | "delete" | null>(null);
   const [publishing, setPublishing] = useState(false);
 

@@ -17,7 +17,6 @@ import { CkanAccessPanel } from "../pages/ckan/CkanAccessPanel";
 import { SharedWithBadge, sharingOf, spaceOf } from "../components/endpoints/sharing";
 import { Button, EmptyState, PageFailed } from "../components/ui";
 import { ManifestGrid } from "../components/grid/ManifestGrid";
-import { deniedWords } from "../components/ui/PermissionGuard";
 
 /**
  * Rows per page (T-4831): each row carries its representation links, about 130 px, so ten keep the
@@ -187,7 +186,7 @@ function PublicEndpointActions({ project, name }: { project: string; name: strin
         void navigate({ to: "/projects/$project/$plural/$name/edit", params: { project, plural: "endpoints", name } }),
       disabledReason: permissions.can("Endpoint", "propose")
         ? undefined
-        : deniedWords(t, "propose", "Endpoint"),
+        : t("permissions.denied", { verb: "propose", kind: "Endpoint" }),
     },
     {
       key: "delete",
@@ -196,7 +195,7 @@ function PublicEndpointActions({ project, name }: { project: string; name: strin
       onSelect: () => setDeleting(true),
       disabledReason: permissions.can("Endpoint", "delete")
         ? undefined
-        : deniedWords(t, "delete", "Endpoint"),
+        : t("permissions.denied", { verb: "delete", kind: "Endpoint" }),
     },
   ];
   return (

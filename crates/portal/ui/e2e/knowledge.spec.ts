@@ -163,7 +163,7 @@ test.describe("the knowledge sources", () => {
     for (const width of [1440, 400]) {
       await p.setViewportSize({ width, height: 900 });
       const add = p.getByRole("button", { name: "Add a source" }).first();
-      await expect(add).toHaveAccessibleDescription("Your role in this project cannot add or change knowledge sources.");
+      await expect(add).toHaveAccessibleDescription(/does not permit 'propose' on 'KnowledgeSource'/);
       await p.screenshot({ path: test.info().outputPath(`knowledge-viewer-refused-${width}.png`), fullPage: true });
     }
   });
@@ -244,7 +244,7 @@ test.describe("the knowledge sources", () => {
     await p.getByRole("checkbox", { name: "Select https://www.hel.fi/", exact: true }).check();
     const exclude = p.getByRole("button", { name: "Leave out of answers" });
     await expect(exclude).toHaveAttribute("aria-disabled", "true");
-    await expect(exclude).toHaveAccessibleDescription("Your role in this project cannot add or change knowledge sources.");
+    await expect(exclude).toHaveAccessibleDescription("Disabled: your role does not permit 'propose' on 'KnowledgeSource' in this project");
     await exclude.click({ force: true });
     expect(writes).toEqual([]);
   });

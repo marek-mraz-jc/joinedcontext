@@ -56,7 +56,7 @@ describe("the permission guard", () => {
   it("disables a control in a project out of reach (404, PF-59), which has no document to allow it", async () => {
     const { onClick } = renderGuard({ title: "Not Found", status: 404, detail: "project helsinki not found" }, "Endpoint", "propose", 404);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute("title", expect.stringMatching(/^Your role in this project cannot /));
+      expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute("title", expect.stringMatching(/^Disabled: /));
     });
     await userEvent.click(screen.getByRole("button", { name: /New endpoint/ }));
     expect(onClick).not.toHaveBeenCalled();
@@ -68,11 +68,11 @@ describe("the permission guard", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute(
         "title",
-        expect.stringMatching(/^Your role in this project cannot /),
+        expect.stringMatching(/^Disabled: /),
       );
     });
     const button = screen.getByRole("button", { name: /New endpoint/ });
-    const reason = "Your role in this project cannot add or change endpoints.";
+    const reason = "Disabled: your role does not permit 'propose' on 'Endpoint' in this project";
     expect(button).toHaveAccessibleDescription(reason);
     expect(button).toHaveAttribute("title", reason);
 
@@ -104,11 +104,11 @@ describe("the permission guard", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute(
         "title",
-        expect.stringMatching(/^Your role in this project cannot /),
+        expect.stringMatching(/^Disabled: /),
       );
     });
     expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAccessibleDescription(
-      "Your role in this project cannot add or change pipelines.",
+      /'propose' on 'Pipeline'/,
     );
   });
 
@@ -119,11 +119,11 @@ describe("the permission guard", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute(
         "title",
-        expect.stringMatching(/^Your role in this project cannot /),
+        expect.stringMatching(/^Disabled: /),
       );
     });
     expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAccessibleDescription(
-      "Your role in this project cannot delete endpoints.",
+      /'delete' on 'Endpoint'/,
     );
 
     // The same role, the verb it does hold.
@@ -214,7 +214,7 @@ describe("the permission guard", () => {
       [/Edit/, "propose"],
       [new RegExp(en.resourceDelete.button), "delete"],
     ] as const) {
-      const reason = `Your role in this project cannot ${en.permissions.action[verb]} endpoints.`;
+      const reason = `Disabled: your role does not permit '${verb}' on 'Endpoint' in this project`;
       await waitFor(() => {
         expect(screen.getByRole("button", { name })).toHaveAttribute("title", reason);
       });

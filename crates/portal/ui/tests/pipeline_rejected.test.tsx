@@ -13,7 +13,6 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { PipelineRejectedDialog } from "../src/pages/pipelines/PipelineRejected";
 import { expectAxeClean, jsonResponse, list, problem, renderRoute } from "./pageHarness";
-import { deniedWords } from "../src/components/ui/PermissionGuard";
 
 const PATH = "/projects/helsinki/pipelines";
 const REJECTED = "/api/v1/projects/helsinki/pipelines/stations/rejected";
@@ -257,7 +256,7 @@ describe("a pipeline's rejected records", () => {
     const retry = within(dialog).getByRole("button", { name: "Retry 1 record after fix" });
     expect(retry).toHaveAttribute("aria-disabled", "true");
     expect(retry).toHaveAccessibleDescription(
-      deniedWords(i18n.t, "propose", "Pipeline"),
+      i18n.t("permissions.denied", { verb: "propose", kind: "Pipeline" }),
     );
     await userEvent.click(retry);
     expect(seen.retried).toEqual([]);

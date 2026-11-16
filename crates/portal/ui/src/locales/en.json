@@ -7194,7 +7194,7 @@
   "permissions": {
     "unchecked": "Your access could not be checked just now. You can still fill in the form: the server checks your rights again when you propose.",
     "checking": "Checking your access…",
-    "denied": "Your role in this project cannot {action} {kinds}.",
+    "denied": "Disabled: your role does not permit ''{verb}'' on ''{kind}'' in this project",
     "deniedOrganization": "Only an organization administrator can {action} {kinds}.",
     "action": {
       "read": "see",
