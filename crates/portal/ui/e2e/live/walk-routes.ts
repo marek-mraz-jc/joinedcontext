@@ -5,7 +5,8 @@
  */
 import type { Page } from "@playwright/test";
 
-export const PROJECT = "helsinki";
+/** The project walked; `WALK_PROJECT` names another where the walking people have no `helsinki` (jc-dev's walker personas: ctl-a-mcp-check). */
+export const PROJECT = process.env.WALK_PROJECT || "helsinki";
 export const P = `/projects/${PROJECT}`;
 
 /** The sections that open a create and an edit form at their own address (`NEW_FORMS`). */

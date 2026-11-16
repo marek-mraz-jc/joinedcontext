@@ -223,6 +223,10 @@ export async function goSignedIn(
   await page.goto(home ? `/login?redirect_to=${encodeURIComponent(url)}` : url, { waitUntil: "load" });
   let redirected = false;
   for (let step = 0; step < 4; step += 1) {
+    const signInButton = page.getByRole("button", { name: "Sign in" });
+    // A shell that sends an anonymous person to /login on its own (jc-dev) draws the Sign in
+    // button after `load`: wait for whichever this step meets before reading the page.
+    await page.locator("#username, #otp").or(signInButton).or(ready(page)).first().waitFor({ timeout: 30_000 }).catch(() => undefined);
     if (await page.locator("#username").count()) {
       redirected = true;
       await page.fill("#username", who.user);
@@ -231,7 +235,6 @@ export async function goSignedIn(
       continue;
     }
     if (await answerOtp(page, who)) continue;
-    const signInButton = page.getByRole("button", { name: "Sign in" });
     if (page.url().includes("/login") && (await signInButton.count())) {
       redirected = true;
       await submitted(page, () => signInButton.first().click());
