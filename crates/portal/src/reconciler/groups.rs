@@ -332,7 +332,10 @@ impl GroupSync {
         let manifests = match self.organization.as_deref() {
             Some(organization) => {
                 wanted.insert(organization.to_owned());
-                outcomes.push(self.keep_members_group(&token, organization, &existing).await);
+                outcomes.push(
+                    self.keep_members_group(&token, organization, &existing)
+                        .await,
+                );
                 Vec::new()
             }
             None => {
@@ -428,9 +431,9 @@ impl GroupSync {
             Some(group) => group.id.clone(),
             None => match self.create(token, organization, None).await {
                 Ok(id) => {
-                    outcome
-                        .drift
-                        .push(format!("the realm had no group '{organization}'; it was created"));
+                    outcome.drift.push(format!(
+                        "the realm had no group '{organization}'; it was created"
+                    ));
                     id
                 }
                 Err(err) => {
@@ -441,7 +444,10 @@ impl GroupSync {
         };
         let children: Vec<KcGroup> = match self
             .admin
-            .get_all(token, &format!("/groups/{root}/children?briefRepresentation=true"))
+            .get_all(
+                token,
+                &format!("/groups/{root}/children?briefRepresentation=true"),
+            )
             .await
         {
             Ok(children) => children,

@@ -1001,7 +1001,10 @@ async fn a_token_of_an_organizations_realm_binds_a_run_of_that_organization_alon
         organization: Some("ba".to_owned()),
         ..run_named("ba-run")
     };
-    grants.bind(&run, &ba_token).await.expect("ba's run takes ba's token");
+    grants
+        .bind(&run, &ba_token)
+        .await
+        .expect("ba's run takes ba's token");
     assert_eq!(grants.token(&run.id).await.expect("a grant"), DELEGATED);
     grants.end(&run.id).await;
     assert_eq!(bodies(&ba, &at("revoke")).await.len(), 1);

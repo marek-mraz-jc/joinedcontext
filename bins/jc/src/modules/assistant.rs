@@ -220,8 +220,13 @@ fn proxy_lookup(
 /// own sign-in host, where a run of that Organization's person is introspected and exchanged as
 /// the realm's `agent-proxy` client (`setup::assistant_realm_file`). The proxy dials the realm at
 /// its issuer, as it dials the installation realm, on the scheme kaisatsu's public address has.
-fn organization_realms(orgs: &[crate::config::OrganizationSection], kaisatsu: &str) -> Option<String> {
-    let scheme = kaisatsu.split_once("://").map_or("https", |(scheme, _)| scheme);
+fn organization_realms(
+    orgs: &[crate::config::OrganizationSection],
+    kaisatsu: &str,
+) -> Option<String> {
+    let scheme = kaisatsu
+        .split_once("://")
+        .map_or("https", |(scheme, _)| scheme);
     let realms: Vec<serde_json::Value> = orgs
         .iter()
         .filter_map(|org| {
@@ -414,7 +419,9 @@ async fn try_start(
     // The proxy: an operator's own (`JC_ASSISTANT_PROXY_URL`), else `jc`'s over the key file.
     let proxy = match (env("JC_ASSISTANT_PROXY_URL"), &secrets.model_key) {
         (Some(_), _) => None,
-        (None, Some(key)) => Some(proxy(siblings, setup, &cfg.organizations, env, &key.secret).await?),
+        (None, Some(key)) => {
+            Some(proxy(siblings, setup, &cfg.organizations, env, &key.secret).await?)
+        }
         (None, None) => {
             return Err(
                 "no model proxy: give the model key file (JCBIN_MODEL_KEY_FILE) or JC_ASSISTANT_PROXY_URL"
@@ -872,7 +879,10 @@ mod tests {
                 jwks_url: "https://idm.bbsk.sk/realms/bbsk/protocol/openid-connect/certs".into(),
             }]
         );
-        assert_eq!(organization_realms(&cfg.organizations[1..], "https://city.example"), None);
+        assert_eq!(
+            organization_realms(&cfg.organizations[1..], "https://city.example"),
+            None
+        );
     }
 
     #[test]

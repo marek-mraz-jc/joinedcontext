@@ -1103,7 +1103,12 @@ async fn an_answer_to_a_question_never_asked_is_refused_and_logs_nothing() {
 async fn the_proxy_reads_the_organization_of_the_runs_project() {
     let config = config();
     let mirror = mirror(Some(builder_profile_spec()));
-    mirror.upsert(envelope("Organization", "bb", "org", json!({ "domain": "hel.fi" })));
+    mirror.upsert(envelope(
+        "Organization",
+        "bb",
+        "org",
+        json!({ "domain": "hel.fi" }),
+    ));
     let (app, internal) = both(mirror, &config);
     let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
     let id = create_run(&app, &cookie).await["id"]

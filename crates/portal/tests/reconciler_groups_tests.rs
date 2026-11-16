@@ -1135,7 +1135,9 @@ async fn an_organizations_realm_holds_its_own_groups_and_members_group_alone() {
             .await;
     }
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REALM}/groups/[^/]+/(children|members)$")))
+        .and(path_regex(format!(
+            "^{REALM}/groups/[^/]+/(children|members)$"
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
         .mount(&keycloak)
         .await;
@@ -1169,7 +1171,11 @@ async fn an_organizations_realm_holds_its_own_groups_and_members_group_alone() {
         .filter(|r| r.method.as_str() == "POST" && r.url.path().starts_with(REALM))
         .map(|r| {
             let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
-            format!("{} {}", r.url.path(), body["name"].as_str().unwrap_or_default())
+            format!(
+                "{} {}",
+                r.url.path(),
+                body["name"].as_str().unwrap_or_default()
+            )
         })
         .collect();
     assert_eq!(

@@ -389,7 +389,10 @@ const CERTS: &str = "/protocol/openid-connect/certs";
 impl OrganizationRealm {
     /// The realm's token endpoint at its back channel.
     pub fn token_url(&self) -> String {
-        let base = self.jwks_url.strip_suffix("/certs").unwrap_or(&self.jwks_url);
+        let base = self
+            .jwks_url
+            .strip_suffix("/certs")
+            .unwrap_or(&self.jwks_url);
         format!("{base}/token")
     }
 }
@@ -416,7 +419,9 @@ fn organization_realms(
     for (i, realm) in realms.iter().enumerate() {
         let org = &realm.organization;
         if org.trim().is_empty() || realms[..i].iter().any(|o| &o.organization == org) {
-            return Err(invalid(format!("Organization '{org}' is empty or listed twice")));
+            return Err(invalid(format!(
+                "Organization '{org}' is empty or listed twice"
+            )));
         }
         for url in [&realm.issuer, &realm.jwks_url] {
             if Url::parse(url).map_or(true, |u| !matches!(u.scheme(), "http" | "https")) {
@@ -424,7 +429,9 @@ fn organization_realms(
             }
         }
         if !realm.jwks_url.ends_with(CERTS) {
-            return Err(invalid(format!("{org}: the key URL does not end in {CERTS}")));
+            return Err(invalid(format!(
+                "{org}: the key URL does not end in {CERTS}"
+            )));
         }
         if same(&realm.issuer, installation.as_str())
             || realms[..i].iter().any(|o| same(&o.issuer, &realm.issuer))
