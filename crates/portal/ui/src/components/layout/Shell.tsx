@@ -769,7 +769,7 @@ function ProjectFrame({
           className={clsx(
             "z-40 w-sidebar shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-surface p-3",
             // The phone drawer takes the room a phone has, so a project's name is not cut (T-7148).
-            "max-lg:w-[min(85vw,20rem)]",
+            "max-lg:w-sidebar-drawer",
             // The viewport minus the `h-14` header (the below-header token).
             // From lg only: at 768 px the open sidebar left a table 460 px and cut its actions,
             // so a tablet opens it from the menu button like a phone (T-4265, photo audit T-4160 #41).
