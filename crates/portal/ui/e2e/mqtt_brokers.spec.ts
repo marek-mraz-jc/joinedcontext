@@ -4,6 +4,12 @@ import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
 import { manifestAsRest } from "../tests/odata";
 
+/** The broker form's shared draft: its REST door, or the service's jc_draft_get/put the form calls (T-7119). */
+const MQTT_DRAFT = (url: URL): boolean =>
+  /\/projects\/helsinki\/drafts\/MqttBroker\/|\/projects\('helsinki'\)\/JoinedContext\.Portal\.jc_draft_(get|put)\b/.test(
+    decodeURIComponent(url.pathname),
+  );
+
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-3839: a project's MQTT brokers and who talks to whom, then an MQTT data source that reads
@@ -115,7 +121,7 @@ test.describe("MQTT brokers", () => {
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ project: PROJECT, bootstrap: true, grants: [] }) }),
     );
     // The form saves its shared draft as it is typed (AG-61); the draft comes back as written.
-    await page.route("**/api/v1/projects/helsinki/drafts/MqttBroker/*", async (route) => {
+    await page.route(MQTT_DRAFT, async (route) => {
       const manifest = (route.request().postDataJSON() as { manifest?: unknown } | null)?.manifest ?? null;
       await route.fulfill({
         contentType: "application/json",
@@ -208,7 +214,7 @@ test.describe("MQTT brokers", () => {
     await page.route("**/api/v1/projects/helsinki/permissions/me", (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ project: PROJECT, bootstrap: true, grants: [] }) }),
     );
-    await page.route("**/api/v1/projects/helsinki/drafts/MqttBroker/*", async (route) => {
+    await page.route(MQTT_DRAFT, async (route) => {
       const manifest = (route.request().postDataJSON() as { manifest?: unknown } | null)?.manifest ?? null;
       await route.fulfill({
         contentType: "application/json",
@@ -253,7 +259,7 @@ test.describe("MQTT brokers", () => {
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ project: PROJECT, bootstrap: true, grants: [] }) }),
     );
     const drafted: unknown[] = [];
-    await page.route("**/api/v1/projects/helsinki/drafts/MqttBroker/*", async (route) => {
+    await page.route(MQTT_DRAFT, async (route) => {
       const manifest = (route.request().postDataJSON() as { manifest?: unknown } | null)?.manifest ?? null;
       drafted.push(manifest);
       await route.fulfill({
