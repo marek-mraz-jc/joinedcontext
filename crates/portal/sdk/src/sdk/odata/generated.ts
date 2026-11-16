@@ -981,6 +981,9 @@ export interface Functions {
   portal_app_checks: Record<string, never>;
   portal_app_dashboard: { name: string };
   portal_app_templates: Record<string, never>;
+  portal_backup_configuration_download: { version: string };
+  portal_backup_configuration_get: Record<string, never>;
+  portal_backup_configuration_versions: Record<string, never>;
   portal_change_manifests: { id: string };
   portal_change_outside: Record<string, never>;
   portal_comment_list: { space: string; urn?: string };
@@ -1116,6 +1119,9 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_app_checks: ["Project"],
   portal_app_dashboard: ["Project"],
   portal_app_templates: ["Organization"],
+  portal_backup_configuration_download: ["Organization"],
+  portal_backup_configuration_get: ["Organization"],
+  portal_backup_configuration_versions: ["Organization"],
   portal_change_manifests: ["Project"],
   portal_change_outside: ["Project"],
   portal_comment_list: ["Project"],
@@ -1253,6 +1259,10 @@ export interface Actions {
   portal_app_rebuild: { name: string };
   portal_app_rename_shapes: Record<string, never>;
   portal_app_restore: { name: string; body?: unknown };
+  portal_backup_configuration_delete: Record<string, never>;
+  portal_backup_configuration_restore: { version: string; body?: unknown };
+  portal_backup_configuration_run: Record<string, never>;
+  portal_backup_configuration_set: { body?: unknown };
   portal_change_restore: { id: string };
   portal_change_undo: { id: string };
   portal_comment_add: { space: string; body?: unknown };
@@ -1385,6 +1395,10 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_app_rebuild: ["Project"],
   portal_app_rename_shapes: ["Project"],
   portal_app_restore: ["Project"],
+  portal_backup_configuration_delete: ["Organization"],
+  portal_backup_configuration_restore: ["Organization"],
+  portal_backup_configuration_run: ["Organization"],
+  portal_backup_configuration_set: ["Organization"],
   portal_change_restore: ["Project"],
   portal_change_undo: ["Project"],
   portal_comment_add: ["Project"],

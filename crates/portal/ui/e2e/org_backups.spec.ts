@@ -3,9 +3,12 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
-import { manifestReadsAsRest } from "./manifestReads";
+import { doorsAsRest, manifestReadsAsRest } from "./manifestReads";
 
-test.beforeEach(({ page }) => manifestReadsAsRest(page));
+test.beforeEach(({ page }) => {
+  manifestReadsAsRest(page);
+  doorsAsRest(page);
+});
 
 // Administration → Backups (T-7154) as an Organization administrator meets it: nothing set up,
 // a bucket field refused, the bucket saved, a run, the versions, a restore check and a soft

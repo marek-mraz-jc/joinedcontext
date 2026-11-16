@@ -174,6 +174,7 @@ pub struct BackupOverview {
 #[utoipa::path(
     get,
     path = "/api/v1/organization/backups/configuration",
+    operation_id = "organization_backup_overview",
     summary = "Read Configuration Backup",
     description = "The Organization's configuration backup target (never its secret key) and the newest runs, deletes and restores (T-7154).",
     tag = "system",
@@ -202,10 +203,15 @@ pub async fn overview(
 #[utoipa::path(
     put,
     path = "/api/v1/organization/backups/configuration",
+    operation_id = "organization_backup_save",
     summary = "Set Configuration Backup Target",
     description = "Saves the bucket, schedule and retention. The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154).",
     tag = "system",
-    request_body = TargetInput,
+    request_body(
+        content = TargetInput,
+        content_type = "application/json",
+        example = json!({ "endpoint": "https://s3.eu-central-1.amazonaws.com", "region": "eu-central-1", "bucket": "bb-backups", "prefix": "joinedcontext/", "accessKeyId": "backup-writer", "enabled": true, "everyHours": 24, "keepDays": 30 })
+    ),
     responses(
         (status = 200, description = "Saved", body = Target),
         (status = 403, description = "Not an administrator of the Organization", body = ProblemDetails),
@@ -285,6 +291,7 @@ async fn saved_target(state: &AppState, organization: &str) -> Result<Target, Ap
 #[utoipa::path(
     post,
     path = "/api/v1/organization/backups/configuration/run",
+    operation_id = "organization_backup_run_now",
     summary = "Run Configuration Backup Now",
     description = "Builds the Organization's configuration bundle and uploads it as a new version, whether the schedule is on or off (T-7154).",
     tag = "system",
@@ -339,6 +346,7 @@ fn s3_unavailable(err: s3::S3Error) -> ApiError {
 #[utoipa::path(
     get,
     path = "/api/v1/organization/backups/configuration/versions",
+    operation_id = "organization_backup_versions",
     summary = "List Configuration Backup Versions",
     description = "Every version and delete marker of the Organization's bundle in its bucket, newest first, with the bucket's versioning and Object Lock state (T-7154).",
     tag = "system",
@@ -414,6 +422,7 @@ async fn fetch(state: &AppState, target: &Target, version: &str) -> Result<Vec<u
 #[utoipa::path(
     get,
     path = "/api/v1/organization/backups/configuration/versions/{version}",
+    operation_id = "organization_backup_download",
     summary = "Download Configuration Backup Version",
     description = "One version of the Organization's bundle, as the zip that was uploaded (T-7154).",
     tag = "system",
@@ -450,6 +459,7 @@ pub async fn download(
 #[utoipa::path(
     delete,
     path = "/api/v1/organization/backups/configuration/bundle",
+    operation_id = "organization_backup_soft_delete",
     summary = "Delete Configuration Backup",
     description = "A soft delete: the bucket keeps every version behind a delete marker until retention removes them, and any version can still be restored (T-7154).",
     tag = "system",
@@ -757,13 +767,18 @@ pub struct RestoreInput {
 #[utoipa::path(
     post,
     path = "/api/v1/organization/backups/configuration/versions/{version}/restore",
+    operation_id = "organization_backup_restore",
     summary = "Restore Configuration Backup Version",
     description = "Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. A bundle of another Organization is refused (T-7154).",
     tag = "system",
     params(
         ("version" = String, Path, description = "S3 version id"),
     ),
-    request_body = RestoreInput,
+    request_body(
+        content = RestoreInput,
+        content_type = "application/json",
+        example = json!({ "apply": false })
+    ),
     responses(
         (status = 200, description = "The plan, and the Changes once applied", body = RestorePlan),
         (status = 403, description = "Not an administrator of the Organization", body = ProblemDetails),

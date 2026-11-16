@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ApiError, api, reasonOf, unwrap } from "../../api/client";
+import { ApiError, reasonOf } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import { useAdministers } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import {
@@ -24,7 +25,6 @@ type Target = components["schemas"]["Target"];
 type VersionList = components["schemas"]["VersionList"];
 type RestorePlan = components["schemas"]["RestorePlan"];
 
-const DOOR = "/api/v1/organization/backups/configuration";
 const OVERVIEW = ["organizationBackup"] as const;
 const VERSIONS = ["organizationBackup", "versions"] as const;
 
@@ -106,7 +106,7 @@ export function Backups(): JSX.Element {
   const overview = useQuery({
     queryKey: OVERVIEW,
     enabled: allowed,
-    queryFn: async (): Promise<Overview> => unwrap(await api.GET(DOOR)),
+    queryFn: async () => (await door("portal_backup_configuration_get", {})) as Overview,
   });
   if (!known) return <p className="text-body text-fg-muted">{t("backups.loading")}</p>;
   if (!allowed) return <Alert tone="info">{t("organization.adminOnly")}</Alert>;
@@ -128,7 +128,7 @@ function Runs({ target, overview }: { target: Target; overview: Overview | undef
   const locale = i18n.resolvedLanguage ?? "en";
   const client = useQueryClient();
   const run = useMutation({
-    mutationFn: async () => unwrap(await api.POST(`${DOOR}/run`)),
+    mutationFn: async () => doorAction("portal_backup_configuration_run", {}),
     onSettled: async () => client.invalidateQueries({ queryKey: OVERVIEW }),
   });
   const log = overview?.log ?? [];
@@ -187,10 +187,10 @@ function Versions(): JSX.Element {
   const [restoring, setRestoring] = useState<string | null>(null);
   const versions = useQuery({
     queryKey: VERSIONS,
-    queryFn: async (): Promise<VersionList> => unwrap(await api.GET(`${DOOR}/versions`)),
+    queryFn: async () => (await door("portal_backup_configuration_versions", {})) as VersionList,
   });
   const remove = useMutation({
-    mutationFn: async () => unwrap(await api.DELETE(`${DOOR}/bundle`)),
+    mutationFn: async () => doorAction("portal_backup_configuration_delete", {}),
     onSettled: async () => {
       setDeleting(false);
       await client.invalidateQueries({ queryKey: OVERVIEW });
@@ -198,11 +198,10 @@ function Versions(): JSX.Element {
     },
   });
   const save = async (version: string) => {
-    const answer = await api.GET(`${DOOR}/versions/{version}`, {
-      params: { path: { version } },
-      parseAs: "blob",
-    });
-    const blob = await unwrap(answer as { data?: Blob; error?: unknown; response: Response });
+    // The door answers the zip as its base64 (OData answers JSON only).
+    const base64 = await door("portal_backup_configuration_download", { version });
+    if (typeof base64 !== "string" || base64 === "") throw new ApiError(502, t("backups.unreadable"));
+    const blob = new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type: "application/zip" });
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
@@ -287,12 +286,7 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
   const locale = i18n.resolvedLanguage ?? "en";
   const client = useQueryClient();
   const call = async (apply: boolean): Promise<RestorePlan> =>
-    unwrap(
-      await api.POST(`${DOOR}/versions/{version}/restore`, {
-        params: { path: { version } },
-        body: { apply },
-      }),
-    );
+    (await doorAction("portal_backup_configuration_restore", { version, body: { apply } })) as RestorePlan;
   const plan = useQuery({ queryKey: ["organizationBackup", "plan", version], queryFn: () => call(false) });
   const apply = useMutation({
     mutationFn: () => call(true),
@@ -361,9 +355,8 @@ function TargetForm({ target }: { target: Target | null }): JSX.Element {
   const [form, setForm] = useState<Form>(() => formOf(target));
   const save = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.PUT(DOOR, {
-          body: {
+      doorAction("portal_backup_configuration_set", {
+        body: {
             endpoint: form.endpoint.trim(),
             region: form.region.trim(),
             bucket: form.bucket.trim(),
@@ -375,7 +368,6 @@ function TargetForm({ target }: { target: Target | null }): JSX.Element {
             keepDays: Number(form.keepDays),
           },
         }),
-      ),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: OVERVIEW });
       await client.invalidateQueries({ queryKey: VERSIONS });

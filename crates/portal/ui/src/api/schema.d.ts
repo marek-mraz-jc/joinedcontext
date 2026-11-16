@@ -1000,12 +1000,12 @@ export interface paths {
          * Read Configuration Backup
          * @description The Organization's configuration backup target (never its secret key) and the newest runs, deletes and restores (T-7154).
          */
-        get: operations["overview"];
+        get: operations["organization_backup_overview"];
         /**
          * Set Configuration Backup Target
          * @description Saves the bucket, schedule and retention. The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154).
          */
-        put: operations["save"];
+        put: operations["organization_backup_save"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1027,7 +1027,7 @@ export interface paths {
          * Delete Configuration Backup
          * @description A soft delete: the bucket keeps every version behind a delete marker until retention removes them, and any version can still be restored (T-7154).
          */
-        delete: operations["soft_delete"];
+        delete: operations["organization_backup_soft_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1046,7 +1046,7 @@ export interface paths {
          * Run Configuration Backup Now
          * @description Builds the Organization's configuration bundle and uploads it as a new version, whether the schedule is on or off (T-7154).
          */
-        post: operations["run_now"];
+        post: operations["organization_backup_run_now"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1064,7 +1064,7 @@ export interface paths {
          * List Configuration Backup Versions
          * @description Every version and delete marker of the Organization's bundle in its bucket, newest first, with the bucket's versioning and Object Lock state (T-7154).
          */
-        get: operations["versions"];
+        get: operations["organization_backup_versions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1084,7 +1084,7 @@ export interface paths {
          * Download Configuration Backup Version
          * @description One version of the Organization's bundle, as the zip that was uploaded (T-7154).
          */
-        get: operations["download"];
+        get: operations["organization_backup_download"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1106,7 +1106,7 @@ export interface paths {
          * Restore Configuration Backup Version
          * @description Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. A bundle of another Organization is refused (T-7154).
          */
-        post: operations["restore"];
+        post: operations["organization_backup_restore"];
         delete?: never;
         options?: never;
         head?: never;
@@ -17294,7 +17294,7 @@ export interface operations {
             };
         };
     };
-    overview: {
+    organization_backup_overview: {
         parameters: {
             query?: never;
             header?: never;
@@ -17323,7 +17323,7 @@ export interface operations {
             };
         };
     };
-    save: {
+    organization_backup_save: {
         parameters: {
             query?: never;
             header?: never;
@@ -17332,6 +17332,18 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "accessKeyId": "backup-writer",
+                 *       "bucket": "bb-backups",
+                 *       "enabled": true,
+                 *       "endpoint": "https://s3.eu-central-1.amazonaws.com",
+                 *       "everyHours": 24,
+                 *       "keepDays": 30,
+                 *       "prefix": "joinedcontext/",
+                 *       "region": "eu-central-1"
+                 *     }
+                 */
                 "application/json": components["schemas"]["TargetInput"];
             };
         };
@@ -17383,7 +17395,7 @@ export interface operations {
             };
         };
     };
-    soft_delete: {
+    organization_backup_soft_delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -17419,7 +17431,7 @@ export interface operations {
             };
         };
     };
-    run_now: {
+    organization_backup_run_now: {
         parameters: {
             query?: never;
             header?: never;
@@ -17466,7 +17478,7 @@ export interface operations {
             };
         };
     };
-    versions: {
+    organization_backup_versions: {
         parameters: {
             query?: never;
             header?: never;
@@ -17513,7 +17525,7 @@ export interface operations {
             };
         };
     };
-    download: {
+    organization_backup_download: {
         parameters: {
             query?: never;
             header?: never;
@@ -17554,7 +17566,7 @@ export interface operations {
             };
         };
     };
-    restore: {
+    organization_backup_restore: {
         parameters: {
             query?: never;
             header?: never;
@@ -17566,6 +17578,11 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "apply": false
+                 *     }
+                 */
                 "application/json": components["schemas"]["RestoreInput"];
             };
         };
