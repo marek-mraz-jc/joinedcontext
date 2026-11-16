@@ -12410,7 +12410,8 @@
   "dashboardHistory": {
       "title": "History",
       "lead": "Every approved version of this dashboard, newest first. Compare an older version with the newest, or restore it: a restore is a change that waits for approval.",
-      "failed": "The history could not be read; try again, or reload the page",
+      "openApprovals": "Open Approvals",
+    "failed": "The history could not be read; try again, or reload the page",
       "emptyTitle": "No versions yet",
       "empty": "The first version appears here once its change is approved. Open Approvals to see changes that wait.",
       "noMessage": "Saved without a message",

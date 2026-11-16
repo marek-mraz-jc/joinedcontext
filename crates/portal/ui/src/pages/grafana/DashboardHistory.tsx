@@ -11,7 +11,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { reasonOf } from "../../api/client";
 import { door, doorAction, type RestAnswer } from "../../api/odata";
-import { Alert, Button, EmptyState, Icon, Skeleton } from "../../components/ui";
+import { Alert, Button, buttonClass, EmptyState, Icon, Skeleton } from "../../components/ui";
 import { PlanDiffViewer } from "../../components/diff/PlanDiffViewer";
 import type { FieldChange } from "../../components/diff/PlanDiffViewer";
 
@@ -89,11 +89,27 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
           {t("dashboardHistory.title")}
         </h2>
         <p className="text-body text-fg-muted">{t("dashboardHistory.lead")}</p>
+        {mayEdit ? null : (
+          <p id="dashboard-history-reader" className="mt-1 text-body text-fg">
+            <Icon name="lock" className="mr-1 inline size-4 align-text-bottom" />
+            {t("dashboardHistory.readerHint")}
+          </p>
+        )}
       </div>
       {versions.isPending ? <Skeleton className="h-24" /> : null}
       {versions.isError ? <Alert tone="danger" title={t("dashboardHistory.failed")}>{reasonOf(versions.error)}</Alert> : null}
       {versions.isSuccess && items.length === 0 ? (
-        <EmptyState bare icon="dashboards" title={t("dashboardHistory.emptyTitle")} description={t("dashboardHistory.empty")} />
+        <EmptyState
+          bare
+          icon="dashboards"
+          title={t("dashboardHistory.emptyTitle")}
+          description={t("dashboardHistory.empty")}
+          action={
+            <Link to="/projects/$project/approvals" params={{ project }} className={buttonClass("secondary", "sm")}>
+              {t("dashboardHistory.openApprovals")}
+            </Link>
+          }
+        />
       ) : null}
       {restore.isSuccess ? (
         <Alert tone="success" title={t("dashboardHistory.restoredTitle")}>
@@ -115,7 +131,7 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
                 </p>
                 <p className="text-caption text-fg-muted">
                   {t("dashboardHistory.byOn", { author: version.author || t("dashboardHistory.unknownAuthor"), date: when(version.date) })}{" "}
-                  <span className="font-mono">{shortSha(version.sha)}</span>
+                  <span aria-hidden="true">·</span> <span className="font-mono">{shortSha(version.sha)}</span>
                 </p>
               </div>
               {index > 0 ? (
@@ -134,6 +150,7 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
                     variant="ghost"
                     disabled={!mayEdit || restore.isPending}
                     title={t(mayEdit ? "dashboardHistory.restoreHint" : "dashboardHistory.readerHint")}
+                    aria-describedby={mayEdit ? undefined : "dashboard-history-reader"}
                     onClick={() => {
                       restore.reset();
                       setAsked(version);
@@ -144,46 +161,46 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
                   </Button>
                 </div>
               ) : null}
+              {asked?.sha === version.sha ? (
+                <Alert
+                  className="basis-full"
+                  tone="info"
+                  title={t("dashboardHistory.confirmTitle")}
+                  actions={
+                    <>
+                      <Button size="sm" variant="primary" disabled={restore.isPending} title={t("dashboardHistory.restoreHint")} onClick={() => restore.mutate(asked.sha)}>
+                        {t("dashboardHistory.confirm")}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setAsked(undefined)}>
+                        {t("dashboardHistory.cancel")}
+                      </Button>
+                    </>
+                  }
+                >
+                  {t("dashboardHistory.confirmBody", { author: asked.author || t("dashboardHistory.unknownAuthor"), date: when(asked.date) })}
+                </Alert>
+              ) : null}
+              {compared === version.sha ? (
+                <div className="flex basis-full flex-col gap-2">
+                  <h3 className="text-body font-semibold text-fg">
+                    {t("dashboardHistory.diffTitle", { from: shortSha(compared), to: newest ? shortSha(newest) : "" })}
+                  </h3>
+                  {older.isPending || current.isPending ? <Skeleton className="h-24" /> : null}
+                  {older.isError || current.isError ? (
+                    <Alert tone="warning" title={t("dashboardHistory.cannotCompare")}>
+                      {reasonOf(older.error ?? current.error)}
+                    </Alert>
+                  ) : null}
+                  {older.isSuccess && current.isSuccess ? (
+                    <div className="overflow-x-auto">
+                      <PlanDiffViewer fields={boardChanges(older.data.board, current.data.board)} />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </li>
           ))}
         </ol>
-      ) : null}
-      {!mayEdit && items.length > 1 ? <p className="text-caption text-fg-muted">{t("dashboardHistory.readerHint")}</p> : null}
-      {asked ? (
-        <Alert
-          tone="warning"
-          title={t("dashboardHistory.confirmTitle")}
-          actions={
-            <>
-              <Button size="sm" variant="primary" disabled={restore.isPending} title={t("dashboardHistory.restoreHint")} onClick={() => restore.mutate(asked.sha)}>
-                {t("dashboardHistory.confirm")}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setAsked(undefined)}>
-                {t("dashboardHistory.cancel")}
-              </Button>
-            </>
-          }
-        >
-          {t("dashboardHistory.confirmBody", { author: asked.author || t("dashboardHistory.unknownAuthor"), date: when(asked.date) })}
-        </Alert>
-      ) : null}
-      {compared ? (
-        <div className="flex flex-col gap-2">
-          <h3 className="text-body font-semibold text-fg">
-            {t("dashboardHistory.diffTitle", { from: shortSha(compared), to: newest ? shortSha(newest) : "" })}
-          </h3>
-          {older.isPending || current.isPending ? <Skeleton className="h-24" /> : null}
-          {older.isError || current.isError ? (
-            <Alert tone="warning" title={t("dashboardHistory.cannotCompare")}>
-              {reasonOf(older.error ?? current.error)}
-            </Alert>
-          ) : null}
-          {older.isSuccess && current.isSuccess ? (
-            <div className="overflow-x-auto">
-              <PlanDiffViewer fields={boardChanges(older.data.board, current.data.board)} />
-            </div>
-          ) : null}
-        </div>
       ) : null}
     </section>
   );

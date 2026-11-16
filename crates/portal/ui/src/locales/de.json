@@ -12410,7 +12410,8 @@
   "dashboardHistory": {
       "title": "Verlauf",
       "lead": "Jede genehmigte Version dieses Dashboards, die neueste zuerst. Vergleichen Sie eine ältere Version mit der aktuellen oder stellen Sie sie wieder her: Eine Wiederherstellung ist eine Änderung, die auf Genehmigung wartet.",
-      "failed": "Der Verlauf konnte nicht gelesen werden; versuchen Sie es erneut oder laden Sie die Seite neu",
+      "openApprovals": "Genehmigungen öffnen",
+    "failed": "Der Verlauf konnte nicht gelesen werden; versuchen Sie es erneut oder laden Sie die Seite neu",
       "emptyTitle": "Noch keine Versionen",
       "empty": "Die erste Version erscheint hier, sobald ihre Änderung genehmigt ist. Wartende Änderungen finden Sie unter Genehmigungen.",
       "noMessage": "Ohne Nachricht gespeichert",

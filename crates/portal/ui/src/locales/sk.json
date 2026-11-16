@@ -12410,7 +12410,8 @@
   "dashboardHistory": {
       "title": "História",
       "lead": "Každá schválená verzia tohto dashboardu, najnovšia prvá. Porovnajte staršiu verziu s aktuálnou alebo ju obnovte: obnovenie je zmena, ktorá čaká na schválenie.",
-      "failed": "Históriu sa nepodarilo načítať; skúste to znova alebo obnovte stránku",
+      "openApprovals": "Otvoriť Schválenia",
+    "failed": "Históriu sa nepodarilo načítať; skúste to znova alebo obnovte stránku",
       "emptyTitle": "Zatiaľ žiadne verzie",
       "empty": "Prvá verzia sa tu zobrazí po schválení jej zmeny. Čakajúce zmeny nájdete v Schváleniach.",
       "noMessage": "Uložené bez správy",
