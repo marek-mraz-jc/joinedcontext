@@ -8,6 +8,7 @@ export { canonicalizeJson, digestOf } from "./digest";
 export type Verdict = components["schemas"]["Verdict"];
 export type Draft = components["schemas"]["Draft"];
 export type DraftEvent = components["schemas"]["DraftEvent"];
+export type DraftList = components["schemas"]["DraftList"];
 
 /** The copy the person works in, as the REST doors read it from `?workspace=` (CC-76). */
 function inWorkspace(): { workspace?: string } {
@@ -23,6 +24,11 @@ function detailOf(error: unknown): string | undefined {
 
 function statusOf(error: unknown): number | undefined {
   return error instanceof ApiError ? error.status : undefined;
+}
+
+/** The shared drafts of `project` the person may read, a line each, with `jc_draft_list` (T-7119). */
+export async function listDrafts(project: string): Promise<DraftList> {
+  return (await call("jc_draft_list", project, inWorkspace())) as DraftList;
 }
 
 /**

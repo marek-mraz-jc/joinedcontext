@@ -332,6 +332,7 @@ const OPERATIONS: Record<string, Door> = {
   jc_workspace_preview_stop: ["DELETE", "/projects/{project}/workspaces/{name}/preview"],
   // The shared drafts and a run's turns (T-7119): the drafts' REST doors run the registry's
   // operations; a run's answer and message are Portal doors, its cancel and publish operations.
+  jc_draft_list: ["GET", "/projects/{project}/drafts"],
   jc_draft_get: ["GET", "/projects/{project}/drafts/{kind}/{name}"],
   jc_draft_put: ["PUT", "/projects/{project}/drafts/{kind}/{name}", ["manifest", "expectedVersion"]],
   jc_draft_drop: ["DELETE", "/projects/{project}/drafts/{kind}/{name}"],

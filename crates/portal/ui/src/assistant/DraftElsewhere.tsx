@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../api/client";
+import { listDrafts } from "../api/drafts";
 import { humanizeName } from "../pages/apps/appTitle";
 import { Alert, buttonClass } from "../components/ui";
 
@@ -38,8 +38,7 @@ export function DraftElsewhere({ project, page }: { project: string; page: strin
   const drafts = useQuery({
     queryKey: ["drafts", project],
     enabled: name !== null && held !== undefined,
-    queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/drafts", { params: { path: { project } } })),
+    queryFn: () => listDrafts(project),
   });
   if (name === null || held === undefined || !drafts.data) {
     return null;
