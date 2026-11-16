@@ -10,6 +10,11 @@
   border-radius: var(--jc-radius-md, 4px);
   overflow: hidden;
 }
+/* An open Arrange columns panel is taller than a grid of a few rows: the grid lets it hang below
+   its edge instead of cutting off the panel's last controls, Observed and the other extra details (T-7072). */
+.jc-grid:has(.jc-grid-arrange-panel) {
+  overflow: visible;
+}
 
 .jc-grid[data-density="compact"] {
   --jc-grid-cell-padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);

@@ -417,7 +417,11 @@ function DataActions({
 }
 
 export interface EndpointDataViewProps {
-  project: string;
+  /**
+   * The project the endpoint belongs to; a catalogue visitor may not know it (T-7072). Without it
+   * the grid keeps its layout under `catalogue` and its map draws no basemap, which is a project's.
+   */
+  project?: string;
   /** The endpoint's slug: the grid reads through it, never through a URL of its own (EP-55). */
   slug: string;
   /** `spec.projection.hiddenAttributes`, including what the open form has ticked but not saved. */
@@ -975,7 +979,10 @@ export function EndpointDataView({
       ) : (
         <PortalEntityGrid
           key={`${slug}-${type.name}`}
-          project={project}
+          project={project ?? "catalogue"}
+          // The basemap is a project's (AP-67): with none known the map draws the points on a plain
+          // ground rather than fail on a style nobody can read (T-7072).
+          {...(project ? {} : { basemap: undefined })}
           config={config}
           // The type is picked in the grid's Type column, like on a space (owner 2026-11-01).
           typeChoice={{
@@ -1008,6 +1015,8 @@ export function EndpointDataView({
           rowTone={tools.rowTone}
           rowSize={tools.rowSize}
           query={tools.query}
+          // A search or a filter panel condition that leaves no row says so, not "no entities yet" (T-7072).
+          emptyText={tools.q ? t("explore.noMatch") : undefined}
          
           queryBox={tools.showQuery}
           filterRow={!phone}

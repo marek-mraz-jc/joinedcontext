@@ -4,7 +4,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { ListFailed } from "../../components/forms/widgets/ListFailed";
 import { useTranslation } from "react-i18next";
 import { parseGridConfig } from "@joinedcontext/sdk";
-import type { ResolvedGridConfig, RichRow } from "@joinedcontext/sdk";
+import type { GridState, ResolvedGridConfig, RichRow } from "@joinedcontext/sdk";
 import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
 import { spaceUsageQuery } from "../../api/spaceUsage";
 import { asManifests, localized, refName } from "../../api/manifest";
@@ -14,6 +14,8 @@ import { AttributeHistory } from "../../components/entities/history/AttributeHis
 import { deniedOf, explainAttribute, useAccessCheck, useAttributeAccess, writableOf } from "../../api/access";
 import { EntityFilters } from "../../components/entities/EntityFilters";
 import { PortalEntityGrid } from "../../components/entities/PortalEntityGrid";
+import { heldView } from "../../components/entities/EndpointDataView";
+import type { OpenedView } from "../../components/entities/EndpointDataView";
 import { enumsOfModel, fetchEntity, filterSlotsOf, qProblem, relationsOfModel, rulesOfModel, useModelSource } from "../../components/entities/filters";
 import type { EntityQuery } from "../../components/entities/filters";
 import { Alert, Button, Card, EmptyState, PageHeader, Select, Tabs, tabPanelProps } from "../../components/ui";
@@ -30,6 +32,7 @@ import { ExploreMap, isLocated } from "./ExploreMap";
 import { andQ } from "./exportView";
 import { entityTypesOf, isAppEndpoint, pickReadEndpoint, spaceOf } from "../spaces/spaceFacts";
 import { useIdentity } from "../../auth/AuthProvider";
+import { useIsPhone } from "../../phone";
 import { replaceOwnSearch } from "../../assistant/HandOff";
 import { ProjectHidden, projectOutOfReach } from "../../components/ProjectHidden";
 import { REQUEST_ACCESS_ANCHOR } from "../../components/endpoints/EndpointAdmission";
@@ -96,6 +99,7 @@ export function ExplorePage({
   initialEntityId,
   initialType,
   initialQ,
+  initialSort,
   initialView,
   colorBy,
 }: {
@@ -111,6 +115,8 @@ export function ExplorePage({
    */
   initialType?: string;
   initialQ?: string;
+  /** The grid's order as the link carries it, `attr` or `attr;desc` (T-7072). */
+  initialSort?: string;
   /** Opens on the map when the type has a place (T-6442). */
   initialView?: "map";
   /** The number attribute the map colours its points by. */
@@ -146,6 +152,12 @@ export function ExplorePage({
   const [refused, setRefused] = useState(false);
   /** Bumped when an entity is removed, so the grid reads the endpoint again. */
   const [generation, setGeneration] = useState(0);
+  // A phone gets the grid's own phone layout, as on an endpoint's data (T-6748, T-7072).
+  const phone = useIsPhone();
+  // The grid's typed query and order, held here so the order travels in the link as the endpoint's
+  // data view keeps it (T-5082, T-7072); without it a shared link opened in the stored order.
+  const [held, setHeld] = useState<OpenedView>(() => ({ filterText: null, sort: orderOfLink(initialSort) }));
+  const onGridState = useCallback((next: GridState) => setHeld((before) => heldView(before, next)), []);
   /** The rows a person opened a relationship from, newest last: the way back (T-7072). */
   const [trail, setTrail] = useState<string[]>([]);
   // Stable: the grid's detail reads a linked row in an effect that depends on this callback.
@@ -252,9 +264,10 @@ export function ExplorePage({
     // The grid's own filter row travels too, so a shared link opens the same rows (T-7072); it
     // reopens as the type panel's query. The link carries the query only, never a credential.
     put("q", andQ(query.q, gridAsk.q));
+    put("sort", held.sort ? `${held.sort.attr}${held.sort.dir === "desc" ? ";desc" : ""}` : undefined);
     put("entityId", selected);
     replaceOwnSearch(address);
-  }, [chosenSpace, endpointChoice, endpointName, query.type, query.q, gridAsk.q, selected]);
+  }, [chosenSpace, endpointChoice, endpointName, query.type, query.q, gridAsk.q, held.sort, selected]);
   /** The space's model is not known yet: the space or the model list is still on its way. */
   const modelPending = spaces.isPending || models.isPending;
   const unknownType =
@@ -386,6 +399,8 @@ export function ExplorePage({
       : [];
 
   function changeQuery(next: EntityQuery) {
+    // Another type has other columns: its order starts empty.
+    if (next.type !== query.type) setHeld({ filterText: null, sort: null });
     setQuery(next);
     setTrail([]);
     setSelected(null);
@@ -570,6 +585,9 @@ export function ExplorePage({
             config={config}
             // Scroll through every matching entity, a window drawn at a time (T-3097).
             virtual
+            compact={phone}
+            view={held}
+            onGridState={onGridState}
             enums={enums}
             relations={relations}
             rules={rules}
@@ -733,4 +751,10 @@ function endpointOptions(group: Manifest[], locale: string): JSX.Element[] {
       </option>
     );
   });
+}
+
+/** The order a link names, `attr` or `attr;desc`; anything else opens unordered (T-7072). */
+function orderOfLink(raw: string | undefined): OpenedView["sort"] {
+  const match = /^([A-Za-z_@][\w@:.-]{0,199})(?:;(asc|desc))?$/.exec(raw ?? "");
+  return match ? { attr: match[1]!, dir: match[2] === "desc" ? "desc" : "asc" } : null;
 }

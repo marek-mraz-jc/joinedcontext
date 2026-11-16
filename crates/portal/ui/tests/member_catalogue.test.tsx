@@ -25,6 +25,8 @@ vi.mock("@tanstack/react-router", () => ({
       {children}
     </a>
   ),
+  useNavigate: () => () => Promise.resolve(),
+  useSearch: () => ({}),
 }));
 
 const { ReadableDatasets } = await import("../src/pages/catalogue/ReadableDatasets");
@@ -114,6 +116,19 @@ describe("a dataset by its Endpoint (T-6411)", () => {
     // A visitor's page never asks what a signed-in person may read.
     const asked = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((call) => String(call[0]));
     expect(asked.some((url) => url.includes("/catalogue/readable"))).toBe(false);
+  });
+
+  it("names a public dataset to a visitor by its Endpoint's own DCAT title (T-7072)", async () => {
+    status = "anonymous";
+    renderPart(<EndpointDatasetPage slug="lightszzzzzzzzzzzzzzzzzzzzzz" />, {
+      answer: (url) =>
+        url.pathname === "/api/endpoint/lightszzzzzzzzzzzzzzzzzzzzzz/"
+          ? json({ "dct:title": [{ "@value": "Pouličné svietidlá", "@language": "sk" }, { "@value": "Street lights", "@language": "en" }] })
+          : url.pathname.startsWith("/api/endpoint/")
+            ? refusal(401)
+            : undefined,
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Street lights" })).toBeInTheDocument();
   });
 
   it("tells a signed-in person without a grant they have no access", async () => {
