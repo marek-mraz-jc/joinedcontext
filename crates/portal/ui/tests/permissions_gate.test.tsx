@@ -94,7 +94,7 @@ describe("roles as code in the UI (T-0526, PF-50)", () => {
     for (const control of screen.getAllByRole("button", { name: en.pipelines.add })) {
       expectDenied(
         control,
-        "Disabled: your role does not permit 'propose' on 'Pipeline' in this project",
+        "Your role in this project cannot add or change pipelines.",
       );
     }
   });

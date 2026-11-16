@@ -2748,11 +2748,11 @@
     "title": "Pipelines",
     "empty": "This project has no pipeline yet.",
     "class": {
-      "resident": "resident",
+      "resident": "Always running",
       "residentHelp": "Runs continuously in the project's Bento runner.",
-      "scheduled": "scheduled",
+      "scheduled": "On a schedule",
       "scheduledHelp": "Runs on a schedule and stops between runs.",
-      "auto": "auto",
+      "auto": "Automatic",
       "autoHelp": "The reconciler picks: resident under 30 seconds or push-based, scheduled otherwise."
     },
     "field": {
@@ -7194,7 +7194,7 @@
   "permissions": {
     "unchecked": "Your access could not be checked just now. You can still fill in the form: the server checks your rights again when you propose.",
     "checking": "Checking your access…",
-    "denied": "Disabled: your role does not permit ''{verb}'' on ''{kind}'' in this project",
+    "denied": "Your role in this project cannot {action} {kinds}.",
     "deniedOrganization": "Only an organization administrator can {action} {kinds}.",
     "action": {
       "read": "see",

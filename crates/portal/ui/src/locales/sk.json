@@ -2748,11 +2748,11 @@
     "title": "Pipeliny",
     "empty": "Tento projekt zatiaľ nemá žiadnu pipelinu.",
     "class": {
-      "resident": "rezidentná",
+      "resident": "Stále beží",
       "residentHelp": "Beží nepretržite v Bento runneri projektu.",
-      "scheduled": "plánovaná",
+      "scheduled": "Podľa rozvrhu",
       "scheduledHelp": "Beží podľa plánu a medzi behmi sa zastaví.",
-      "auto": "auto",
+      "auto": "Automaticky",
       "autoHelp": "Vyberie reconciler: rezidentná pod 30 sekúnd alebo push, inak plánovaná."
     },
     "field": {
@@ -7194,7 +7194,7 @@
   "permissions": {
     "unchecked": "Vaše oprávnenia sa teraz nepodarilo overiť. Formulár môžete vyplniť aj tak: server vaše práva overí znova, keď zmenu navrhnete.",
     "checking": "Overuje sa váš prístup…",
-    "denied": "Vypnuté: vaša rola nedovoľuje ''{verb}'' na ''{kind}'' v tomto projekte",
+    "denied": "Vaša rola v tomto projekte nemôže {action}: {kinds}.",
     "deniedOrganization": "Len administrátor organizácie môže {action}: {kinds}.",
     "action": {
       "read": "vidieť",

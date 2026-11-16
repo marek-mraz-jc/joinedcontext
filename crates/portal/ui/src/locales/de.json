@@ -2748,11 +2748,11 @@
     "title": "Pipelines",
     "empty": "Dieses Projekt hat noch keine Pipeline.",
     "class": {
-      "resident": "resident",
+      "resident": "Dauerhaft laufend",
       "residentHelp": "Läuft durchgehend im Bento-Runner des Projekts.",
-      "scheduled": "geplant",
+      "scheduled": "Nach Zeitplan",
       "scheduledHelp": "Läuft nach Zeitplan und pausiert zwischen den Läufen.",
-      "auto": "auto",
+      "auto": "Automatisch",
       "autoHelp": "Der Reconciler wählt: resident unter 30 Sekunden oder push-basiert, sonst geplant."
     },
     "field": {
@@ -7194,7 +7194,7 @@
   "permissions": {
     "unchecked": "Ihre Berechtigungen konnten gerade nicht geprüft werden. Sie können das Formular trotzdem ausfüllen: Der Server prüft Ihre Rechte erneut, wenn Sie die Änderung vorschlagen.",
     "checking": "Ihr Zugriff wird geprüft…",
-    "denied": "Deaktiviert: Ihre Rolle erlaubt ''{verb}'' auf ''{kind}'' in diesem Projekt nicht",
+    "denied": "Ihre Rolle in diesem Projekt kann {kinds} nicht {action}.",
     "deniedOrganization": "Nur die Organisationsadministration kann {kinds} {action}.",
     "action": {
       "read": "sehen",

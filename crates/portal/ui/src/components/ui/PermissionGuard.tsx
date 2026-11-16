@@ -9,17 +9,21 @@ import { kindPlural } from "../../kindWords";
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 /**
- * Why a control is refused. At organization scope it names who may, in words (T-4831): "Only an
- * organization administrator can add or change agent profiles.", never the verb and the kind's
- * code name the raw sentence quoted to an administrator on Agent profiles.
+ * Why a control is refused, in words (T-4831, T-7106): "Only an organization administrator can add
+ * or change agent profiles." at organization scope, "Your role in this project cannot add or change
+ * sync sources." in a project; never the verb and the kind's code name.
  */
 export function deniedReason(t: Translate, project: string, verb: Verb, kind: string): string {
-  return project === ORG_NAMESPACE
-    ? t("permissions.deniedOrganization", {
-        action: t(`permissions.action.${verb}`, { defaultValue: verb }),
-        kinds: kindPlural(kind, t),
-      })
-    : t("permissions.denied", { verb, kind });
+  return project === ORG_NAMESPACE ? t("permissions.deniedOrganization", words(t, verb, kind)) : deniedWords(t, verb, kind);
+}
+
+/** The project-scope sentence alone, for a page that already knows it is inside a project. */
+export function deniedWords(t: Translate, verb: Verb, kind: string): string {
+  return t("permissions.denied", words(t, verb, kind));
+}
+
+function words(t: Translate, verb: Verb, kind: string): { action: string; kinds: string } {
+  return { action: t(`permissions.action.${verb}`, { defaultValue: verb }), kinds: kindPlural(kind, t) };
 }
 
 /**

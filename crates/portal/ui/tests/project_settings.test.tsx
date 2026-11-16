@@ -255,7 +255,7 @@ describe("Delete project (PF-77, UI-44)", () => {
   it("keeps Delete in place for a viewer, disabled with the reason", async () => {
     renderTab("danger", VIEWER);
     await waitFor(() => {
-      expectDenied(screen.getByRole("button", { name: "Delete project helsinki" }), /permit .delete. on .Project./);
+      expectDenied(screen.getByRole("button", { name: "Delete project helsinki" }), "Your role in this project cannot delete projects.");
     });
   });
 

@@ -153,7 +153,7 @@ describe("the Fields tab of a model's page", () => {
     // Removal is refused with its reason, as Edit is (UI-44), never a button that does nothing.
     const remove = screen.getByRole("button", { name: en.resourceDelete.action.replace("{name}", "air") });
     expect(remove).toHaveAttribute("aria-disabled", "true");
-    expect(remove).toHaveAccessibleDescription(/does not permit 'delete' on 'DataModel'/);
+    expect(remove).toHaveAccessibleDescription("Your role in this project cannot delete data models.");
   });
 
   it("lets a steward propose removing the model from its page, the name typed back first", async () => {

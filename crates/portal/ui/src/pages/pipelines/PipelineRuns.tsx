@@ -9,6 +9,7 @@ import { api, ApiError, queryKeys, unwrap } from "../../api/client";
 import { usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import type { BadgeTone } from "../../components/ui/Badge";
+import { deniedWords } from "../../components/ui/PermissionGuard";
 import {
   Alert,
   Badge,
@@ -144,7 +145,7 @@ export function PipelineRunsView({
   });
   const runRefusal =
     !permissions.can("Pipeline", "propose") || !permissions.can("Pipeline", "approve")
-      ? t("permissions.denied", { verb: "approve", kind: "Pipeline" })
+      ? deniedWords(t, "approve", "Pipeline")
       : undefined;
   const items: Run[] = runs.data?.items ?? [];
   const facts = runFacts(items);

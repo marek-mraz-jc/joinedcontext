@@ -152,6 +152,9 @@ for (const width of [1440, 400]) {
       const card = page.getByText("regional-models").first();
       await expect(card).toBeVisible();
       await expect(page.getByText("Every 30 minutes").first()).toBeVisible();
+      // An editor who may not delete meets Detach closed, and the page says why in words.
+      await expect(page.getByRole("button", { name: "Detach" }).first()).toBeDisabled();
+      await expect(page.getByText("Your role in this project cannot delete sync sources.").first()).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shoot(page, "syncsources-filled", width, card);
       await page.getByRole("button", { name: "Pause" }).first().click();
@@ -182,7 +185,7 @@ for (const width of [1440, 400]) {
       const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
       await expect(page.getByRole("button", { name: "Add source" }).first()).toBeDisabled();
-      await expect(page.getByText(/your role does not permit/i).first()).toBeVisible();
+      await expect(page.getByText("Your role in this project cannot add or change sync sources.").first()).toBeVisible();
       await shoot(page, "syncsources-refused", width, refused);
     });
 
