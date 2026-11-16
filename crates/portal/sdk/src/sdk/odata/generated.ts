@@ -849,7 +849,7 @@ export interface Functions {
   jc_model_sdm_search: { q: string; subject?: string };
   jc_model_source_get: { name: string };
   jc_mqtt_captured: { limit?: number; name: string; topic?: string };
-  jc_organization_read: { aspect: string; cursor?: string; limit?: number };
+  jc_organization_read: { aspect: string; cursor?: string; endpoint?: string; group?: string; limit?: number; month?: string; organization?: string; person?: string };
   jc_person_get: { id: string };
   jc_person_list: { first?: number; max?: number; search?: string };
   jc_pipeline_inspect: { cursor?: number; limit?: number; name: string; view: string };
@@ -899,7 +899,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_model_sdm_search: ["Project"],
   jc_model_source_get: ["Project"],
   jc_mqtt_captured: ["Project"],
-  jc_organization_read: ["Project"],
+  jc_organization_read: ["Organization"],
   jc_person_get: ["Organization"],
   jc_person_list: ["Organization"],
   jc_pipeline_inspect: ["Project"],

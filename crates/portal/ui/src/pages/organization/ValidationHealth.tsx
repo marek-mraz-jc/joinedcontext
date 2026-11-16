@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { organizationReading } from "../../api/odata";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
@@ -56,7 +56,7 @@ export function ValidationHealth(): JSX.Element {
   const health = useQuery({
     queryKey: ["validationHealth"],
     enabled: administers,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/health")),
+    queryFn: async () => organizationReading("health"),
   });
 
   if (permissions.isLoading) {

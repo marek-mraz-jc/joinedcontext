@@ -1377,7 +1377,7 @@
           {
             "$Name": "bindingParameter",
             "$Nullable": false,
-            "$Type": "JoinedContext.Portal.Project"
+            "$Type": "JoinedContext.Portal.Organization"
           },
           {
             "$Name": "aspect",
@@ -1390,9 +1390,34 @@
             "$Type": "Edm.String"
           },
           {
+            "$Name": "endpoint",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "group",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
             "$Name": "limit",
             "$Nullable": true,
             "$Type": "Edm.Int64"
+          },
+          {
+            "$Name": "month",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "organization",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "person",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {

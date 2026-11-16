@@ -8696,6 +8696,7 @@
       "measured": "Speicher gemessen {at}; KI umgerechnet zu {rate} {currency} für einen US-Dollar.",
       "partial": "Einige Spaces oder Assistenten haben nicht geantwortet; sie zählen hier 0. Die Gründe stehen in den Zeilen jedes Projekts.",
       "empty": "Noch kein Projekt hat einen Space oder einen Assistenten, daher gehört der ganze Monat der Plattform. Legen Sie in einem Projekt einen Context Space an, um seinen Anteil zu sehen.",
+      "emptyAction": "Projekte öffnen",
       "caption": "Kosten pro Projekt, {month}",
       "project": "Projekt",
       "node": "Serveranteil",

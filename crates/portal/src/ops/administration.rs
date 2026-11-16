@@ -41,6 +41,11 @@ enum Aspect {
     Brokers,
     Agents,
     AgentActivity,
+    Costs,
+    Addresses,
+    DataAccess,
+    WidgetOptions,
+    PersonReadable,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +56,16 @@ struct OrganizationInput {
     limit: Option<usize>,
     #[serde(default)]
     cursor: Option<String>,
+    #[serde(default)]
+    month: Option<String>,
+    #[serde(default)]
+    group: Option<String>,
+    #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    organization: Option<String>,
+    #[serde(default)]
+    person: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,11 +100,16 @@ fn organization_schema() -> Value {
         "properties": {
             "aspect": {
                 "type": "string",
-                "enum": ["projects", "setup", "health", "healthChecks", "limits", "brokers", "agents", "agentActivity"],
-                "description": "projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did"
+                "enum": ["projects", "setup", "health", "healthChecks", "limits", "brokers", "agents", "agentActivity", "costs", "addresses", "dataAccess", "widgetOptions", "personReadable"],
+                "description": "projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did; costs: a month's costs per project; addresses: the Organization's addresses; dataAccess: who reads which Endpoint; widgetOptions: home page Dashboards to pick; personReadable: what one person reads"
             },
             "limit": { "type": "integer", "minimum": 1, "maximum": 50, "description": "agentActivity: page size, default 20" },
-            "cursor": text("agentActivity: nextCursor of the previous page", TERM)
+            "cursor": text("agentActivity: nextCursor of the previous page", TERM),
+            "month": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}$", "description": "costs: e.g. 2026-09, default last month" },
+            "group": text("dataAccess: one group's column", NAME),
+            "endpoint": text("dataAccess: one Endpoint's row, by slug", NAME),
+            "organization": text("widgetOptions: the Organization, by name", NAME),
+            "person": text("personReadable: the Keycloak user id", ID)
         },
         "required": ["aspect"],
         "additionalProperties": false
@@ -134,18 +154,52 @@ fn requests_schema() -> Value {
     })
 }
 
-fn pages_only_the_activity(input: &OrganizationInput) -> Result<(), OpError> {
-    if input.aspect != Aspect::AgentActivity && (input.limit.is_some() || input.cursor.is_some()) {
-        return Err(OpError::InvalidInput {
-            path: "/limit".into(),
-            message: "limit and cursor page only the agentActivity aspect".into(),
-        });
+/// The members `aspect` takes besides itself, and the ones it cannot go without.
+fn members_of(aspect: Aspect) -> (&'static [&'static str], &'static [&'static str]) {
+    match aspect {
+        Aspect::AgentActivity => (&["limit", "cursor"], &[]),
+        Aspect::Costs => (&["month"], &[]),
+        Aspect::DataAccess => (&["group", "endpoint"], &[]),
+        Aspect::WidgetOptions => (&["organization"], &["organization"]),
+        Aspect::PersonReadable => (&["person"], &["person"]),
+        _ => (&[], &[]),
+    }
+}
+
+/// Each member names the one aspect it belongs to: one given to another aspect, or a required
+/// one left out, is refused at its path.
+fn members_fit_the_aspect(input: &OrganizationInput) -> Result<(), OpError> {
+    let given = [
+        ("limit", input.limit.is_some()),
+        ("cursor", input.cursor.is_some()),
+        ("month", input.month.is_some()),
+        ("group", input.group.is_some()),
+        ("endpoint", input.endpoint.is_some()),
+        ("organization", input.organization.is_some()),
+        ("person", input.person.is_some()),
+    ];
+    let (takes, needs) = members_of(input.aspect);
+    for (member, present) in given {
+        if present && !takes.contains(&member) {
+            return Err(OpError::InvalidInput {
+                path: format!("/{member}"),
+                message: format!(
+                    "{member} belongs to another aspect; see the aspect's description"
+                ),
+            });
+        }
+        if !present && needs.contains(&member) {
+            return Err(OpError::InvalidInput {
+                path: format!("/{member}"),
+                message: format!("this aspect needs {member}"),
+            });
+        }
     }
     Ok(())
 }
 
 fn organization_validate(val: &Value) -> Result<(), OpError> {
-    pages_only_the_activity(&parse_input(val.clone())?)
+    members_fit_the_aspect(&parse_input(val.clone())?)
 }
 
 /// The reading `aspect` names, from the route that answers it on the Administration page.
@@ -154,7 +208,7 @@ async fn read(
     state: &crate::state::AppState,
     input: OrganizationInput,
 ) -> Result<Value, OpError> {
-    pages_only_the_activity(&input)?;
+    members_fit_the_aspect(&input)?;
     let user = || as_user(caller);
     let state = || State(state.clone());
     let answer = match input.aspect {
@@ -193,6 +247,48 @@ async fn read(
             };
             json!(
                 crate::api::agent_activity::list_agent_activity(user(), state(), Query(query))
+                    .await?
+                    .0
+            )
+        }
+        Aspect::Costs => {
+            let query = crate::api::costs::CostQuery { month: input.month };
+            json!(
+                crate::api::costs::get_costs(user(), state(), Query(query))
+                    .await?
+                    .0
+            )
+        }
+        Aspect::Addresses => json!(
+            crate::api::organization_addresses::list_addresses(user(), state())
+                .await?
+                .0
+        ),
+        Aspect::DataAccess => {
+            let query = crate::api::data_access::DataAccessQuery {
+                group: input.group,
+                endpoint: input.endpoint,
+            };
+            json!(
+                crate::api::data_access::get_data_access(user(), state(), Query(query))
+                    .await?
+                    .0
+            )
+        }
+        Aspect::WidgetOptions => {
+            let query = crate::api::organization_widgets::OptionsQuery {
+                organization: input.organization.unwrap_or_default(),
+            };
+            json!(
+                crate::api::organization_widgets::list_options(user(), state(), Query(query))
+                    .await
+                    .0
+            )
+        }
+        Aspect::PersonReadable => {
+            let person = Path(input.person.unwrap_or_default());
+            json!(
+                crate::api::data_access::get_person_readable(user(), state(), person)
                     .await?
                     .0
             )
@@ -396,14 +492,54 @@ mod tests {
             },
             super::super::Via::Session,
         );
-        let input = OrganizationInput {
-            aspect: Aspect::Setup,
-            limit: Some(5),
-            cursor: None,
-        };
+        let input: OrganizationInput =
+            parse_input(json!({ "aspect": "setup", "limit": 5 })).expect("parses");
         match read(&caller, &state, input).await {
             Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/limit"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// T-7098: each aspect takes its own members and needs the ones it cannot go without.
+    #[test]
+    fn each_member_belongs_to_its_aspect() {
+        for (input, path) in [
+            (
+                json!({ "aspect": "costs", "person": "id-1" }),
+                Some("/person"),
+            ),
+            (
+                json!({ "aspect": "dataAccess", "month": "2026-09" }),
+                Some("/month"),
+            ),
+            (json!({ "aspect": "widgetOptions" }), Some("/organization")),
+            (json!({ "aspect": "personReadable" }), Some("/person")),
+            (json!({ "aspect": "costs", "month": "2026-09" }), None),
+            (
+                json!({ "aspect": "dataAccess", "group": "g", "endpoint": "e" }),
+                None,
+            ),
+            (
+                json!({ "aspect": "widgetOptions", "organization": "hel" }),
+                None,
+            ),
+            (
+                json!({ "aspect": "personReadable", "person": "id-1" }),
+                None,
+            ),
+            (json!({ "aspect": "addresses" }), None),
+        ] {
+            match (organization_validate(&input), path) {
+                (Ok(()), None) => {}
+                (Err(OpError::InvalidInput { path: found, .. }), Some(path)) => {
+                    assert_eq!(found, path, "{input}")
+                }
+                (other, _) => panic!("{input}: {other:?}"),
+            }
+        }
+        let schema = organization_schema();
+        assert!(jsonschema::validator_for(&schema)
+            .expect("compiles")
+            .is_valid(&json!({ "aspect": "costs", "month": "2026-09" })));
     }
 }

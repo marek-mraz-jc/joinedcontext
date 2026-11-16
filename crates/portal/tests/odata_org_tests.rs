@@ -1604,6 +1604,145 @@ async fn a_refusals_fields_and_hint_carry_into_the_odata_error() {
     assert_eq!(error["hint"], problem["hint"], "{}", odata.text);
 }
 
+/// `value` with each RFC 3339 instant as one token: two reads of a live reading differ in when.
+fn timeless(value: Value) -> Value {
+    match value {
+        Value::String(text) if chrono::DateTime::parse_from_rfc3339(&text).is_ok() => {
+            json!("<instant>")
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(timeless).collect()),
+        Value::Object(map) => {
+            Value::Object(map.into_iter().map(|(k, v)| (k, timeless(v))).collect())
+        }
+        other => other,
+    }
+}
+
+/// T-7098: the Administration pages' readings are the Organization's: `jc_organization_read`,
+/// bound to the `Organization` singleton, answers each aspect with its REST door's status, its
+/// body or its refusal's sentence, for an administrator and for a viewer, and no project binds it.
+#[tokio::test]
+async fn the_organizations_readings_answer_as_their_rest_doors() {
+    let state = state();
+    let mode = Mode::Host("hel");
+    let cases: [(Value, &str); 13] = [
+        (json!({ "aspect": "projects" }), "/api/v1/projects"),
+        (json!({ "aspect": "setup" }), "/api/v1/organization/setup"),
+        (json!({ "aspect": "health" }), "/api/v1/organization/health"),
+        (
+            json!({ "aspect": "healthChecks" }),
+            "/api/v1/organization/health-checks",
+        ),
+        (json!({ "aspect": "limits" }), "/api/v1/organization/limits"),
+        (
+            json!({ "aspect": "brokers" }),
+            "/api/v1/organization/brokers",
+        ),
+        (json!({ "aspect": "agents" }), "/api/v1/organization/agents"),
+        (
+            json!({ "aspect": "agentActivity", "limit": 5 }),
+            "/api/v1/organization/agents/activity?limit=5",
+        ),
+        (
+            json!({ "aspect": "costs", "month": "2026-09" }),
+            "/api/v1/organization/costs?month=2026-09",
+        ),
+        (
+            json!({ "aspect": "addresses" }),
+            "/api/v1/organization/addresses",
+        ),
+        (
+            json!({ "aspect": "dataAccess" }),
+            "/api/v1/organization/data-access",
+        ),
+        (
+            json!({ "aspect": "widgetOptions", "organization": "hel" }),
+            "/api/v1/organization/widgets/options?organization=hel",
+        ),
+        (
+            json!({ "aspect": "personReadable", "person": "sub-ada" }),
+            "/api/v1/organization/people/sub-ada/readable",
+        ),
+    ];
+    let mut answered = std::collections::BTreeSet::new();
+    for (params, rest_uri) in cases {
+        let params = params.as_object().expect("object");
+        let names: Vec<String> = params.keys().map(|k| format!("{k}=@{k}")).collect();
+        let aliases: Vec<String> = params
+            .iter()
+            .map(|(k, v)| format!("@{k}={}", alias(v)))
+            .collect();
+        let uri = format!(
+            "/api/v1/Organization/JoinedContext.Portal.jc_organization_read({})?{}",
+            names.join(","),
+            aliases.join("&")
+        );
+        for who in ["root", "hel-only"] {
+            let odata = get(&state, mode, who, &uri).await;
+            let rest = get(&state, mode, who, rest_uri).await;
+            assert_eq!(
+                odata.status, rest.status,
+                "{who} {rest_uri}: OData {} REST {}",
+                odata.text, rest.text
+            );
+            answered.insert((who, rest.status.as_u16()));
+            if rest.status.is_success() {
+                assert_eq!(
+                    timeless(odata.json()["value"].clone()),
+                    timeless(rest.json()),
+                    "{who} {rest_uri}"
+                );
+            } else {
+                assert_eq!(
+                    odata.json()["error"]["message"],
+                    rest.json()["detail"],
+                    "{who} {rest_uri}: {}",
+                    odata.text
+                );
+            }
+        }
+    }
+    // Both an answer and a refusal ran through the parity above.
+    assert!(answered.contains(&("root", 200)), "{answered:?}");
+    assert!(answered.contains(&("hel-only", 403)), "{answered:?}");
+
+    let bound = |text: &str, ty: &str| {
+        text.contains(&format!(
+            r#"Name="jc_organization_read" IsBound="true"><Parameter Name="bindingParameter" Type="JoinedContext.Portal.{ty}""#
+        ))
+    };
+    let metadata = get(&state, mode, "root", "/api/v1/$metadata").await;
+    assert!(bound(&metadata.text, "Organization"), "{}", metadata.text);
+    assert!(!bound(&metadata.text, "Project"), "{}", metadata.text);
+    let on_project = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_organization_read(aspect='setup')",
+    )
+    .await;
+    assert_eq!(
+        on_project.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        on_project.text
+    );
+    // A member given to another aspect is refused at its path, as the REST op door refuses it.
+    let misplaced = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/Organization/JoinedContext.Portal.jc_organization_read(aspect='setup',person='x')",
+    )
+    .await;
+    assert_eq!(
+        misplaced.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        misplaced.text
+    );
+}
+
 /// T-7097: the people's operations are bound to the `Organization` singleton of the installation's
 /// Organization and answer as their REST doors; no project binds them, and another
 /// Organization's singleton answers as an unknown operation does.

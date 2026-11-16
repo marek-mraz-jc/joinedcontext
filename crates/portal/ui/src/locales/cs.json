@@ -8696,6 +8696,7 @@
       "measured": "Úložiště změřeno {at}; AI přepočteno kurzem {rate} {currency} za jeden americký dolar.",
       "partial": "Některé prostory nebo asistenti neodpověděli; počítají se zde jako 0. Důvody jsou v řádcích každého projektu.",
       "empty": "Žádný projekt zatím nemá prostor ani asistenta, proto celý měsíc patří platformě. Vytvořte v projektu Context Space a uvidíte jeho podíl.",
+      "emptyAction": "Otevřít projekty",
       "caption": "Náklady podle projektů, {month}",
       "project": "Projekt",
       "node": "Podíl na serveru",

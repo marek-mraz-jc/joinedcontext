@@ -66,3 +66,47 @@ export async function asOData(rest: Response): Promise<Response> {
   const code = problem.type?.split("/").pop() ?? "internal-error";
   return odataError(rest.status, code, problem.detail ?? problem.title ?? `HTTP ${rest.status}`);
 }
+
+const READING = /^\/api\/v1\/Organization\/JoinedContext\.Portal\.jc_organization_read\(([^)]*)\)$/;
+
+/** The REST door of each Administration reading: the handler `jc_organization_read` runs (T-7098). */
+const READING_DOORS: Record<string, (params: Record<string, string>) => string> = {
+  projects: () => "/api/v1/projects",
+  setup: () => "/api/v1/organization/setup",
+  health: () => "/api/v1/organization/health",
+  healthChecks: () => "/api/v1/organization/health-checks",
+  limits: () => "/api/v1/organization/limits",
+  brokers: () => "/api/v1/organization/brokers",
+  agents: () => "/api/v1/organization/agents",
+  agentActivity: () => "/api/v1/organization/agents/activity",
+  costs: () => "/api/v1/organization/costs",
+  addresses: () => "/api/v1/organization/addresses",
+  dataAccess: () => "/api/v1/organization/data-access",
+  widgetOptions: () => "/api/v1/organization/widgets/options",
+  personReadable: (params) => `/api/v1/organization/people/${encodeURIComponent(params.person ?? "")}/readable`,
+};
+
+/**
+ * The REST address whose handler answers an Administration reading the page asked the service
+ * for, its other members as the query; nothing for any other request. The server proves the two
+ * answer alike (odata_org_tests `the_organizations_readings_answer_as_their_rest_doors`), so a
+ * page test keeps its REST stub and wraps the stub's answer with `asOData`.
+ */
+export function readingAsRest(url: string | URL): URL | undefined {
+  const at = new URL(String(url), "http://localhost");
+  const reading = READING.exec(decodeURIComponent(at.pathname));
+  if (!reading) return undefined;
+  const params: Record<string, string> = {};
+  for (const argument of reading[1].split(",").filter(Boolean)) {
+    const [name, alias] = argument.split("=");
+    const value = at.searchParams.get(alias);
+    if (value !== null) params[name] = String(literal(value));
+  }
+  const door = READING_DOORS[params.aspect ?? ""];
+  if (!door) return undefined;
+  const rest = new URL(door(params), at.origin);
+  for (const [name, value] of Object.entries(params)) {
+    if (name !== "aspect" && name !== "person") rest.searchParams.set(name, value);
+  }
+  return rest;
+}

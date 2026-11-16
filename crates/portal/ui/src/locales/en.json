@@ -8696,6 +8696,7 @@
       "measured": "Storage measured {at}; AI converted at {rate} {currency} for one US dollar.",
       "partial": "Some spaces or assistants did not answer; they count 0 here. Their reasons are in each project's lines.",
       "empty": "No project has a space or an assistant yet, so the whole month is the platform's. Create a Context Space in a project to see its share.",
+      "emptyAction": "Open the projects",
       "caption": "Costs per project, {month}",
       "project": "Project",
       "node": "Node share",

@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { organizationReading } from "../../api/odata";
 import { useAdministers } from "../../api/permissions";
 import { Alert, Badge, buttonClass, PageFailed, PageLoading } from "../../components/ui";
 
@@ -40,7 +40,7 @@ function useSetup(enabled = true) {
   return useQuery({
     queryKey: SETUP_KEY,
     enabled,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/setup")),
+    queryFn: async () => organizationReading("setup"),
   });
 }
 

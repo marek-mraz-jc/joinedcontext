@@ -8696,6 +8696,7 @@
       "measured": "Úložisko zmerané {at}; AI prepočítané kurzom {rate} {currency} za jeden americký dolár.",
       "partial": "Niektoré priestory alebo asistenti neodpovedali; počítajú sa tu ako 0. Dôvody sú v riadkoch každého projektu.",
       "empty": "Žiadny projekt ešte nemá priestor ani asistenta, preto celý mesiac patrí platforme. Vytvorte v projekte Context Space a uvidíte jeho podiel.",
+      "emptyAction": "Otvoriť projekty",
       "caption": "Náklady podľa projektov, {month}",
       "project": "Projekt",
       "node": "Podiel na serveri",
