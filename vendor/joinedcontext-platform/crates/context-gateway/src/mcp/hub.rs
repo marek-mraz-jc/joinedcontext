@@ -224,7 +224,7 @@ pub(crate) fn reached(
             audiences.dedup();
             Some(
                 verifier
-                    .verify(raw, &audiences)
+                    .verify_for(host.map(|h| h.0.as_str()), raw, &audiences)
                     .map_err(|rejected| Box::new(ProblemDetails::from(rejected).into_response()))?,
             )
         }

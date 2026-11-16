@@ -257,6 +257,9 @@ pub struct Verifier {
     keys: ArcSwap<Table>,
     /// `sub` -> unix second of the subject's revocation, as the Portal lists it (T-5568).
     revoked: ArcSwap<HashMap<String, i64>>,
+    /// Organization -> the realm of its own sign-in host (T-7131), fixed at start. Its tokens
+    /// count only for a request of that Organization ([`Self::verify_for`]).
+    organizations: HashMap<String, Arc<Verifier>>,
 }
 
 impl std::fmt::Debug for Verifier {
@@ -265,6 +268,7 @@ impl std::fmt::Debug for Verifier {
         f.debug_struct("Verifier")
             .field("issuer", &self.issuer)
             .field("keys", &self.key_count())
+            .field("organizations", &self.organizations.len())
             .finish()
     }
 }
@@ -276,7 +280,27 @@ impl Verifier {
             issuer: issuer.into(),
             keys: ArcSwap::new(Arc::new(Table::default())),
             revoked: ArcSwap::new(Arc::new(HashMap::new())),
+            organizations: HashMap::new(),
         }
+    }
+
+    /// Accepts `issuer`'s tokens beside this realm's for a request of `organization` alone: the
+    /// realm of an Organization with its own sign-in host (T-7131). Its keys are loaded through
+    /// [`Self::organizations`]; the revocations stay this verifier's.
+    #[must_use]
+    pub fn with_organization(
+        mut self,
+        organization: impl Into<String>,
+        issuer: impl Into<String>,
+    ) -> Self {
+        self.organizations
+            .insert(organization.into(), Arc::new(Self::new(issuer)));
+        self
+    }
+
+    /// Each Organization's own realm, to load and refresh its keys.
+    pub fn organizations(&self) -> impl Iterator<Item = (&str, &Arc<Verifier>)> {
+        self.organizations.iter().map(|(o, v)| (o.as_str(), v))
     }
 
     /// Replaces the revoked subjects: `sub` -> the unix second it was revoked at. A token of a
@@ -344,11 +368,23 @@ impl Verifier {
     /// `audiences` is every value that names the resource being called; the token must
     /// contain one of them.
     pub fn verify(&self, token: &str, audiences: &[String]) -> Result<Claims, Rejected> {
+        self.verify_for(None, token, audiences)
+    }
+
+    /// [`Self::verify`] for a request of `organization` (T-7131): a token of this realm, or of
+    /// that Organization's own realm when it has one. Another Organization's realm is never
+    /// asked, so its tokens are refused as any foreign issuer's are.
+    pub fn verify_for(
+        &self,
+        organization: Option<&str>,
+        token: &str,
+        audiences: &[String],
+    ) -> Result<Claims, Rejected> {
         if audiences.is_empty() {
             // Nothing to bind the token to means nothing would refuse it.
             return Err(Rejected::WrongAudience);
         }
-        let claims = self.decode(token, Some(audiences))?;
+        let claims = self.decode_for(organization, token, Some(audiences))?;
         unrevoked(claims, &self.revoked.load())
     }
 
@@ -359,6 +395,32 @@ impl Verifier {
     /// buy a fresh bucket with a made-up token. Every admission goes through [`Self::verify`].
     pub fn identify(&self, token: &str) -> Result<Claims, Rejected> {
         self.decode(token, None)
+    }
+
+    /// [`Self::identify`] for a request of `organization`, its own realm's tokens included.
+    pub fn identify_for(
+        &self,
+        organization: Option<&str>,
+        token: &str,
+    ) -> Result<Claims, Rejected> {
+        self.decode_for(organization, token, None)
+    }
+
+    /// The Organization's own realm first when it has one; a token that realm did not sign
+    /// (another key, another issuer) is then this realm's to accept or refuse.
+    fn decode_for(
+        &self,
+        organization: Option<&str>,
+        token: &str,
+        audiences: Option<&[String]>,
+    ) -> Result<Claims, Rejected> {
+        if let Some(own) = organization.and_then(|o| self.organizations.get(o)) {
+            match own.decode(token, audiences) {
+                Err(Rejected::UnknownKey | Rejected::WrongIssuer | Rejected::BadSignature) => {}
+                answer => return answer,
+            }
+        }
+        self.decode(token, audiences)
     }
 
     /// How many verified tokens are remembered, which is what a memo test looks at.

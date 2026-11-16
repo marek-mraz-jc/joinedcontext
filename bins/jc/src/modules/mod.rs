@@ -154,9 +154,16 @@ pub async fn build(
             .await
             .map(|built| built.router),
         #[cfg(feature = "gateway")]
-        Module::Gateway => gateway::build(ctx, cfg.portal_siblings, mount, None, None)
-            .await
-            .map(gateway::at_root),
+        Module::Gateway => gateway::build(
+            ctx,
+            &cfg.organizations,
+            cfg.portal_siblings,
+            mount,
+            None,
+            None,
+        )
+        .await
+        .map(gateway::at_root),
         #[cfg(feature = "portal")]
         Module::Portal => {
             let mut organizations = portal::organization_vars(cfg, ctx.siblings.listener);

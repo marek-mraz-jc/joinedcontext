@@ -219,6 +219,90 @@ async fn a_person_of_another_organization_is_not_admitted_to_an_organization_end
     assert_eq!(fixture.broker.hops().len(), 0, "the broker was never asked");
 }
 
+/// The realm of `hel`'s own sign-in host and of `zilina`'s (T-7131).
+const HEL_ISSUER: &str = "https://idm.hel.test/realms/hel";
+const ZILINA_ISSUER: &str = "https://idm.zilina.test/realms/zilina";
+
+/// The fixture with `hel` and `zilina` each on a realm of its own beside the installation's: the
+/// two realms, then the fixture.
+async fn fixture_with_own_realms(name: &str) -> (common::Realm, common::Realm, Fixture) {
+    let (hel, zilina) = (common::Realm::new(), common::Realm::new());
+    let realm = common::Realm::new();
+    let broker = common::BrokerStub::start(vec![json!([]), json!([])]).await;
+    let repo = Repo::new(name, &[PROJECT, OUTSIDER]);
+    let accounts =
+        accounts_of(&jc_manifest::loader::Repository::load(&repo.0).expect("the repository loads"));
+    let verifier = realm
+        .verifier()
+        .with_organization("hel", HEL_ISSUER)
+        .with_organization("zilina", ZILINA_ISSUER);
+    for (organization, own) in verifier.organizations() {
+        let keys = if organization == "hel" { &hel } else { &zilina };
+        assert_eq!(own.replace_keys(keys.published_jwks()), 1);
+    }
+    let gateway = Gateway::new(
+        Broker::new(broker.url.clone()),
+        Box::new(PolicyPdp),
+        "hel.fi",
+    )
+    .serve([endpoint()])
+    .authenticate(Arc::new(verifier), accounts, None);
+    gateway.replace_provenance(organizations());
+    let fixture = Fixture {
+        realm,
+        app: router(Arc::new(gateway)),
+        broker,
+        _repo: repo,
+    };
+    (hel, zilina, fixture)
+}
+
+/// A person of `hel`'s project as `issuer`'s realm signs them, for `audience`.
+fn own_realm_person(realm: &common::Realm, issuer: &str, audience: &str) -> String {
+    realm.mint(&json!({
+        "iss": issuer,
+        "sub": "f:2:someone",
+        "aud": audience,
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+        "preferred_username": "demo.someone",
+        "groups": [PROJECT],
+        "jc_org": ["hel"],
+        "realm_access": { "roles": ["member"] },
+    }))
+}
+
+/// T-7131: the Endpoint's Organization's own realm signs a member in, and so does the
+/// installation realm (operators, people not yet moved); another Organization's realm signs
+/// nobody in here, whichever audience its token names (the Endpoint's, the edge's, the CLI's, the
+/// hub's), not even a token copying `hel`'s groups and `jc_org`.
+#[tokio::test]
+async fn only_the_endpoints_own_organization_realm_and_the_installations_sign_in() {
+    let (hel, zilina, fixture) = fixture_with_own_realms("own-realms").await;
+    let token = own_realm_person(&hel, HEL_ISSUER, SLUG);
+    let (status, body) = read(&fixture, SLUG, &token).await;
+    assert_eq!(status, StatusCode::OK, "hel's own realm: {body}");
+    let token = person(&fixture.realm, SLUG, &[PROJECT]);
+    let (status, body) = read(&fixture, SLUG, &token).await;
+    assert_eq!(status, StatusCode::OK, "the installation realm: {body}");
+    for audience in [SLUG, "context-gateway", "jcctl-endpoint", "mcp-hub"] {
+        for token in [
+            own_realm_person(&zilina, ZILINA_ISSUER, audience),
+            // zilina's key under hel's issuer, and hel's issuer forged by the installation key.
+            own_realm_person(&zilina, HEL_ISSUER, audience),
+            own_realm_person(&fixture.realm, HEL_ISSUER, audience),
+        ] {
+            let (status, body) = read(&fixture, SLUG, &token).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{audience}: {body}");
+        }
+    }
+    assert_eq!(
+        fixture.broker.hops().len(),
+        2,
+        "only the two members reached the broker"
+    );
+}
+
 /// F-SEC1-009 under ADR-N-067: a person whose groups name no project at all and whose token
 /// carries no `jc_org` (a `platform-readers`-only token) is no member of any Organization.
 #[tokio::test]
