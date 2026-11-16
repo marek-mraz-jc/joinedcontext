@@ -93,6 +93,7 @@ const QUESTION: (&str, Place) = ("id", Place::Path);
 const PROJECT_NAME: (&str, Place) = ("projectName", Place::Path);
 const SPACE_FILTER: (&str, Place) = ("space", Place::Query("Edm.String"));
 const VIEW: (&str, Place) = ("id", Place::Path);
+const CONNECTOR: (&str, Place) = ("id", Place::Path);
 const DAYS: (&str, Place) = ("days", Place::Query("Edm.Int32"));
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
@@ -117,7 +118,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 189] = [
+pub static DOORS: [Door; 207] = [
     door(
         "portal_people_remove",
         Org,
@@ -704,6 +705,158 @@ pub static DOORS: [Door; 189] = [
             ("limit", Place::Query("Edm.Int32")),
             ("cursor", Place::Query("Edm.String")),
         ],
+        Who::ProjectReader,
+    ),
+    // A person's own AI connectors and the tab paired with one (route_coverage_tests: a person
+    // manages their own connectors in the Portal, never a connector), the model tools' catalogue,
+    // compile and import, the kinds' schemas and form arrangements, the Apps shared with the
+    // person, their feedback, and a project's assistant: what it may reach, a conversation's start
+    // and an Endpoint it renders. Each handler keeps its own check (T-7173).
+    door(
+        "portal_own_connector_list",
+        Org,
+        Method::GET,
+        "/connectors",
+        &[],
+        Who::Own,
+    ),
+    door(
+        "portal_own_connector_options",
+        Org,
+        Method::GET,
+        "/connectors/options",
+        &[],
+        Who::Own,
+    ),
+    door(
+        "portal_own_connector_create",
+        Org,
+        Method::POST,
+        "/connectors",
+        &[BODY],
+        Who::Own,
+    ),
+    door(
+        "portal_own_connector_edit",
+        Org,
+        Method::PATCH,
+        "/connectors/{id}",
+        &[CONNECTOR, BODY],
+        Who::Own,
+    ),
+    door(
+        "portal_own_connector_revoke",
+        Org,
+        Method::DELETE,
+        "/connectors/{id}",
+        &[CONNECTOR],
+        Who::Own,
+    ),
+    door(
+        "portal_own_connector_activity",
+        Org,
+        Method::GET,
+        "/connectors/{id}/activity",
+        &[CONNECTOR],
+        Who::Own,
+    ),
+    door(
+        "portal_connector_tab_pair",
+        Org,
+        Method::POST,
+        "/connectors/{id}/tab",
+        &[CONNECTOR],
+        Who::Own,
+    ),
+    door(
+        "portal_connector_tab_unpair",
+        Org,
+        Method::DELETE,
+        "/connectors/{id}/tab",
+        &[CONNECTOR],
+        Who::Own,
+    ),
+    door(
+        "portal_model_catalogue",
+        Org,
+        Method::GET,
+        "/tools/sdm-catalog",
+        &[
+            ("subject", Place::Query("Edm.String")),
+            ("refresh", Place::Query("Edm.Boolean")),
+        ],
+        Who::Own,
+    ),
+    door(
+        "portal_model_compile",
+        Org,
+        Method::POST,
+        "/tools/generate",
+        &[BODY],
+        Who::Own,
+    ),
+    door(
+        "portal_model_import",
+        Org,
+        Method::POST,
+        "/tools/import-sdm",
+        &[BODY],
+        Who::Own,
+    ),
+    door(
+        "portal_kind_schema",
+        Org,
+        Method::GET,
+        "/kinds/{kind}/schema",
+        &[("kind", Place::Path)],
+        Who::Own,
+    ),
+    door(
+        "portal_form_list",
+        Org,
+        Method::GET,
+        "/forms",
+        &[],
+        Who::Own,
+    ),
+    door(
+        "portal_shared_app_list",
+        Org,
+        Method::GET,
+        "/shared-apps",
+        &[],
+        Who::Own,
+    ),
+    door(
+        "portal_feedback_send",
+        Org,
+        Method::POST,
+        "/feedback",
+        &[BODY],
+        Who::Own,
+    ),
+    door(
+        "portal_assistant_access",
+        Project,
+        Method::GET,
+        "/projects/{project}/assistant/access",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_conversation_start",
+        Project,
+        Method::POST,
+        "/projects/{project}/assistant/conversations",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_endpoint_render",
+        Project,
+        Method::POST,
+        "/projects/{project}/assistant/propose-endpoint",
+        &[BODY],
         Who::ProjectReader,
     ),
     door(

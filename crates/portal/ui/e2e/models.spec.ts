@@ -421,7 +421,7 @@ test.describe("a model change is proposed, and read back (T-4830)", () => {
     test(`the Form tab has no schema error, History lists v1.0.0, Propose waits for an edit at ${width} px`, async ({ page }) => {
       await page.setViewportSize({ width, height: width > 600 ? 900 : 860 });
       await stubKpi(page, ["read", "propose"]);
-      await page.route("**/api/v1/tools/generate", (route) =>
+      await page.route((url) => url.pathname === "/api/v1/tools/generate" || odataCall(url)?.name === "portal_model_compile", (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(KPI_ARTIFACTS) }),
       );
       await page.route((url) => odataCall(url)?.name === "jc_change_history", (route) =>
@@ -762,7 +762,7 @@ test.describe("a model's lists on the shared grid (T-6753)", () => {
 
       await page.unrouteAll({ behavior: "ignoreErrors" });
       await stubKpi(page, ["read", "propose"]);
-      await page.route("**/api/v1/tools/generate", (route) =>
+      await page.route((url) => url.pathname === "/api/v1/tools/generate" || odataCall(url)?.name === "portal_model_compile", (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(KPI_ARTIFACTS) }),
       );
       await page.goto("/projects/helsinki/models?edit=helsinki-kpi&lang=en");

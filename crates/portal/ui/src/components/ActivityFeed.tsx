@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../api/client";
+import { ApiError } from "../api/client";
 import { door, type RestAnswer } from "../api/odata";
 import {
   ACTIVITY_KINDS,
@@ -168,7 +168,7 @@ export function ActivityFeed({
   const connectors = useQuery({
     queryKey: ["connectors"],
     enabled: !compact,
-    queryFn: async () => unwrap(await api.GET("/api/v1/connectors", {})),
+    queryFn: async () => (await door("portal_own_connector_list", {})) as RestAnswer<"list_connectors">,
   });
   const ownConnectors = connectors.data?.items ?? [];
 

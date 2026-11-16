@@ -18,7 +18,7 @@ export const CITY_SUBJECTS = [
   "dataModel.WasteManagement",
 ] as const;
 
-/** One model of the catalogue index, as `GET /api/v1/tools/sdm-catalog` lists it. */
+/** One model of the catalogue index, as the `portal_model_catalogue` door lists it. */
 export interface CatalogueModel {
   id: string;
   name: string;

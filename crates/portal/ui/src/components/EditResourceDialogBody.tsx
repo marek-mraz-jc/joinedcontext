@@ -1,11 +1,11 @@
-import { readManifest } from "../api/odata";
+import { readManifest, door, type RestAnswer } from "../api/odata";
 /** The edit dialog itself, loaded when it opens (T-3316): see EditResourceDialog.tsx. */
 import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { api, ApiError, queryKeys, unwrap } from "../api/client";
+import { ApiError, queryKeys } from "../api/client";
 import { proposeChecked } from "../api/proposal";
 import { isChange } from "../api/manifest";
 import type { Change, ResourceProposal } from "../api/manifest";
@@ -114,7 +114,7 @@ export function EditResourceDialogBody({
     staleTime: 60 * 60_000,
     retry: false,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/kinds/{kind}/schema", { params: { path: { kind: target.kind } } })),
+      (await door("portal_kind_schema", { kind: target.kind })) as RestAnswer<"kind_schema">,
   });
 
   // The help and the examples a new resource's form shows, on its edit as well (T-3220): the
@@ -126,7 +126,7 @@ export function EditResourceDialogBody({
     enabled: open && form !== undefined,
     staleTime: 5 * 60_000,
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/forms", {})),
+    queryFn: async () => (await door("portal_form_list", {})) as RestAnswer<"list_forms">,
   });
   const arrangeable = form ? paths(form.schema).join("\u0000") : "";
   const requiredFields = (form?.schema.required ?? []).join("\u0000");

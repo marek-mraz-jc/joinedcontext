@@ -10,7 +10,8 @@ import { ASSISTANT_EVENT } from "../navigation/shortcuts";
 import { useIsPhone } from "../phone";
 import { useHiddenSections } from "../branding";
 import { isHiddenSection } from "../components/layout/navigation";
-import { api, ApiError, unwrap } from "../api/client";
+import { ApiError } from "../api/client";
+import { doorAction, type RestAnswer } from "../api/odata";
 import { usePermissions } from "../api/permissions";
 import { ConversationPanel } from "../pages/apps/ConversationPanel";
 import { TERMINAL_STATES, useAgentRun } from "../pages/apps/useAgentRun";
@@ -450,9 +451,9 @@ export function AssistantDock({
     setStartError(null);
     setIsStarting(true);
     try {
-      const created = await unwrap(
-        await api.POST("/api/v1/projects/{project}/assistant/conversations", {
-          params: { path: { project: activeProject } },
+      const created = (await doorAction(
+        "portal_conversation_start",
+        {
           // `endpointNames` is AG-75, `formContext` is T-1611.
           body: {
             message: promptText,
@@ -462,8 +463,9 @@ export function AssistantDock({
             pageContext: pageContext(activeProject),
             path,
           },
-        }),
-      );
+        },
+        activeProject,
+      )) as RestAnswer<"start_conversation">;
       rememberRun({ project: activeProject, runId: created.id });
       setComposerMessage("");
     } catch (err) {

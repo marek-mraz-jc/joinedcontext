@@ -86,8 +86,8 @@ export const STAY_REST: { why: string; shapes: string[] }[] = [
     ],
   },
   {
-    why: "uploads that send a file's bytes: a bundle or archive import, a knowledge source's file",
-    shapes: ["/api/v1/projects/{}/import", "/api/v1/projects/{}/knowledge/sources/{}/files"],
+    why: "uploads that send a file's bytes: a bundle or archive import, a knowledge source's file, a sample a model is inferred from",
+    shapes: ["/api/v1/projects/{}/import", "/api/v1/projects/{}/knowledge/sources/{}/files", "/api/v1/tools/infer-schema"],
   },
 ];
 

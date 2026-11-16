@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { shippedForms } from "../../schemas/forms";
 import { portalThemeWidgets } from "./theme";
 import { arrange, index, mergeUi, paths, prefilled } from "./uischema";
@@ -44,7 +45,7 @@ export function useFormArrangement(options: FormArrangementOptions): FormArrange
     enabled: open && kind !== undefined,
     staleTime: 5 * 60_000,
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/forms", {})),
+    queryFn: async () => (await door("portal_form_list", {})) as RestAnswer<"list_forms">,
   });
   // CC-29: the Git mechanics are on the form only when the person asked for them. The stored
   // preference starts it; the switch answers at once and saves in the background, so an
