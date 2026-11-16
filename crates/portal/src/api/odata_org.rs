@@ -535,14 +535,25 @@ fn metadata_json(model: &Model) -> Result<String, String> {
 
 /// An OData error object with API/09's problem members inside (API/13 §2a).
 fn error(status: StatusCode, slug: &str, message: &str) -> Response {
+    error_with(status, slug, message, Map::new())
+}
+
+/// [`error`] with `extra` members beside the problem's: `target`, `details`, `hint`.
+fn error_with(
+    status: StatusCode,
+    slug: &str,
+    message: &str,
+    extra: Map<String, Value>,
+) -> Response {
     let title = status.canonical_reason().unwrap_or("Error");
-    let body = json!({ "error": {
-        "code": slug,
-        "message": message,
-        "type": crate::error::type_uri(slug),
-        "title": title,
-        "status": status.as_u16(),
-    }});
+    let mut inner = Map::new();
+    inner.insert("code".into(), json!(slug));
+    inner.insert("message".into(), json!(message));
+    inner.insert("type".into(), json!(crate::error::type_uri(slug)));
+    inner.insert("title".into(), json!(title));
+    inner.insert("status".into(), json!(status.as_u16()));
+    inner.extend(extra);
+    let body = json!({ "error": inner });
     (status, headers("application/json"), body.to_string()).into_response()
 }
 
@@ -591,7 +602,29 @@ async fn as_odata_error(response: Response) -> Response {
         .and_then(|t| t.rsplit('/').next())
         .unwrap_or_else(|| slug_of(status))
         .to_owned();
-    let mut answer = error(status, &slug, &message);
+    // What a person fixes: each field the problem names is a detail with its target (ADR-N-070
+    // item 8), the first one the error's own, and the problem's hint.
+    let mut extra = Map::new();
+    let details: Vec<Value> = problem
+        .get("errors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            Some(
+                json!({ "code": slug, "message": e.get("message")?.as_str()?,
+                         "target": e.get("path")?.as_str()? }),
+            )
+        })
+        .collect();
+    if let Some(first) = details.first() {
+        extra.insert("target".into(), first["target"].clone());
+        extra.insert("details".into(), Value::Array(details));
+    }
+    if let Some(hint) = problem.get("hint").filter(|h| h.is_string()) {
+        extra.insert("hint".into(), hint.clone());
+    }
+    let mut answer = error_with(status, &slug, &message, extra);
     if let Some(etag) = etag {
         answer.headers_mut().insert(header::ETAG, etag);
     }

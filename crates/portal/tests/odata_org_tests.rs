@@ -1442,6 +1442,48 @@ async fn a_changes_detail_answers_as_the_rest_door() {
     assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
 }
 
+/// T-7097: a refusal naming fields keeps them over OData, as the REST door's `errors[]`: each a
+/// detail with its target, the first the error's own, beside the problem's hint.
+#[tokio::test]
+async fn a_refusals_fields_and_hint_carry_into_the_odata_error() {
+    let state = state();
+    let odata = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-only",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_schema_get(kind=1)",
+    )
+    .await;
+    let rest = act(
+        &state,
+        "hel-only",
+        "/api/v1/projects/helsinki/ops/jc_schema_get",
+        None,
+        json!({ "kind": 1 }),
+    )
+    .await;
+    assert_eq!(odata.status, rest.status, "{} / {}", odata.text, rest.text);
+    let (problem, error) = (rest.json(), odata.json()["error"].clone());
+    let paths: Vec<Value> = problem["errors"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|e| e["path"].clone())
+        .collect();
+    assert!(!paths.is_empty(), "{}", rest.text);
+    let targets: Vec<Value> = error["details"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|d| d["target"].clone())
+        .collect();
+    assert_eq!(targets, paths, "{}", odata.text);
+    assert_eq!(error["target"], paths[0], "{}", odata.text);
+    assert_eq!(error["hint"], problem["hint"], "{}", odata.text);
+}
+
 /// T-7097: the people's operations are bound to the `Organization` singleton of the installation's
 /// Organization and answer as their REST doors; no project binds them, and another
 /// Organization's singleton answers as an unknown operation does.
