@@ -326,7 +326,12 @@ pub(crate) async fn serve(
             // is refused here (EP-94, PF-45).
             let mut audiences = gateway.server_audiences(&server);
             audiences.push(EDGE_AUDIENCE.to_owned());
-            let claims = match verifier.verify(raw, &audiences) {
+            // The server's project's Organization, else the host's, names the own realm a token
+            // may come from (T-7131).
+            let organization = gateway
+                .organization_of(&server.project)
+                .or_else(|| host.as_ref().map(|h| h.0.clone()));
+            let claims = match verifier.verify_for(organization.as_deref(), raw, &audiences) {
                 Ok(claims) => claims,
                 Err(rejected) => return ProblemDetails::from(rejected).into_response(),
             };

@@ -248,7 +248,11 @@ pub async fn message(gateway: Arc<Gateway>, name: String, request: Request) -> R
     };
     let mut audiences = gateway.server_audiences(&address);
     audiences.push(EDGE_AUDIENCE.to_owned());
-    let claims = match verifier.verify(raw, &audiences) {
+    let organization = request
+        .extensions()
+        .get::<crate::app::HostOrganization>()
+        .map(|h| h.0.as_str());
+    let claims = match verifier.verify_for(organization, raw, &audiences) {
         Ok(claims) => claims,
         Err(rejected) => return ProblemDetails::from(rejected).into_response(),
     };
