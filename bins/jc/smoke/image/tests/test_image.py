@@ -34,8 +34,10 @@ def test_the_plan_holds_every_check_of_the_script_in_order():
     ids = [s[0] for s in PLAN]
     assert ids[:4] == ["admin.healthz", "user.nonroot", "admin.metrics.anonymous", "admin.metrics.token"]
     assert ids[-2:] == ["gateway.checkout", "gateway.log"]
-    # one row per module route of the script: identity, catalogue, dashboards, streams, broker, git, Portal
-    assert len(PATHS) == 7 and "module/api/v1/health" in PATHS and "module/streams/ping" in PATHS
+    # one row per module route of the script: identity, catalogue, dashboards, streams, broker, git, Portal,
+    # and the embedded explorer bundle (T-7102)
+    assert len(PATHS) == 8 and "module/api/v1/health" in PATHS and "module/streams/ping" in PATHS
+    assert "module/embed/explorer/explorer.js" in PATHS
 
 
 def test_a_clean_run_passes_every_row():
