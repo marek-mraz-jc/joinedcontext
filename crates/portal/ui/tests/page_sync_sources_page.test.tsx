@@ -184,7 +184,7 @@ describe("the sync sources page", () => {
   it("closes each write control to a role without its verb, and says which verb", async () => {
     renderSync({ rows: 1, permissions: { project: PROJECT, bootstrap: false, grants: [] } });
     const reason = (verb: string) =>
-      `Disabled: your role does not permit '${verb}' on 'SyncSource' in this project`;
+      `Your role in ${PROJECT} cannot ${en.permissions.action[verb as "propose" | "delete"]} sync sources. Whoever manages the project can grant it.`;
     await waitFor(() => {
       expectDenied(screen.getByRole("button", { name: en.syncSources.add }), reason("propose"));
     });

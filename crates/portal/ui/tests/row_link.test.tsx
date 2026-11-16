@@ -611,7 +611,7 @@ describe("a person who may not change a record still opens it, read only", () =>
 
   it("a reader gets the filled form, closed, with the reason, and nothing to propose", async () => {
     await renderRoute({ path: "/projects/helsinki/subscriptions/alerts/edit?lang=en", answer, permissions: READER });
-    expect(await screen.findByText(/Your role does not permit changing Subscription here/)).toBeInTheDocument();
+    expect(await screen.findByText(/Your role does not permit changing subscriptions here/)).toBeInTheDocument();
     expect(screen.getAllByText("alerts").length).toBeGreaterThan(0);
     expect(screen.getByText("Read only")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Propose change" })).toBeNull();

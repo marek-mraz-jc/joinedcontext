@@ -17,7 +17,7 @@ import { usePermissions } from "../../api/permissions";
 import { appSchema, appUiSchema } from "../../schemas/kinds";
 import { fromAppEnvelope, toAppEnvelope } from "./appForm";
 import type { AppForm } from "./appForm";
-import { PermissionGuard } from "../../components/ui/PermissionGuard";
+import { deniedReason, PermissionGuard } from "../../components/ui/PermissionGuard";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
 import { AppCheckChip, useAppChecks } from "./AppCheckChip";
 import type { AppCheck } from "./AppCheckChip";
@@ -751,7 +751,7 @@ function AppCardActions({
   const run = build.data?.run ?? null;
   const running = run !== null && runState(run) === "building";
   const mayPropose = permissions.can("App", "propose");
-  const denied = t("permissions.denied", { verb: "propose", kind: "App" });
+  const denied = deniedReason(t, project, "propose", "App");
 
   const openReason = openBlockedReason(app, run, t);
 

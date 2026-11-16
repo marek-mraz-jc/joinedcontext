@@ -114,7 +114,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 
   // The reason is a *description*, so it lives beside the button rather than inside it: text
   // inside would join the accessible name, and "New group" would be announced as "New group,
-  // disabled: your role does not permit…" every time the list is read.
+  // your role in helsinki cannot add groups…" every time the list is read.
   return explained ? (
     <>
       {button}
