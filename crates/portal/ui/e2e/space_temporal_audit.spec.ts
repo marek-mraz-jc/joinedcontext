@@ -109,6 +109,15 @@ for (const [label, width, height] of [["desktop-1440", 1440, 900], ["phone-400",
       expect(await axeViolations(page)).toEqual([]);
       await heading.scrollIntoViewIfNeeded();
       await shot(page, `temporal-audit-${state}-${label}`);
+      if (state === "filled") {
+        // A pressed chip lists its verdict alone and shows it is the filter in force (T-7109).
+        const chip = page.getByRole("button", { name: "Duplicates rows: 1" });
+        await chip.click();
+        await expect(chip).toHaveAttribute("aria-pressed", "true");
+        await expect(page.getByRole("table", { name: "How each pipeline's writes become history rows" }).getByRole("row")).toHaveCount(2);
+        await heading.scrollIntoViewIfNeeded();
+        await shot(page, `temporal-audit-pressed-${label}`);
+      }
     });
   }
 }
