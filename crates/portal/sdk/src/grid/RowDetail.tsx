@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { targetName } from "./cells";
-import { readable } from "./readableName";
+import { readable, readableName } from "./readableName";
 import type { RichRow } from "./model";
 import type { VisibleColumn } from "./useEntityGrid";
 import { useRowChanges } from "./EntityChanges";
@@ -120,9 +120,10 @@ export function RowDetail({ row, name, columns, renderValue, labels, labelOf = r
   // the button that opened it.
   // The id is behind the Copy identifier button, never text on screen (T-5599); a model's `id`
   // slot is not a field to read either.
+  // A column the grid names only by its attribute reads in words here, as the fields it left out do (T-7112).
   const shown = columns
     .filter((column) => column.attr !== null && column.attr !== "id" && column.meta === null)
-    .map((column) => ({ ...column, pinned: false }));
+    .map((column) => ({ ...column, label: column.label === readableName(column.attr ?? "") ? labelOf(column.attr ?? "") : column.label, pinned: false }));
   const named = new Set(shown.map((column) => column.attr));
   const rest: VisibleColumn[] = Object.keys(row.cells)
     .filter((attr) => !named.has(attr))
