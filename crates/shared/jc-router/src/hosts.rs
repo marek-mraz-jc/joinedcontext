@@ -106,6 +106,21 @@ impl HostRole {
         }
     }
 
+    /// The role a registry row names; `None` for a row role the router gives no refusals
+    /// (`portal-site`, `host`).
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        [
+            Self::Working,
+            Self::OpenData,
+            Self::Api,
+            Self::SignIn,
+            Self::Apps,
+        ]
+        .into_iter()
+        .find(|r| r.as_str() == name)
+    }
+
     /// The methods the role answers, `None` for every method.
     pub(crate) fn allowed_methods(self) -> Option<&'static str> {
         (self == Self::OpenData).then_some("GET, HEAD, OPTIONS")
@@ -124,6 +139,19 @@ impl HostRole {
     pub(crate) fn drops_set_cookie(self) -> bool {
         matches!(self, Self::OpenData | Self::Api)
     }
+}
+
+/// One row of the host registry (`organization_hosts`, T-7135) as the router reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegistryHost<'a> {
+    pub host: &'a str,
+    pub organization: &'a str,
+    /// The minted Organization id the row links to: the Organization's path segment.
+    pub organization_id: Option<&'a str>,
+    /// The registry's role name (`working`, `api`, `signin`, ...).
+    pub role: &'a str,
+    /// Whether the row's state is `served`: only those answer.
+    pub served: bool,
 }
 
 /// The header naming a request's [`HostRole`] to the module (the gateway's open data `404`).
@@ -382,6 +410,40 @@ impl HostTable {
                     if rest.is_empty() { "/" } else { rest }.to_owned(),
                 ))
             })
+    }
+
+    /// This table with the host registry's rows applied (T-7129 §1, T-7136): a host whose row
+    /// is not `served` leaves the table (it answers `421`), and a `served` host the table lacks
+    /// joins it bound to its Organization at `/`, with the role its row names. A host with no
+    /// row keeps what the configuration gave it.
+    pub fn with_registry(&self, rows: &[RegistryHost<'_>]) -> Result<Self, RouterError> {
+        let mut table = self.clone();
+        for row in rows {
+            let host = without_port(row.host.trim()).to_ascii_lowercase();
+            if row.served {
+                continue;
+            }
+            table.rows.remove(&host);
+            table.roles.remove(&host);
+            table.moves.remove(&host);
+        }
+        for row in rows.iter().filter(|r| r.served) {
+            let host = without_port(row.host.trim()).to_ascii_lowercase();
+            if table.rows.contains_key(&host) {
+                continue;
+            }
+            if !table.organizations.contains(row.organization) {
+                table = match row.organization_id {
+                    Some(id) => table.organization_id(row.organization, id)?,
+                    None => table.organization(row.organization)?,
+                };
+            }
+            table = table.bound(&host, row.organization, "/")?;
+            if let Some(role) = HostRole::parse(row.role) {
+                table = table.role(&host, role)?;
+            }
+        }
+        Ok(table)
     }
 
     /// The Organizations of the deployment.
