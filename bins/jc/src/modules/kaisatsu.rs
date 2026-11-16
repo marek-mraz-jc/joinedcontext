@@ -1028,7 +1028,11 @@ mod tests {
                 .collect()
         };
         assert_eq!(audience(&assistant), vec![setup::PROXY_CLIENT.to_owned()]);
-        assert!(client(setup::PROXY_CLIENT).await.service_accounts_enabled);
+        let proxy = client(setup::PROXY_CLIENT).await;
+        assert!(proxy.service_accounts_enabled);
+        // The proxy reads a run's context on the Portal's internal listener, which admits only a
+        // token for `portal-internal` (T-7149: without it every conversation got 401 there).
+        assert_eq!(audience(&proxy), vec!["portal-internal".to_owned()]);
         let portal = client(setup::PORTAL_CLIENT).await;
         assert!(audience(&portal).contains(&setup::ASSISTANT_CLIENT.to_owned()));
     }
