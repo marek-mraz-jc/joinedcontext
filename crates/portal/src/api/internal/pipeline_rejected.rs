@@ -101,46 +101,15 @@ pub(crate) async fn keep(
     let Some(pipeline) = state.mirror.get(project, "Pipeline", name) else {
         return StatusCode::NOT_FOUND;
     };
-    let problems = target_space(state, project, &pipeline.spec)
-        .and_then(|space| {
-            let schema = state.model_schemas.get(project, &space)?;
-            Some(schema.check(&refused.record))
-        })
-        .unwrap_or_default();
     let step = refused.step.as_ref().and_then(|step| match step {
         Value::Number(n) => n.as_i64(),
         Value::String(text) => text.parse().ok(),
         _ => None,
     });
-    let (rule, path, message) = match problems.as_slice() {
-        [first, ..] => (
-            first.rule.clone(),
-            first.path.clone(),
-            problems
-                .iter()
-                .map(|Problem { message, .. }| message.as_str())
-                .collect::<Vec<_>>()
-                .join("; "),
-        ),
-        [] => (
-            if step.is_some() { "step" } else { "runner" }.to_owned(),
-            String::new(),
-            runner_error(refused.error.as_deref()),
-        ),
-    };
-    let outcome = if problems.is_empty() {
-        Outcome::Failed
-    } else {
-        Outcome::Rejected
-    };
+    let problems = problems_of(state, project, &pipeline.spec, &refused.record);
+    let (mut reason, outcome) = reason_of(&problems, refused.error.as_deref(), step);
     let run = run_name(refused.run.as_deref());
-    let reason = crate::pipeline_outcomes::Reason {
-        rule,
-        path,
-        message,
-        step: step.and_then(|s| i32::try_from(s).ok()),
-        run: Some(run.clone()),
-    };
+    reason.run = Some(run.clone());
     if outcome == Outcome::Rejected {
         let id = vec![record_id(&refused.record)];
         crate::pipeline_source_deletes::note_seen(state, project, name, &run, &id, false).await;
@@ -171,6 +140,70 @@ pub(crate) async fn keep(
             StatusCode::SERVICE_UNAVAILABLE
         }
     }
+}
+
+/// What the space's model says is wrong with `record`, as the stage the runner ran checks it:
+/// the space's LinkML model when it renders the LinkML stage (G-19), else, and for what that one
+/// leaves to its mappings, the compiled one. Empty without a model, or for a record it takes.
+pub(crate) fn problems_of(
+    state: &AppState,
+    project: &str,
+    spec: &Value,
+    record: &Value,
+) -> Vec<Problem> {
+    target_space(state, project, spec)
+        .and_then(|space| {
+            let schema = state.model_schemas.get(project, &space)?;
+            let linkml = state
+                .model_schemas
+                .stage_linkml(project, &space)
+                .map(|linkml| linkml.check(record, crate::pipeline_validation::closed(&schema)))
+                .unwrap_or_default();
+            Some(if linkml.is_empty() {
+                schema.check(record)
+            } else {
+                linkml
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// The rule a refused record is listed under: the first of the model's `problems`, else the
+/// step it failed at (`step`) or the runner's own error (`runner`). The run is the caller's.
+pub(crate) fn reason_of(
+    problems: &[Problem],
+    error: Option<&str>,
+    step: Option<i64>,
+) -> (crate::pipeline_outcomes::Reason, Outcome) {
+    let (rule, path, message) = match problems {
+        [first, ..] => (
+            first.rule.clone(),
+            first.path.clone(),
+            problems
+                .iter()
+                .map(|Problem { message, .. }| message.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+        ),
+        [] => (
+            if step.is_some() { "step" } else { "runner" }.to_owned(),
+            String::new(),
+            runner_error(error),
+        ),
+    };
+    let outcome = if problems.is_empty() {
+        Outcome::Failed
+    } else {
+        Outcome::Rejected
+    };
+    let reason = crate::pipeline_outcomes::Reason {
+        rule,
+        path,
+        message,
+        step: step.and_then(|s| i32::try_from(s).ok()),
+        run: None,
+    };
+    (reason, outcome)
 }
 
 /// `POST /internal/pipelines/{project}/{name}/outcomes`: one `sent` line per record of a batch
@@ -473,8 +506,14 @@ mod tests {
     /// A project with one space that names its model, an Endpoint into it and a pipeline
     /// writing through that Endpoint; the model is compiled the way a sync compiles it.
     fn world() -> AppState {
+        world_staged(false)
+    }
+
+    /// [`world`], its stage the LinkML one when `linkml` (G-19).
+    fn world_staged(linkml: bool) -> AppState {
         let mut config = Config::for_tests();
         config.org_domain = Some("banskabystrica.sk".into());
+        config.pipeline_linkml_stage = linkml;
         let state = AppState::new(config, None);
         state.mirror.upsert(manifest(
             "ContextSpace",
@@ -566,6 +605,53 @@ mod tests {
             .expect("the list");
         let rules: Vec<&str> = kept.iter().map(|r| r.rule.as_str()).collect();
         assert_eq!(rules, ["type", "id", "sh:datatype"], "newest first");
+    }
+
+    /// G-19: under the LinkML stage the rule is the LinkML model's, in the Portal's words; what
+    /// that model leaves to the stage's mappings (the class, the id) is named as before.
+    #[tokio::test]
+    async fn under_the_linkml_stage_a_record_is_kept_with_the_linkml_models_rule() {
+        let state = world_staged(true);
+        let model = json!({ "id": "https://e.org/air/", "name": "air",
+            "classes": { "AirQualityObserved": { "slots": ["pm10"] } },
+            "slots": { "pm10": { "range": "float", "minimum_value": 0 } } });
+        state
+            .model_schemas
+            .set_linkml("ovzdusie", "ovzdusie", "d1".into(), &model);
+        let below = json!({
+            "id": "urn:ngsi-ld:AirQualityObserved:banskabystrica.sk:ovzdusie:s-1",
+            "type": "AirQualityObserved",
+            "pm10": { "type": "Property", "value": -3 }
+        });
+        let other = json!({ "id": "urn:ngsi-ld:Bus:1", "type": "Bus" });
+        for record in [below, other] {
+            assert_eq!(
+                keep(&state, "ovzdusie", "stations", refused(record, None)).await,
+                StatusCode::NO_CONTENT
+            );
+        }
+        let kept = state
+            .rejected
+            .list("ovzdusie", "stations", 10, None)
+            .await
+            .expect("the list");
+        let rules: Vec<(&str, &str)> = kept
+            .iter()
+            .map(|r| (r.rule.as_str(), r.path.as_str()))
+            .collect();
+        assert_eq!(
+            rules,
+            [("type", "type"), ("sh:minInclusive", "pm10")],
+            "newest first"
+        );
+        assert!(!kept[1].message.contains("-3"), "{}", kept[1].message);
+        let off = world();
+        off.model_schemas
+            .set_linkml("ovzdusie", "ovzdusie", "d1".into(), &model);
+        assert!(off
+            .model_schemas
+            .stage_linkml("ovzdusie", "ovzdusie")
+            .is_none());
     }
 
     #[tokio::test]

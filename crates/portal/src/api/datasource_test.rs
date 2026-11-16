@@ -95,6 +95,39 @@ fn reading(
     capture: &str,
     envelope: String,
 ) -> Result<Value, ApiError> {
+    let (input, mut processors) = source_read(name, project, reader, source)?;
+    processors.push(json!({ "mapping": envelope }));
+    processors.push(json!({ "catch": [] }));
+
+    // The output, with the runner's own credential for the capture route, is the harness's.
+    let probe: PipelineSpec = serde_json::from_value(json!({
+        "class": "auto",
+        "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe"
+    }))
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let sample = Sample {
+        text: Some(String::new()),
+        url: None,
+        format: SampleFormat::Text,
+        records: None,
+    };
+    let mut config =
+        harness(&probe, &sample, capture).map_err(|e| ApiError::Internal(e.to_string()))?;
+    config["input"] = input;
+    config["pipeline"] = json!({ "processors": processors });
+    Ok(config)
+}
+
+/// `source`'s input read beside the live pipelines as `reader`, and the processors that turn what
+/// it read into the messages a live pipeline's steps get: an `http` source is one fetch by the
+/// `http` processor, its `paging` walking every page (T-7056), then the source's own body bound,
+/// archive, csv and `records` split (PL-114).
+pub(crate) fn source_read(
+    name: &str,
+    project: &str,
+    reader: &str,
+    source: &DataSourceSpec,
+) -> Result<(Value, Vec<Value>), ApiError> {
     let context = InputContext::new(name, project, reader);
     let input = serde_json::to_value(input_of(source, &context))
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -121,26 +154,7 @@ fn reading(
         processors
             .push(serde_json::to_value(processor).map_err(|e| ApiError::Internal(e.to_string()))?);
     }
-    processors.push(json!({ "mapping": envelope }));
-    processors.push(json!({ "catch": [] }));
-
-    // The output, with the runner's own credential for the capture route, is the harness's.
-    let probe: PipelineSpec = serde_json::from_value(json!({
-        "class": "auto",
-        "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe"
-    }))
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let sample = Sample {
-        text: Some(String::new()),
-        url: None,
-        format: SampleFormat::Text,
-        records: None,
-    };
-    let mut config =
-        harness(&probe, &sample, capture).map_err(|e| ApiError::Internal(e.to_string()))?;
-    config["input"] = input;
-    config["pipeline"] = json!({ "processors": processors });
-    Ok(config)
+    Ok((input, processors))
 }
 
 /// The inputs a test may read, each with the fields through which readers share messages. A
