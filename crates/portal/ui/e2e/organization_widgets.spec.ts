@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // An Organization's home page Dashboards (UIX-16, T-6779): its administrator picks them on
 // Settings → Edit → "How it looks" from the Dashboards the server offers them, the server refuses

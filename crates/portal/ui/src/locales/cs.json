@@ -8153,6 +8153,7 @@
       "empty": "Organizace zatím nemá manifest",
       "emptyHint": "Instalace zapíše org.yaml do konfiguračního repozitáře; dokud tam není, na této kartě nelze nic upravit.",
       "locales": "{locales}; v jazyce {fallback}, když jazyk osoby není v nabídce",
+      "noLocales": "Zatím není nastaven žádný jazyk: lidé čtou jazyky instalace.",
       "noContacts": "Zatím není uveden žádný kontakt.",
       "creationAnyone": "Projekt smí otevřít kdokoli přihlášený.",
       "creationGroup": "Projekty otevírají členové skupiny {group}.",

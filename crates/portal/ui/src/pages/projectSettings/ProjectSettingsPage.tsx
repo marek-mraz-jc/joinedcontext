@@ -186,7 +186,6 @@ function General({ project }: { project: string }): JSX.Element {
   // may not read: asked only once the organization's permissions say so, or the API's 404 would
   // read as a project that is gone (jc-portal-refusals, as `useReadableList` asks a list).
   const reads = readsOnceKnown(usePermissions(ORG_NAMESPACE), "Project");
-  const hidden = reads === false;
   const projectTitle = useProjectTitles();
   const manifest = useQuery({
     queryKey: [...queryKeys.list(ORG_NAMESPACE, "projects"), project],
@@ -194,6 +193,8 @@ function General({ project }: { project: string }): JSX.Element {
     queryFn: async () =>
       readManifest(ORG_NAMESPACE, "projects", project),
   });
+  // A manifest the person may not read after all (a narrowed grant) shows what the list shows.
+  const hidden = reads === false || manifest.isError;
   // The project's own Organization: with several, the first of the list is another body's.
   const { organization } = useProjectOrganization(project);
   const orgSpec = (organization?.spec ?? {}) as { domain?: string; projects?: { visibility?: string } };

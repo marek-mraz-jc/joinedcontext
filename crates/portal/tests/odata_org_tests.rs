@@ -736,7 +736,7 @@ async fn metadata_service_document_and_rest_compat_share_the_root() {
 }
 
 /// The deployment's own address of a jc with several Organizations names none: the service
-/// there answers 404 and points at `/{org}/api/v1/`, it never picks one.
+/// there answers 404 (`several-organizations`) and points at its own host, it never picks one.
 #[tokio::test]
 async fn an_unpinned_request_with_several_organizations_reads_none() {
     let state = state();

@@ -348,7 +348,7 @@ export async function listManifests(
 
 /** A manifest the caller may not read, refused as the REST door refuses it. */
 function notFound(name: string): ApiError {
-  const detail = `resource '${name}' not found in project '${ORG_NAMESPACE}'`;
+  const detail = `Your roles do not let you read the settings of ${name}, or it no longer exists.`;
   return new ApiError(404, detail, { type: "about:blank", title: "Not Found", status: 404, detail });
 }
 

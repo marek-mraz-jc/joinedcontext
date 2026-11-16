@@ -102,7 +102,7 @@ for (const width of [1440, 400]) {
         "/api/v1/Organization": { status: 200, body: HEL },
       });
       await page.goto("/projects/helsinki/settings?lang=en");
-      const said = page.getByText(/resource 'helsinki' not found/i).first();
+      const said = page.getByText("Your roles do not let you read the settings of helsinki, or it no longer exists.").first();
       await expect(said).toBeVisible();
       await shoot(page, "project-settings-refused", width, said);
     });

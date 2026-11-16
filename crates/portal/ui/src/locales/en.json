@@ -8153,6 +8153,7 @@
       "empty": "The organization has no manifest yet",
       "emptyHint": "The installation writes org.yaml into the configuration repository; until it is there, nothing on this tab can be edited.",
       "locales": "{locales}; shown in {fallback} when a person's own language is not offered",
+      "noLocales": "No language is set yet: people read the installation's languages.",
       "noContacts": "No contact is named yet.",
       "creationAnyone": "Anyone signed in may open a project.",
       "creationGroup": "The members of the group {group} open projects.",

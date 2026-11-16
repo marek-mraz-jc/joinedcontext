@@ -256,10 +256,12 @@ export function OrganizationSettings(): JSX.Element {
             <dd className="text-fg">{spec.domain}</dd>
             <dt className="font-medium text-fg">{t("organization.field.locales")}</dt>
             <dd className="text-fg">
-              {t("organization.settings.locales", {
-                locales: (spec.locales ?? []).join(", "),
-                fallback: spec.defaultLocale ?? "",
-              })}
+              {(spec.locales ?? []).length === 0
+                ? t("organization.settings.noLocales")
+                : t("organization.settings.locales", {
+                    locales: (spec.locales ?? []).join(", "),
+                    fallback: spec.defaultLocale ?? spec.locales?.[0] ?? "",
+                  })}
             </dd>
             <dt className="font-medium text-fg">{t("organization.field.contacts")}</dt>
             <dd className="text-fg">
