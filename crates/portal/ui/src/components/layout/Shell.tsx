@@ -14,8 +14,8 @@ import { PairedTabBar } from "../../connectors/PairedTabBar";
 import { CommandPalette } from "../../navigation/CommandPalette";
 import { PageTools } from "../../navigation/PageTools";
 import { useAuth } from "../../auth/AuthProvider";
-import { localized, ORG_NAMESPACE } from "../../api/manifest";
-import { lastAddress, rememberAddress, rememberProject, useOrganizations, useProjects, useProjectTitles } from "../../api/projects";
+import { ORG_NAMESPACE } from "../../api/manifest";
+import { lastAddress, rememberAddress, rememberProject, useProjects, useProjectTitles } from "../../api/projects";
 import { useAdministers } from "../../api/permissions";
 import { useBranding, useHiddenSections } from "../../branding";
 import {
@@ -48,11 +48,8 @@ function ProjectSelector({ active }: { active: string }) {
   const { t } = useTranslation();
   const known = useProjects().data ?? [];
   const titleOf = useProjectTitles();
-  // With several Organizations the list is the chosen one's (PF-124); the active project stays.
-  const organization = useChosenOrganization(active);
-  const { ownerOf } = useOrganizations().data ?? { ownerOf: new Map<string, string | undefined>() };
-  const shown = organization ? known.filter((name) => ownerOf.get(name) === organization) : known;
-  const projects = shown.includes(active) ? shown : [active, ...shown];
+  // The active project is listed whatever the API says.
+  const projects = known.includes(active) ? known : [active, ...known];
   // The page in hand, so the switch keeps it: a person comparing two projects' endpoints stays
   // in Endpoints instead of walking back from Spaces every time (T-2425, UI-05).
   const here = useRouterState({ select: (state) => sameSection(state.location.pathname) });
@@ -140,86 +137,6 @@ function initials(name: string): string {
     .slice(0, 2)
     .map((word) => Array.from(word)[0]?.toLocaleUpperCase() ?? "")
     .join("");
-}
-
-/**
- * The Organization the person works in (PF-124): `?org=` when it names one they see, else the
- * active project's. `undefined` when they see one Organization only.
- */
-function useChosenOrganization(active: string): string | undefined {
-  const { organizations, ownerOf } = useOrganizations().data ?? { organizations: [], ownerOf: new Map() };
-  const asked = useRouterState({ select: (state) => (state.location.search as { org?: string }).org });
-  if (organizations.length < 2) {
-    return undefined;
-  }
-  if (asked && organizations.some((organization) => organization.name === asked)) {
-    return asked;
-  }
-  return ownerOf.get(active) ?? undefined;
-}
-
-/**
- * Switches between the Organizations the person sees, for a person who sees more than one
- * (PF-124, ADR-N-058 section 2.7). The choice is kept in `?org=` and opens that Organization's
- * first project on the page in hand; the server listed only Organizations owning a project the
- * person reads, so every entry opens something.
- */
-function OrganizationSwitcher({ active, inSidebar = false }: { active: string; inSidebar?: boolean }) {
-  const { t, i18n } = useTranslation();
-  const data = useOrganizations().data;
-  const known = useProjects().data ?? [];
-  const chosen = useChosenOrganization(active);
-  const here = useRouterState({ select: (state) => sameSection(state.location.pathname) });
-  if (!data || data.organizations.length < 2) {
-    return null;
-  }
-  const titleOf = (name: string) =>
-    localized(data.organizations.find((organization) => organization.name === name)?.title, i18n.language, name);
-  return (
-    <Menu>
-      <MenuTrigger asChild>
-        <Button
-          variant={inSidebar ? "secondary" : "ghost"}
-          size="sm"
-          aria-label={t("nav.organizationSwitch", { organization: chosen ? titleOf(chosen) : "" })}
-          title={t("nav.organizationHint")}
-          className={inSidebar ? "w-full justify-start gap-1.5" : "max-w-48 gap-1.5"}
-        >
-          <Icon name="user" className="size-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-left">{chosen ? titleOf(chosen) : t("nav.organizationChoose")}</span>
-          <Icon name="chevronDown" className="size-4 shrink-0 text-fg-subtle" />
-        </Button>
-      </MenuTrigger>
-      <MenuContent align={inSidebar ? "start" : "end"} className="min-w-56 max-w-80">
-        <MenuLabel>
-          {t("nav.organizationLabel")}
-          <span className="block text-caption font-normal text-fg-muted">{t("nav.organizationHint")}</span>
-        </MenuLabel>
-        {data.organizations.map((organization) => {
-          const first = known.find((name) => data.ownerOf.get(name) === organization.name);
-          if (!first) {
-            return null;
-          }
-          return (
-            <MenuItem key={organization.name} asChild>
-              <Link
-                to="/projects/$project/$plural"
-                params={{ project: organization.name === data.ownerOf.get(active) ? active : first, plural: here.plural }}
-                search={withoutCopy({ org: organization.name })}
-                aria-current={organization.name === chosen ? "true" : undefined}
-              >
-                {organization.name === chosen ? <Icon name="check" className="size-4" /> : <span className="size-4" />}
-                <span className="min-w-0">
-                  <span className="block truncate">{titleOf(organization.name)}</span>
-                  <span className="block truncate font-mono text-caption text-fg-muted">{organization.name}</span>
-                </span>
-              </Link>
-            </MenuItem>
-          );
-        })}
-      </MenuContent>
-    </Menu>
-  );
 }
 
 /** The sections with a route of their own: the generic `$plural` template would resolve to it anyway, with a router warning. */
@@ -829,10 +746,6 @@ function ProjectFrame({
               </span>
             </Link>
           ) : null}
-          {/* On a phone the switcher sits atop the sidebar, where its name has room (UI-15). */}
-          <span className="contents max-sm:hidden">
-            <OrganizationSwitcher active={project} />
-          </span>
           <LanguageSwitcher />
           <JobsMenu />
           <FeedbackButton open={feedbackOpen} onOpenChange={setFeedbackOpen} buttonClassName="hidden sm:inline-flex" />
@@ -865,12 +778,9 @@ function ProjectFrame({
           )}
         >
           {sidebar ? sidebar(closeNav) : (<>
-          {/* The Organization, the project and New project read as one block, set off from the
+          {/* The project and New project read as one block, set off from the
               sections under it (T-7148). */}
           <div className="flex flex-col gap-1.5 border-b border-border pb-3">
-            <span className="contents sm:hidden">
-              <OrganizationSwitcher active={project} inSidebar />
-            </span>
             <ProjectSelector active={project} />
             {/* Opening a project is a setting of the organization, so the control is always
                 here, disabled with the reason when this caller may not (UI-44, PF-65). */}

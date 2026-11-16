@@ -6,9 +6,9 @@ import i18n from "../src/i18n";
 import { App } from "../src/App";
 
 /**
- * T-5248 (ADR-N-058 sections 2.4 and 2.7): Administration follows `?org=` for the installation's
- * administrator, and an administrator of another Organization opens that Organization's own
- * members, groups and settings alone.
+ * T-5248 (ADR-N-058 section 2.4): an administrator of another Organization opens that
+ * Organization's own members, groups and settings alone. No Portal chooses among Organizations
+ * (T-7151): `?org=` chooses nothing, the deployment's own address shows the installation's.
  */
 const IDENTITY = { subject: "e5a2", username: "eva", name: "Eva Nováková", roles: [] };
 const list = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
@@ -17,10 +17,7 @@ const PROJECTS = {
     { name: "helsinki", sample: false, organization: "hel" },
     { name: "ovzdusie", sample: false, organization: "zilina" },
   ]),
-  organizations: [
-    { name: "hel", title: "City of Helsinki" },
-    { name: "zilina", title: "Mesto Žilina" },
-  ],
+  organizations: [],
 };
 const manifest = (kind: string, name: string, spec: object) => ({
   apiVersion: "joinedcontext.com/v1alpha1",
@@ -86,18 +83,12 @@ function start(path: string, permissions: object, organizations = ORGANIZATIONS,
   );
 }
 
-describe("Administration and the chosen Organization (T-5248)", () => {
+describe("Administration of an Organization (T-5248, T-7151)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it("lists the members of the Organization ?org= names for the installation's administrator", async () => {
-    start("/organization/members?org=zilina", INSTALLATION_ADMIN);
-    expect(await screen.findByText("eva@zilina.sk", {}, { timeout: 5000 })).toBeInTheDocument();
-    expect(screen.queryByText("jana@hel.fi")).not.toBeInTheDocument();
   });
 
   it("lists every Organization's members without ?org=", async () => {
@@ -106,10 +97,9 @@ describe("Administration and the chosen Organization (T-5248)", () => {
     expect(screen.getByText("jana@hel.fi")).toBeInTheDocument();
   });
 
-  it("shows the Organization ?org= names on Settings, else the installation's", async () => {
+  it("shows the installation's Organization on Settings, whatever ?org= names (T-7151)", async () => {
     start("/organization/settings?org=zilina", INSTALLATION_ADMIN);
-    expect((await screen.findAllByText("zilina.sk", {}, { timeout: 5000 })).length).toBeGreaterThan(0);
-    expect(screen.queryByText("hel.fi")).not.toBeInTheDocument();
+    expect((await screen.findAllByText("hel.fi", {}, { timeout: 5000 })).length).toBeGreaterThan(0);
   });
 
   it("opens an Organization's own administrator its members, groups and settings alone", async () => {

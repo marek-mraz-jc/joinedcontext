@@ -20,6 +20,7 @@ import type { PanelData, PanelDefinition } from "../../components/panels/PanelVi
 import { PanelView } from "../../components/panels/PanelView";
 import { overrideWords, RefreshPicker, rangeWords, TimeRangeControls } from "../../components/panels/TimePicker";
 import { panelRange, QUICK_RANGES, refreshMs, resolveTime } from "../../components/panels/timeRange";
+import { DashboardHistory } from "./DashboardHistory";
 
 type View = components["schemas"]["DashboardView"];
 type Variable = components["schemas"]["VariableView"];
@@ -376,6 +377,8 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
           )}
         />
       )}
+      {/* The builder's dashboards are files with a history; a provisioned one has none here (T-7150). */}
+      {isBuilderUid(uid) ? <DashboardHistory project={project} uid={uid} mayEdit={mayEdit} /> : null}
     </div>
   );
 }

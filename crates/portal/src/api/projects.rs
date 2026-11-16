@@ -22,13 +22,13 @@ pub struct ProjectList {
     pub api_version: String,
     pub kind: String,
     pub items: Vec<ProjectSummary>,
-    /// The Organizations that own a listed project, by name, when the installation holds more
-    /// than one (PF-124, ADR-N-058 section 2.7): what the organization switcher offers. Empty
-    /// with one Organization, so a person who sees one gets no switcher.
+    /// The Organization whose own Portal host the request reached, its one entry; empty on
+    /// every other address. No Portal lists Organizations (T-7151): each runs on its own host,
+    /// and an operator finds them under `GET /organization/addresses`.
     pub organizations: Vec<OrganizationSummary>,
 }
 
-/// One Organization a caller sees (PF-124): its name, the `?org=` value, and its title.
+/// The Organization of the Portal host: its name and its title.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OrganizationSummary {
@@ -114,7 +114,7 @@ pub async fn list_projects(
             }
         })
         .collect();
-    let organizations = organizations_seen(&state, &items);
+    let organizations = host_organization(&state);
     Ok(Json(ProjectList {
         api_version: API_VERSION.to_string(),
         kind: "List".to_string(),
@@ -123,26 +123,17 @@ pub async fn list_projects(
     }))
 }
 
-/// The Organizations owning one of `items`, in name order, when there are two or more (PF-124).
-/// Only what the caller reads already: an Organization none of whose projects they read stays
-/// unnamed, as the project list keeps an unreadable project unnamed.
-fn organizations_seen(state: &AppState, items: &[ProjectSummary]) -> Vec<OrganizationSummary> {
-    let names: std::collections::BTreeSet<&str> = items
-        .iter()
-        .filter_map(|item| item.organization.as_deref())
-        .collect();
-    if names.len() < 2 {
-        return Vec::new();
-    }
-    names
-        .into_iter()
+/// The Organization this request's Portal host serves, alone (T-7151); none on any other address.
+fn host_organization(state: &AppState) -> Vec<OrganizationSummary> {
+    crate::organization_host::organization()
         .map(|name| OrganizationSummary {
-            name: name.to_owned(),
             title: state
                 .mirror
-                .get(crate::permissions::ORG_NAMESPACE, "Organization", name)
+                .get(crate::permissions::ORG_NAMESPACE, "Organization", &name)
                 .and_then(|organization| organization.metadata.title),
+            name,
         })
+        .into_iter()
         .collect()
 }
 
