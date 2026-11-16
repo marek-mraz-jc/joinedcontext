@@ -688,6 +688,20 @@ routes:
     values: {"uid": "jcd-0123456789abcdef"}
     note: "the fixture's forge takes the removal: `allow` answers 202"
     expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/grafana/builder/{uid}/versions
+    rule: "project-read"
+    values: {"uid": "jcd-0123456789abcdef"}
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/builder/{uid}/versions/{sha}
+    rule: "project-read, then read on every Endpoint the version names"
+    values: {"uid": "jcd-0123456789abcdef", "sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"}
+    note: "the fixture's version is no builder file: `allow` answers 422"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/grafana/builder/{uid}/versions/{sha}/restore
+    rule: "propose on Dashboard, then read on every Endpoint the version names"
+    values: {"uid": "jcd-0123456789abcdef", "sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"}
+    note: "the fixture's version is no builder file: `allow` answers 422"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
   - route: GET /projects/{project}/activity
     rule: "project-read"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]

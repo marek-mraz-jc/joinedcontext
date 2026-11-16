@@ -2921,6 +2921,20 @@
         "evidence/jc-grafana-parity/shots/portal/portal-list-no-match-400.png"
       ]
     },
+    "src/pages/grafana/DashboardHistory.tsx": {
+      "walkedBy": "worker-t7151 (stub walk, T-7150)",
+      "date": "2026-11-16",
+      "screenshots": [
+        "evidence/T-7150/history-list-1440.png",
+        "evidence/T-7150/history-list-400.png",
+        "evidence/T-7150/history-diff-1440.png",
+        "evidence/T-7150/history-diff-400.png",
+        "evidence/T-7150/history-restore-asked-1440.png",
+        "evidence/T-7150/history-restore-asked-400.png",
+        "evidence/T-7150/history-reader-1440.png",
+        "evidence/T-7150/history-reader-400.png"
+      ]
+    },
     "src/components/forms/SchemaForm.tsx": {
       "walkedBy": "worker-t6779 (stub walk: the fix summary of a refused form, T-6772)",
       "date": "2026-11-11",

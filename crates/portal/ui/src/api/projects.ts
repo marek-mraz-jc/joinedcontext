@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { queryOptions, useQuery } from "@tanstack/react-query";
-import { useRouterState } from "@tanstack/react-router";
 import { api, queryKeys, unwrap } from "./client";
 import { listOrganizations } from "./odata";
 import { asManifests, localized, ORG_NAMESPACE } from "./manifest";
@@ -35,9 +34,9 @@ export function useProjects() {
 }
 
 /**
- * The Organizations the person sees, when they see more than one, and the Organization of each
- * project they read (PF-124, ADR-N-058 section 2.7). The server lists only Organizations owning a
- * project the person reads. Same request as [`useProjects`].
+ * The Organization of the Portal host the page runs on, alone (no Portal lists Organizations,
+ * T-7151), and the Organization of each project the person reads. Same request as
+ * [`useProjects`].
  */
 export function useOrganizations() {
   return useQuery({
@@ -50,29 +49,14 @@ export function useOrganizations() {
 }
 
 /**
- * The `Organization` manifests the person reads, as `GET /projects/org/organizations` lists them:
- * the service's own Organization when they see one, every one they see when they see several
- * (T-7104): the service's at once, the list once the projects list shows several.
+ * The `Organization` manifests the person reads, as the Organization service answers them: the
+ * host's own on an Organization's Portal host (T-7104, T-7151).
  */
 export function useOrganizationManifests() {
-  const owners = useOrganizations();
-  const several = (owners.data?.organizations.length ?? 0) > 1;
   return useQuery({
-    queryKey: [...queryKeys.list(ORG_NAMESPACE, "organizations"), several ? "several" : "one"],
-    queryFn: async () => listOrganizations(several),
+    queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
+    queryFn: async () => listOrganizations(),
   });
-}
-
-/**
- * The Organization `?org=` names when it is one the person sees among two or more (PF-124,
- * ADR-N-058 section 2.7), else `undefined`: what the Administration lists show (T-5248).
- */
-export function useChosenOrganizationName(): string | undefined {
-  const organizations = useOrganizations().data?.organizations ?? [];
-  const asked = useRouterState({ select: (state) => (state.location.search as { org?: string }).org });
-  return asked !== undefined && organizations.length > 1 && organizations.some((o) => o.name === asked)
-    ? asked
-    : undefined;
 }
 
 /**
@@ -102,26 +86,22 @@ export function useProjectTitles(): (project: string) => string {
 
 /**
  * The name of the Organization `project` belongs to (ADR-N-058): its `organizationRef`, as the
- * project list answers it; for the organization's own pages the one chosen in the switcher; and
- * the only Organization of an installation that has one. `undefined` while that is not known.
+ * project list answers it, else the Organization of the Portal host. `undefined` while that is
+ * not known.
  */
 export function organizationNameOf(
   list: { organizations: { name: string }[]; ownerOf: Map<string, string | null | undefined> } | undefined,
   project: string,
-  chosen?: string,
 ): string | undefined {
   if (!list) return undefined;
   const owner = list.ownerOf.get(project);
   if (owner) return owner;
-  if (chosen) return chosen;
   return list.organizations.length === 1 ? list.organizations[0]?.name : undefined;
 }
 
 /** The name of the Organization `project` belongs to; see [`organizationNameOf`]. */
 export function useOrganizationName(project: string): string | undefined {
-  const list = useOrganizations().data;
-  const chosen = useChosenOrganizationName();
-  return organizationNameOf(list, project, chosen);
+  return organizationNameOf(useOrganizations().data, project);
 }
 
 /**

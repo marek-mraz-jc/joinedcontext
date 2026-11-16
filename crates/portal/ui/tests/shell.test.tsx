@@ -267,7 +267,7 @@ describe("the Approvals badge", () => {
     status: { lane: "yellow", phase, plan: { update: 1 } },
   });
 
-  function renderShell(changes: unknown[] | null, grants: unknown[]) {
+  function renderShell(changes: unknown[] | null, grants: unknown[] | null) {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -275,7 +275,9 @@ describe("the Approvals badge", () => {
         const [status, body] = url.includes("/auth/me")
           ? [200, { ...IDENTITY, email: "jana@banskabystrica.sk" }]
           : url.includes("/permissions/me")
-            ? [200, { project: "banskabystrica", bootstrap: false, grants }]
+            ? grants === null
+              ? [404, { title: "Not Found", status: 404 }]
+              : [200, { project: "banskabystrica", bootstrap: false, grants }]
             : url.includes("/changes")
               ? changes === null
                 ? [403, { title: "Forbidden", status: 403 }]
@@ -327,6 +329,16 @@ describe("the Approvals badge", () => {
     renderShell([change("chg-1", "PendingApproval", "marek@banskabystrica.sk")], []);
     const link = await screen.findByRole("link", { name: /Approvals/ });
     await new Promise((r) => setTimeout(r, 50));
+    expect(link).not.toHaveTextContent(/wait/);
+  });
+
+  it("asks for no Change list of a project the person reads nothing in (T-7126, outsider smoke 404)", async () => {
+    renderShell([change("chg-1", "PendingApproval", "marek@banskabystrica.sk")], null);
+    const link = await screen.findByRole("link", { name: /Approvals/ });
+    const asked = () => vi.mocked(fetch).mock.calls.map(([input]) => String(input instanceof Request ? input.url : input));
+    await waitFor(() => expect(asked().some((url) => url.includes("/permissions/me"))).toBe(true));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(asked().filter((url) => /changes|change_list/.test(url))).toEqual([]);
     expect(link).not.toHaveTextContent(/wait/);
   });
 
