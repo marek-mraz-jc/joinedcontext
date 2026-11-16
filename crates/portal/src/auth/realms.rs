@@ -162,6 +162,12 @@ impl OrganizationRealm {
         &self.issuer
     }
 
+    /// The realm as a sign-in configuration: its public issuer, the Portal's client and the
+    /// back channel the Portal posts to.
+    pub fn oidc(&self) -> &OidcConfig {
+        &self.config
+    }
+
     /// The sign-in client, discovered the first time a person signs in on the Organization's
     /// host: a realm that does not answer yet costs that sign-in a 503, never the Portal's start.
     pub async fn client(&self) -> Result<Arc<OidcClient>, ApiError> {
@@ -188,6 +194,48 @@ impl OrganizationRealm {
 pub fn here(state: &AppState) -> Option<Arc<OrganizationRealm>> {
     let organization = crate::organization_host::organization()?;
     state.organization_realms.get(&organization).cloned()
+}
+
+/// The realm App `app` signs its people in at (T-7165): its project's Organization's own, when
+/// that Organization has one; `None`: the installation realm. Read off the App's manifest, never
+/// off the request's host.
+pub fn of_app(state: &AppState, app: &str) -> Option<Arc<OrganizationRealm>> {
+    let project = state
+        .mirror
+        .find(|env| env.kind == "App" && env.metadata.name == app)?
+        .metadata
+        .namespace?;
+    let organization = crate::permissions::organization_of(&state.mirror, &project)?;
+    state.organization_realms.get(&organization).cloned()
+}
+
+/// The sign-in configuration of App `app`'s realm ([`of_app`]), else the installation's.
+pub fn app_oidc(state: &AppState, app: &str) -> Option<OidcConfig> {
+    match of_app(state, app) {
+        Some(realm) => Some(realm.oidc().clone()),
+        None => state.config.oidc.clone(),
+    }
+}
+
+/// `token` as an access token of App `app`'s own client, verified by the App's realm alone
+/// ([`of_app`]): a token of the installation or of another Organization is `401` on that App.
+pub async fn verify_app_token(
+    state: &AppState,
+    app: &str,
+    token: &str,
+) -> Result<(crate::auth::session::Session, Vec<String>), ApiError> {
+    let client = crate::reconciler::app_clients::client_id(app);
+    match of_app(state, app) {
+        Some(realm) => realm.bearer.verify_app_token(token, &client).await,
+        None => {
+            state
+                .bearer
+                .as_ref()
+                .ok_or(ApiError::Unauthorized)?
+                .verify_app_token(token, &client)
+                .await
+        }
+    }
 }
 
 /// The Organization realm that checks `token` on the running request: the pinned Organization's,

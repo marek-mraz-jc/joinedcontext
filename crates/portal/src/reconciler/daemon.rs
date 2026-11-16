@@ -231,6 +231,9 @@ pub struct Syncer {
     /// The Keycloak client of every published App (ADR-N-030, AP-111). `None` without an admin
     /// client or an apps host: the Apps are served, and nobody's client is written.
     app_clients: Option<Arc<super::app_clients::AppClientSync>>,
+    /// The App clients of each Organization with a realm of its own (T-7165). Their secrets stay
+    /// out of `app_client_secrets`: the edge file logs in at the installation realm alone.
+    organization_app_clients: Vec<Arc<super::app_clients::AppClientSync>>,
     /// The secret of every App whose client is in place, by App name, as the last run left it:
     /// what the edge file is composed with (AP-112). Never logged.
     app_client_secrets:
@@ -406,6 +409,7 @@ impl Syncer {
             organization_groups: Vec::new(),
             people: None,
             app_clients: None,
+            organization_app_clients: Vec::new(),
             app_client_secrets: Arc::default(),
             workload_clients: None,
             host_runner_values: RwLock::default(),
@@ -633,6 +637,15 @@ impl Syncer {
     /// Makes each run bring every published App's Keycloak client to what the App says (AP-111).
     pub fn with_app_clients(mut self, clients: Arc<super::app_clients::AppClientSync>) -> Self {
         self.app_clients = Some(clients);
+        self
+    }
+
+    /// Makes each run bring an Organization's own realm to its Apps' clients (T-7165).
+    pub fn with_organization_app_clients(
+        mut self,
+        clients: Arc<super::app_clients::AppClientSync>,
+    ) -> Self {
+        self.organization_app_clients.push(clients);
         self
     }
 
@@ -2503,6 +2516,17 @@ impl Syncer {
                     .app_client_secrets
                     .write()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = run.secrets;
+            }
+        }
+        for clients in &self.organization_app_clients {
+            let run = clients.converge(fresh_mirror).await;
+            super::app_clients::record(fresh_mirror, &run.outcomes);
+            for outcome in &run.outcomes {
+                if let Some(err) = &outcome.error {
+                    tracing::warn!(app = %outcome.app, error = %err, "app client did not converge in its Organization's realm")
+                } else if !outcome.drift.is_empty() {
+                    tracing::info!(app = %outcome.app, drift = %outcome.drift.join("; "), "app client brought back in its Organization's realm")
+                }
             }
         }
     }

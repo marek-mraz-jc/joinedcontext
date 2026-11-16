@@ -816,18 +816,37 @@ impl AppState {
                     &oidc.backchannel(),
                     oidc.client_id.clone(),
                     oidc.auth.clone(),
-                    host,
+                    host.clone(),
                 ) {
                     Some(mut clients) => {
                         if let Some((id, secret)) = self.config.keycloak_admin.clone() {
                             clients = clients.with_members(id, secret);
                         }
                         syncer = syncer.with_app_clients(Arc::new(
-                            clients.with_foreign(Arc::clone(&self.foreign_names)),
+                            clients
+                                .with_foreign(Arc::clone(&self.foreign_names))
+                                .without(self.organization_realms.keys().cloned()),
                         ))
                     }
                     None => {
                         tracing::warn!("the issuer is not a realm URL, so no App client is managed")
+                    }
+                }
+                // The Apps of an Organization with a realm of its own have their client there,
+                // written by the same Portal client (T-7001 §3: one secret for every realm, T-7165).
+                for realm in self.organization_realms.values() {
+                    if let Some(mut clients) = crate::reconciler::app_clients::AppClientSync::new(
+                        &realm.backchannel,
+                        oidc.client_id.clone(),
+                        oidc.auth.clone(),
+                        host.clone(),
+                    ) {
+                        if let Some((id, secret)) = self.config.keycloak_admin.clone() {
+                            clients = clients.with_members(id, secret);
+                        }
+                        syncer = syncer.with_organization_app_clients(Arc::new(
+                            clients.for_organization(&realm.organization),
+                        ));
                     }
                 }
             }

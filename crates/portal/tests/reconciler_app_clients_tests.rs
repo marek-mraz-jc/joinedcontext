@@ -388,6 +388,92 @@ async fn a_managed_client_whose_app_is_gone_is_deleted_and_a_draft_gets_none() {
     assert!(!foreign.has_client("app-old") && !foreign.has_client("edge"));
 }
 
+/// hel (the installation's Organization) owns `helsinki` and its App `bikes`; ba, with a realm of
+/// its own, owns `bratislava` and its App `trams` (T-7165).
+fn two_organizations() -> Mirror {
+    let owner = |kind: &str, name: &str, spec: Value| ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: kind.to_owned(),
+        metadata: ObjectMeta::new(name, joinedcontext_portal::permissions::ORG_NAMESPACE),
+        spec,
+        status: None,
+    };
+    mirror_with(vec![
+        owner("Organization", "hel", json!({ "installation": true })),
+        owner("Organization", "ba", json!({})),
+        owner("Project", "helsinki", json!({ "organizationRef": "hel" })),
+        owner("Project", "bratislava", json!({ "organizationRef": "ba" })),
+        app("helsinki", "bikes", "published"),
+        app("bratislava", "trams", "published"),
+    ])
+}
+
+/// Every call a run made, as `METHOD path?query`.
+async fn asked(keycloak: &MockServer) -> Vec<String> {
+    keycloak
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| format!("{} {}?{}", r.method, r.url.path(), r.url.query().unwrap_or("")))
+        .collect()
+}
+
+/// T-7165: an Organization's realm holds its own Apps' clients alone, and the installation realm
+/// lets them go there, removing the one it held before.
+#[tokio::test]
+async fn an_organizations_realm_holds_its_own_apps_clients_alone() {
+    let ba = realm().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .with_priority(20)
+        .mount(&ba)
+        .await;
+    let run = sync(&ba)
+        .for_organization("ba")
+        .converge(&two_organizations())
+        .await;
+    let apps: Vec<&str> = run.outcomes.iter().map(|o| o.app.as_str()).collect();
+    assert_eq!(apps, ["trams"], "{:?}", run.outcomes);
+    let calls = asked(&ba).await;
+    assert!(
+        calls.iter().all(|call| !call.contains("app-bikes")),
+        "{calls:?}"
+    );
+
+    let installation = realm().await;
+    app_client_list(
+        &installation,
+        json!([managed_client("uuid-trams", "bratislava", "trams")]),
+    )
+    .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("{REALM}/clients/uuid-trams")))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&installation)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .with_priority(20)
+        .mount(&installation)
+        .await;
+    let run = sync(&installation)
+        .without(["ba".to_owned()])
+        .converge(&two_organizations())
+        .await;
+    let apps: Vec<&str> = run.outcomes.iter().map(|o| o.app.as_str()).collect();
+    assert_eq!(apps, ["bikes", "trams"], "{:?}", run.outcomes);
+    assert!(run.secrets.get("trams").is_none());
+    let calls = asked(&installation).await;
+    assert!(
+        calls.iter().all(|call| !call.contains("clientId=app-trams")),
+        "{calls:?}"
+    );
+    assert!(wrote(&installation)
+        .await
+        .contains(&format!("DELETE {REALM}/clients/uuid-trams")));
+}
+
 /// The last App dropped from a loaded source: its client goes (a revocation), while before the
 /// source has loaded once (Mirror::hold_removals) it stays and is reported.
 #[tokio::test]
