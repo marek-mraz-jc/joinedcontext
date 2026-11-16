@@ -776,6 +776,7 @@ export interface Workspace {
   owner?: string | null;
   previewState?: string | null;
   project: string;
+  scope?: unknown | null;
   title?: string | null;
   "@odata.etag"?: string;
 }
@@ -936,6 +937,7 @@ export interface Functions {
   jc_syncsource_status: { name: string };
   jc_workspace_compare: { name: string };
   jc_workspace_preview_get: { name: string };
+  portal_access_request_incoming: Record<string, never>;
   portal_access_request_list: { endpoint: string };
   portal_alert_list: Record<string, never>;
   portal_alert_notice_list: Record<string, never>;
@@ -945,6 +947,34 @@ export interface Functions {
   portal_endpoint_quality: { endpoint: string };
   portal_erasure_get: { space: string; id: string };
   portal_erasure_list: { space: string };
+  portal_grafana_builder: Record<string, never>;
+  portal_grafana_builder_get: { uid: string };
+  portal_grafana_dashboard: { uid: string };
+  portal_grafana_dashboards: Record<string, never>;
+  portal_grafana_list: Record<string, never>;
+  portal_grafana_options: { endpoint?: string; type?: string };
+  portal_grafana_panel: { uid: string; panel: string; from?: string; to?: string; maxDataPoints?: number; vars?: unknown };
+  portal_grafana_variable: { uid: string; name: string };
+  portal_knowledge_conversation_get: { conversation: string };
+  portal_knowledge_conversation_list: { deployment?: string; from?: string; to?: string; status?: string; feedback?: string; slow?: boolean; minCostUsd?: number; q?: string; sort?: string; cursor?: string };
+  portal_knowledge_conversation_same: { conversation: string; turn: string };
+  portal_knowledge_conversation_usage: { deployment?: string; from?: string; to?: string };
+  portal_knowledge_document_list: { source: string };
+  portal_knowledge_error_list: { source: string };
+  portal_knowledge_file_list: { source: string };
+  portal_knowledge_page_links: { source: string; page: string };
+  portal_knowledge_page_list: { source: string; parent?: number; q?: string };
+  portal_knowledge_passage_list: { source: string; page?: number; document?: number };
+  portal_knowledge_search: { source: string; q?: string; limit?: number };
+  portal_knowledge_source_list: Record<string, never>;
+  portal_knowledge_usage: { deployment: string };
+  portal_mqtt_allowance: Record<string, never>;
+  portal_mqtt_binding_list: { broker: string };
+  portal_mqtt_broker_access: { broker: string; account?: string };
+  portal_mqtt_captured_list: { broker: string; topic?: string; limit?: number };
+  portal_mqtt_device_options: { broker: string };
+  portal_mqtt_measured: { broker: string };
+  portal_mqtt_watch: { broker: string; account?: string; since?: string };
   portal_notification_list: Record<string, never>;
   portal_opendata_pages: Record<string, never>;
   portal_organization_change_get: { id: string };
@@ -952,11 +982,24 @@ export interface Functions {
   portal_organization_change_list: Record<string, never>;
   portal_organization_change_manifests: { id: string };
   portal_person_names: { ids?: string };
+  portal_pipeline_access_request_endpoints: { pipeline: string };
+  portal_pipeline_access_request_list: { pipeline: string };
+  portal_pipeline_health: Record<string, never>;
+  portal_pipeline_latest_runs: Record<string, never>;
+  portal_pipeline_metrics: { pipeline: string };
+  portal_pipeline_rejected: { pipeline: string; limit?: number; before?: number };
+  portal_pipeline_rejected_groups: { pipeline: string };
+  portal_pipeline_run_list: { pipeline: string; limit?: number };
+  portal_pipeline_run_log: { pipeline: string; run: string; limit?: number; before?: number };
+  portal_pipeline_samples: { pipeline: string };
+  portal_pipeline_source_deletes: { pipeline: string };
+  portal_pipeline_stats: { pipeline: string };
   portal_preferences_get: Record<string, never>;
   portal_secret_list: Record<string, never>;
   portal_space_quality: { space: string };
   portal_space_quality_checks: { space: string };
   portal_space_retention_deleted: { space: string };
+  portal_space_source_removals: { space: string };
   portal_space_temporal_audit: { space: string; pipeline?: string };
   portal_trash_list: { space: string };
   portal_visualization_template: { template: string; x?: string; y?: string; color?: string; facet?: string };
@@ -1010,6 +1053,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_syncsource_status: ["Project"],
   jc_workspace_compare: ["Project"],
   jc_workspace_preview_get: ["Project"],
+  portal_access_request_incoming: ["Project"],
   portal_access_request_list: ["Project"],
   portal_alert_list: ["Organization"],
   portal_alert_notice_list: ["Organization"],
@@ -1019,6 +1063,34 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_endpoint_quality: ["Project"],
   portal_erasure_get: ["Project"],
   portal_erasure_list: ["Project"],
+  portal_grafana_builder: ["Project"],
+  portal_grafana_builder_get: ["Project"],
+  portal_grafana_dashboard: ["Project"],
+  portal_grafana_dashboards: ["Project"],
+  portal_grafana_list: ["Project"],
+  portal_grafana_options: ["Project"],
+  portal_grafana_panel: ["Project"],
+  portal_grafana_variable: ["Project"],
+  portal_knowledge_conversation_get: ["Project"],
+  portal_knowledge_conversation_list: ["Project"],
+  portal_knowledge_conversation_same: ["Project"],
+  portal_knowledge_conversation_usage: ["Project"],
+  portal_knowledge_document_list: ["Project"],
+  portal_knowledge_error_list: ["Project"],
+  portal_knowledge_file_list: ["Project"],
+  portal_knowledge_page_links: ["Project"],
+  portal_knowledge_page_list: ["Project"],
+  portal_knowledge_passage_list: ["Project"],
+  portal_knowledge_search: ["Project"],
+  portal_knowledge_source_list: ["Project"],
+  portal_knowledge_usage: ["Project"],
+  portal_mqtt_allowance: ["Project"],
+  portal_mqtt_binding_list: ["Project"],
+  portal_mqtt_broker_access: ["Project"],
+  portal_mqtt_captured_list: ["Project"],
+  portal_mqtt_device_options: ["Project"],
+  portal_mqtt_measured: ["Project"],
+  portal_mqtt_watch: ["Project"],
   portal_notification_list: ["Organization"],
   portal_opendata_pages: ["Organization"],
   portal_organization_change_get: ["Organization"],
@@ -1026,11 +1098,24 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_organization_change_list: ["Organization"],
   portal_organization_change_manifests: ["Organization"],
   portal_person_names: ["Organization"],
+  portal_pipeline_access_request_endpoints: ["Project"],
+  portal_pipeline_access_request_list: ["Project"],
+  portal_pipeline_health: ["Project"],
+  portal_pipeline_latest_runs: ["Project"],
+  portal_pipeline_metrics: ["Project"],
+  portal_pipeline_rejected: ["Project"],
+  portal_pipeline_rejected_groups: ["Project"],
+  portal_pipeline_run_list: ["Project"],
+  portal_pipeline_run_log: ["Project"],
+  portal_pipeline_samples: ["Project"],
+  portal_pipeline_source_deletes: ["Project"],
+  portal_pipeline_stats: ["Project"],
   portal_preferences_get: ["Organization"],
   portal_secret_list: ["Project"],
   portal_space_quality: ["Project"],
   portal_space_quality_checks: ["Project"],
   portal_space_retention_deleted: ["Project"],
+  portal_space_source_removals: ["Project"],
   portal_space_temporal_audit: ["Project"],
   portal_trash_list: ["Project"],
   portal_visualization_template: ["Organization"],
@@ -1083,7 +1168,10 @@ export interface Actions {
   jc_workspace_preview_stop: { name: string };
   jc_workspace_propose: { name: string };
   jc_workspace_update_from_main: { name: string; resolutions?: unknown };
+  portal_access_request_approve: { id: string };
+  portal_access_request_decline: { id: string; body?: unknown };
   portal_access_request_file: { endpoint: string; body?: unknown };
+  portal_access_request_revoke: { id: string; body?: unknown };
   portal_alert_mute: { id: string; body?: unknown };
   portal_alert_notice_read: { id: string };
   portal_alert_subscribe: { body?: unknown };
@@ -1096,6 +1184,21 @@ export interface Actions {
   portal_erasure_approve: { space: string; id: string; body?: unknown };
   portal_erasure_decline: { space: string; id: string; body?: unknown };
   portal_erasure_file: { space: string; dryRun?: string; body?: unknown };
+  portal_grafana_builder_create: { body?: unknown };
+  portal_grafana_builder_preview: { body?: unknown };
+  portal_grafana_builder_update: { uid: string; body?: unknown };
+  portal_grafana_remove: { id: string };
+  portal_grafana_save: { body?: unknown };
+  portal_knowledge_answers_forget: { deployment: string };
+  portal_knowledge_context_preview: { dryRun?: string; lang?: string; body?: unknown };
+  portal_knowledge_conversation_erase: { conversation: string };
+  portal_knowledge_file_remove: { source: string; id: string };
+  portal_knowledge_inclusion_set: { source: string; body?: unknown };
+  portal_knowledge_recrawl: { source: string };
+  portal_kpi_check: { body?: unknown };
+  portal_mqtt_captured_clear: { broker: string };
+  portal_mqtt_device_propose: { broker: string; body?: unknown };
+  portal_mqtt_test_publish: { broker: string; body?: unknown };
   portal_notification_read: { notification: string };
   portal_opendata_page_preview: { body?: unknown };
   portal_opendata_page_revert: { page: string; lang: string };
@@ -1107,6 +1210,11 @@ export interface Actions {
   portal_person_remove_second_factor: { person: string };
   portal_person_resend_invitation: { person: string };
   portal_person_reset_password: { person: string };
+  portal_pipeline_access_request_file: { pipeline: string; body?: unknown };
+  portal_pipeline_rejected_retry: { pipeline: string; body?: unknown };
+  portal_pipeline_run_start: { pipeline: string };
+  portal_pipeline_source_check: { pipeline: string };
+  portal_pipeline_source_decide: { pipeline: string; body?: unknown };
   portal_preferences_recent: { body?: unknown };
   portal_preferences_set: { body?: unknown };
   portal_secret_set: { body?: unknown };
@@ -1169,7 +1277,10 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_workspace_preview_stop: ["Project"],
   jc_workspace_propose: ["Project"],
   jc_workspace_update_from_main: ["Project"],
+  portal_access_request_approve: ["Project"],
+  portal_access_request_decline: ["Project"],
   portal_access_request_file: ["Project"],
+  portal_access_request_revoke: ["Project"],
   portal_alert_mute: ["Organization"],
   portal_alert_notice_read: ["Organization"],
   portal_alert_subscribe: ["Organization"],
@@ -1182,6 +1293,21 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_erasure_approve: ["Project"],
   portal_erasure_decline: ["Project"],
   portal_erasure_file: ["Project"],
+  portal_grafana_builder_create: ["Project"],
+  portal_grafana_builder_preview: ["Project"],
+  portal_grafana_builder_update: ["Project"],
+  portal_grafana_remove: ["Project"],
+  portal_grafana_save: ["Project"],
+  portal_knowledge_answers_forget: ["Project"],
+  portal_knowledge_context_preview: ["Project"],
+  portal_knowledge_conversation_erase: ["Project"],
+  portal_knowledge_file_remove: ["Project"],
+  portal_knowledge_inclusion_set: ["Project"],
+  portal_knowledge_recrawl: ["Project"],
+  portal_kpi_check: ["Project"],
+  portal_mqtt_captured_clear: ["Project"],
+  portal_mqtt_device_propose: ["Project"],
+  portal_mqtt_test_publish: ["Project"],
   portal_notification_read: ["Organization"],
   portal_opendata_page_preview: ["Organization"],
   portal_opendata_page_revert: ["Organization"],
@@ -1193,6 +1319,11 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_person_remove_second_factor: ["Organization"],
   portal_person_resend_invitation: ["Organization"],
   portal_person_reset_password: ["Organization"],
+  portal_pipeline_access_request_file: ["Project"],
+  portal_pipeline_rejected_retry: ["Project"],
+  portal_pipeline_run_start: ["Project"],
+  portal_pipeline_source_check: ["Project"],
+  portal_pipeline_source_decide: ["Project"],
   portal_preferences_recent: ["Organization"],
   portal_preferences_set: ["Organization"],
   portal_secret_set: ["Project"],

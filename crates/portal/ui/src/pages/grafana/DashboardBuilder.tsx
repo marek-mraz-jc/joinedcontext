@@ -12,7 +12,8 @@ import type { JSX, PointerEvent as ReactPointerEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { api, ApiError, reasonOf, unwrap } from "../../api/client";
+import { ApiError, reasonOf } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import {
   Alert,
@@ -97,11 +98,11 @@ function useChoices(project: string, endpoint: string, type: string) {
   return useQuery({
     queryKey: ["projects", project, "grafana", "options", endpoint, type],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/grafana/options", {
-          params: { path: { project }, query: { endpoint: endpoint || undefined, type: type || undefined } },
-        }),
-      ),
+      (await door(
+        "portal_grafana_options",
+        { ...(endpoint ? { endpoint } : {}), ...(type ? { type } : {}) },
+        project,
+      )) as RestAnswer<"grafana_options">,
   });
 }
 
@@ -806,7 +807,7 @@ export function PanelPreviewCard({ project, board, panel }: { project: string; b
   const [now] = useState(() => Date.now());
   const run = useMutation({
     mutationFn: async (): Promise<Preview> => {
-      const answer = await unwrap(await api.POST("/api/v1/projects/{project}/grafana/builder/preview", { params: { path: { project } }, body: { board, panel: panel.id } }));
+      const answer = (await doorAction("portal_grafana_builder_preview", { body: { board, panel: panel.id } }, project)) as RestAnswer<"builder_preview">;
       return { panel: answer.panel as unknown as PanelDefinition, frames: (answer.frames ?? []) as unknown as Frame[], error: answer.error ?? undefined, accessDenied: answer.accessDenied ?? undefined };
     },
   });
@@ -1033,19 +1034,19 @@ export function DashboardBuilderPage({ project, uid }: { project: string; uid?: 
   const navigate = useNavigate();
   const start = useQuery({
     queryKey: builderKey(project),
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/grafana/builder", { params: { path: { project } } })),
+    queryFn: async () => (await door("portal_grafana_builder", {}, project)) as RestAnswer<"builder_start">,
   });
   const saved = useQuery({
     queryKey: [...builderKey(project), uid],
     enabled: Boolean(uid) && start.data?.mayEdit === true,
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/grafana/builder/{uid}", { params: { path: { project, uid: uid ?? "" } } })),
+    queryFn: async () => (await door("portal_grafana_builder_get", { uid: uid ?? "" }, project)) as RestAnswer<"builder_get">,
   });
   const work = useBoard(saved.data?.board);
   const save = useMutation({
     mutationFn: async (board: Board) =>
       uid
-        ? unwrap(await api.PUT("/api/v1/projects/{project}/grafana/builder/{uid}", { params: { path: { project, uid } }, body: { board, base: saved.data?.base ?? "" } }))
-        : unwrap(await api.POST("/api/v1/projects/{project}/grafana/builder", { params: { path: { project } }, body: { board } })),
+        ? ((await doorAction("portal_grafana_builder_update", { uid, body: { board, base: saved.data?.base ?? "" } }, project)) as RestAnswer<"builder_update">)
+        : ((await doorAction("portal_grafana_builder_create", { body: { board } }, project)) as RestAnswer<"builder_create">),
     onSuccess: async (answer) => {
       await queryClient.invalidateQueries({ queryKey: builderKey(project) });
       if (!uid) void navigate({ to: "/projects/$project/grafana/dashboards/$uid/edit", params: { project, uid: answer.uid } });

@@ -2138,6 +2138,16 @@ fn door_sample(member: &str) -> Value {
         "endpoint" => json!("air"),
         "notification" => json!("1"),
         "template" => json!("bar"),
+        "limit" => json!(5),
+        "before" => json!(1),
+        "parent" | "document" | "turn" | "panel" => json!(1),
+        "from" => json!("now-6h"),
+        "to" => json!("now"),
+        "maxDataPoints" => json!(100),
+        "vars" => json!({ "region": ["north", "south"] }),
+        "slow" => json!(true),
+        "since" => json!("2026-11-16T00:00:00Z"),
+        "minCostUsd" => json!(0.02),
         other => json!(format!("{other}-1")),
     }
 }

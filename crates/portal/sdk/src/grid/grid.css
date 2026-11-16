@@ -3236,8 +3236,32 @@ a.jc-cell--link:focus-visible {
   gap: var(--jc-space-2, 8px);
 }
 
-/* On a phone a stacked list draws each row as a card of label and value lines. */
+/* The toggle to a phone card's other fields: a table row has every column already. */
+.jc-data-grid-more-toggle { display: none; }
+
+/* On a phone a stacked list draws each row as a card of label and value lines: its title, the first
+   fields and its actions; the others behind the card's More details (T-7115). The toolbar keeps the
+   search and an icon-only Arrange columns on one line. */
 @media (width <= 640px) {
+  .jc-data-grid--stack tbody tr:not([data-open]) .jc-data-grid-more { display: none; }
+  .jc-data-grid--stack tbody :is(td, th) { padding-block: 2px; }
+  .jc-data-grid--stack tbody th { font-weight: 600; padding-bottom: var(--jc-space-1, 4px); }
+  .jc-data-grid--stack tbody td.jc-data-grid-more-toggle { display: block; }
+  /* A text button, still a 32 px target: the card's own content stays the heavier mark. */
+  .jc-data-grid--stack .jc-data-grid-more-toggle button {
+    min-height: 32px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--jc-color-accent, #0b57d0);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .jc-data-grid--stack .jc-data-grid-toolbar { flex-wrap: nowrap; align-items: flex-start; }
+  .jc-data-grid--stack .jc-data-grid-search { flex: 1 1 auto; min-width: 0; }
+  .jc-data-grid--stack .jc-grid-arrange-toggle { margin-top: 18px; min-height: 36px; }
+  .jc-data-grid--stack .jc-grid-arrange-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   .jc-data-grid--stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
   .jc-data-grid--stack tbody tr { display: block; padding: var(--jc-space-2, 8px) 0; border-bottom: 1px solid var(--jc-color-line, #e0e0e0); }
   .jc-data-grid--stack :is(table, tbody) { display: block; }
@@ -3247,6 +3271,8 @@ a.jc-cell--link:focus-visible {
   /* A card reads top to bottom: a number column's right alignment would make the eye jump. */
   .jc-data-grid--stack tbody td.jc-data-grid-end { text-align: start; }
   .jc-data-grid--stack tbody td:empty { display: none; }
+  /* A cell the list marks as saying nothing ("—") leaves its card line out (T-7111 judge). */
+  .jc-data-grid--stack tbody td:has([data-grid-empty]) { display: none; }
   .jc-data-grid--stack tbody td:not(.jc-grid-empty)[data-label]::before {
     content: attr(data-label);
     display: block;

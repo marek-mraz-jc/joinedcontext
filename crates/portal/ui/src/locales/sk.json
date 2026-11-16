@@ -1356,7 +1356,9 @@
       "pipelineFilter": "Pipeline",
       "allPipelines": "Všetky pipeline",
       "verdictFilter": "Verdikt",
-      "allVerdicts": "Všetky verdikty",
+      "chipsHint": "Ťuknutím na verdikt zobrazíte len jeho riadky; ďalším ťuknutím opäť všetky verdikty.",
+      "showOk": "{count, plural, one {Zobraziť # riadok v poriadku} few {Zobraziť # riadky v poriadku} other {Zobraziť # riadkov v poriadku}}",
+      "hideOk": "Skryť riadky v poriadku",
       "noMatch": "Týmto filtrom nezodpovedá žiadny riadok",
       "caption": "Ako sa zápisy každej pipeline menia na riadky histórie",
       "attribute": "Atribút",
@@ -7701,6 +7703,7 @@
     "compareAction": "Porovnať",
     "discard": "Zahodiť",
     "discardConfirm": "Zahodiť kópiu {name}? Jej obsah zanikne; projekt ostane nedotknutý.",
+    "discardWaiting": "Rozhodnite o zmene, ktorá čaká na schválenie",
     "empty": "Žiadne kópie. Začnite jednu, ak chcete zmeniť viac zdrojov naraz.",
     "open": {
       "action": "Pracovať na kópii",
@@ -11114,7 +11117,7 @@
         "account": "Účet, ktorým sa zariadenie prihlasuje, napr. cam-west; ponúkajú sa len účty rolí, ktoré smú publikovať.",
         "topic": "Presná téma, na ktorú zariadenie publikuje, bez + a #, napr. cameras/helsinki-cam-west/frame.",
         "payload": "Správa tak, ako ju zariadenie pošle, napr. objekt JSON s jedným meraním.",
-        "watch": "Zapnite a na zariadení spustite riadok mosquitto_pub vyššie: počas jednej minúty sa tu do pár sekúnd ukáže každé odmietnutie prihlásenia."
+        "watch": "Zapnite a pošlite zo zariadenia skutočnú správu, napr. riadkom mosquitto_pub v časti Pripojiť zariadenie na stránke brokera: počas jednej minúty sa tu do pár sekúnd ukáže každé odmietnutie prihlásenia."
       },
       "run": "Spustiť test",
       "failed": "Test sa nespustil; skúste to o minútu.",
@@ -13025,8 +13028,10 @@
   "dataGrid": {
     "searchRows": "Hľadať v zozname",
     "searchRowsHint": "Napíšte časť ľubovoľnej hodnoty, napr. názov alebo priestor.",
+    "moreFields": "Ďalšie údaje",
+    "fewerFields": "Menej údajov",
     "noMatch": "Hľadaniu ani filtrom nezodpovedá žiadny riadok.",
-    "rowCount": "Riadkov: {n}"
+    "rowCount": "{n, plural, one {# riadok} few {# riadky} other {# riadkov}}"
   },
   "portals": {
     "nav": {

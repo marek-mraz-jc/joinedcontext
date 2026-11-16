@@ -5,6 +5,10 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { pageFindings } from "../tests/pageChecks";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read through the OData service; each stub below answers as the REST door (T-7115).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The project's daiya dashboards drawn in the Portal (item 15), on the built bundle with the API
 // answered from the browser. The context-broker and helsinki dashboards are the deployment's own

@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
 
-// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+// The pages read manifests and the MQTT doors through OData; each stub below meets them as REST.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5532: a steward adds a device to an MQTT broker with a key pair made in the browser. `vite

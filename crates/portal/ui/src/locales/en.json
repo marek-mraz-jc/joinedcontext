@@ -1356,7 +1356,9 @@
       "pipelineFilter": "Pipeline",
       "allPipelines": "All pipelines",
       "verdictFilter": "Verdict",
-      "allVerdicts": "All verdicts",
+      "chipsHint": "Tap a verdict to list only its rows; tap it again to list every verdict.",
+      "showOk": "{count, plural, one {Show the # OK row} other {Show the # OK rows}}",
+      "hideOk": "Hide the OK rows",
       "noMatch": "No row matches these filters",
       "caption": "How each pipeline's writes become history rows",
       "attribute": "Attribute",
@@ -7701,6 +7703,7 @@
     "compareAction": "Compare",
     "discard": "Discard",
     "discardConfirm": "Discard the copy {name}? What it holds goes with it; the project is not touched.",
+    "discardWaiting": "Decide the change waiting for approval",
     "empty": "No copies. Start one to change several resources and bring them back together.",
     "open": {
       "action": "Work on a copy",
@@ -11114,7 +11117,7 @@
         "account": "The account the device signs in as, e.g. cam-west; only accounts of roles that may publish are listed.",
         "topic": "The exact topic the device publishes on, no + or #, e.g. cameras/helsinki-cam-west/frame.",
         "payload": "The message as the device sends it, e.g. a JSON object with one reading.",
-        "watch": "Switch on, then run the mosquitto_pub line above on the device: for one minute every refusal of the broker's sign-in check shows here within seconds."
+        "watch": "Switch on, then send a real message from the device, e.g. with the mosquitto_pub line under Connect a device on the broker's page: for one minute every refusal of the broker's sign-in check shows here within seconds."
       },
       "run": "Run the test",
       "failed": "The test did not run; try again in a minute.",
@@ -13025,8 +13028,10 @@
   "dataGrid": {
     "searchRows": "Search this list",
     "searchRowsHint": "Type part of any value, e.g. a name or a space.",
+    "moreFields": "More details",
+    "fewerFields": "Fewer details",
     "noMatch": "No rows match the search or the filters.",
-    "rowCount": "{n} rows"
+    "rowCount": "{n, plural, one {# row} other {# rows}}"
   },
   "portals": {
     "nav": {

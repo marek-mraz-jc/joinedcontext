@@ -4,7 +4,8 @@ import type { JSX, ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, whilePending } from "../../api/client";
+import { ApiError, queryKeys, whilePending } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { asManifests, isChange, localized } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -96,13 +97,8 @@ export function useLastRun(project: string, name: string) {
     retry: false,
     refetchInterval: 60_000,
     queryFn: async () =>
-      (
-        await unwrap(
-          await api.GET("/api/v1/projects/{project}/pipelines/{name}/runs", {
-            params: { path: { project, name }, query: { limit: 1 } },
-          }),
-        )
-      ).items[0] ?? null,
+      ((await door("portal_pipeline_run_list", { pipeline: name, limit: 1 }, project)) as RestAnswer<"get_runs">)
+        .items[0] ?? null,
   });
 }
 
@@ -117,11 +113,7 @@ export function useLatestRuns(project: string) {
     refetchInterval: 60_000,
     queryFn: async () =>
       new Map(
-        (
-          await unwrap(
-            await api.GET("/api/v1/projects/{project}/pipeline-runs", { params: { path: { project } } }),
-          )
-        ).items.map((item) => [item.pipeline, item.run] as const),
+        ((await door("portal_pipeline_latest_runs", {}, project)) as RestAnswer<"get_latest_runs">).items.map((item) => [item.pipeline, item.run] as const),
       ),
   });
 }
@@ -302,11 +294,7 @@ export function PipelineOverview({ project, name }: { project: string; name: str
     queryKey: [...queryKeys.resource(project, "pipelines", name), "rejected", "newest", REJECTED_SHOWN],
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/rejected", {
-          params: { path: { project, name }, query: { limit: REJECTED_SHOWN } },
-        }),
-      ),
+      (await door("portal_pipeline_rejected", { pipeline: name, limit: REJECTED_SHOWN }, project)) as RestAnswer<"get_rejected">,
   });
 
   const toggle = useMutation({
@@ -606,11 +594,8 @@ export function useStreamCounters(project: string, name: string, enabled: boolea
     enabled,
     refetchInterval: 15_000,
     retry: false,
-    queryFn: async () => {
-      const answer = await api.GET("/api/v1/projects/{project}/pipelines/{name}/metrics", {
-        params: { path: { project, name } },
-      });
-      return answer.data ?? null;
-    },
+    // No metrics yet (the runner has not reported) reads as none, as the REST answer's absent body did.
+    queryFn: async () =>
+      ((await door("portal_pipeline_metrics", { pipeline: name }, project).catch(() => null)) as RestAnswer<"get_metrics"> | null),
   });
 }

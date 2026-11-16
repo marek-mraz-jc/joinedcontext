@@ -5,7 +5,8 @@ import { clsx } from "clsx";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
 
-export type AlertTone = "info" | "success" | "warning" | "danger";
+/** `neutral` is a fact with no verdict, e.g. a figure nobody measured: no success or brand colour. */
+export type AlertTone = "neutral" | "info" | "success" | "warning" | "danger";
 
 /**
  * What each tone looks like, what it is announced as, and how a screen reader hears it.
@@ -16,6 +17,7 @@ export type AlertTone = "info" | "success" | "warning" | "danger";
  * there; a caller with a different need still passes its own `role` through.
  */
 const TONES: Record<AlertTone, { box: string; icon: IconName; role: string; label: string }> = {
+  neutral: { box: "border-border bg-surface-subtle text-fg", icon: "info", role: "status", label: "app.alert.info" },
   info: { box: "border-info/30 bg-info-soft text-fg", icon: "info", role: "status", label: "app.alert.info" },
   success: { box: "border-success/30 bg-success-soft text-fg", icon: "check", role: "status", label: "app.alert.success" },
   warning: { box: "border-warning/30 bg-warning-soft text-fg", icon: "warning", role: "status", label: "app.alert.warning" },
@@ -58,6 +60,7 @@ export const Alert = forwardRef<HTMLDivElement, AlertProps>(function Alert(
           tone === "warning" && "text-warning",
           tone === "success" && "text-success",
           tone === "info" && "text-info",
+          tone === "neutral" && "text-fg-muted",
         )}
       />
       {/* The eye reads the colour and the glyph; a screen reader is told the tone in a word. */}

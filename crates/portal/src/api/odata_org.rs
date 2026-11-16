@@ -814,6 +814,13 @@ const CHANGE_DETAIL: [&str; 9] = [
     "decision",
 ];
 
+/// A Workspace's detail (T-7116): its scope, an object the list's scalar fields leave out, which
+/// the list row holds, and how many files it changes, which `jc_workspace_get` counts on the forge.
+const WORKSPACE_DETAIL: [&str; 2] = ["scope", "changes"];
+
+/// The workspace detail member only `jc_workspace_get` answers.
+const WORKSPACE_CHANGES: &str = "changes";
+
 /// The most Changes one page answers with their detail: each is a read of the forge.
 // ponytail: one jc_change_get per row; a batch read in the change store when a page wants more.
 const CHANGE_DETAIL_MAX: usize = 50;
@@ -826,6 +833,7 @@ fn detail(set: &str) -> &'static [&'static str] {
     }
     match kind(set).or_else(|| org_set(set)) {
         Some(list) if list.set == CHANGES => &CHANGE_DETAIL,
+        Some(list) if list.set == WORKSPACES => &WORKSPACE_DETAIL,
         Some(list) if manifest_kind(list) => &MANIFEST_SET_DETAIL,
         _ => &[],
     }
@@ -1049,6 +1057,10 @@ impl Read<'_> {
             return Ok(());
         }
         let change = list.is_some_and(|list| list.set == CHANGES);
+        if list.is_some_and(|list| list.set == WORKSPACES) {
+            let changes = asked.contains(&WORKSPACE_CHANGES);
+            return self.fill_workspaces(changes, answer).await;
+        }
         if change && answer.rows.len() > CHANGE_DETAIL_MAX {
             return Err(no(bad(format!(
                 "a page with a Change's {} holds at most {CHANGE_DETAIL_MAX} Changes; ask with \
@@ -1094,6 +1106,40 @@ impl Read<'_> {
                     whole.get(*member).cloned().unwrap_or(Value::Null),
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// A Workspace's detail: its row holds its scope; its count of changed files is
+    /// `jc_workspace_get`'s, run through the registry door as `GET …/workspaces/{name}`.
+    async fn fill_workspaces(&self, changes: bool, answer: &mut Answer) -> Result<(), Refused> {
+        if !changes {
+            return Ok(());
+        }
+        if answer.rows.len() > CHANGE_DETAIL_MAX {
+            return Err(no(bad(format!(
+                "a page with a Workspace's {WORKSPACE_CHANGES} holds at most {CHANGE_DETAIL_MAX} \
+                 Workspaces; ask with $top={CHANGE_DETAIL_MAX} or fewer"
+            ))));
+        }
+        let Some(op) = crate::ops::find("jc_workspace_get") else {
+            return Err(no(not_found("jc_workspace_get is not registered")));
+        };
+        for (row, key) in answer.rows.iter_mut().zip(&answer.keys) {
+            let (Value::Object(row), Some((project, name))) =
+                (row, key.as_str().and_then(|key| key.split_once('/')))
+            else {
+                continue;
+            };
+            let asked = json!({ "name": name });
+            let whole = match crate::ops::call(op, &self.caller, self.state, project, asked).await {
+                Ok(whole) => whole,
+                Err(e) => return Err(Box::new(as_odata_error(e.into_response()).await)),
+            };
+            row.insert(
+                WORKSPACE_CHANGES.to_owned(),
+                whole.get(WORKSPACE_CHANGES).cloned().unwrap_or(Value::Null),
+            );
         }
         Ok(())
     }
@@ -2070,6 +2116,7 @@ fn rights(state: &AppState, user: &CurrentUser, org: &str) -> Rights {
 }
 
 const CHANGES: &str = "changes";
+const WORKSPACES: &str = "workspaces";
 
 /// An action, its binding type and its parameters.
 type BoundAction = (

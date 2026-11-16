@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../src/i18n";
-import { panelQuery, toggled } from "../src/pages/grafana/DashboardPage";
+import { panelAsked, toggled } from "../src/pages/grafana/DashboardPage";
 import { overrideWords, pastedRange, RefreshPicker, rangeWords, TimePicker, TimeRangeControls, zoneWords } from "../src/components/panels/TimePicker";
 import { absoluteWords, panelRange, QUICK_RANGES, REFRESHES, refreshMs, resolveTime, roundInterval, shiftedRange, zoomedOutRange } from "../src/components/panels/timeRange";
 import timePicker from "./fixtures/grafana-reference/time-picker.json";
@@ -198,7 +198,7 @@ describe("a panel's own range", () => {
 
   it("asks the panel's datasource with the panel's own range as epochs", () => {
     const own = panelRange({ timeShift: "1d" }, absolute, NOW);
-    expect(panelQuery(own, { testid: ["k6-a", "k6-b"] }, 100)).toBe(`from=${local(2026, 10, 6, 6)}&to=${local(2026, 10, 7, 6)}&maxDataPoints=100&var-testid=k6-a&var-testid=k6-b`);
+    expect(panelAsked(own, { testid: ["k6-a", "k6-b"] }, 100)).toEqual({ from: String(local(2026, 10, 6, 6)), to: String(local(2026, 10, 7, 6)), maxDataPoints: 100, vars: { testid: ["k6-a", "k6-b"] } });
   });
 });
 

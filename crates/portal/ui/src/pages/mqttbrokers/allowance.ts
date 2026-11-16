@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, unwrap } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import type { JsonSchema } from "../../components/forms/types";
 import { DEDICATED_PORTS } from "../../schemas/mqttbroker";
 
@@ -115,16 +115,12 @@ export function toProjectAllowance(form: Record<string, unknown>, stored: unknow
   return { ...manifest, spec };
 }
 
-/** `GET /api/v1/projects/{project}/mqtt/allowance` (API/01 §47): whoever may read the project. */
+/** The `portal_mqtt_allowance` door (`GET /projects/{project}/mqtt/allowance`, API/01 §47): whoever may read the project. */
 export function useMqttAllowance(project: string) {
   return useQuery({
     queryKey: ["mqttAllowance", project],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/mqtt/allowance", {
-          params: { path: { project } },
-        }),
-      ),
+      (await door("portal_mqtt_allowance", {}, project)) as RestAnswer<"get_allowance">,
   });
 }
 

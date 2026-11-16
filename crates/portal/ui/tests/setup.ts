@@ -3,7 +3,7 @@ import { configure } from "@testing-library/react";
 import { File as NodeFile } from "node:buffer";
 import { beforeEach, vi } from "vitest";
 import { EXACT_PROJECTS } from "./exactProjects";
-import { asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "./odata";
+import { answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "./odata";
 import { settlePrefill } from "../src/assistant/state";
 
 // A hand-off the assistant leaves lives until the person leaves the page it was left on
@@ -135,13 +135,13 @@ function listingThePage(stubbed: typeof fetch): typeof fetch {
       // its answer wrapped as the service wraps it (doorAsRest).
       if (input instanceof Request && callsOperation(input)) {
         return doorAsRest(input).then(async (door) =>
-          door ? asOData(await Reflect.apply(target, self, [door])) : Reflect.apply(target, self, args),
+          door ? asOData(await Reflect.apply(target, self, [door]), answerShape(input)) : Reflect.apply(target, self, args),
         );
       }
       const read = manifestAsRest(new URL(input instanceof Request ? input.url : String(input), window.location.href));
       if (!read) return listing(Reflect.apply(target, self, args), ...args);
       const rest = new Request(read.rest);
-      return listing(Reflect.apply(target, self, [rest]), rest).then((answer) => manifestAnswer(answer, read.one, read.organization));
+      return listing(Reflect.apply(target, self, [rest]), rest).then((answer) => manifestAnswer(answer, read.one, read.organization, read.row));
     },
   });
 }

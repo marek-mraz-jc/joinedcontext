@@ -5,7 +5,7 @@ import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
 
-// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+// The pages read manifests and the MQTT doors through OData; each stub below meets them as REST.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5876: a broker card's "who can do what" panel (the explain route, ADR-N-048 §2.13) in each
@@ -69,7 +69,7 @@ async function stubApi(page: Page, refused = false): Promise<void> {
       return json({ project: PROJECT, bootstrap: false, grants: [{ rule: { kinds: ["MqttBroker", "ServiceAccount", "Role"], verbs: ["read", "propose"] } }] });
     }
     if (path.endsWith("/air/access")) {
-      if (refused) return json({ status: 403, title: "Forbidden", detail: "you may not read the MQTT brokers of project 'helsinki'; ask a project admin for a role that reads MqttBroker" }, 403);
+      if (refused) return json({ status: 403, title: "Forbidden", detail: "you may not read the MQTT brokers of project 'helsinki'; ask a project admin for a role that may read MQTT brokers" }, 403);
       return json(ANSWERS[url.searchParams.get("account") ?? ""]);
     }
     if (path.endsWith("/air/bindings")) return json({ broker: "air", bindings: [] });

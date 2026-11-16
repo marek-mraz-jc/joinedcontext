@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
 
-// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+// The pipeline pages read through their Portal doors (T-7109): each REST stub below answers its door.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The pipelines list's Last run column (T-5818): one request reads every row's newest run,

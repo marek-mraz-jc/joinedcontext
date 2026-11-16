@@ -2,7 +2,8 @@ import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, forPeople, unwrap } from "../../api/client";
+import { ApiError, forPeople } from "../../api/client";
+import { door } from "../../api/odata";
 import { asManifests } from "../../api/manifest";
 import { useReadableList } from "../../api/permissions";
 import type { components } from "../../api/schema";
@@ -70,11 +71,7 @@ function Held({ project, broker, account }: { project: string; broker: string; a
   const access = useQuery({
     queryKey: ["mqttBrokerAccess", project, broker, account],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/mqttbrokers/{name}/access", {
-          params: { path: { project, name: broker }, query: { account } },
-        }),
-      ),
+      (await door("portal_mqtt_broker_access", { broker, account }, project)) as Access,
   });
   const time = new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language ?? "en", { dateStyle: "medium", timeStyle: "short" });
   if (access.isPending) {

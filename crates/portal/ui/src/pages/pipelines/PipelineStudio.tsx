@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { asManifests, localized, refName } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { useBranding } from "../../branding";
@@ -347,11 +348,7 @@ export function PipelineStudio({
     refetchInterval: 5_000,
     refetchIntervalInBackground: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/stats", {
-          params: { path: { project, name: pipelineName } },
-        }),
-      ),
+      (await door("portal_pipeline_stats", { pipeline: pipelineName }, project)) as RestAnswer<"get_stats">,
   });
   const liveCounters = liveStats.data?.nodes ? countersOfStats(liveStats.data.nodes) : undefined;
   // The queue on the wire into the output (T-3973), from the runner's metrics.
@@ -363,11 +360,7 @@ export function PipelineStudio({
     retry: false,
     refetchInterval: 15_000,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/metrics", {
-          params: { path: { project, name: pipelineName } },
-        }),
-      ),
+      (await door("portal_pipeline_metrics", { pipeline: pipelineName }, project)) as RestAnswer<"get_metrics">,
   });
   const statsUnavailable = liveStats.error instanceof ApiError && liveStats.error.status === 503;
   // A failing node's last refused record, by the step it failed at: its message only, never
@@ -381,11 +374,7 @@ export function PipelineStudio({
     enabled: failingLabel !== undefined && !flowTrace,
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/rejected", {
-          params: { path: { project, name: pipelineName }, query: { limit: 20 } },
-        }),
-      ),
+      (await door("portal_pipeline_rejected", { pipeline: pipelineName, limit: 20 }, project)) as RestAnswer<"get_rejected">,
     select: (page) => page.items,
   });
   const failingStep = failingLabel?.startsWith("step_") ? Number(failingLabel.slice(5)) : undefined;

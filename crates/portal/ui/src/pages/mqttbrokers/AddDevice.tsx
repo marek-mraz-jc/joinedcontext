@@ -3,7 +3,8 @@ import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import { RecordLink, RECORD_LINK_STYLE } from "../../components/RecordLink";
 import { CopyUrlButton } from "../../components/endpoints/links";
 import { Alert, Button, CodeBlock, Field, Input, RadioGroup, Select, Skeleton, Textarea } from "../../components/ui";
@@ -44,17 +45,14 @@ export function AddDevice({
   const options = useQuery({
     queryKey: ["mqttBrokerDevices", project, broker],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/mqttbrokers/{name}/devices", {
-          params: { path: { project, name: broker } },
-        }),
-      ),
+      (await door("portal_mqtt_device_options", { broker }, project)) as RestAnswer<"device_options">,
   });
   const id = `device-${broker}`;
   if (options.isPending) return <Skeleton className="h-8 w-40" />;
   if (options.isError || !options.data.mayAdd) {
     return (
-      <Alert tone="info" data-device="refused">
+      // A missing right is no success: neutral, a failed read a warning (T-7113 judge).
+      <Alert tone={options.isError ? "warning" : "neutral"} data-device="refused">
         {options.isError ? options.error.message : t("mqttbrokers.device.mayNot", { broker })}
       </Alert>
     );
@@ -121,12 +119,11 @@ function DeviceForm({
 
   const propose = useMutation({
     mutationFn: async (jwks: Jwks) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/mqttbrokers/{name}/devices", {
-          params: { path: { project, name: broker } },
-          body: { name, role, topic: publish.length > 0 ? topic : null, jwks },
-        }),
-      ),
+      (await doorAction(
+        "portal_mqtt_device_propose",
+        { broker, body: { name, role, topic: publish.length > 0 ? topic : null, jwks } },
+        project,
+      )) as RestAnswer<"add_device">,
     onSuccess: (change, jwks) => {
       const changeId = change.metadata.name;
       // The private key leaves memory now: the person had it shown and offered once.

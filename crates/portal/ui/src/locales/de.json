@@ -1356,7 +1356,9 @@
       "pipelineFilter": "Pipeline",
       "allPipelines": "Alle Pipelines",
       "verdictFilter": "Urteil",
-      "allVerdicts": "Alle Urteile",
+      "chipsHint": "Tippen Sie auf ein Urteil, um nur seine Zeilen zu zeigen; erneut tippen zeigt alle Urteile.",
+      "showOk": "{count, plural, one {Die # OK-Zeile zeigen} other {Die # OK-Zeilen zeigen}}",
+      "hideOk": "OK-Zeilen ausblenden",
       "noMatch": "Keine Zeile passt zu diesen Filtern",
       "caption": "Wie die Schreibvorgänge jeder Pipeline zu Verlaufszeilen werden",
       "attribute": "Attribut",
@@ -7701,6 +7703,7 @@
     "compareAction": "Vergleichen",
     "discard": "Verwerfen",
     "discardConfirm": "Die Kopie {name} verwerfen? Ihr Inhalt geht mit; das Projekt bleibt unberührt.",
+    "discardWaiting": "Über die wartende Änderung entscheiden",
     "empty": "Keine Kopien. Starten Sie eine, um mehrere Ressourcen gemeinsam zu ändern.",
     "open": {
       "action": "An einer Kopie arbeiten",
@@ -11114,7 +11117,7 @@
         "account": "Das Konto, mit dem sich das Gerät anmeldet, z. B. cam-west; nur Konten von Rollen, die veröffentlichen dürfen, stehen zur Wahl.",
         "topic": "Das genaue Topic, auf dem das Gerät veröffentlicht, ohne + oder #, z. B. cameras/helsinki-cam-west/frame.",
         "payload": "Die Nachricht, wie das Gerät sie sendet, z. B. ein JSON-Objekt mit einem Messwert.",
-        "watch": "Einschalten und auf dem Gerät die mosquitto_pub-Zeile oben ausführen: eine Minute lang erscheint hier jede Ablehnung der Anmeldung binnen Sekunden."
+        "watch": "Einschalten und vom Gerät eine echte Nachricht senden, z. B. mit der mosquitto_pub-Zeile unter „Gerät verbinden“ auf der Seite des Brokers: eine Minute lang erscheint hier jede Ablehnung der Anmeldung binnen Sekunden."
       },
       "run": "Test ausführen",
       "failed": "Der Test lief nicht; versuchen Sie es in einer Minute erneut.",
@@ -13025,8 +13028,10 @@
   "dataGrid": {
     "searchRows": "Liste durchsuchen",
     "searchRowsHint": "Geben Sie einen Teil eines Werts ein, z. B. einen Namen oder einen Bereich.",
+    "moreFields": "Weitere Angaben",
+    "fewerFields": "Weniger Angaben",
     "noMatch": "Keine Zeile passt zur Suche oder zu den Filtern.",
-    "rowCount": "{n} Zeilen"
+    "rowCount": "{n, plural, one {# Zeile} other {# Zeilen}}"
   },
   "portals": {
     "nav": {

@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { api, reasonOf, unwrap } from "../../api/client";
+import { reasonOf, unwrap } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { DashboardList } from "./DashboardList";
 import {
@@ -40,14 +41,11 @@ function useOptions(project: string, endpoint: string, type: string) {
   return useQuery({
     queryKey: [...pageKey(project), "options", endpoint, type],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/grafana/options", {
-          params: {
-            path: { project },
-            query: { endpoint: endpoint || undefined, type: type || undefined },
-          },
-        }),
-      ),
+      (await door(
+        "portal_grafana_options",
+        { ...(endpoint ? { endpoint } : {}), ...(type ? { type } : {}) },
+        project,
+      )) as RestAnswer<"grafana_options">,
   });
 }
 
@@ -66,11 +64,7 @@ export function SavedVisualization({
   const [asking, setAsking] = useState(false);
   const remove = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.DELETE("/api/v1/projects/{project}/grafana/{id}", {
-          params: { path: { project, id: item.id } },
-        }),
-      ),
+      doorAction("portal_grafana_remove", { id: item.id }, project),
     onSuccess: () => {
       setAsking(false);
       return queryClient.invalidateQueries({ queryKey: pageKey(project) });
@@ -245,9 +239,9 @@ export function VisualizationForm({ project }: { project: string }): JSX.Element
   const form = useChoices(project);
   const save = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/grafana", {
-          params: { path: { project } },
+      (await doorAction(
+        "portal_grafana_save",
+        {
           body: {
             title: form.title,
             endpoint: form.endpoint,
@@ -255,8 +249,9 @@ export function VisualizationForm({ project }: { project: string }): JSX.Element
             attribute: form.attribute,
             kind: form.kind,
           },
-        }),
-      ),
+        },
+        project,
+      )) as RestAnswer<"save_visualization">,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: pageKey(project) }),
   });
   const endpoints = form.options.data?.endpoints ?? [];
@@ -418,13 +413,13 @@ export function ProjectDashboards({ project }: { project: string }): JSX.Element
   const list = useQuery({
     queryKey: [...pageKey(project), "dashboards"],
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/grafana/dashboards", { params: { path: { project } } })),
+      (await door("portal_grafana_dashboards", {}, project)) as RestAnswer<"list_dashboards">,
   });
   // Who may build a dashboard here, and which wait for approval: the builder's own start.
   const builder = useQuery({
     queryKey: [...pageKey(project), "builder"],
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/grafana/builder", { params: { path: { project } } })),
+      (await door("portal_grafana_builder", {}, project)) as RestAnswer<"builder_start">,
   });
   const mayBuild = builder.data?.mayEdit === true;
   return (
@@ -471,7 +466,7 @@ export function GrafanaPage({ project }: { project: string }): JSX.Element {
   const page = useQuery({
     queryKey: pageKey(project),
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/grafana", { params: { path: { project } } })),
+      (await door("portal_grafana_list", {}, project)) as RestAnswer<"grafana_page">,
   });
   const header = <PageHeader title={t("grafana.title")} description={t("grafana.lead")} />;
   if (page.isPending) {

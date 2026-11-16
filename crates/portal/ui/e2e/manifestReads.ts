@@ -1,5 +1,5 @@
 import type { Page, Request, Route } from "@playwright/test";
-import { asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "../tests/odata";
+import { answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "../tests/odata";
 
 // T-7103: the pages read a kind's manifests through the Organization's OData service ($select of
 // spec, status, metadata: api/odata.ts listManifests, readManifest). The server proves each answers
@@ -11,10 +11,10 @@ import { asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, pr
 type Fulfil = Parameters<Route["fulfill"]>[0];
 
 /** The stub's answer to the REST read, as the service answers the manifest read. */
-async function asService(route: Route, options: Fulfil, one: boolean, organization?: boolean): Promise<void> {
+async function asService(route: Route, options: Fulfil, one: boolean, organization?: boolean, row?: boolean): Promise<void> {
   const status = options?.status ?? 200;
   const body = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
-  const answer = await manifestAnswer(new Response(body, { status }), one, organization);
+  const answer = await manifestAnswer(new Response(body, { status }), one, organization, row);
   await route.fulfill({ status: answer.status, contentType: "application/json", body: await answer.text() });
 }
 
@@ -31,14 +31,17 @@ type Translate = (request: Request) => Promise<AsRest | undefined>;
 
 const manifestRead: Translate = async (request) => {
   const read = manifestAsRest(request.url());
-  return read && { url: read.rest.href, fulfil: (route, options) => asService(route, options, read.one, read.organization) };
+  return read && { url: read.rest.href, fulfil: (route, options) => asService(route, options, read.one, read.organization, read.row) };
 };
 
 /** A Portal door (api/odata.ts `door`, `doorAction`) as its REST door, its answer as the service wraps it. */
 const portalDoor: Translate = async (request) => {
   const body = request.postData();
-  const rest = await doorAsRest(new Request(request.url(), { method: request.method(), body: body ?? undefined }));
+  const asked = new Request(request.url(), { method: request.method(), body: body ?? undefined });
+  const rest = await doorAsRest(asked);
   if (!rest) return undefined;
+  // An operation whose answer is not its REST door's (tests/odata.ts ANSWERS), e.g. jc_workspace_propose.
+  const shape = answerShape(asked);
   const text = rest.body ? await rest.text() : null;
   return {
     url: rest.url,
@@ -47,7 +50,7 @@ const portalDoor: Translate = async (request) => {
     fulfil: async (route, options) => {
       const status = options?.status ?? 200;
       const sent = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
-      const answer = await asOData(new Response(status === 204 ? null : String(sent), { status }));
+      const answer = await asOData(new Response(status === 204 ? null : String(sent), { status }), shape);
       await route.fulfill({ status: answer.status, contentType: "application/json", body: await answer.text() });
     },
   };

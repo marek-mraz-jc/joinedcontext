@@ -7,6 +7,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The knowledge pages read through their Portal doors (T-7111): each REST stub below answers its door.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 const PROJECT = "helsinki";
 const ONE = "11111111-1111-4111-8111-111111111111";

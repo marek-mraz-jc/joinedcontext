@@ -23,7 +23,7 @@ import type { Frame } from "../src/components/panels/frames";
 import { ordered, sections } from "../src/components/panels/DashboardGrid";
 import { ColourKey } from "../src/components/panels/ChartPanels";
 import { Fill, Swatch } from "../src/components/panels/paint";
-import { panelQuery } from "../src/pages/grafana/DashboardPage";
+import { panelAsked } from "../src/pages/grafana/DashboardPage";
 import { resolveTime } from "../src/components/panels/timeRange";
 import * as frames from "./fixtures/panel_frames";
 import builderFile from "../../tests/fixtures/grafana-builder/bike-stations.json";
@@ -537,7 +537,7 @@ describe("the dashboard around the panels", () => {
   });
 
   it("asks a panel for the range and each variable, and nothing else", () => {
-    expect(panelQuery({ from: 1000, to: 2000 }, { station: ["Kallio"], testid: ["$__all"] }, 500)).toBe("from=1000&to=2000&maxDataPoints=500&var-station=Kallio&var-testid=%24__all");
+    expect(panelAsked({ from: 1000, to: 2000 }, { station: ["Kallio"], testid: ["$__all"] }, 500)).toEqual({ from: "1000", to: "2000", maxDataPoints: 500, vars: { station: ["Kallio"], testid: ["$__all"] } });
   });
 
   it("reads Grafana's time words", () => {

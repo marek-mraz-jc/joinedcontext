@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
+import { act, call, projectBound, readWorkspace } from "../../api/odata";
 import { useAuth } from "../../auth/AuthProvider";
 import { Link } from "@tanstack/react-router";
 import { Alert, Badge, Button, Card, ExternalLink, PageHeader, PageLoading } from "../../components/ui";
@@ -22,19 +23,16 @@ export function TryItPage({ project, name }: { project: string; name: string }):
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [copies, setCopies] = useState<Record<string, CopyResult>>({});
-  const path = { project, name };
   const key = [...queryKeys.list(project, "workspaces"), name, "preview"];
 
   const workspace = useQuery({
     queryKey: [...queryKeys.list(project, "workspaces"), name],
-    queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/workspaces/{name}", { params: { path } })),
+    queryFn: () => readWorkspace(project, name),
     retry: false,
   });
   const preview = useQuery({
     queryKey: key,
-    queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/workspaces/{name}/preview", { params: { path } })),
+    queryFn: () => call("jc_workspace_preview_get", project, { name }),
     refetchInterval: (query) => (query.state.data?.state === "starting" ? POLL_MS : false),
     retry: false,
   });
@@ -45,13 +43,11 @@ export function TryItPage({ project, name }: { project: string; name: string }):
     onSettled: () => void queryClient.invalidateQueries({ queryKey: key }),
   };
   const start = useMutation({
-    mutationFn: async () =>
-      unwrap(await api.POST("/api/v1/projects/{project}/workspaces/{name}/preview", { params: { path } })),
+    mutationFn: () => act("jc_workspace_preview_start", projectBound(project), { name }),
     ...settled,
   });
   const stop = useMutation({
-    mutationFn: async () =>
-      unwrap(await api.DELETE("/api/v1/projects/{project}/workspaces/{name}/preview", { params: { path } })),
+    mutationFn: () => act("jc_workspace_preview_stop", projectBound(project), { name }),
     ...settled,
   });
   const copy = useMutation({

@@ -92,7 +92,7 @@ export function ArrangePanel({ labels, items, onShow, onRename, onMove, onReset,
       >
         <span className="jc-grid-menu-icon" aria-hidden="true">☰</span>
         {/* On a phone the toggle is its icon beside the host's tools; the name stays for a screen reader. */}
-        <span className="jc-grid-arrange-label">{labels.arrangeColumns}</span>
+        <span className="jc-grid-arrange-label jc-grid-arrange-word">{labels.arrangeColumns}</span>
       </button>
       {open && (
         <div

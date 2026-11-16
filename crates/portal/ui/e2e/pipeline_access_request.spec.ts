@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 import { greenVerdict, isCheck } from "./verdict";
 import { manifestReadsAsRest } from "./manifestReads";
 
-// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+// The pipeline pages read through their Portal doors (T-7109): each REST stub below answers its door.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5369, PL-90: a record check that finds the pipeline holds no grant on another space's

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
 
-// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+// The pipeline pages read through their Portal doors (T-7109): each REST stub below answers its door.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // A pipeline's rejected records grouped by rule and path (G-21, T-7069) as a steward meets them:

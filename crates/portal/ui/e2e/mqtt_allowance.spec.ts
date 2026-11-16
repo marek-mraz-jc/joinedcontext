@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
 
-// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+// The pages read manifests and the MQTT doors through OData; each stub below meets them as REST.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4860: the MQTT allowance end to end in the real build (PF-117…PF-119). An organization

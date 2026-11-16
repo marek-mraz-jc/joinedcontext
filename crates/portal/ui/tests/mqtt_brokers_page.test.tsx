@@ -574,6 +574,10 @@ describe("what a broker measures (T-4043)", () => {
     });
     expect(await screen.findByText("the broker did not answer; try again in a minute")).toBeInTheDocument();
     expect(document.querySelector("[data-state='unmeasured']")?.textContent).toBe(en.mqttbrokers.page.state.unmeasured);
+    // A missing measurement is no verdict: drawn neutral, never in the success or brand (info) tone.
+    const notMeasured = document.querySelector("[data-measured='no']");
+    expect(notMeasured?.className).toContain("bg-surface-subtle");
+    expect(notMeasured?.className).not.toMatch(/success|info/);
     expect(screen.queryByText(en.mqttbrokers.page.figure.rate)).toBeNull();
     expect(screen.queryByRole("meter")).toBeNull();
   });

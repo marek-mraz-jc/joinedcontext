@@ -240,7 +240,7 @@ describe("the endpoints page", () => {
 
     await search("EP-0119");
     expect(rowLinks().map((link) => link.textContent)).toEqual(["ep-0119"]);
-    expect(screen.getByText("1 rows")).toBeInTheDocument();
+    expect(screen.getByText("1 row")).toBeInTheDocument();
     // A search matching nothing names the text and clears back to the first page (T-6095).
     await search("nothing-like-it");
     expect(screen.queryByText(/^\d+ rows$/)).toBeNull();
@@ -271,7 +271,7 @@ describe("the endpoints page", () => {
     expect(screen.getByText("120 rows")).toBeInTheDocument();
     await search("zvolen");
     expect(screen.getByRole("link", { name: "Noise in Zvolen" })).toBeInTheDocument();
-    expect(screen.getByText("1 rows")).toBeInTheDocument();
+    expect(screen.getByText("1 row")).toBeInTheDocument();
     // The search started on page one: back to the whole list, the first page shows.
     await search("ep-");
     expect(rowLinks()[0]).toHaveTextContent("ep-0000");

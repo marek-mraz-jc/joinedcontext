@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import { asManifests } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { useReadableList } from "../../api/permissions";
@@ -67,12 +67,7 @@ export function TestPublishDialog({
   const [payload, setPayload] = useState('{"temperature": 21.5}');
   const run = useMutation({
     mutationFn: async (): Promise<DryRun> =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/mqttbrokers/{name}/test-publish", {
-          params: { path: { project, name: broker } },
-          body: { account, topic, payload },
-        }),
-      ),
+      (await doorAction("portal_mqtt_test_publish", { broker, body: { account, topic, payload } }, project)) as DryRun,
   });
   const changeAccount = (next: string) => {
     setAccount(next);
@@ -159,11 +154,7 @@ function Watch({ project, broker, account }: { project: string; broker: string; 
     enabled: since !== null,
     refetchInterval: WATCH_EVERY_MS,
     queryFn: async (): Promise<Watched> =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/mqttbrokers/{name}/watch", {
-          params: { path: { project, name: broker }, query: { account, since: since ?? undefined } },
-        }),
-      ),
+      (await door("portal_mqtt_watch", since === null ? { broker, account } : { broker, account, since }, project)) as Watched,
   });
   return (
     <section className="flex flex-col gap-2 border-t border-border pt-3">

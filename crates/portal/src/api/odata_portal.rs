@@ -54,6 +54,9 @@ pub enum Place {
     Query(&'static str),
     /// The REST door's JSON body.
     Body,
+    /// A dashboard's picked variables, a JSON object of each name and its values, e.g.
+    /// `{"region":["north","south"]}`: each value one `var-{name}` query member.
+    Vars,
 }
 
 /// One Portal door: its OData name, its binding and the REST door whose handler answers it.
@@ -77,6 +80,12 @@ const PAGE: (&str, Place) = ("page", Place::Path);
 const LANG: (&str, Place) = ("lang", Place::Path);
 const CHANGE: (&str, Place) = ("id", Place::Path);
 const SPACE: (&str, Place) = ("space", Place::Path);
+const PIPELINE: (&str, Place) = ("pipeline", Place::Path);
+const SOURCE: (&str, Place) = ("source", Place::Path);
+const DEPLOYMENT: (&str, Place) = ("deployment", Place::Path);
+const CONVERSATION: (&str, Place) = ("conversation", Place::Path);
+const BROKER: (&str, Place) = ("broker", Place::Path);
+const UID: (&str, Place) = ("uid", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -100,7 +109,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 57] = [
+pub static DOORS: [Door; 122] = [
     door(
         "portal_people_remove",
         Org,
@@ -567,6 +576,584 @@ pub static DOORS: [Door; 57] = [
         &[CHANGE],
         Who::Own,
     ),
+    door(
+        "portal_pipeline_run_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/runs",
+        &[PIPELINE, ("limit", Place::Query("Edm.Int32"))],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_run_start",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/runs",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_run_log",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/runs/{run}/log",
+        &[
+            PIPELINE,
+            ("run", Place::Path),
+            ("limit", Place::Query("Edm.Int32")),
+            ("before", Place::Query("Edm.Int64")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_latest_runs",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipeline-runs",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_health",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipeline-health",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_metrics",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/metrics",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_samples",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/samples",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_stats",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/stats",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_rejected",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/rejected",
+        &[
+            PIPELINE,
+            ("limit", Place::Query("Edm.Int32")),
+            ("before", Place::Query("Edm.Int64")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_rejected_groups",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/rejected/groups",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_rejected_retry",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/rejected/retry",
+        &[PIPELINE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_source_deletes",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/source-deletes",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_source_decide",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/source-deletes",
+        &[PIPELINE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_source_removals",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/source-removals",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_source_check",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/source-check",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_access_request_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/access-requests",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_access_request_file",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/access-requests",
+        &[PIPELINE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_access_request_endpoints",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/access-requests/endpoints",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_access_request_incoming",
+        Project,
+        Method::GET,
+        "/projects/{project}/access-requests",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_access_request_approve",
+        Project,
+        Method::POST,
+        "/projects/{project}/access-requests/{id}/approve",
+        &[CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_access_request_decline",
+        Project,
+        Method::POST,
+        "/projects/{project}/access-requests/{id}/decline",
+        &[CHANGE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_access_request_revoke",
+        Project,
+        Method::POST,
+        "/projects/{project}/access-requests/{id}/revoke",
+        &[CHANGE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_source_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_page_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/pages",
+        &[
+            SOURCE,
+            ("parent", Place::Query("Edm.Int64")),
+            ("q", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_page_links",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/pages/{page}/links",
+        &[SOURCE, PAGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_document_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/documents",
+        &[SOURCE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_search",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/search",
+        &[
+            SOURCE,
+            ("q", Place::Query("Edm.String")),
+            ("limit", Place::Query("Edm.Int32")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_passage_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/passages",
+        &[
+            SOURCE,
+            ("page", Place::Query("Edm.Int64")),
+            ("document", Place::Query("Edm.Int64")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_error_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/errors",
+        &[SOURCE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_inclusion_set",
+        Project,
+        Method::POST,
+        "/projects/{project}/knowledge/sources/{source}/inclusion",
+        &[SOURCE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_recrawl",
+        Project,
+        Method::POST,
+        "/projects/{project}/knowledge/sources/{source}/recrawl",
+        &[SOURCE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_file_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/sources/{source}/files",
+        &[SOURCE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_file_remove",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/knowledge/sources/{source}/files/{id}",
+        &[SOURCE, CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_context_preview",
+        Project,
+        Method::POST,
+        "/projects/{project}/knowledge/deployments/context",
+        &[
+            ("dryRun", Place::Query("Edm.String")),
+            ("lang", Place::Query("Edm.String")),
+            BODY,
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_usage",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/deployments/{deployment}/usage",
+        &[DEPLOYMENT],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_answers_forget",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/knowledge/deployments/{deployment}/answers",
+        &[DEPLOYMENT],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/conversations",
+        &[
+            ("deployment", Place::Query("Edm.String")),
+            ("from", Place::Query("Edm.String")),
+            ("to", Place::Query("Edm.String")),
+            ("status", Place::Query("Edm.String")),
+            ("feedback", Place::Query("Edm.String")),
+            ("slow", Place::Query("Edm.Boolean")),
+            ("minCostUsd", Place::Query("Edm.Double")),
+            ("q", Place::Query("Edm.String")),
+            ("sort", Place::Query("Edm.String")),
+            ("cursor", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_usage",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/conversations/usage",
+        &[
+            ("deployment", Place::Query("Edm.String")),
+            ("from", Place::Query("Edm.String")),
+            ("to", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_get",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/conversations/{conversation}",
+        &[CONVERSATION],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_erase",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/knowledge/conversations/{conversation}",
+        &[CONVERSATION],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_knowledge_conversation_same",
+        Project,
+        Method::GET,
+        "/projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same",
+        &[CONVERSATION, ("turn", Place::Path)],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_allowance",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqtt/allowance",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_broker_access",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/access",
+        &[BROKER, ("account", Place::Query("Edm.String"))],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_device_options",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/devices",
+        &[BROKER],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_device_propose",
+        Project,
+        Method::POST,
+        "/projects/{project}/mqttbrokers/{broker}/devices",
+        &[BROKER, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_test_publish",
+        Project,
+        Method::POST,
+        "/projects/{project}/mqttbrokers/{broker}/test-publish",
+        &[BROKER, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_watch",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/watch",
+        &[
+            BROKER,
+            ("account", Place::Query("Edm.String")),
+            ("since", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_measured",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/measured",
+        &[BROKER],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_captured_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/captured",
+        &[
+            BROKER,
+            ("topic", Place::Query("Edm.String")),
+            ("limit", Place::Query("Edm.Int32")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_captured_clear",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/mqttbrokers/{broker}/captured",
+        &[BROKER],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_mqtt_binding_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/mqttbrokers/{broker}/bindings",
+        &[BROKER],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_options",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/options",
+        &[
+            ("endpoint", Place::Query("Edm.String")),
+            ("type", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_save",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_remove",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/grafana/{id}",
+        &[CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_dashboards",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/dashboards",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_dashboard",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/dashboards/{uid}",
+        &[UID],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_panel",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/dashboards/{uid}/panels/{panel}",
+        &[
+            UID,
+            ("panel", Place::Path),
+            ("from", Place::Query("Edm.String")),
+            ("to", Place::Query("Edm.String")),
+            ("maxDataPoints", Place::Query("Edm.Int32")),
+            ("vars", Place::Vars),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_variable",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/dashboards/{uid}/variables/{name}",
+        &[UID, ("name", Place::Path)],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/builder",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_create",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_preview",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder/preview",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_get",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/builder/{uid}",
+        &[UID],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_update",
+        Project,
+        Method::PUT,
+        "/projects/{project}/grafana/builder/{uid}",
+        &[UID, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_kpi_check",
+        Project,
+        Method::POST,
+        "/projects/{project}/kpis/check",
+        &[BODY],
+        Who::ProjectReader,
+    ),
 ];
 
 /// The door named `name`.
@@ -584,7 +1171,7 @@ impl Door {
         match place {
             Place::Path => "Edm.String",
             Place::Query(ty) => ty,
-            Place::Body => "Edm.Untyped",
+            Place::Body | Place::Vars => "Edm.Untyped",
         }
     }
 
@@ -722,6 +1309,32 @@ fn text(member: &str, value: &Value) -> Result<String, Refusal> {
     }
 }
 
+/// The `(name, value)` pairs of a [`Place::Vars`] parameter: an object of non-empty names, each
+/// a text or a list of texts.
+fn vars<'a>(member: &str, value: &'a Value) -> Result<Vec<(&'a str, &'a str)>, Refusal> {
+    let shape = || {
+        bad(format!(
+            "{member} is an object of each variable's values, e.g. {{\"region\":[\"north\"]}}"
+        ))
+    };
+    let mut out = Vec::new();
+    for (name, picked) in value.as_object().ok_or_else(shape)? {
+        let picked = match picked {
+            Value::String(one) => vec![one.as_str()],
+            Value::Array(many) => many
+                .iter()
+                .map(|each| each.as_str().ok_or_else(shape))
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => return Err(shape()),
+        };
+        if name.is_empty() {
+            return Err(shape());
+        }
+        out.extend(picked.into_iter().map(|each| (name.as_str(), each)));
+    }
+    Ok(out)
+}
+
 fn encoded(text: &str) -> String {
     url::form_urlencoded::byte_serialize(text.as_bytes())
         .collect::<String>()
@@ -761,6 +1374,11 @@ pub fn rest(
             }
             (Place::Body, Some(value)) => {
                 body = Some(serde_json::to_vec(value).unwrap_or_default());
+            }
+            (Place::Vars, Some(value)) => {
+                for (name, picked) in vars(member, value)? {
+                    query.append_pair(&format!("var-{name}"), picked);
+                }
             }
             (_, None) => {}
         }
@@ -903,6 +1521,30 @@ mod tests {
             let refused =
                 super::rest(door, None, params.as_object().expect("object")).expect_err("refused");
             assert_eq!(refused.0, StatusCode::BAD_REQUEST, "{params}");
+        }
+    }
+
+    #[test]
+    fn a_dashboards_variables_become_its_var_members() {
+        let door = find("portal_grafana_panel").expect("door");
+        let params = json!({ "uid": "air", "panel": 2, "from": "now-6h",
+                             "vars": { "region": ["north", "a&b"], "kind": "pm10" } });
+        let rest =
+            super::rest(door, Some("air"), params.as_object().expect("object")).expect("rest");
+        assert_eq!(
+            rest.path_and_query,
+            "/projects/air/grafana/dashboards/air/panels/2?from=now-6h&var-kind=pm10&var-region=north&var-region=a%26b"
+        );
+        for vars in [
+            json!(["north"]),
+            json!({ "region": [1] }),
+            json!({ "region": { "x": 1 } }),
+            json!({ "": ["north"] }),
+        ] {
+            let params = json!({ "uid": "air", "panel": 2, "vars": vars });
+            let refused = super::rest(door, Some("air"), params.as_object().expect("object"))
+                .expect_err("refused");
+            assert_eq!(refused.0, StatusCode::BAD_REQUEST, "{vars}");
         }
     }
 }

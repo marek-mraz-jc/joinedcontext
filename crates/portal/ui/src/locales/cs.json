@@ -1356,7 +1356,9 @@
       "pipelineFilter": "Pipeline",
       "allPipelines": "Všechny pipeline",
       "verdictFilter": "Verdikt",
-      "allVerdicts": "Všechny verdikty",
+      "chipsHint": "Klepnutím na verdikt zobrazíte jen jeho řádky; dalším klepnutím zase všechny verdikty.",
+      "showOk": "{count, plural, one {Zobrazit # řádek v pořádku} few {Zobrazit # řádky v pořádku} other {Zobrazit # řádků v pořádku}}",
+      "hideOk": "Skrýt řádky v pořádku",
       "noMatch": "Těmto filtrům neodpovídá žádný řádek",
       "caption": "Jak se zápisy každé pipeline mění na řádky historie",
       "attribute": "Atribut",
@@ -7701,6 +7703,7 @@
     "compareAction": "Porovnat",
     "discard": "Zahodit",
     "discardConfirm": "Zahodit kopii {name}? Její obsah zanikne; projekt zůstane nedotčen.",
+    "discardWaiting": "Rozhodněte o změně, která čeká na schválení",
     "empty": "Žádné kopie. Začněte jednu, chcete-li změnit více zdrojů najednou.",
     "open": {
       "action": "Pracovat na kopii",
@@ -11114,7 +11117,7 @@
         "account": "Účet, kterým se zařízení přihlašuje, např. cam-west; nabízejí se jen účty rolí, které smějí publikovat.",
         "topic": "Přesné téma, na které zařízení publikuje, bez + a #, např. cameras/helsinki-cam-west/frame.",
         "payload": "Zpráva tak, jak ji zařízení pošle, např. objekt JSON s jedním měřením.",
-        "watch": "Zapněte a na zařízení spusťte řádek mosquitto_pub výše: po jednu minutu se tu do pár sekund ukáže každé odmítnutí přihlášení."
+        "watch": "Zapněte a pošlete ze zařízení skutečnou zprávu, např. řádkem mosquitto_pub v části Připojit zařízení na stránce brokeru: po jednu minutu se tu do pár sekund ukáže každé odmítnutí přihlášení."
       },
       "run": "Spustit test",
       "failed": "Test se nespustil; zkuste to za minutu.",
@@ -13025,8 +13028,10 @@
   "dataGrid": {
     "searchRows": "Hledat v seznamu",
     "searchRowsHint": "Napište část libovolné hodnoty, např. název nebo prostor.",
+    "moreFields": "Další údaje",
+    "fewerFields": "Méně údajů",
     "noMatch": "Hledání ani filtrům neodpovídá žádný řádek.",
-    "rowCount": "Řádků: {n}"
+    "rowCount": "{n, plural, one {# řádek} few {# řádky} other {# řádků}}"
   },
   "portals": {
     "nav": {

@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { manifestReadsAsRest } from "./manifestReads";
 
-// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+// The pages read through the OData service; each stub below answers as the REST door (T-7115).
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4935, PL-105: a person builds a KPI over two sources from the KPI recipe without writing

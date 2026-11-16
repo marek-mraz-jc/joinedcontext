@@ -5,7 +5,8 @@ import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ManifestGrid } from "../../components/grid/ManifestGrid";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import { usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import type { BadgeTone } from "../../components/ui/Badge";
@@ -115,11 +116,7 @@ export function PipelineRunsView({
   const runs = useQuery({
     queryKey: runsKey,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/runs", {
-          params: { path: { project, name } },
-        }),
-      ),
+      (await door("portal_pipeline_run_list", { pipeline: name }, project)) as RestAnswer<"get_runs">,
   });
   const queryClient = useQueryClient();
   const permissions = usePermissions(project);
@@ -129,11 +126,7 @@ export function PipelineRunsView({
     mutationFn: async () => {
       setRunError(null);
       setStarted(null);
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/pipelines/{name}/runs", {
-          params: { path: { project, name } },
-        }),
-      );
+      return (await doorAction("portal_pipeline_run_start", { pipeline: name }, project)) as RestAnswer<"post_run">;
     },
     onSuccess: (result) => {
       setStarted(result.run);
@@ -357,11 +350,7 @@ function RunLog({
   const page = useQuery({
     queryKey: [...queryKeys.resource(project, "pipelines", name), "runs", run, before ?? "newest"],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/runs/{run}/log", {
-          params: { path: { project, name, run }, query: { limit: PAGE, before } },
-        }),
-      ),
+      (await door("portal_pipeline_run_log", { pipeline: name, run, limit: PAGE, before }, project)) as RestAnswer<"get_run_log">,
   });
   const caption = t("pipelines.runs.logCaption", { run: title });
   const lines: LogLine[] = page.data?.items ?? [];

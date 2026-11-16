@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, forPeople, unwrap } from "../../api/client";
+import { forPeople } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import { usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import { RecordLink } from "../../components/RecordLink";
@@ -65,11 +66,7 @@ export function BrokerTopics({ project, broker, mode }: { project: string; broke
     enabled: capture,
     refetchInterval: 15_000,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/mqttbrokers/{name}/captured", {
-          params: { path: { project, name: broker }, query: { limit: 100 } },
-        }),
-      ),
+      (await door("portal_mqtt_captured_list", { broker, limit: 100 }, project)) as Captured,
   });
   return (
     <>
@@ -85,11 +82,7 @@ function TopicsTable({ project, broker, messages }: { project: string; broker: s
   const bindings = useQuery({
     queryKey: ["mqttBrokerBindings", project, broker],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/mqttbrokers/{name}/bindings", {
-          params: { path: { project, name: broker } },
-        }),
-      ),
+      (await door("portal_mqtt_binding_list", { broker }, project)) as RestAnswer<"get_bindings">,
   });
   const heading = <h3 className="border-t border-border pt-3 text-body font-semibold text-fg">{t("mqttbrokers.topics.title")}</h3>;
   if (bindings.isPending) {
@@ -131,7 +124,7 @@ function TopicsTable({ project, broker, messages }: { project: string; broker: s
       label: t("mqttbrokers.topics.filter"),
       text: (row) => row.topicFilter ?? hopText(row.dataSource),
       cell: (row) =>
-        row.topicFilter ? <code className="font-mono text-caption">{row.topicFilter}</code> : <HopCell project={project} hop={row.dataSource} />,
+        row.topicFilter ? <TopicFilter filter={row.topicFilter} /> : <HopCell project={project} hop={row.dataSource} />,
     },
     {
       key: "via",
@@ -139,7 +132,8 @@ function TopicsTable({ project, broker, messages }: { project: string; broker: s
       text: (row) => (row.topicFilter ? `${hopText(row.dataSource)} ${row.pipeline ? hopText(row.pipeline) : t("mqttbrokers.topics.noPipeline")}` : ""),
       cell: (row) => <Via project={project} row={row} />,
     },
-    { key: "type", label: t("mqttbrokers.topics.type"), text: (row) => row.type ?? "" , cell: (row) => row.type ?? "—" },
+    // A type is one word: break-word keeps it whole, where the cells' anywhere drew WeatherObserv|ed.
+    { key: "type", label: t("mqttbrokers.topics.type"), text: (row) => row.type ?? "", cell: (row) => <span className="[overflow-wrap:break-word]">{row.type ?? "—"}</span> },
     {
       key: "attributes",
       label: t("mqttbrokers.topics.attributes"),
@@ -269,11 +263,7 @@ export function CapturedList({ project, broker, captured, heading }: { project: 
   const client = useQueryClient();
   const clear = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.DELETE("/api/v1/projects/{project}/mqttbrokers/{name}/captured", {
-          params: { path: { project, name: broker } },
-        }),
-      ),
+      doorAction("portal_mqtt_captured_clear", { broker }, project),
     onSuccess: async () => {
       setAsking(false);
       await client.invalidateQueries({ queryKey: ["mqttBrokerCaptured", project, broker] });
@@ -333,4 +323,12 @@ export function CapturedList({ project, broker, captured, heading }: { project: 
       />
     </div>
   );
+}
+
+/**
+ * A topic filter that wraps only where a line may break, after a `/` (`devices/+/status`), never
+ * inside a level: break-word, unlike the cells' anywhere, keeps each level in the column's minimum width.
+ */
+function TopicFilter({ filter }: { filter: string }): JSX.Element {
+  return <code className="font-mono text-caption [overflow-wrap:break-word]">{filter}</code>;
 }

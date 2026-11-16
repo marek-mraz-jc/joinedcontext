@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { components } from "../api/schema";
-import { api, ApiError, unwrap } from "../api/client";
+import { ApiError } from "../api/client";
+import { act, projectBound } from "../api/odata";
 import { usePermissions } from "../api/permissions";
 import { Alert, Button, Dialog, Field, Input, Select } from "./ui";
 import { useWorkspace } from "./layout/WorkspaceContext";
@@ -67,7 +67,7 @@ export function WorkOnCopyDialog({
 
   const create = useMutation({
     mutationFn: async () => {
-      const body: components["schemas"]["OpenRequest"] = {
+      const body = {
         name,
         title: title.trim() || undefined,
         ttlDays,
@@ -78,12 +78,7 @@ export function WorkOnCopyDialog({
               ? { kind: "resources", items: scope.items ?? [] }
               : { kind: "project" },
       };
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/workspaces", {
-          params: { path: { project } },
-          body,
-        }),
-      );
+      return act("jc_workspace_open", projectBound(project), body);
     },
     onSuccess: () => {
       enter(name);

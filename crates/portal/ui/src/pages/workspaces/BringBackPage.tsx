@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
+import { act, call, projectBound, projectEtag, readWorkspace } from "../../api/odata";
 import { FileList } from "./ComparePage";
 import { Alert, Button, EmptyState, PageHeader, PageLoading, RadioGroup } from "../../components/ui";
 import { ResourcePageFailed } from "../../components/ui/PageState";
@@ -38,23 +39,13 @@ export function BringBackPage({
 
   const workspace = useQuery({
     queryKey: [...queryKeys.list(project, "workspaces"), name],
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/workspaces/{name}", {
-          params: { path: { project, name } },
-        }),
-      ),
+    queryFn: () => readWorkspace(project, name),
     retry: false,
   });
 
   const comparison = useQuery({
     queryKey: [...queryKeys.list(project, "workspaces"), name, "compare"],
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/workspaces/{name}/compare", {
-          params: { path: { project, name } },
-        }),
-      ),
+    queryFn: () => call("jc_workspace_compare", project, { name }),
   });
 
   const isOwner = isWorkspaceOwner(identity, workspace.data?.owner);
@@ -67,15 +58,7 @@ export function BringBackPage({
           return { path, field, keep };
         }),
       };
-      return unwrap(
-        await api.POST(
-          "/api/v1/projects/{project}/workspaces/{name}/update",
-          {
-            params: { path: { project, name } },
-            body,
-          },
-        ),
-      );
+      return act("jc_workspace_update_from_main", projectBound(project), { name, ...body });
     },
     onSuccess: (report) => {
       setUpdateError(null);
@@ -92,17 +75,9 @@ export function BringBackPage({
 
   const propose = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST(
-          "/api/v1/projects/{project}/workspaces/{name}/propose",
-          {
-            params: { path: { project, name } },
-          },
-        ),
-      ),
+      act("jc_workspace_propose", projectBound(project), { name }, await projectEtag(project)),
     onSuccess: (data) => {
-      const changeId = (data as { metadata?: { name?: string } })?.metadata?.name;
-      if (changeId) setProposedChange(changeId);
+      if (data.changeId) setProposedChange(data.changeId);
     },
     onError: (err: Error) => setProposeError(err.message),
   });

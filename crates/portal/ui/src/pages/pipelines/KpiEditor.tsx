@@ -1,4 +1,4 @@
-import { listManifests } from "../../api/odata";
+import { doorAction, listManifests } from "../../api/odata";
 /**
  * The KPI editor over several sources (PL-105, T-4935): two to five Endpoints of the project, how
  * their rows meet, a formula from plain choices (the typed one only under Advanced), each field
@@ -10,7 +10,7 @@ import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { asManifests } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { usePermissions } from "../../api/permissions";
@@ -60,12 +60,7 @@ function useKpiCheck(project: string, manifest: Manifest, ready: boolean) {
     queryKey: ["kpi-check", project, body],
     enabled: ready,
     queryFn: async (): Promise<Checked> =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/kpis/check", {
-          params: { path: { project } },
-          body: { pipeline: JSON.parse(body) as { [key: string]: unknown }, preview: false },
-        }),
-      ),
+      (await doorAction("portal_kpi_check", { body: { pipeline: JSON.parse(body) as unknown, preview: false } }, project)) as Checked,
   });
 }
 
@@ -110,12 +105,7 @@ export function KpiEditorDialog({ project, initial, pending, error, onClose, onP
   const update = (patch: Partial<KpiDraft>) => setDraft((d) => ({ ...d, ...patch }));
   const preview = useMutation({
     mutationFn: async (): Promise<Checked> =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/kpis/check", {
-          params: { path: { project } },
-          body: { pipeline: manifest as unknown as { [key: string]: unknown }, preview: true },
-        }),
-      ),
+      (await doorAction("portal_kpi_check", { body: { pipeline: manifest, preview: true } }, project)) as Checked,
   });
   const checkFailed = check.error instanceof ApiError ? (check.error.problem?.detail ?? check.error.message) : undefined;
   const clean = !missing && check.isSuccess && problems.length === 0 && !check.isFetching;

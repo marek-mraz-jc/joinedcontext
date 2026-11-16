@@ -97,6 +97,9 @@ for (const [label, width, height] of [["desktop-1440", 1440, 900], ["phone-400",
         const table = page.getByRole("table", { name: "How each pipeline's writes become history rows" });
         await expect(table.getByRole("row", { name: /vehicleType/ }).getByText("Duplicates rows")).toBeVisible();
         await expect(table.getByRole("row", { name: /dateObserved/ }).getByText("A fixed time")).toBeVisible();
+        // The OK rows fold behind one button while a verdict needs a change (T-7109).
+        await expect(table.getByRole("row", { name: /speed/ })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Show the 4 OK rows" })).toBeVisible();
       }
       if (state === "unread") await expect(page.getByText(/linked-events could not be read/)).toBeVisible();
       if (state === "empty") await expect(page.getByText("No pipeline you can read writes this space")).toBeVisible();
@@ -107,6 +110,15 @@ for (const [label, width, height] of [["desktop-1440", 1440, 900], ["phone-400",
       expect(await axeViolations(page)).toEqual([]);
       await heading.scrollIntoViewIfNeeded();
       await shot(page, `temporal-audit-${state}-${label}`);
+      if (state === "filled") {
+        // A pressed chip lists its verdict alone and shows it is the filter in force (T-7109).
+        const chip = page.getByRole("button", { name: "Duplicates rows: 1" });
+        await chip.click();
+        await expect(chip).toHaveAttribute("aria-pressed", "true");
+        await expect(page.getByRole("table", { name: "How each pipeline's writes become history rows" }).getByRole("row")).toHaveCount(2);
+        await heading.scrollIntoViewIfNeeded();
+        await shot(page, `temporal-audit-pressed-${label}`);
+      }
     });
   }
 }

@@ -5,7 +5,7 @@ import { greenVerdict, isCheck } from "./verdict";
 import { odataBody, odataCall } from "../tests/odata";
 import { manifestReadsAsRest } from "./manifestReads";
 
-// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+// The pipeline pages read through their Portal doors (T-7109): each REST stub below answers its door.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // `vite preview` has no portal API behind it, so the API is answered in the browser and

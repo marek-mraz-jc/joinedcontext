@@ -2303,6 +2303,16 @@
         "evidence/deployer/T-3986/full-0500/portal-projects-helsinki-endpoints-app-air-quality-dialog-export-steward-en-1440.png"
       ]
     },
+    "src/pages/spaces/SpaceTemporalAudit.tsx": {
+      "walkedBy": "worker-t7109",
+      "date": "2026-11-16",
+      "screenshots": [
+        "evidence/T-7109/shots/temporal-audit-filled-desktop-1440.png",
+        "evidence/T-7109/shots/temporal-audit-filled-phone-400.png",
+        "evidence/T-7109/shots/temporal-audit-error-desktop-1440.png",
+        "evidence/T-7109/shots/temporal-audit-error-phone-400.png"
+      ]
+    },
     "src/pages/spaces/TypeApi.tsx": {
       "walkedBy": "deployer",
       "date": "2026-10-20",

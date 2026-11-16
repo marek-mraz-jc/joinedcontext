@@ -83,18 +83,18 @@ export function odataError(
  * A REST door's answer as the service gives the same operation's: a success's body under `value`,
  * a problem document as the OData error object carrying its members.
  */
-export async function asOData(rest: Response): Promise<Response> {
-  const answer = await asODataBody(rest);
+export async function asOData(rest: Response, shape?: (body: unknown) => unknown): Promise<Response> {
+  const answer = await asODataBody(rest, shape);
   // The edge's reference of the answer, which a failure page shows (T-2747).
   const id = rest.headers.get("x-request-id");
   if (id) answer.headers.set("x-request-id", id);
   return answer;
 }
 
-async function asODataBody(rest: Response): Promise<Response> {
+async function asODataBody(rest: Response, shape?: (body: unknown) => unknown): Promise<Response> {
   const body: unknown = await rest.json().catch(() => null);
   // A `204` of the REST door is the service's `200` with `null` (API/13 §2b).
-  if (rest.ok) return odataValue(body, rest.status === 204 ? 200 : rest.status);
+  if (rest.ok) return odataValue(shape ? shape(body) : body, rest.status === 204 ? 200 : rest.status);
   // A bare failure stays bare: the service passes on a door's answer that said nothing.
   if (body === null) return new Response(null, { status: rest.status });
   const problem = (body ?? {}) as {
@@ -228,7 +228,115 @@ const OPERATIONS: Record<string, Door> = {
   portal_alert_mute: ["POST", "/alerts/{id}/mute"],
   portal_alert_notice_list: ["GET", "/alerts/notices"],
   portal_alert_notice_read: ["POST", "/alerts/notices/{id}/read"],
+
+  // The Portal doors of a pipeline's runs, rejected records, source deletes, source check and
+  // access requests (T-7109).
+  portal_pipeline_run_list: ["GET", "/projects/{project}/pipelines/{pipeline}/runs"],
+  portal_pipeline_run_start: ["POST", "/projects/{project}/pipelines/{pipeline}/runs"],
+  portal_pipeline_run_log: ["GET", "/projects/{project}/pipelines/{pipeline}/runs/{run}/log"],
+  portal_pipeline_latest_runs: ["GET", "/projects/{project}/pipeline-runs"],
+  portal_pipeline_health: ["GET", "/projects/{project}/pipeline-health"],
+  portal_pipeline_metrics: ["GET", "/projects/{project}/pipelines/{pipeline}/metrics"],
+  portal_pipeline_samples: ["GET", "/projects/{project}/pipelines/{pipeline}/samples"],
+  portal_pipeline_stats: ["GET", "/projects/{project}/pipelines/{pipeline}/stats"],
+  portal_pipeline_rejected: ["GET", "/projects/{project}/pipelines/{pipeline}/rejected"],
+  portal_pipeline_rejected_groups: ["GET", "/projects/{project}/pipelines/{pipeline}/rejected/groups"],
+  portal_pipeline_rejected_retry: ["POST", "/projects/{project}/pipelines/{pipeline}/rejected/retry"],
+  portal_pipeline_source_deletes: ["GET", "/projects/{project}/pipelines/{pipeline}/source-deletes"],
+  portal_pipeline_source_decide: ["POST", "/projects/{project}/pipelines/{pipeline}/source-deletes"],
+  portal_space_source_removals: ["GET", "/projects/{project}/spaces/{space}/source-removals"],
+  portal_pipeline_source_check: ["POST", "/projects/{project}/pipelines/{pipeline}/source-check"],
+  portal_pipeline_access_request_list: ["GET", "/projects/{project}/pipelines/{pipeline}/access-requests"],
+  portal_pipeline_access_request_file: ["POST", "/projects/{project}/pipelines/{pipeline}/access-requests"],
+  portal_pipeline_access_request_endpoints: [
+    "GET",
+    "/projects/{project}/pipelines/{pipeline}/access-requests/endpoints",
+  ],
+  portal_access_request_incoming: ["GET", "/projects/{project}/access-requests"],
+  portal_access_request_approve: ["POST", "/projects/{project}/access-requests/{id}/approve"],
+  portal_access_request_decline: ["POST", "/projects/{project}/access-requests/{id}/decline"],
+  portal_access_request_revoke: ["POST", "/projects/{project}/access-requests/{id}/revoke"],
+  // The knowledge assistant's doors: its sources, deployments and stored conversations (T-7111).
+  portal_knowledge_source_list: ["GET", "/projects/{project}/knowledge/sources"],
+  portal_knowledge_page_list: ["GET", "/projects/{project}/knowledge/sources/{source}/pages"],
+  portal_knowledge_page_links: ["GET", "/projects/{project}/knowledge/sources/{source}/pages/{page}/links"],
+  portal_knowledge_document_list: ["GET", "/projects/{project}/knowledge/sources/{source}/documents"],
+  portal_knowledge_search: ["GET", "/projects/{project}/knowledge/sources/{source}/search"],
+  portal_knowledge_passage_list: ["GET", "/projects/{project}/knowledge/sources/{source}/passages"],
+  portal_knowledge_error_list: ["GET", "/projects/{project}/knowledge/sources/{source}/errors"],
+  portal_knowledge_inclusion_set: ["POST", "/projects/{project}/knowledge/sources/{source}/inclusion"],
+  portal_knowledge_recrawl: ["POST", "/projects/{project}/knowledge/sources/{source}/recrawl"],
+  portal_knowledge_file_list: ["GET", "/projects/{project}/knowledge/sources/{source}/files"],
+  portal_knowledge_file_remove: ["DELETE", "/projects/{project}/knowledge/sources/{source}/files/{id}"],
+  portal_knowledge_context_preview: ["POST", "/projects/{project}/knowledge/deployments/context"],
+  portal_knowledge_usage: ["GET", "/projects/{project}/knowledge/deployments/{deployment}/usage"],
+  portal_knowledge_answers_forget: [
+    "DELETE",
+    "/projects/{project}/knowledge/deployments/{deployment}/answers",
+  ],
+  portal_knowledge_conversation_list: ["GET", "/projects/{project}/knowledge/conversations"],
+  portal_knowledge_conversation_usage: ["GET", "/projects/{project}/knowledge/conversations/usage"],
+  portal_knowledge_conversation_get: ["GET", "/projects/{project}/knowledge/conversations/{conversation}"],
+  portal_knowledge_conversation_erase: [
+    "DELETE",
+    "/projects/{project}/knowledge/conversations/{conversation}",
+  ],
+  portal_knowledge_conversation_same: [
+    "GET",
+    "/projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same",
+  ],
+  portal_mqtt_allowance: ["GET", "/projects/{project}/mqtt/allowance"],
+  portal_mqtt_broker_access: ["GET", "/projects/{project}/mqttbrokers/{broker}/access"],
+  portal_mqtt_device_options: ["GET", "/projects/{project}/mqttbrokers/{broker}/devices"],
+  portal_mqtt_device_propose: ["POST", "/projects/{project}/mqttbrokers/{broker}/devices"],
+  portal_mqtt_test_publish: ["POST", "/projects/{project}/mqttbrokers/{broker}/test-publish"],
+  portal_mqtt_watch: ["GET", "/projects/{project}/mqttbrokers/{broker}/watch"],
+  portal_mqtt_measured: ["GET", "/projects/{project}/mqttbrokers/{broker}/measured"],
+  portal_mqtt_captured_list: ["GET", "/projects/{project}/mqttbrokers/{broker}/captured"],
+  portal_mqtt_captured_clear: ["DELETE", "/projects/{project}/mqttbrokers/{broker}/captured"],
+  portal_mqtt_binding_list: ["GET", "/projects/{project}/mqttbrokers/{broker}/bindings"],
+  portal_grafana_list: ["GET", "/projects/{project}/grafana"],
+  portal_grafana_options: ["GET", "/projects/{project}/grafana/options"],
+  portal_grafana_save: ["POST", "/projects/{project}/grafana"],
+  portal_grafana_remove: ["DELETE", "/projects/{project}/grafana/{id}"],
+  portal_grafana_dashboards: ["GET", "/projects/{project}/grafana/dashboards"],
+  portal_grafana_dashboard: ["GET", "/projects/{project}/grafana/dashboards/{uid}"],
+  portal_grafana_panel: ["GET", "/projects/{project}/grafana/dashboards/{uid}/panels/{panel}"],
+  portal_grafana_variable: ["GET", "/projects/{project}/grafana/dashboards/{uid}/variables/{name}"],
+  portal_grafana_builder: ["GET", "/projects/{project}/grafana/builder"],
+  portal_grafana_builder_create: ["POST", "/projects/{project}/grafana/builder"],
+  portal_grafana_builder_preview: ["POST", "/projects/{project}/grafana/builder/preview"],
+  portal_grafana_builder_get: ["GET", "/projects/{project}/grafana/builder/{uid}"],
+  portal_grafana_builder_update: ["PUT", "/projects/{project}/grafana/builder/{uid}"],
+  portal_kpi_check: ["POST", "/projects/{project}/kpis/check"],
+  // A project's copies (T-7116): the registry's workspace operations, run by the REST doors' handlers.
+  jc_workspace_open: ["POST", "/projects/{project}/workspaces", ["name", "title", "ttlDays", "scope"]],
+  jc_workspace_compare: ["GET", "/projects/{project}/workspaces/{name}/compare"],
+  jc_workspace_update_from_main: ["POST", "/projects/{project}/workspaces/{name}/update", ["resolutions"]],
+  jc_workspace_propose: ["POST", "/projects/{project}/workspaces/{name}/propose"],
+  jc_workspace_discard: ["DELETE", "/projects/{project}/workspaces/{name}"],
+  jc_workspace_preview_get: ["GET", "/projects/{project}/workspaces/{name}/preview"],
+  jc_workspace_preview_start: ["POST", "/projects/{project}/workspaces/{name}/preview"],
+  jc_workspace_preview_stop: ["DELETE", "/projects/{project}/workspaces/{name}/preview"],
 };
+
+/**
+ * An operation whose answer is not its REST door's, and the service's answer of the door's: a
+ * workspace brought back answers the Change as every proposing operation does (api/mutate.rs
+ * `ProposeOutcome::Change`).
+ */
+const ANSWERS: Record<string, (body: unknown) => unknown> = {
+  jc_workspace_propose: (body) => {
+    const change = body as { metadata?: { name?: string }; status?: { lane?: string; mergeRequest?: string } } | null;
+    return { changeId: change?.metadata?.name, lane: change?.status?.lane, url: change?.status?.mergeRequest, change };
+  },
+};
+
+/** The answer {@link ANSWERS} makes of the REST door's for the operation `request` calls, if any. */
+export function answerShape(request: Request): ((body: unknown) => unknown) | undefined {
+  const name = DOOR.exec(decodeURIComponent(new URL(request.url).pathname))?.[2];
+  return name === undefined ? undefined : ANSWERS[name];
+}
 
 /** Whether `request` calls one of {@link OPERATIONS}. */
 export function callsOperation(request: Request): boolean {
@@ -348,6 +456,10 @@ export async function doorAsRest(
     if (path.includes(`{${name}}`))
       path = path.replace(`{${name}}`, encodeURIComponent(String(value)));
     else if (name === "body") body = JSON.stringify(value);
+    else if (name === "vars")
+      // A dashboard's variables, each value one `var-{name}` member (odata_portal.rs Place::Vars).
+      for (const [variable, picked] of Object.entries(value as Record<string, string | string[]>))
+        for (const each of [picked].flat()) rest.searchParams.append(`var-${variable}`, each);
     else if (door[2]?.includes(name)) members[name] = value;
     else rest.searchParams.set(name, String(value));
   }
@@ -362,6 +474,8 @@ export async function doorAsRest(
 
 const UNDER = /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/(\w+)$/;
 const ORG_SET = /^\/api\/v1\/(\w+)$/;
+const WORKSPACES =
+  /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)\/workspaces|workspaces\(project='((?:[^']|'')*)',name='((?:[^']|'')*)'\))$/;
 const KEYED =
   /^\/api\/v1\/(\w+)\((?:project='((?:[^']|'')*)',name='((?:[^']|'')*)'|'((?:[^']|'')*)')\)$/;
 
@@ -373,12 +487,20 @@ const KEYED =
  */
 export function manifestAsRest(
   url: string | URL,
-): { rest: URL; one: boolean; organization?: boolean } | undefined {
+): { rest: URL; one: boolean; organization?: boolean; row?: boolean } | undefined {
   const at = new URL(String(url), "http://localhost");
-  if (!(at.searchParams.get("$select") ?? "").split(",").includes("spec"))
-    return undefined;
   const path = decodeURIComponent(at.pathname);
   const unquote = (text: string) => text.replaceAll("''", "'");
+  // A project's copies (api/odata.ts listWorkspaces, readWorkspace): the REST rows are the
+  // service's (workspace_api_tests `the_workspaces_set_answers_scope_and_changes_as_the_rest_doors`).
+  const copies = WORKSPACES.exec(path);
+  if (copies) {
+    const project = encodeURIComponent(unquote(copies[1] ?? copies[2]));
+    const name = copies[3] === undefined ? "" : `/${encodeURIComponent(unquote(copies[3]))}`;
+    return { rest: new URL(`/api/v1/projects/${project}/workspaces${name}`, at.origin), one: name !== "", row: true };
+  }
+  if (!(at.searchParams.get("$select") ?? "").split(",").includes("spec"))
+    return undefined;
   const rest = (project: string, set: string, name?: string): URL => {
     // The `org` namespace's own Roles are the Organization set `organizationRoles`.
     const plural = set === "organizationRoles" ? "roles" : set;
@@ -426,9 +548,16 @@ export async function manifestAnswer(
   rest: Response,
   one: boolean,
   organization = false,
+  row = false,
 ): Promise<Response> {
   if (!rest.ok) return asOData(rest);
   const body = (await rest.json()) as Record<string, unknown>;
+  // A REST row that is the service's row as it is: a list's `items` are the set's `value`.
+  if (row)
+    return new Response(JSON.stringify(one ? body : { value: body.items ?? [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "OData-Version": "4.01" },
+    });
   const items = (body.items ?? []) as Record<string, unknown>[];
   // A list of several is the installation's address, which serves no one Organization's service.
   if (organization && items.length > 1)

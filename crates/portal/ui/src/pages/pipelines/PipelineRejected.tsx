@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { usePermissions } from "../../api/permissions";
 import { download } from "../models/diagramExport";
@@ -65,23 +66,14 @@ export function PipelineRejectedDialog({
   const page = useQuery({
     queryKey: [...listKey, before ?? "newest"],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/rejected", {
-          params: { path: { project, name }, query: { limit: PAGE, before } },
-        }),
-      ),
+      (await door("portal_pipeline_rejected", { pipeline: name, limit: PAGE, before }, project)) as RestAnswer<"get_rejected">,
   });
 
   const retry = useMutation({
     mutationFn: async (ids: number[]) => {
       setError(null);
       setAnswer(null);
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/pipelines/{name}/rejected/retry", {
-          params: { path: { project, name } },
-          body: { ids },
-        }),
-      );
+      return (await doorAction("portal_pipeline_rejected_retry", { pipeline: name, body: { ids } }, project)) as RestAnswer<"retry_rejected">;
     },
     onSuccess: (result) => {
       setAnswer(result);
@@ -98,11 +90,7 @@ export function PipelineRejectedDialog({
   const groups = useQuery({
     queryKey: [...listKey, "groups"],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/rejected/groups", {
-          params: { path: { project, name } },
-        }),
-      ),
+      (await door("portal_pipeline_rejected_groups", { pipeline: name }, project)) as RestAnswer<"get_rejected_groups">,
   });
   const exported = useMutation({
     mutationFn: async () => {

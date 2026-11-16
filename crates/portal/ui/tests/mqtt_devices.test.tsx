@@ -158,6 +158,8 @@ describe("Add device", () => {
   it("says who may add a device to a person the server offers nothing, and drops a bad name", async () => {
     mount(undefined, { mayAdd: false, roles: [] });
     expect(await screen.findByText(d.mayNot.replace("{broker}", "cameras"))).toBeInTheDocument();
+    // A refusal is drawn neutral, never in the info tone that reads as a success.
+    expect(document.querySelector("[data-device='refused']")?.className).not.toMatch(/info|success/);
     cleanup();
     const sent = mount();
     fireEvent.click(await screen.findByRole("button", { name: d.open }));

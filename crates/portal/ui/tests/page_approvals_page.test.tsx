@@ -140,7 +140,7 @@ describe("the approvals queue", () => {
       await waitFor(() =>
         expect(within(table).getAllByRole("row").length).toBe(count === 0 ? 2 : Math.min(count, 25) + 1),
       );
-      if (count > 0) expect(screen.getByText(i18n.t("dataGrid.rowCount", { n: String(count) }))).toBeInTheDocument();
+      if (count > 0) expect(screen.getByText(i18n.t("dataGrid.rowCount", { n: count }))).toBeInTheDocument();
       unmount();
       vi.restoreAllMocks();
     }

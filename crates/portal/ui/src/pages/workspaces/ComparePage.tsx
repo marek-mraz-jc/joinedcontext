@@ -2,7 +2,7 @@ import { useId } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { api, unwrap } from "../../api/client";
+import { call } from "../../api/odata";
 import { PlanDiffViewer } from "../../components/diff/PlanDiffViewer";
 import type { FieldChange } from "../../components/diff/PlanDiffViewer";
 import { Alert, Badge, buttonClass, Card, EmptyState, PageFailed, PageHeader, PageLoading } from "../../components/ui";
@@ -120,12 +120,7 @@ export function ComparePage({
   const { t } = useTranslation();
   const compareQuery = useQuery({
     queryKey: ["workspaces", project, name, "compare"],
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/workspaces/{name}/compare", {
-          params: { path: { project, name } },
-        }),
-      ),
+    queryFn: () => call("jc_workspace_compare", project, { name }),
   });
 
   const comparison = compareQuery.data as Comparison | undefined;

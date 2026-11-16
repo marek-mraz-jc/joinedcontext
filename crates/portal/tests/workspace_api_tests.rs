@@ -262,6 +262,59 @@ async fn a_viewer_may_read_but_not_open_and_a_stranger_sees_nothing() {
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
 }
 
+/// The workspaces page names each copy's scope and the bar its count of changed files (T-7116):
+/// the OData set answers both under `$select`, as the REST doors do, and leaves them out of a
+/// plain row.
+#[tokio::test]
+async fn the_workspaces_set_answers_scope_and_changes_as_the_rest_doors() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    changed(&server, &space("en", 10), "s-base").await;
+    // The service answers at the installation's Organization, which holds the project.
+    let org = json!({ "installation": true });
+    state
+        .mirror
+        .upsert(envelope("Organization", "hel", ORG_NAMESPACE, org));
+    let owner = json!({ "organizationRef": "hel" });
+    state
+        .mirror
+        .upsert(envelope("Project", PROJECT, ORG_NAMESPACE, owner));
+    let rest = body(&send(&state, viewer(), "GET", WS, None).await.text);
+    let set = format!("/api/v1/projects('{PROJECT}')/workspaces");
+    let selected = send(
+        &state,
+        viewer(),
+        "GET",
+        &format!("{set}?$select=name,scope"),
+        None,
+    )
+    .await;
+    assert_eq!(selected.status, StatusCode::OK, "{}", selected.text);
+    let rows = body(&selected.text);
+    assert_eq!(rows["value"][0]["scope"], rest["items"][0]["scope"]);
+    assert_eq!(rows["value"][0]["scope"], json!({ "kind": "project" }));
+    let one = format!("{set}('air-v2')?$select=name,scope,changes");
+    let keyed = send(&state, viewer(), "GET", &one, None).await;
+    assert_eq!(keyed.status, StatusCode::OK, "{}", keyed.text);
+    let read = body(
+        &send(&state, viewer(), "GET", &format!("{WS}/air-v2"), None)
+            .await
+            .text,
+    );
+    assert_eq!(body(&keyed.text)["scope"], json!({ "kind": "project" }));
+    assert_eq!(body(&keyed.text)["changes"], read["changes"]);
+    assert_eq!(read["changes"], 1);
+    let plain = body(&send(&state, viewer(), "GET", &set, None).await.text);
+    assert_eq!(plain["value"][0]["name"], "air-v2");
+    assert!(plain["value"][0].get("scope").is_none(), "{plain}");
+    assert!(plain["value"][0].get("changes").is_none(), "{plain}");
+    // The detail does not move the ETag a write's If-Match sends.
+    assert_eq!(
+        body(&keyed.text)["@odata.etag"],
+        plain["value"][0]["@odata.etag"]
+    );
+}
+
 #[tokio::test]
 async fn compare_lists_the_changed_file_with_its_fields_and_no_conflict_while_main_stood_still() {
     let (server, state) = world().await;
