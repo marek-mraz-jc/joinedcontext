@@ -1022,7 +1022,7 @@ export function EndpointDataView({
           rowSize={tools.rowSize}
           query={tools.query}
           // A search or a filter panel condition that leaves no row says so, not "no entities yet" (T-7072).
-          emptyText={tools.q ? t("explore.noMatch") : undefined}
+          emptyText={tools.q ? t("entityGrid.filtersMatchNothing") : undefined}
          
           queryBox={tools.showQuery}
           filterRow={!phone}
