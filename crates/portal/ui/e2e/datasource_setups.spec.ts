@@ -224,7 +224,6 @@ test.describe("ready-made set-ups on Data sources", () => {
   test("a JSON template names the array its records sit in, and refuses a path that is not names", async ({ page }) => {
     await stubApi(page);
     await page.goto(`/projects/${PROJECT}/datasources/new?lang=en`);
-    await page.getByText("Start from a template").click();
     await page.getByRole("button", { name: /REST API \(JSON\)/ }).click();
     await page.getByLabel("Address of the API").fill("https://gbfs.example.org/gbfs/2.2/helsinki/en/station_information.json");
     const records = page.getByTestId("datasource-templates").getByRole("textbox", { name: "Records are in" });
@@ -252,7 +251,6 @@ test.describe("ready-made set-ups on Data sources", () => {
   test("a spreadsheet template names its sheet, refuses a name no workbook holds, and fills the form", async ({ page }) => {
     await stubApi(page);
     await page.goto(`/projects/${PROJECT}/datasources/new?lang=en`);
-    await page.getByText("Start from a template").click();
     await page.getByRole("button", { name: /Spreadsheet \(Excel, ODS\)/ }).click();
     const gallery = page.getByTestId("datasource-templates");
     const sheet = gallery.getByRole("textbox", { name: "Sheet", exact: true });
@@ -298,7 +296,6 @@ test.describe("ready-made set-ups on Data sources", () => {
           }),
     );
     await page.goto(`/projects/${PROJECT}/datasources/new?lang=en`);
-    await page.getByText("Start from a template").click();
     await page.getByRole("button", { name: /Shapefile \(zipped\)/ }).click();
     const gallery = page.getByTestId("datasource-templates");
     await expect(gallery.getByText("The .prj names the coordinate system", { exact: false })).toBeVisible();
