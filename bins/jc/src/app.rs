@@ -1332,7 +1332,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
             let _ = running.stop().await;
             return Err(e);
         }
-        match build_gateway(ctx, cfg.portal_siblings, late.mount, late.hop, None).await {
+        match build_gateway(ctx, cfg, late.mount, late.hop, None).await {
             Ok(router) => late.slot.set(router),
             Err(e) => {
                 let _ = running.stop().await;
@@ -1414,18 +1414,19 @@ async fn portal_attempt(
 /// internal listener at `portal` when the Portal runs beside it.
 async fn build_gateway(
     ctx: modules::BuildCtx<'_>,
-    wire: bool,
+    cfg: &Config,
     mount: Mount,
     hop: Option<modules::Hop>,
     portal: Option<std::net::SocketAddr>,
 ) -> Result<Router, StartError> {
     #[cfg(feature = "gateway")]
     {
-        modules::gateway::build(ctx, wire, mount, hop, portal).await
+        modules::gateway::build(ctx, &cfg.organizations, cfg.portal_siblings, mount, hop, portal)
+            .await
     }
     #[cfg(not(feature = "gateway"))]
     {
-        let _ = (ctx, wire, mount, hop, portal);
+        let _ = (ctx, cfg, mount, hop, portal);
         Err(StartError::module(
             Module::Gateway,
             "not compiled into this jc binary",
@@ -1445,7 +1446,7 @@ async fn gateway_attempt(
     let ctx = shared.ctx();
     // Boxed as `Send`, as in `portal_attempt` (rust-lang/rust#102211).
     let build: std::pin::Pin<Box<dyn Future<Output = Result<Router, StartError>> + Send + '_>> =
-        Box::pin(build_gateway(ctx, cfg.portal_siblings, mount, hop, portal));
+        Box::pin(build_gateway(ctx, &cfg, mount, hop, portal));
     build.await
 }
 

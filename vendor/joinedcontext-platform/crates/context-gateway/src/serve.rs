@@ -119,7 +119,14 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
     // The realm's keys are refreshed in the background; a request never fetches (PF-46).
     let gateway = match (&config.oidc_issuer, &config.oidc_jwks_url) {
         (Some(issuer), Some(jwks_url)) => {
-            let verifier = Arc::new(Verifier::new(issuer.clone()));
+            let verifier = Arc::new(
+                config
+                    .oidc_organizations
+                    .iter()
+                    .fold(Verifier::new(issuer.clone()), |verifier, own| {
+                        verifier.with_organization(&own.organization, &own.issuer)
+                    }),
+            );
             let reach = config.oidc_jwks_reach;
             if let Err(error) = jwks::refresh_at(&verifier, jwks_url, reach).await {
                 tracing::error!(%error, "cannot load the realm signing keys");
@@ -130,6 +137,21 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
                 jwks_url.clone(),
                 reach,
             ));
+            // Each Organization's own realm (T-7131), loaded in the background: one not
+            // answering yet keeps its Organization's tokens refused, never the installation's.
+            for own in &config.oidc_organizations {
+                let Some((_, realm)) = verifier
+                    .organizations()
+                    .find(|(name, _)| *name == own.organization)
+                else {
+                    continue;
+                };
+                tokio::spawn(jwks::keep_current_at(
+                    Arc::clone(realm),
+                    own.jwks_url.clone(),
+                    reach,
+                ));
+            }
             gateway.authenticate(verifier, accounts, config.public_url.clone())
         }
         _ => {

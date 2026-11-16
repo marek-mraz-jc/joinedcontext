@@ -82,6 +82,7 @@ pub fn work_dir(setup: &Setup) -> PathBuf {
 /// | `JC_GATEWAY_OAUTH_KEY` | the generated `gateway-oauth-key` |
 /// | `JC_OIDC_ISSUER`, `_JWKS_URL`, `_JWKS_REACH` (host mode), `_CLIENT_ID`, `_CLIENT_SECRET`, `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | kaisatsu and the Portal |
 /// | `JC_GATEWAY_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | shako, checked out by [`follow_forge`] |
+/// | `JC_OIDC_ORGANIZATION_REALMS` | `[[organizations]] hosts.idm`, by [`organization_realms`] in [`build`] |
 #[must_use]
 pub fn vars(
     siblings: &Siblings,
@@ -799,19 +800,50 @@ pub fn by_organization(
     ))
 }
 
+/// `JC_OIDC_ORGANIZATION_REALMS` (T-7131): the realm of each Organization with its own sign-in
+/// host, named like it (T-7001), under the issuer kaisatsu names on that host. Its keys are read
+/// on that host through kaisatsu's `reach` in host mode, else on kaisatsu's loopback address:
+/// either way kaisatsu answers the pinned realm's back channel there. `None` when no
+/// Organization has a sign-in host of its own.
+#[must_use]
+pub fn organization_realms(
+    orgs: &[crate::config::OrganizationSection],
+    kaisatsu: &crate::siblings::Sibling,
+    scheme: &str,
+) -> Option<String> {
+    let realms: Vec<serde_json::Value> = orgs
+        .iter()
+        .filter_map(|org| {
+            let idm = org.hosts.idm.as_deref()?;
+            let name = &org.name;
+            let keys = match kaisatsu.reach {
+                Some(_) => format!("http://{idm}"),
+                None => kaisatsu.internal.trim_end_matches('/').to_owned(),
+            };
+            Some(serde_json::json!({
+                "organization": name,
+                "issuer": format!("{scheme}://{idm}/realms/{name}"),
+                "jwks_url": format!("{keys}/realms/{name}/protocol/openid-connect/certs"),
+            }))
+        })
+        .collect();
+    (!realms.is_empty()).then(|| serde_json::Value::from(realms).to_string())
+}
+
 fn bare(host: &str) -> &str {
     host.split(':').next().unwrap_or(host)
 }
 
 pub async fn build(
     ctx: BuildCtx<'_>,
+    orgs: &[crate::config::OrganizationSection],
     wire: bool,
     mount: Mount,
     hop: Option<Hop>,
     portal: Option<std::net::SocketAddr>,
 ) -> Result<Router, StartError> {
     let env = crate::config::portal_env;
-    let filled = vars(
+    let mut filled = vars(
         ctx.siblings,
         ctx.setup,
         wire,
@@ -820,6 +852,18 @@ pub async fn build(
         portal,
         env,
     );
+    // Beside the installation realm jc filled, never beside one the environment named.
+    if filled.contains_key("JC_OIDC_ISSUER")
+        && env(&env_key("JC_OIDC_ORGANIZATION_REALMS")).is_none()
+    {
+        let realms = ctx
+            .siblings
+            .get(Module::Kaisatsu)
+            .and_then(|id| organization_realms(orgs, id, &mount.scheme));
+        if let Some(realms) = realms {
+            filled.insert("JC_OIDC_ORGANIZATION_REALMS".to_owned(), realms);
+        }
+    }
     tracing::info!(
         keys = ?filled.keys().collect::<Vec<_>>(),
         "gateway: settings filled from sibling modules"
@@ -1359,6 +1403,54 @@ mod tests {
         let setup =
             Setup::prepare(dir.path(), &Module::ALL, &std::collections::BTreeMap::new()).unwrap();
         (siblings, setup, mount, dir)
+    }
+
+    /// T-7131: an Organization with its own sign-in host gets its realm in the gateway, under
+    /// the issuer kaisatsu names there, its keys read on that host through the reach (host mode)
+    /// or on kaisatsu's loopback address; one without `hosts.idm` gets none.
+    #[test]
+    fn an_organization_with_its_own_sign_in_host_gets_its_realm_in_the_gateway() {
+        let text = "base_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            hosts = { portal = \"smartcity.bbsk.sk\", idm = \"idm.bbsk.sk\" }\n\
+            [[organizations]]\nname = \"zilina\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a2\"\n\
+            hosts = { portal = \"smartcity.zilina.sk\" }\n";
+        let file = JcConfig::parse_file(Path::new("jc.toml"), text).unwrap();
+        let cfg = JcConfig::merge(Cli::default(), file).unwrap();
+        let slug = crate::siblings::Sibling::direct(
+            "https://city.example/login".into(),
+            "http://127.0.0.1:4000/login".into(),
+        );
+        let host = crate::siblings::Sibling {
+            reach: Some("127.0.0.1:4000".parse().unwrap()),
+            ..crate::siblings::Sibling::direct(
+                "https://idm.city.example".into(),
+                "http://idm.city.example".into(),
+            )
+        };
+        for (kaisatsu, keys) in [
+            (&slug, "http://127.0.0.1:4000/login"),
+            (&host, "http://idm.bbsk.sk"),
+        ] {
+            let json = organization_realms(&cfg.organizations, kaisatsu, "https").unwrap();
+            let realms: Vec<context_gateway::config::OrganizationRealm> =
+                serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                realms,
+                [context_gateway::config::OrganizationRealm {
+                    organization: "bbsk".into(),
+                    issuer: "https://idm.bbsk.sk/realms/bbsk".into(),
+                    jwks_url: format!("{keys}/realms/bbsk/protocol/openid-connect/certs"),
+                }]
+            );
+        }
+        let none = JcConfig::merge(
+            Cli::default(),
+            JcConfig::parse_file(Path::new("jc.toml"), &text.replace(", idm = \"idm.bbsk.sk\"", ""))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(organization_realms(&none.organizations, &host, "https"), None);
     }
 
     #[test]
