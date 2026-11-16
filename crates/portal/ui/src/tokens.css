@@ -143,7 +143,8 @@
   /* The SDK grid's text in rem, so it follows the Portal's root size (owner 2026-10-30, 80 %). */
   --jc-font-size-md: 0.875rem;
   --jc-font-size-sm: 0.75rem;
-  --portal-sidebar-width: 13rem;
+  /* 15rem: at 13rem the project switcher cut a city's slug to "banskabystri…" (T-7148). */
+  --portal-sidebar-width: 15rem;
   /* The preview column of an application: the page IS the application, so the frame takes what
      the viewport allows and never falls below a phone's screen. The building state uses the
      same box, so the column does not jump when the preview arrives (AP-63, UI-42). */
