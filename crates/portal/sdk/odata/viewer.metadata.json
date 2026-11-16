@@ -467,8 +467,7 @@
         "$Type": "Edm.Untyped"
       },
       "origin": {
-        "$Nullable": true,
-        "$Type": "Edm.Untyped"
+        "$Nullable": true
       },
       "pathPrefix": {
         "$Nullable": true,
@@ -2685,6 +2684,22 @@
       }
     ],
     "portal_app_templates": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_blueprint_list": [
       {
         "$IsBound": true,
         "$Kind": "Function",

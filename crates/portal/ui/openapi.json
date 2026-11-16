@@ -30878,9 +30878,7 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "example": {
-                "bundle": "example"
-              },
+              "example": {},
               "schema": {
                 "additionalProperties": false,
                 "properties": {
@@ -30903,15 +30901,46 @@
                     "description": "Answer the plan and write nothing",
                     "type": "boolean"
                   },
+                  "manifests": {
+                    "description": "Instead of a bundle",
+                    "items": {
+                      "maxProperties": 5,
+                      "type": "object"
+                    },
+                    "maxItems": 1000,
+                    "type": "array"
+                  },
                   "orgDomain": {
                     "description": "Organisation ids are rewritten to; this one when absent",
                     "maxLength": 253,
                     "type": "string"
+                  },
+                  "spaceMapping": {
+                    "description": "Space `from` lands on the project's `to`",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "description": "Space in the manifests",
+                          "maxLength": 253,
+                          "type": "string"
+                        },
+                        "to": {
+                          "description": "Space of this project",
+                          "maxLength": 253,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 1000,
+                    "type": "array"
                   }
                 },
-                "required": [
-                  "bundle"
-                ],
                 "type": "object"
               }
             }
@@ -34933,6 +34962,10 @@
                     "kind": {
                       "type": "string"
                     },
+                    "origin": {
+                      "description": "person, or journey for a live journey's test run",
+                      "type": "string"
+                    },
                     "previewUrl": {
                       "description": "The preview once a version is built",
                       "type": "string"
@@ -35066,6 +35099,14 @@
                     "description": "Only the runs this caller started",
                     "type": "boolean"
                   },
+                  "origin": {
+                    "description": "Whose runs; journey is a live test",
+                    "enum": [
+                      "person",
+                      "journey",
+                      "all"
+                    ]
+                  },
                   "status": {
                     "description": "Only runs in this state",
                     "enum": [
@@ -35113,6 +35154,10 @@
                             "type": "string"
                           },
                           "kind": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "description": "person, or journey for a live journey's test run",
                             "type": "string"
                           },
                           "previewUrl": {

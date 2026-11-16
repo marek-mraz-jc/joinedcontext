@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "./client";
 import { isChange, ORG_NAMESPACE } from "./manifest";
-import { isManifestSet, proposeManifest } from "./odata";
+import { act, isManifestSet, projectBound, projectEtag, proposeManifest } from "./odata";
 import type { Change, ResourceProposal } from "./manifest";
 import type { components } from "./schema";
 
@@ -66,19 +66,26 @@ export async function proposeChecked(
 }
 
 /**
- * One call of the import door (MF-23, PF-57): `dryRun` checks without proposing. Every caller
- * of `/import` comes through here, so the route, the dry run and the refusal are said once.
+ * One import of manifests (MF-23, PF-57): the service's `jc_project_import` action on the project,
+ * with its `If-Match`; `dryRun` checks without proposing. Every JSON import comes through here, so
+ * the action, the dry run and the refusal are said once; a bundle file stays an upload.
  */
 export async function importBody(
   project: string,
-  body: components["schemas"]["ImportOptions"],
+  { manifests, conflictPolicy, orgDomain, spaceMapping }: components["schemas"]["ImportOptions"],
   dryRun: boolean,
 ): Promise<unknown> {
-  return unwrap<unknown>(
-    await api.POST("/api/v1/projects/{project}/import", {
-      params: { path: { project }, query: dryRun ? { dryRun: "All" } : undefined },
-      body,
-    }),
+  return act(
+    "jc_project_import",
+    projectBound(project),
+    {
+      manifests: manifests as ResourceProposal[],
+      dryRun,
+      ...(conflictPolicy ? { conflictPolicy } : {}),
+      ...(orgDomain ? { orgDomain } : {}),
+      ...(spaceMapping?.length ? { spaceMapping } : {}),
+    },
+    await projectEtag(project),
   );
 }
 

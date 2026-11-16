@@ -35767,14 +35767,10 @@ export interface operations {
         };
         requestBody: {
             content: {
-                /**
-                 * @example {
-                 *       "bundle": "example"
-                 *     }
-                 */
+                /** @example {} */
                 "application/json": {
                     /** @description The bundle document an export answered */
-                    bundle: string;
+                    bundle?: string;
                     /**
                      * @description For a resource the project has; absent refuses the import
                      * @enum {string}
@@ -35782,8 +35778,17 @@ export interface operations {
                     conflictPolicy?: "fail" | "skip" | "replace" | "rename";
                     /** @description Answer the plan and write nothing */
                     dryRun?: boolean;
+                    /** @description Instead of a bundle */
+                    manifests?: Record<string, never>[];
                     /** @description Organisation ids are rewritten to; this one when absent */
                     orgDomain?: string;
+                    /** @description Space `from` lands on the project's `to` */
+                    spaceMapping?: {
+                        /** @description Space in the manifests */
+                        from: string;
+                        /** @description Space of this project */
+                        to: string;
+                    }[];
                 };
             };
         };
@@ -37947,6 +37952,8 @@ export interface operations {
                         createdBy?: string;
                         id: string;
                         kind?: string;
+                        /** @description person, or journey for a live journey's test run */
+                        origin?: string;
                         /** @description The preview once a version is built */
                         previewUrl?: string;
                         project?: string;
@@ -38029,6 +38036,11 @@ export interface operations {
                     /** @description Only the runs this caller started */
                     mine?: boolean;
                     /**
+                     * @description Whose runs; journey is a live test
+                     * @enum {unknown}
+                     */
+                    origin?: "person" | "journey" | "all";
+                    /**
                      * @description Only runs in this state
                      * @enum {string}
                      */
@@ -38051,6 +38063,8 @@ export interface operations {
                             createdBy?: string;
                             id: string;
                             kind?: string;
+                            /** @description person, or journey for a live journey's test run */
+                            origin?: string;
                             /** @description The preview once a version is built */
                             previewUrl?: string;
                             project?: string;
