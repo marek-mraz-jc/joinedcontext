@@ -693,6 +693,54 @@ pub fn sign_in_cookie(suffix: &str, value: &str, max_age: i64) -> String {
     )
 }
 
+/// How many sign-ins one browser holds open at once (T-7147): the `auth` cookie carries the
+/// newest this many auth session handles, `.`-separated, so a second start (another tab, an
+/// Organization host, a reload) no longer expires the first tab's form.
+pub const AUTH_COOKIE_HANDLES: usize = 8;
+
+/// The auth session handles this browser presents, newest first, at most
+/// [`AUTH_COOKIE_HANDLES`]; anything that is not a `random_handle_256` handle is dropped.
+pub fn auth_cookie_handles(headers: &HeaderMap) -> Vec<String> {
+    read_cookie(headers, &sign_in_cookie_name("auth"))
+        .map(|raw| {
+            raw.split('.')
+                .filter(|h| {
+                    h.len() == 43
+                        && h.bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                })
+                .take(AUTH_COOKIE_HANDLES)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// K1: whether this browser holds the auth session whose handle hashes to `handle_hash`. Every
+/// presented handle is compared in constant time, with no early exit.
+pub fn auth_cookie_holds(headers: &HeaderMap, handle_hash: &str) -> bool {
+    auth_cookie_handles(headers)
+        .iter()
+        .fold(false, |held, h| {
+            held | constant_time_str_eq(&sha256_hex(h), handle_hash)
+        })
+}
+
+/// The `Set-Cookie` that adds `handle` to this browser's auth cookie, newest first, keeping at
+/// most [`AUTH_COOKIE_HANDLES`]. The cookie lives at least the 30 min of the longest auth
+/// session, so a shorter session added last does not end an older tab's; the store's
+/// `expires_at` stays the limit of each session.
+pub fn add_auth_cookie(headers: &HeaderMap, handle: &str, max_age: i64) -> String {
+    let mut handles = vec![handle.to_owned()];
+    handles.extend(
+        auth_cookie_handles(headers)
+            .into_iter()
+            .filter(|h| h != handle)
+            .take(AUTH_COOKIE_HANDLES - 1),
+    );
+    sign_in_cookie("auth", &handles.join("."), max_age.max(1800))
+}
+
 /// The first non-empty value of cookie `target` across every `Cookie` header.
 pub fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
     headers
@@ -1219,7 +1267,7 @@ async fn authorize_get(
     };
     state.store.put_auth_session(auth_session).await?;
 
-    let set_cookie = sign_in_cookie("auth", &handle, 1800);
+    let set_cookie = add_auth_cookie(&headers, &handle, 1800);
     let login_url = format!(
         "{}/realms/{}/login-actions/authenticate?session_code={auth_session_id}&client_id={}",
         mount.path_prefix, realm.realm, client.client_id

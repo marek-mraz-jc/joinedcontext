@@ -279,6 +279,7 @@ async fn start_login(
     state: &OidcState,
     realm: &RealmConfig,
     mount: &Mount,
+    headers: &HeaderMap,
     return_to: String,
 ) -> Result<Response> {
     let id = uuid::Uuid::now_v7().to_string();
@@ -322,7 +323,7 @@ async fn start_login(
             expires_at: now + Duration::minutes(30),
         })
         .await?;
-    let set_cookie = crate::handlers::sign_in_cookie("auth", &handle, 1800);
+    let set_cookie = crate::handlers::add_auth_cookie(headers, &handle, 1800);
     let login = format!(
         "{}/realms/{}/login-actions/authenticate?session_code={id}&client_id={LOGIN_CLIENT}",
         mount.path_prefix, realm.realm
@@ -366,7 +367,7 @@ pub async fn device_page(
         if !user_code.is_empty() {
             back = format!("{back}?user_code={user_code}");
         }
-        return start_login(&state, &realm, &mount, back).await;
+        return start_login(&state, &realm, &mount, &headers, back).await;
     };
     let action = page_path(&mount, &realm);
     let csrf = csrf_of(&state, &sso);
