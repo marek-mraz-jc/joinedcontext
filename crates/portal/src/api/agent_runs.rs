@@ -387,6 +387,10 @@ pub struct RunContext {
     /// a run with zero reaches nothing (AG-50, AG-65).
     pub max_egress_bytes_per_run: u64,
     pub created_by: String,
+    /// The Organization of the run's project: the one Organization whose own realm may issue
+    /// the token of the person who started it (T-7144); absent, the installation realm's alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
     pub model_name: String,
     /// The profile's `model.reasoningEffort`: the proxy adds it to every model call (AG-72).
     #[serde(skip_serializing_if = "Option::is_none")]

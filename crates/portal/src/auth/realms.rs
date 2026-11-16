@@ -112,6 +112,9 @@ pub struct OrganizationRealm {
     /// The realm's people, as its own `portal-reconciler` manages them (T-7142); `None` without
     /// the admin client (`JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID`).
     pub people: Option<crate::people::People>,
+    /// The realm's issuer path at its back channel, where the Portal's admin clients post
+    /// (`http://idm.city.example/realms/city`).
+    pub backchannel: String,
 }
 
 impl OrganizationRealm {
@@ -135,6 +138,7 @@ impl OrganizationRealm {
             people: admin.and_then(|(id, auth)| {
                 crate::people::People::new(&backchannel, id.clone(), auth.clone())
             }),
+            backchannel,
             organization: setting.organization.clone(),
             issuer: trimmed(&setting.issuer).to_owned(),
             config: OidcConfig {

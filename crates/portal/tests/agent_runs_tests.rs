@@ -1097,6 +1097,31 @@ async fn an_answer_to_a_question_never_asked_is_refused_and_logs_nothing() {
     );
 }
 
+/// T-7144: the proxy reads the Organization of the run's project, the one whose own realm may
+/// issue the token of the person who started it.
+#[tokio::test]
+async fn the_proxy_reads_the_organization_of_the_runs_project() {
+    let config = config();
+    let mirror = mirror(Some(builder_profile_spec()));
+    mirror.upsert(envelope("Organization", "bb", "org", json!({ "domain": "hel.fi" })));
+    let (app, internal) = both(mirror, &config);
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let id = create_run(&app, &cookie).await["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let (status, context) = internal_call(
+        &internal,
+        Some(proxy_bearer()),
+        Method::GET,
+        &format!("/internal/agent-runs/{id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(context["organization"], "bb", "{context}");
+}
+
 #[tokio::test]
 async fn cancelling_ends_the_run_and_the_ticket_with_it() {
     let config = config();

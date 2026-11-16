@@ -926,3 +926,106 @@ async fn no_token_reaches_a_log_line() {
         assert!(!logged.contains(token), "{token} was logged: {logged}");
     }
 }
+
+/// T-7144: a person of an Organization's own realm hands over a token of that realm. It is
+/// introspected, exchanged, refreshed and revoked there, for a run of that Organization's
+/// project alone: a run of another Organization, or of none, takes no token of it, and the
+/// installation realm never sees it.
+#[tokio::test]
+async fn a_token_of_an_organizations_realm_binds_a_run_of_that_organization_alone() {
+    use base64::Engine;
+    const ISSUER: &str = "https://idm.ba.example/realms/ba";
+    let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(json!({ "iss": ISSUER, "sub": "ba-person" }).to_string());
+    let ba_token = format!("eyJhbGciOiJSUzI1NiJ9.{claims}.c2ln");
+    let installation = realm(300).await;
+    let ba = MockServer::start().await;
+    let at = |end: &str| format!("/realms/ba/protocol/openid-connect/{end}");
+    Mock::given(method("POST"))
+        .and(path(at("token/introspect")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "active": true, "azp": "edge", "username": PERSON, "aud": [PROXY_CLIENT],
+        })))
+        .mount(&ba)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(at("token")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": DELEGATED, "expires_in": 300, "refresh_token": REFRESH,
+            "session_state": SESSION,
+        })))
+        .mount(&ba)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(at("revoke")))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&ba)
+        .await;
+    let realms = json!([{
+        "organization": "ba",
+        "issuer": ISSUER,
+        "jwks_url": format!("{}{}", ba.uri(), at("certs")),
+    }])
+    .to_string();
+    let installation_issuer = format!("{}/realms/jc", installation.uri());
+    let config = agent_proxy::config::Config::from_lookup(|key| match key {
+        "JC_PROXY_BIND" => Some("127.0.0.1:0".to_owned()),
+        "JC_REQUIRE_MESH_IDENTITY" => Some("false".to_owned()),
+        "JC_MODEL_KEY" => Some("mock-model-key".to_owned()),
+        "JC_FORGE_TOKEN" => Some("mock-forge-token".to_owned()),
+        "JC_OIDC_ISSUER" => Some(installation_issuer.clone()),
+        "JC_OIDC_CLIENT_ID" => Some(PROXY_CLIENT.to_owned()),
+        "JC_OIDC_CLIENT_SECRET" => Some(PROXY_SECRET.to_owned()),
+        "JC_OIDC_ORGANIZATION_REALMS" => Some(realms.clone()),
+        _ => None,
+    })
+    .expect("the configuration is complete");
+    let grants = agent_proxy::delegation::Grants::new(Arc::new(config));
+
+    for organization in [Some("hel"), None] {
+        let run = agent_proxy::runs::RunContext {
+            organization: organization.map(str::to_owned),
+            ..run_named("elsewhere")
+        };
+        assert!(
+            matches!(
+                grants.bind(&run, &ba_token).await,
+                Err(agent_proxy::delegation::BindError::NotTheRunsPerson)
+            ),
+            "ba's token bound a run of {organization:?}"
+        );
+    }
+    assert!(ba.received_requests().await.unwrap_or_default().is_empty());
+
+    let run = agent_proxy::runs::RunContext {
+        organization: Some("ba".to_owned()),
+        ..run_named("ba-run")
+    };
+    grants.bind(&run, &ba_token).await.expect("ba's run takes ba's token");
+    assert_eq!(grants.token(&run.id).await.expect("a grant"), DELEGATED);
+    grants.end(&run.id).await;
+    assert_eq!(bodies(&ba, &at("revoke")).await.len(), 1);
+    let seen = installation.received_requests().await.unwrap_or_default();
+    assert!(
+        seen.iter()
+            .all(|r| !String::from_utf8_lossy(&r.body).contains(&ba_token)),
+        "the installation realm saw ba's token"
+    );
+}
+
+/// The proxy refuses a realm list that would let one realm's tokens count for two.
+#[test]
+fn an_organization_realm_with_the_installations_issuer_is_refused() {
+    for realms in [
+        r#"[{"organization":"ba","issuer":"https://idm.example/realms/jc","jwks_url":"http://kc/realms/jc/protocol/openid-connect/certs"}]"#,
+        r#"[{"organization":"ba","issuer":"https://idm.ba/realms/ba","jwks_url":"http://kc/realms/ba/protocol/openid-connect/certs"},{"organization":"hel","issuer":"https://idm.ba/realms/ba/","jwks_url":"http://kc/realms/ba/protocol/openid-connect/certs"}]"#,
+        r#"[{"organization":"ba","issuer":"https://idm.ba/realms/ba","jwks_url":"http://kc/realms/ba/keys"}]"#,
+    ] {
+        let refused = agent_proxy::config::Config::from_lookup(|key| match key {
+            "JC_OIDC_ISSUER" => Some("https://idm.example/realms/jc".to_owned()),
+            "JC_OIDC_ORGANIZATION_REALMS" => Some(realms.to_owned()),
+            _ => None,
+        });
+        assert!(refused.is_err(), "{realms}");
+    }
+}

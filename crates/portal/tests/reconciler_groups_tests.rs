@@ -1106,3 +1106,86 @@ async fn a_loaded_source_that_drops_its_last_group_removes_it_and_its_members() 
         .iter()
         .any(|o| o.name == "skoly-viewer" && o.drift.iter().any(|d| d.contains("removed"))));
 }
+
+/// T-7144: the sync of an Organization's own realm writes that Organization's derived groups and
+/// its `/{organization}/members` there, and nothing else: no Group manifest of the installation
+/// and no group of another Organization, whose people are not this realm's.
+#[tokio::test]
+async fn an_organizations_realm_holds_its_own_groups_and_members_group_alone() {
+    let keycloak = realm().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .and(query_param("briefRepresentation", "false"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(format!("^{REALM}/groups(/[^/]+/children)?$")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+        .mount(&keycloak)
+        .await;
+    for name in ["bb", "bb-readers", "bb_bound"] {
+        Mock::given(method("GET"))
+            .and(path(format!("{REALM}/groups")))
+            .and(query_param("search", name))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": format!("id-{name}"), "name": name, "attributes": { MANAGED_BY: [MANAGED_VALUE] } }
+            ])))
+            .mount(&keycloak)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path_regex(format!("^{REALM}/groups/[^/]+/(children|members)$")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/users/{LEAD}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": LEAD })))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path_regex(format!("^{REALM}/users/.*/groups/.*$")))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&keycloak)
+        .await;
+
+    let mirror = mirror_with(vec![group("city-leads", &[READER])]);
+    let generated = [
+        derived("bb-readers", LEAD, Some("bb")),
+        bound_group("bb", LEAD),
+        derived("hel-readers", READER, Some("hel")),
+        bound_group("hel", READER),
+    ];
+    let outcomes = sync(&keycloak)
+        .for_organization("bb")
+        .converge_with(&mirror, &generated)
+        .await;
+    assert!(outcomes.iter().all(|o| o.error.is_none()), "{outcomes:?}");
+
+    let requests = keycloak.received_requests().await.unwrap_or_default();
+    let created: Vec<String> = requests
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().starts_with(REALM))
+        .map(|r| {
+            let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+            format!("{} {}", r.url.path(), body["name"].as_str().unwrap_or_default())
+        })
+        .collect();
+    assert_eq!(
+        created,
+        [
+            format!("{REALM}/groups bb"),
+            format!("{REALM}/groups/id-bb/children members"),
+            format!("{REALM}/groups bb-readers"),
+            format!("{REALM}/groups bb_bound"),
+        ]
+    );
+    for r in &requests {
+        let seen = format!("{} {}", r.url, String::from_utf8_lossy(&r.body));
+        assert!(
+            !seen.contains("hel") && !seen.contains("city-leads") && !seen.contains(READER),
+            "bb's realm was asked about another Organization's or the installation's group: {seen}"
+        );
+    }
+}

@@ -786,6 +786,20 @@ impl AppState {
                 "no Keycloak admin client: Group manifests are read, the realm is not written"
             ),
         }
+        // Each Organization's realm, as that realm's own `portal-reconciler` (T-7144).
+        if let Some((id, secret)) = self.config.keycloak_admin.clone() {
+            for realm in self.organization_realms.values() {
+                if let Some(groups) = crate::reconciler::groups::GroupSync::new(
+                    &realm.backchannel,
+                    id.clone(),
+                    secret.clone(),
+                ) {
+                    syncer = syncer.with_organization_groups(Arc::new(
+                        groups.for_organization(&realm.organization),
+                    ));
+                }
+            }
+        }
         // Every published App's own client (ADR-N-030, AP-111). It is written as the Portal
         // client's own service account, the one identity the realm gives `manage-clients`.
         // Who holds an App role is looked up and mapped with the group credential above,

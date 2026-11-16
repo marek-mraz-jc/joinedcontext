@@ -72,6 +72,17 @@ pub struct DerivedGroup {
     pub second_factor: bool,
 }
 
+impl DerivedGroup {
+    /// The Organization the group belongs to: the one it grants (`jc_org`), or the one whose
+    /// project it serves (the first segment of `jc_groups`).
+    pub fn organization(&self) -> Option<&str> {
+        self.jc_org.as_deref().or_else(|| {
+            let path = self.jc_groups.as_deref()?.strip_prefix('/')?;
+            path.split_once('/').map(|(organization, _)| organization)
+        })
+    }
+}
+
 /// Whether the Organization manifest `organization` sets `spec.policies.signIn.secondFactor:
 /// required`. Only `spec.policies` is read. A block that does not parse (a manifest that skipped
 /// the propose check: a direct git edit, an older Portal) counts as required, so a broken
@@ -225,6 +236,10 @@ pub struct GroupSync {
     /// lacks asked the realm again on every run (jc-smoke-logs: ~600 `GET /users/{id}` a minute
     /// at a 10 s sync). Asked again once [`ABSENT_FOR`] has passed.
     absent: std::sync::Mutex<BTreeMap<String, std::time::Instant>>,
+    /// The Organization whose own realm this is (T-7144): only its derived groups and its
+    /// `/{organization}/members` are written there, never a Group manifest or another
+    /// Organization's group. `None`: the installation realm.
+    organization: Option<String>,
 }
 
 /// How long a user the realm lacks is taken as still missing before the realm is asked again.
@@ -244,7 +259,14 @@ impl GroupSync {
             admin: super::app_clients::Admin::new(issuer, client_id, auth)?,
             foreign: None,
             absent: Default::default(),
+            organization: None,
         })
+    }
+
+    /// Makes this the sync of `organization`'s own realm (T-7144).
+    pub fn for_organization(mut self, organization: &str) -> Self {
+        self.organization = Some(organization.to_owned());
+        self
     }
 
     /// Brings the realm to what the manifests say, and answers what it had to change.
@@ -305,10 +327,21 @@ impl GroupSync {
 
         let mut outcomes = Vec::new();
         let mut wanted: BTreeSet<String> = BTreeSet::new();
-        for envelope in mirror
-            .list(ORG_NAMESPACE, "Group", &ListOptions::default())
-            .items
-        {
+        // The Group manifests are the installation's: an Organization's realm holds its own
+        // derived groups and its members group alone.
+        let manifests = match self.organization.as_deref() {
+            Some(organization) => {
+                wanted.insert(organization.to_owned());
+                outcomes.push(self.keep_members_group(&token, organization, &existing).await);
+                Vec::new()
+            }
+            None => {
+                mirror
+                    .list(ORG_NAMESPACE, "Group", &ListOptions::default())
+                    .items
+            }
+        };
+        for envelope in manifests {
             let name = envelope.metadata.name.clone();
             wanted.insert(name.clone());
             let spec: GroupSpec = match serde_json::from_value(envelope.spec) {
@@ -328,6 +361,9 @@ impl GroupSync {
                 .collect();
             outcomes.push(self.converge_one(&token, &name, &members, None, held).await);
         }
+        let generated = generated.iter().filter(|derived| {
+            self.organization.is_none() || derived.organization() == self.organization.as_deref()
+        });
         for derived in generated {
             let name = &derived.name;
             if !wanted.insert(name.clone()) {
@@ -378,6 +414,90 @@ impl GroupSync {
         outcomes
     }
 
+    /// `/{organization}/members` in the Organization's own realm, where an invitation puts a new
+    /// person (ADR-N-067 §2.2): the root group is made, managed, when the realm lacks it, and
+    /// the subgroup under it. Its members are the invitations' and are never pruned here.
+    async fn keep_members_group(
+        &self,
+        token: &str,
+        organization: &str,
+        existing: &[KcGroup],
+    ) -> GroupOutcome {
+        let mut outcome = GroupOutcome::of(&format!("{organization}/members"));
+        let root = match existing.iter().find(|group| group.name == organization) {
+            Some(group) => group.id.clone(),
+            None => match self.create(token, organization, None).await {
+                Ok(id) => {
+                    outcome
+                        .drift
+                        .push(format!("the realm had no group '{organization}'; it was created"));
+                    id
+                }
+                Err(err) => {
+                    outcome.error = Some(err);
+                    return outcome;
+                }
+            },
+        };
+        let children: Vec<KcGroup> = match self
+            .admin
+            .get_all(token, &format!("/groups/{root}/children?briefRepresentation=true"))
+            .await
+        {
+            Ok(children) => children,
+            Err(err) => {
+                outcome.error = Some(err);
+                return outcome;
+            }
+        };
+        if children.iter().any(|child| child.name == "members") {
+            return outcome;
+        }
+        match self
+            .admin
+            .send(
+                token,
+                reqwest::Method::POST,
+                &format!("/groups/{root}/children"),
+                Some(&json!({ "name": "members" })),
+            )
+            .await
+        {
+            Ok(_) => outcome.drift.push(format!(
+                "the realm had no '/{organization}/members'; it was created"
+            )),
+            Err(err) => outcome.error = Some(err),
+        }
+        outcome
+    }
+
+    /// Creates the managed top-level group `name` and answers its id.
+    async fn create(
+        &self,
+        token: &str,
+        name: &str,
+        derived: Option<&DerivedGroup>,
+    ) -> Result<String, String> {
+        self.admin
+            .send(
+                token,
+                reqwest::Method::POST,
+                "/groups",
+                Some(&json!({ "name": name, "attributes": attributes_of(derived) })),
+            )
+            .await?;
+        let found = self
+            .admin
+            .get::<Value>(token, &format!("/groups?search={name}&exact=true"))
+            .await
+            .and_then(|v| serde_json::from_value::<Vec<KcGroup>>(v).map_err(|e| e.to_string()))?;
+        found
+            .into_iter()
+            .find(|group| group.name == name)
+            .map(|group| group.id)
+            .ok_or_else(|| "the realm did not return the group it just created".to_owned())
+    }
+
     async fn converge_one(
         &self,
         token: &str,
@@ -398,44 +518,18 @@ impl GroupSync {
                 return outcome;
             }
             Some(group) => group.id.clone(),
-            None => {
-                if let Err(err) = self
-                    .admin
-                    .send(
-                        token,
-                        reqwest::Method::POST,
-                        "/groups",
-                        Some(&json!({ "name": name, "attributes": attributes_of(derived) })),
-                    )
-                    .await
-                {
+            None => match self.create(token, name, derived).await {
+                Ok(id) => {
+                    outcome
+                        .drift
+                        .push(format!("the realm had no group '{name}'; it was created"));
+                    id
+                }
+                Err(err) => {
                     outcome.error = Some(err);
                     return outcome;
                 }
-                outcome
-                    .drift
-                    .push(format!("the realm had no group '{name}'; it was created"));
-                match self
-                    .admin
-                    .get::<Value>(token, &format!("/groups?search={name}&exact=true"))
-                    .await
-                    .and_then(|v| {
-                        serde_json::from_value::<Vec<KcGroup>>(v).map_err(|e| e.to_string())
-                    }) {
-                    Ok(found) => match found.into_iter().find(|group| group.name == name) {
-                        Some(group) => group.id,
-                        None => {
-                            outcome.error =
-                                Some("the realm did not return the group it just created".into());
-                            return outcome;
-                        }
-                    },
-                    Err(err) => {
-                        outcome.error = Some(err);
-                        return outcome;
-                    }
-                }
-            }
+            },
         };
 
         self.keep_claims(token, held, derived, &mut outcome).await;

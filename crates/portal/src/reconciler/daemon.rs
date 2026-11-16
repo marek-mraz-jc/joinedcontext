@@ -223,6 +223,8 @@ pub struct Syncer {
     /// `None` when no Keycloak admin client is configured: the `Group` manifests are then read
     /// and served, and the realm is written by nobody (PF-63).
     groups: Option<Arc<GroupSync>>,
+    /// The groups of each Organization with a realm of its own, in that realm (T-7144).
+    organization_groups: Vec<Arc<GroupSync>>,
     /// The realm's people and the database of their pending removals (PF-93). `None` leaves a
     /// removal pending until a Portal with both runs.
     people: Option<(Arc<crate::people::People>, sqlx::PgPool)>,
@@ -401,6 +403,7 @@ impl Syncer {
             subscriptions: None,
             dashboards: None,
             groups: None,
+            organization_groups: Vec::new(),
             people: None,
             app_clients: None,
             app_client_secrets: Arc::default(),
@@ -612,6 +615,12 @@ impl Syncer {
     /// Makes each run bring the realm's managed groups to what the manifests say (PF-63).
     pub fn with_groups(mut self, groups: Arc<GroupSync>) -> Self {
         self.groups = Some(groups);
+        self
+    }
+
+    /// Makes each run bring an Organization's own realm to its derived groups (T-7144).
+    pub fn with_organization_groups(mut self, groups: Arc<GroupSync>) -> Self {
+        self.organization_groups.push(groups);
         self
     }
 
@@ -2449,6 +2458,19 @@ impl Syncer {
             }
             super::groups::record(fresh_mirror, &outcomes);
             self.say_group_drift(&outcomes).await;
+        }
+        if self.organization_groups.is_empty() {
+            return;
+        }
+        let generated = super::groups::derived_groups(fresh_mirror, projects, chrono::Utc::now());
+        for groups in &self.organization_groups {
+            for outcome in groups.converge_with(fresh_mirror, &generated).await {
+                if let Some(err) = &outcome.error {
+                    tracing::warn!(group = %outcome.name, error = %err, "group did not converge in its Organization's realm")
+                } else if !outcome.drift.is_empty() {
+                    tracing::info!(group = %outcome.name, drift = %outcome.drift.join("; "), "group brought back in its Organization's realm")
+                }
+            }
         }
     }
 
