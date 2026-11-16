@@ -5,6 +5,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { pageFindings } from "../tests/pageChecks";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read through the OData service; each stub below answers as the REST door (T-7115).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 const NAMESPACES = Object.keys(
   JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/locales/en.json"), "utf8")) as object,

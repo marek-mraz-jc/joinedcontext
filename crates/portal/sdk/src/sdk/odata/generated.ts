@@ -946,6 +946,14 @@ export interface Functions {
   portal_endpoint_quality: { endpoint: string };
   portal_erasure_get: { space: string; id: string };
   portal_erasure_list: { space: string };
+  portal_grafana_builder: Record<string, never>;
+  portal_grafana_builder_get: { uid: string };
+  portal_grafana_dashboard: { uid: string };
+  portal_grafana_dashboards: Record<string, never>;
+  portal_grafana_list: Record<string, never>;
+  portal_grafana_options: { endpoint?: string; type?: string };
+  portal_grafana_panel: { uid: string; panel: string; from?: string; to?: string; maxDataPoints?: number; vars?: unknown };
+  portal_grafana_variable: { uid: string; name: string };
   portal_knowledge_conversation_get: { conversation: string };
   portal_knowledge_conversation_list: { deployment?: string; from?: string; to?: string; status?: string; feedback?: string; slow?: boolean; minCostUsd?: number; q?: string; sort?: string; cursor?: string };
   portal_knowledge_conversation_same: { conversation: string; turn: string };
@@ -1054,6 +1062,14 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_endpoint_quality: ["Project"],
   portal_erasure_get: ["Project"],
   portal_erasure_list: ["Project"],
+  portal_grafana_builder: ["Project"],
+  portal_grafana_builder_get: ["Project"],
+  portal_grafana_dashboard: ["Project"],
+  portal_grafana_dashboards: ["Project"],
+  portal_grafana_list: ["Project"],
+  portal_grafana_options: ["Project"],
+  portal_grafana_panel: ["Project"],
+  portal_grafana_variable: ["Project"],
   portal_knowledge_conversation_get: ["Project"],
   portal_knowledge_conversation_list: ["Project"],
   portal_knowledge_conversation_same: ["Project"],
@@ -1167,12 +1183,18 @@ export interface Actions {
   portal_erasure_approve: { space: string; id: string; body?: unknown };
   portal_erasure_decline: { space: string; id: string; body?: unknown };
   portal_erasure_file: { space: string; dryRun?: string; body?: unknown };
+  portal_grafana_builder_create: { body?: unknown };
+  portal_grafana_builder_preview: { body?: unknown };
+  portal_grafana_builder_update: { uid: string; body?: unknown };
+  portal_grafana_remove: { id: string };
+  portal_grafana_save: { body?: unknown };
   portal_knowledge_answers_forget: { deployment: string };
   portal_knowledge_context_preview: { dryRun?: string; lang?: string; body?: unknown };
   portal_knowledge_conversation_erase: { conversation: string };
   portal_knowledge_file_remove: { source: string; id: string };
   portal_knowledge_inclusion_set: { source: string; body?: unknown };
   portal_knowledge_recrawl: { source: string };
+  portal_kpi_check: { body?: unknown };
   portal_mqtt_captured_clear: { broker: string };
   portal_mqtt_device_propose: { broker: string; body?: unknown };
   portal_mqtt_test_publish: { broker: string; body?: unknown };
@@ -1270,12 +1292,18 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_erasure_approve: ["Project"],
   portal_erasure_decline: ["Project"],
   portal_erasure_file: ["Project"],
+  portal_grafana_builder_create: ["Project"],
+  portal_grafana_builder_preview: ["Project"],
+  portal_grafana_builder_update: ["Project"],
+  portal_grafana_remove: ["Project"],
+  portal_grafana_save: ["Project"],
   portal_knowledge_answers_forget: ["Project"],
   portal_knowledge_context_preview: ["Project"],
   portal_knowledge_conversation_erase: ["Project"],
   portal_knowledge_file_remove: ["Project"],
   portal_knowledge_inclusion_set: ["Project"],
   portal_knowledge_recrawl: ["Project"],
+  portal_kpi_check: ["Project"],
   portal_mqtt_captured_clear: ["Project"],
   portal_mqtt_device_propose: ["Project"],
   portal_mqtt_test_publish: ["Project"],

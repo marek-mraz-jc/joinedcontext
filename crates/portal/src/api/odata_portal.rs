@@ -54,6 +54,9 @@ pub enum Place {
     Query(&'static str),
     /// The REST door's JSON body.
     Body,
+    /// A dashboard's picked variables, a JSON object of each name and its values, e.g.
+    /// `{"region":["north","south"]}`: each value one `var-{name}` query member.
+    Vars,
 }
 
 /// One Portal door: its OData name, its binding and the REST door whose handler answers it.
@@ -82,6 +85,7 @@ const SOURCE: (&str, Place) = ("source", Place::Path);
 const DEPLOYMENT: (&str, Place) = ("deployment", Place::Path);
 const CONVERSATION: (&str, Place) = ("conversation", Place::Path);
 const BROKER: (&str, Place) = ("broker", Place::Path);
+const UID: (&str, Place) = ("uid", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -105,7 +109,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 108] = [
+pub static DOORS: [Door; 122] = [
     door(
         "portal_people_remove",
         Org,
@@ -1028,6 +1032,128 @@ pub static DOORS: [Door; 108] = [
         &[BROKER],
         Who::ProjectReader,
     ),
+    door(
+        "portal_grafana_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_options",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/options",
+        &[
+            ("endpoint", Place::Query("Edm.String")),
+            ("type", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_save",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_remove",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/grafana/{id}",
+        &[CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_dashboards",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/dashboards",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_dashboard",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/dashboards/{uid}",
+        &[UID],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_panel",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/dashboards/{uid}/panels/{panel}",
+        &[
+            UID,
+            ("panel", Place::Path),
+            ("from", Place::Query("Edm.String")),
+            ("to", Place::Query("Edm.String")),
+            ("maxDataPoints", Place::Query("Edm.Int32")),
+            ("vars", Place::Vars),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_variable",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/dashboards/{uid}/variables/{name}",
+        &[UID, ("name", Place::Path)],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/builder",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_create",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_preview",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder/preview",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_get",
+        Project,
+        Method::GET,
+        "/projects/{project}/grafana/builder/{uid}",
+        &[UID],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_update",
+        Project,
+        Method::PUT,
+        "/projects/{project}/grafana/builder/{uid}",
+        &[UID, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_kpi_check",
+        Project,
+        Method::POST,
+        "/projects/{project}/kpis/check",
+        &[BODY],
+        Who::ProjectReader,
+    ),
 ];
 
 /// The door named `name`.
@@ -1045,7 +1171,7 @@ impl Door {
         match place {
             Place::Path => "Edm.String",
             Place::Query(ty) => ty,
-            Place::Body => "Edm.Untyped",
+            Place::Body | Place::Vars => "Edm.Untyped",
         }
     }
 
@@ -1183,6 +1309,32 @@ fn text(member: &str, value: &Value) -> Result<String, Refusal> {
     }
 }
 
+/// The `(name, value)` pairs of a [`Place::Vars`] parameter: an object of non-empty names, each
+/// a text or a list of texts.
+fn vars<'a>(member: &str, value: &'a Value) -> Result<Vec<(&'a str, &'a str)>, Refusal> {
+    let shape = || {
+        bad(format!(
+            "{member} is an object of each variable's values, e.g. {{\"region\":[\"north\"]}}"
+        ))
+    };
+    let mut out = Vec::new();
+    for (name, picked) in value.as_object().ok_or_else(shape)? {
+        let picked = match picked {
+            Value::String(one) => vec![one.as_str()],
+            Value::Array(many) => many
+                .iter()
+                .map(|each| each.as_str().ok_or_else(shape))
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => return Err(shape()),
+        };
+        if name.is_empty() {
+            return Err(shape());
+        }
+        out.extend(picked.into_iter().map(|each| (name.as_str(), each)));
+    }
+    Ok(out)
+}
+
 fn encoded(text: &str) -> String {
     url::form_urlencoded::byte_serialize(text.as_bytes())
         .collect::<String>()
@@ -1222,6 +1374,11 @@ pub fn rest(
             }
             (Place::Body, Some(value)) => {
                 body = Some(serde_json::to_vec(value).unwrap_or_default());
+            }
+            (Place::Vars, Some(value)) => {
+                for (name, picked) in vars(member, value)? {
+                    query.append_pair(&format!("var-{name}"), picked);
+                }
             }
             (_, None) => {}
         }
@@ -1364,6 +1521,30 @@ mod tests {
             let refused =
                 super::rest(door, None, params.as_object().expect("object")).expect_err("refused");
             assert_eq!(refused.0, StatusCode::BAD_REQUEST, "{params}");
+        }
+    }
+
+    #[test]
+    fn a_dashboards_variables_become_its_var_members() {
+        let door = find("portal_grafana_panel").expect("door");
+        let params = json!({ "uid": "air", "panel": 2, "from": "now-6h",
+                             "vars": { "region": ["north", "a&b"], "kind": "pm10" } });
+        let rest =
+            super::rest(door, Some("air"), params.as_object().expect("object")).expect("rest");
+        assert_eq!(
+            rest.path_and_query,
+            "/projects/air/grafana/dashboards/air/panels/2?from=now-6h&var-kind=pm10&var-region=north&var-region=a%26b"
+        );
+        for vars in [
+            json!(["north"]),
+            json!({ "region": [1] }),
+            json!({ "region": { "x": 1 } }),
+            json!({ "": ["north"] }),
+        ] {
+            let params = json!({ "uid": "air", "panel": 2, "vars": vars });
+            let refused = super::rest(door, Some("air"), params.as_object().expect("object"))
+                .expect_err("refused");
+            assert_eq!(refused.0, StatusCode::BAD_REQUEST, "{vars}");
         }
     }
 }

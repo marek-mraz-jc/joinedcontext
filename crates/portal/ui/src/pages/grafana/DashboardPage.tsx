@@ -9,7 +9,8 @@ import type { JSX } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { api, ApiError, reasonOf, unwrap } from "../../api/client";
+import { ApiError, reasonOf } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { Alert, Button, buttonClass, Checkbox, EmptyState, Field, Icon, PageFailed, PageHeader, PageLoading, Select, safeHref } from "../../components/ui";
 import { ToolbarPopover } from "../../components/entities/GridToolbar";
@@ -31,14 +32,12 @@ export interface Asked {
 }
 
 /**
- * The address query of one panel read, as Grafana asks its datasources: the panel's own range as
- * epoch milliseconds (its `timeFrom` and `timeShift` applied), `maxDataPoints`, and one
- * `var-<name>` per picked value.
+ * The `portal_grafana_panel` parameters of one panel read, as Grafana asks its datasources: the
+ * panel's own range as epoch milliseconds (its `timeFrom` and `timeShift` applied),
+ * `maxDataPoints`, and each picked value of each variable (the door sends one `var-<name>` each).
  */
-export function panelQuery(range: { from: number; to: number }, vars: Asked["vars"], maxDataPoints: number): string {
-  const query = new URLSearchParams({ from: String(range.from), to: String(range.to), maxDataPoints: String(maxDataPoints) });
-  for (const [name, values] of Object.entries(vars)) for (const value of values) query.append(`var-${name}`, value);
-  return query.toString();
+export function panelAsked(range: { from: number; to: number }, vars: Asked["vars"], maxDataPoints: number) {
+  return { from: String(range.from), to: String(range.to), maxDataPoints, vars };
 }
 
 interface LivePanelProps {
@@ -70,12 +69,11 @@ function LivePanel({ project, uid, panel, asked, tick, locale, at, words, onWide
     enabled: panel.type !== "text" && panel.type !== "row",
     placeholderData: (previous) => previous,
     queryFn: async (): Promise<PanelData> => {
-      const answer = await unwrap(
-        await api.GET("/api/v1/projects/{project}/grafana/dashboards/{uid}/panels/{panel}", {
-          params: { path: { project, uid, panel: panel.id } },
-          querySerializer: () => panelQuery(range, asked.vars, panel.maxDataPoints ?? 1000),
-        }),
-      );
+      const answer = (await door(
+        "portal_grafana_panel",
+        { uid, panel: String(panel.id), ...panelAsked(range, asked.vars, panel.maxDataPoints ?? 1000) },
+        project,
+      )) as RestAnswer<"panel_data">;
       // The wire names frames only as objects; their shape is daiya's (frames.ts).
       return { frames: answer.frames as unknown as Frame[], accessDenied: answer.accessDenied ?? undefined, error: answer.error ?? undefined };
     },
@@ -111,13 +109,7 @@ function useVariableOptions(project: string, uid: string, variable: Variable) {
     queryKey: ["projects", project, "grafana", "dashboards", uid, "variable", variable.name],
     enabled: variable.kind === "query",
     queryFn: async () =>
-      (
-        await unwrap(
-          await api.GET("/api/v1/projects/{project}/grafana/dashboards/{uid}/variables/{name}", {
-            params: { path: { project, uid, name: variable.name } },
-          }),
-        )
-      ).options,
+      ((await door("portal_grafana_variable", { uid, name: variable.name }, project)) as RestAnswer<"variable_values">).options,
   });
 }
 
@@ -196,7 +188,7 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
   const view = useQuery({
     queryKey: ["projects", project, "grafana", "dashboards", uid],
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/grafana/dashboards/{uid}", { params: { path: { project, uid } } })),
+      (await door("portal_grafana_dashboard", { uid }, project)) as RestAnswer<"get_dashboard">,
   });
   // The range and refresh live in the address, as Grafana keeps them (`?from=&to=&refresh=`).
   const search = useSearch({ strict: false }) as Record<string, unknown>;
@@ -238,7 +230,7 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
   const builder = useQuery({
     queryKey: ["projects", project, "grafana", "builder"],
     enabled: isBuilderUid(uid),
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/grafana/builder", { params: { path: { project } } })),
+    queryFn: async () => (await door("portal_grafana_builder", {}, project)) as RestAnswer<"builder_start">,
   });
   const mayEdit = isBuilderUid(uid) && builder.data?.mayEdit === true;
   // The tables page lives in the dashboards service, in the organization that holds the dashboard.

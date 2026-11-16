@@ -284,7 +284,8 @@ const OPERATIONS: Record<string, Door> = {
   portal_knowledge_conversation_same: [
     "GET",
     "/projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same",
-  ],  portal_mqtt_allowance: ["GET", "/projects/{project}/mqtt/allowance"],
+  ],
+  portal_mqtt_allowance: ["GET", "/projects/{project}/mqtt/allowance"],
   portal_mqtt_broker_access: ["GET", "/projects/{project}/mqttbrokers/{broker}/access"],
   portal_mqtt_device_options: ["GET", "/projects/{project}/mqttbrokers/{broker}/devices"],
   portal_mqtt_device_propose: ["POST", "/projects/{project}/mqttbrokers/{broker}/devices"],
@@ -294,6 +295,20 @@ const OPERATIONS: Record<string, Door> = {
   portal_mqtt_captured_list: ["GET", "/projects/{project}/mqttbrokers/{broker}/captured"],
   portal_mqtt_captured_clear: ["DELETE", "/projects/{project}/mqttbrokers/{broker}/captured"],
   portal_mqtt_binding_list: ["GET", "/projects/{project}/mqttbrokers/{broker}/bindings"],
+  portal_grafana_list: ["GET", "/projects/{project}/grafana"],
+  portal_grafana_options: ["GET", "/projects/{project}/grafana/options"],
+  portal_grafana_save: ["POST", "/projects/{project}/grafana"],
+  portal_grafana_remove: ["DELETE", "/projects/{project}/grafana/{id}"],
+  portal_grafana_dashboards: ["GET", "/projects/{project}/grafana/dashboards"],
+  portal_grafana_dashboard: ["GET", "/projects/{project}/grafana/dashboards/{uid}"],
+  portal_grafana_panel: ["GET", "/projects/{project}/grafana/dashboards/{uid}/panels/{panel}"],
+  portal_grafana_variable: ["GET", "/projects/{project}/grafana/dashboards/{uid}/variables/{name}"],
+  portal_grafana_builder: ["GET", "/projects/{project}/grafana/builder"],
+  portal_grafana_builder_create: ["POST", "/projects/{project}/grafana/builder"],
+  portal_grafana_builder_preview: ["POST", "/projects/{project}/grafana/builder/preview"],
+  portal_grafana_builder_get: ["GET", "/projects/{project}/grafana/builder/{uid}"],
+  portal_grafana_builder_update: ["PUT", "/projects/{project}/grafana/builder/{uid}"],
+  portal_kpi_check: ["POST", "/projects/{project}/kpis/check"],
 };
 
 /** Whether `request` calls one of {@link OPERATIONS}. */
@@ -414,6 +429,10 @@ export async function doorAsRest(
     if (path.includes(`{${name}}`))
       path = path.replace(`{${name}}`, encodeURIComponent(String(value)));
     else if (name === "body") body = JSON.stringify(value);
+    else if (name === "vars")
+      // A dashboard's variables, each value one `var-{name}` member (odata_portal.rs Place::Vars).
+      for (const [variable, picked] of Object.entries(value as Record<string, string | string[]>))
+        for (const each of [picked].flat()) rest.searchParams.append(`var-${variable}`, each);
     else if (door[2]?.includes(name)) members[name] = value;
     else rest.searchParams.set(name, String(value));
   }

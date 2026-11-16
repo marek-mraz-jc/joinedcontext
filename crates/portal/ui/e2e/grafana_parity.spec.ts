@@ -4,6 +4,10 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { pageFindings } from "../tests/pageChecks";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read through the OData service; each stub below answers as the REST door (T-7115).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The deployment's nine dashboards and the three range fixtures, drawn by the Portal over the
 // same recorded frames the reference Grafana 12.4.14 drew (scripts/grafana-reference.mjs): the

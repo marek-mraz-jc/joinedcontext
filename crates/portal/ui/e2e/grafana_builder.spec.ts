@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page, Route } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read through the OData service; each stub below answers as the REST door (T-7115).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The dashboard builder on the built bundle with the API answered from the browser: a reader,
 // an empty new dashboard, a panel being added, the form of each of the four panel kinds with its
