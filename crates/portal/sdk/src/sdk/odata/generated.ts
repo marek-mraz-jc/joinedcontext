@@ -662,7 +662,7 @@ export interface Run {
   kind?: string | null;
   mergeRequest?: unknown | null;
   mirrorUrl?: unknown | null;
-  origin?: unknown | null;
+  origin?: string | null;
   pathPrefix?: unknown | null;
   previewUrl?: string | null;
   profile?: unknown | null;
@@ -988,6 +988,7 @@ export interface Functions {
   portal_backup_data_get: Record<string, never>;
   portal_backup_data_restores: Record<string, never>;
   portal_backup_data_versions: Record<string, never>;
+  portal_blueprint_list: Record<string, never>;
   portal_change_manifests: { id: string };
   portal_change_outside: Record<string, never>;
   portal_comment_list: { space: string; urn?: string };
@@ -1130,6 +1131,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_backup_data_get: ["Organization"],
   portal_backup_data_restores: ["Organization"],
   portal_backup_data_versions: ["Organization"],
+  portal_blueprint_list: ["Organization"],
   portal_change_manifests: ["Project"],
   portal_change_outside: ["Project"],
   portal_comment_list: ["Project"],
@@ -1237,7 +1239,7 @@ export interface Actions {
   jc_pipeline_test: { draft?: unknown; pipeline?: unknown; sample: unknown; steps?: boolean };
   jc_pipeline_try_mapping: { draft?: unknown; messages?: unknown; pipeline?: unknown; sample?: unknown; steps?: boolean };
   jc_project_delete: { name: string };
-  jc_project_import: { bundle: string; conflictPolicy?: string; dryRun?: boolean; orgDomain?: string };
+  jc_project_import: { bundle?: string; conflictPolicy?: string; dryRun?: boolean; manifests?: unknown; orgDomain?: string; spaceMapping?: unknown };
   jc_run_answer: { answers: unknown; id: string; questionId: string };
   jc_run_cancel: { id: string };
   jc_run_create: { appClass: string; appName: string; dataNeeds: unknown; endpointName?: string; endpointNames?: unknown; kind?: string; profile?: string; prompt: string; unattended?: boolean; visibility?: string };
@@ -1293,6 +1295,7 @@ export interface Actions {
   portal_grafana_builder_create: { body?: unknown };
   portal_grafana_builder_preview: { body?: unknown };
   portal_grafana_builder_restore: { uid: string; sha: string };
+  portal_grafana_builder_saved_charts: { body?: unknown };
   portal_grafana_builder_update: { uid: string; body?: unknown };
   portal_grafana_remove: { id: string };
   portal_grafana_save: { body?: unknown };
@@ -1435,6 +1438,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_grafana_builder_create: ["Project"],
   portal_grafana_builder_preview: ["Project"],
   portal_grafana_builder_restore: ["Project"],
+  portal_grafana_builder_saved_charts: ["Project"],
   portal_grafana_builder_update: ["Project"],
   portal_grafana_remove: ["Project"],
   portal_grafana_save: ["Project"],
