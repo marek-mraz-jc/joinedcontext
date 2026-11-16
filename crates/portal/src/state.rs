@@ -102,6 +102,10 @@ pub struct AppState {
     /// Comments on a space's entities and the notifications of their mentions (API/01 §35).
     pub comments: Arc<crate::entity_comments::CommentStore>,
     pub feedback: Arc<crate::feedback::FeedbackStore>,
+    /// An Organization's backup targets and their audit log (T-7154).
+    pub org_backups: Arc<crate::org_backup::BackupStore>,
+    /// How an Organization backup reaches S3: public addresses only, outside tests.
+    pub org_backup_egress: Arc<crate::org_backup::Egress>,
     /// People's connectors and their audit (AG-142, AG-147).
     pub connectors: Arc<crate::connectors::ConnectorStore>,
     /// Portal tabs paired with a connector, which hear its UI actions (T-5967).
@@ -306,6 +310,8 @@ impl AppState {
             trash: Arc::new(crate::entity_trash::TrashStore::new(None)),
             comments: Arc::new(crate::entity_comments::CommentStore::new(None)),
             feedback: Arc::new(crate::feedback::FeedbackStore::new(None)),
+            org_backups: Arc::new(crate::org_backup::BackupStore::new(None)),
+            org_backup_egress: Arc::new(crate::org_backup::Egress::default()),
             connectors: Arc::new(crate::connectors::ConnectorStore::new(None)),
             paired_tabs: Arc::default(),
             plans: Arc::default(),
@@ -377,6 +383,16 @@ impl AppState {
         records: Arc<dyn crate::domain_verification::TxtRecords>,
     ) -> Self {
         self.txt_records = Some(records);
+        self
+    }
+
+    /// An Organization backup that reaches S3 through `http`, private addresses included: for a
+    /// test's in-process S3 only.
+    pub fn with_org_backup_egress(mut self, http: reqwest::Client) -> Self {
+        self.org_backup_egress = Arc::new(crate::org_backup::Egress {
+            http,
+            public_only: false,
+        });
         self
     }
 
@@ -1149,6 +1165,7 @@ impl AppState {
         self.trash = Arc::new(crate::entity_trash::TrashStore::new(db.clone()));
         self.comments = Arc::new(crate::entity_comments::CommentStore::new(db.clone()));
         self.feedback = Arc::new(crate::feedback::FeedbackStore::new(db.clone()));
+        self.org_backups = Arc::new(crate::org_backup::BackupStore::new(db.clone()));
         self.connectors = Arc::new(crate::connectors::ConnectorStore::new(db.clone()));
         self.alerts = Arc::new(crate::alerts::AlertStore::new(db.clone()));
         self.health_log = Arc::new(crate::health_log::HealthStore::new(db.clone()));

@@ -201,7 +201,7 @@ fn seal(plaintext: &[u8], aad: &str, data_key: &[u8]) -> Result<String, String> 
 }
 
 /// The data key wrapped for one recipient, ASCII-armored.
-fn wrap(data_key: &[u8], recipient: &age::x25519::Recipient) -> Result<String, String> {
+pub(crate) fn wrap(data_key: &[u8], recipient: &age::x25519::Recipient) -> Result<String, String> {
     let failed = |_| "the data key could not be wrapped".to_owned();
     let encryptor =
         age::Encryptor::with_recipients(std::iter::once(recipient as &dyn age::Recipient))

@@ -932,100 +932,18 @@ pub async fn export(
     let complete = names.is_none() && !included.is_empty();
 
     if format == "zip" {
-        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
-        let mut items = Vec::new();
-        let mut native_files = Vec::new();
-        // What the archive actually carries, which is not `included`: the native files of the
-        // resources it holds come too. The checksums are of these (MF-42).
-        let mut archived: Vec<&Exported> = Vec::new();
-        for file in &files {
-            match &file.manifest {
-                Some(envelope) => {
-                    if !matches_filters(envelope, kinds.as_ref(), names.as_ref()) {
-                        continue;
-                    }
-                    items.push(bundle_item(envelope, &file.path));
-                }
-                // A native file travels with the resource it belongs to, under the same filters
-                // (T-1405).
-                None => {
-                    let travels = match owner(&file.path, &files) {
-                        Some(envelope) => matches_filters(envelope, kinds.as_ref(), names.as_ref()),
-                        None => native_matches_filters(&file.path, kinds.as_ref(), names.as_ref()),
-                    };
-                    if !travels {
-                        continue;
-                    }
-                    native_files.push(file.path.clone());
-                }
-            }
-            archived.push(file);
-            let zipped = |err: zip::result::ZipError| {
-                ApiError::Internal(format!("archive entry failed: {err}"))
-            };
-            writer.start_file(&file.path, options).map_err(zipped)?;
-            writer
-                .write_all(file.content.as_bytes())
-                .map_err(|e| ApiError::Internal(format!("archive write failed: {e}")))?;
-        }
-        let description = if complete {
-            Some(describe(&state, &included, &files, &header, true).await)
-        } else {
-            None
-        };
-        // A Bundle lists at least one resource, so an archive whose filters matched no manifest
-        // carries no index rather than one the platform refuses (MF-17).
-        let mut entries = Vec::new();
-        if !items.is_empty() {
-            entries.push((
-                "bundle.yaml".to_owned(),
-                bundle_index(
-                    &header,
-                    items,
-                    native_files,
-                    bundle_files(&archived),
-                    description.as_ref(),
-                )?,
-            ));
-        }
-        if let Some(description) = &description {
-            entries.push((README_PATH.to_owned(), description.readme.clone()));
-            for (kind, schema) in &description.kinds {
-                entries.push((
-                    format!("{SCHEMAS_DIR}kinds/{kind}.schema.json"),
-                    pretty(schema)?,
-                ));
-            }
-            for (name, model) in &description.models {
-                if let Some(linkml) = &model.linkml {
-                    entries.push((
-                        format!("{SCHEMAS_DIR}models/{name}/{name}.linkml.yaml"),
-                        linkml.clone(),
-                    ));
-                }
-                if let Some(schema) = &model.json_schema {
-                    entries.push((
-                        format!("{SCHEMAS_DIR}models/{name}/{name}.schema.json"),
-                        pretty(schema)?,
-                    ));
-                }
-            }
-        }
-        for (entry, content) in entries {
-            writer
-                .start_file(entry, options)
-                .map_err(|err| ApiError::Internal(format!("archive entry failed: {err}")))?;
-            writer
-                .write_all(content.as_bytes())
-                .map_err(|e| ApiError::Internal(format!("archive write failed: {e}")))?;
-        }
-        let cursor = writer
-            .finish()
-            .map_err(|err| ApiError::Internal(format!("archive did not close: {err}")))?;
+        let bytes = zip_archive(
+            &state,
+            &files,
+            &included,
+            &header,
+            kinds.as_ref(),
+            names.as_ref(),
+            complete,
+        )
+        .await?;
         return Ok(attachment(
-            cursor.into_inner(),
+            bytes,
             "application/zip",
             format!("{project}-{short}.zip"),
         ));
@@ -1093,6 +1011,158 @@ pub async fn export(
         "application/yaml",
         format!("{project}-{short}.yaml"),
     ))
+}
+
+/// Whether a manifest holds executable code in its own spec: a Script's versions are source, and
+/// a Mapping with native blocks carries Bloblang. A configuration backup leaves both out (T-7154);
+/// the Pipelines that use them name them by id and version.
+pub(crate) fn carries_code(envelope: &ResourceEnvelope) -> bool {
+    match envelope.kind.as_str() {
+        "Script" => true,
+        "Mapping" => envelope.spec["native"]
+            .as_array()
+            .is_some_and(|blocks| !blocks.is_empty()),
+        _ => false,
+    }
+}
+
+/// One project's configuration at the head of its default branch, as the zip a whole-project
+/// export of that commit is, minus every file that is code (T-7154): a native file stays only
+/// when it describes data, a DataModel's LinkML source or schema; a Bento stream, a mapping or an
+/// App's source does not leave, and its manifest names it by id. The caller has checked who asks.
+pub(crate) async fn configuration_zip(
+    state: &AppState,
+    project: &str,
+    exporter: &str,
+) -> Result<(Vec<u8>, String), ApiError> {
+    let forge = shako(state, project)?;
+    let branch = forge.default_branch().await?;
+    let commit = forge.branch_head(&branch).await?;
+    let (files, omitted) =
+        read_project(&forge, project, &commit, &endpoints_by_slug(state)).await?;
+    let files: Vec<Exported> = files
+        .into_iter()
+        .filter(|file| match &file.manifest {
+            Some(envelope) => !carries_code(envelope),
+            None => crate::api::import::native_kind(&file.path) == Some("DataModel"),
+        })
+        .collect();
+    let included: Vec<&Exported> = files.iter().filter(|f| f.manifest.is_some()).collect();
+    let header = IndexHeader {
+        project,
+        revision: &commit,
+        exporter,
+        omitted,
+    };
+    let complete = !included.is_empty();
+    let bytes = zip_archive(state, &files, &included, &header, None, None, complete).await?;
+    Ok((bytes, commit))
+}
+
+/// The zip archive of a project's `files`: the manifests that pass the filters, the native files
+/// of the resources it holds, the `kind: Bundle` index and, for a `complete` export, the README
+/// and the schemas that say what the files mean (MF-17, MF-41, MF-42).
+async fn zip_archive(
+    state: &AppState,
+    files: &[Exported],
+    included: &[&Exported],
+    header: &IndexHeader<'_>,
+    kinds: Option<&Vec<String>>,
+    names: Option<&Vec<String>>,
+    complete: bool,
+) -> Result<Vec<u8>, ApiError> {
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let mut items = Vec::new();
+    let mut native_files = Vec::new();
+    // What the archive actually carries, which is not `included`: the native files of the
+    // resources it holds come too. The checksums are of these (MF-42).
+    let mut archived: Vec<&Exported> = Vec::new();
+    for file in files {
+        match &file.manifest {
+            Some(envelope) => {
+                if !matches_filters(envelope, kinds, names) {
+                    continue;
+                }
+                items.push(bundle_item(envelope, &file.path));
+            }
+            // A native file travels with the resource it belongs to, under the same filters
+            // (T-1405).
+            None => {
+                let travels = match owner(&file.path, files) {
+                    Some(envelope) => matches_filters(envelope, kinds, names),
+                    None => native_matches_filters(&file.path, kinds, names),
+                };
+                if !travels {
+                    continue;
+                }
+                native_files.push(file.path.clone());
+            }
+        }
+        archived.push(file);
+        let zipped =
+            |err: zip::result::ZipError| ApiError::Internal(format!("archive entry failed: {err}"));
+        writer.start_file(&file.path, options).map_err(zipped)?;
+        writer
+            .write_all(file.content.as_bytes())
+            .map_err(|e| ApiError::Internal(format!("archive write failed: {e}")))?;
+    }
+    let description = if complete {
+        Some(describe(state, included, files, header, true).await)
+    } else {
+        None
+    };
+    // A Bundle lists at least one resource, so an archive whose filters matched no manifest
+    // carries no index rather than one the platform refuses (MF-17).
+    let mut entries = Vec::new();
+    if !items.is_empty() {
+        entries.push((
+            "bundle.yaml".to_owned(),
+            bundle_index(
+                &header,
+                items,
+                native_files,
+                bundle_files(&archived),
+                description.as_ref(),
+            )?,
+        ));
+    }
+    if let Some(description) = &description {
+        entries.push((README_PATH.to_owned(), description.readme.clone()));
+        for (kind, schema) in &description.kinds {
+            entries.push((
+                format!("{SCHEMAS_DIR}kinds/{kind}.schema.json"),
+                pretty(schema)?,
+            ));
+        }
+        for (name, model) in &description.models {
+            if let Some(linkml) = &model.linkml {
+                entries.push((
+                    format!("{SCHEMAS_DIR}models/{name}/{name}.linkml.yaml"),
+                    linkml.clone(),
+                ));
+            }
+            if let Some(schema) = &model.json_schema {
+                entries.push((
+                    format!("{SCHEMAS_DIR}models/{name}/{name}.schema.json"),
+                    pretty(schema)?,
+                ));
+            }
+        }
+    }
+    for (entry, content) in entries {
+        writer
+            .start_file(entry, options)
+            .map_err(|err| ApiError::Internal(format!("archive entry failed: {err}")))?;
+        writer
+            .write_all(content.as_bytes())
+            .map_err(|e| ApiError::Internal(format!("archive write failed: {e}")))?;
+    }
+    let cursor = writer
+        .finish()
+        .map_err(|err| ApiError::Internal(format!("archive did not close: {err}")))?;
+    Ok(cursor.into_inner())
 }
 
 #[utoipa::path(
