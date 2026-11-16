@@ -16,6 +16,8 @@
 //! Every run, delete and restore is written to `organization_backup_log` with who and when: that
 //! table is the audit, kept as long as the Organization's target exists.
 
+pub mod data;
+pub mod restore;
 pub mod s3;
 
 use std::collections::BTreeMap;
@@ -32,8 +34,10 @@ use crate::resource::ResourceEnvelope;
 use crate::state::AppState;
 use crate::store::{ListOptions, Mirror};
 
-/// The backup this module runs. `data` is T-7155's and has no exporter yet.
+/// The configuration backup: manifests, schemas, no database rows.
 pub const CONFIGURATION: &str = "configuration";
+/// The data backup: the Organization's database rows, age-encrypted ([`data`], T-7168).
+pub const DATA: &str = "data";
 
 /// Hours between scheduled runs: at least one, at most four weeks.
 pub const EVERY_HOURS: std::ops::RangeInclusive<i32> = 1..=672;
@@ -59,6 +63,9 @@ pub struct Target {
     pub enabled: bool,
     pub every_hours: i32,
     pub keep_days: i32,
+    /// The age recipients (`age1…`, public keys) a data archive is encrypted to: the working
+    /// one first, then the recovery one. Empty for the configuration backup.
+    pub recipients: Vec<String>,
     pub updated_by: String,
     /// RFC 3339.
     pub updated_at: String,
@@ -67,9 +74,18 @@ pub struct Target {
 }
 
 impl Target {
-    /// The folder of this Organization's bundles: `{prefix}{organization}/configuration/`.
+    /// The folder of this Organization's bundles: `{prefix}{organization}/{kind}/`.
     pub fn folder(&self) -> String {
         format!("{}{}/{}/", self.prefix, self.organization, self.kind)
+    }
+
+    /// The one object every run writes a new version of.
+    pub fn object_key(&self) -> String {
+        if self.kind == DATA {
+            format!("{}archive.zip.age", self.folder())
+        } else {
+            format!("{}bundle.zip", self.folder())
+        }
     }
 }
 
@@ -137,6 +153,7 @@ type TargetRow = (
     bool,
     i32,
     i32,
+    Vec<String>,
     String,
     time::OffsetDateTime,
     Option<time::OffsetDateTime>,
@@ -155,9 +172,10 @@ fn target_of(row: TargetRow) -> Target {
         enabled: row.8,
         every_hours: row.9,
         keep_days: row.10,
-        updated_by: row.11,
-        updated_at: rfc3339(row.12),
-        last_run_at: row.13.map(rfc3339),
+        recipients: row.11,
+        updated_by: row.12,
+        updated_at: rfc3339(row.13),
+        last_run_at: row.14.map(rfc3339),
     }
 }
 
@@ -200,8 +218,8 @@ impl BackupStore {
             Inner::Postgres(pool) => {
                 let row: Option<TargetRow> = sqlx::query_as(
                     "SELECT organization, kind, endpoint, region, bucket, prefix, access_key_id, \
-                     sealed_secret, enabled, every_hours, keep_days, updated_by, updated_at, \
-                     last_run_at FROM organization_backup_targets \
+                     sealed_secret, enabled, every_hours, keep_days, recipients, updated_by, \
+                     updated_at, last_run_at FROM organization_backup_targets \
                      WHERE organization = $1 AND kind = $2",
                 )
                 .bind(organization)
@@ -233,12 +251,12 @@ impl BackupStore {
                 sqlx::query(
                     "INSERT INTO organization_backup_targets (organization, kind, endpoint, \
                      region, bucket, prefix, access_key_id, sealed_secret, enabled, every_hours, \
-                     keep_days, updated_by, updated_at) \
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now()) \
+                     keep_days, updated_by, recipients, updated_at) \
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now()) \
                      ON CONFLICT (organization, kind) DO UPDATE SET endpoint = $3, region = $4, \
                      bucket = $5, prefix = $6, access_key_id = $7, sealed_secret = $8, \
                      enabled = $9, every_hours = $10, keep_days = $11, updated_by = $12, \
-                     updated_at = now()",
+                     recipients = $13, updated_at = now()",
                 )
                 .bind(&target.organization)
                 .bind(&target.kind)
@@ -252,6 +270,7 @@ impl BackupStore {
                 .bind(target.every_hours)
                 .bind(target.keep_days)
                 .bind(&target.updated_by)
+                .bind(&target.recipients)
                 .execute(pool)
                 .await
                 .map_err(db)?;
@@ -295,8 +314,8 @@ impl BackupStore {
                      WHERE enabled AND (last_run_at IS NULL \
                      OR last_run_at <= now() - make_interval(hours => every_hours)) \
                      RETURNING organization, kind, endpoint, region, bucket, prefix, \
-                     access_key_id, sealed_secret, enabled, every_hours, keep_days, updated_by, \
-                     updated_at, last_run_at",
+                     access_key_id, sealed_secret, enabled, every_hours, keep_days, recipients, \
+                     updated_by, updated_at, last_run_at",
                 )
                 .fetch_all(pool)
                 .await
@@ -901,10 +920,14 @@ async fn upload(
     let http = &state.org_backup_egress.http;
     let bucket = bucket(state, target)?;
     require_versioning(http, &bucket).await?;
-    let (bytes, _index) = build_bundle(state, &target.organization, actor).await?;
+    let bytes = if target.kind == DATA {
+        data::encrypted_archive(state, target, actor).await?
+    } else {
+        build_bundle(state, &target.organization, actor).await?.0
+    };
     let size = bytes.len();
     // One key: every run is a new version of it, which is what "the versions" of the page lists.
-    let key = format!("{}bundle.zip", target.folder());
+    let key = target.object_key();
     let version = bucket
         .put(http, &key, bytes)
         .await
@@ -953,7 +976,7 @@ pub fn spawn_schedule(state: AppState) {
                     continue;
                 }
             };
-            for target in due.into_iter().filter(|t| t.kind == CONFIGURATION) {
+            for target in due {
                 if let Err(err) = run(&state, &target, "schedule").await {
                     tracing::warn!(organization = %target.organization, error = %err, "scheduled organization backup failed");
                 }

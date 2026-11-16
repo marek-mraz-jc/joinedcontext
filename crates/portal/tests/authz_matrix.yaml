@@ -338,6 +338,49 @@ routes:
     rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
     expect: [403, 403, 403, 403, 403, allow, 403, 403]
     note: "a soft delete (delete marker); no target in the fixture: 409 for the administrator (T-7154)"
+  - route: GET /organization/backups/data
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7168)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the data backup target without its secret, the recipients' fingerprints and the audit log (T-7168)"
+  - route: PUT /organization/backups/data
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7168)"
+    body: {"endpoint": "https://s3.example.com", "region": "eu-central-1", "bucket": "bb-backups", "prefix": "", "accessKeyId": "AKIAEXAMPLE", "secretAccessKey": "s", "enabled": false, "everyHours": 24, "keepDays": 90, "workingRecipient": "age1ql3z7hjy54pw3hyw…", "recoveryRecipient": "age1syrvza6xvtvsr9f0…"}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "the fixture has no age key and the recipients are cut short, so the administrator gets 503 or 422 before any bucket is asked (T-7168)"
+  - route: POST /organization/backups/data/run
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7168)"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "no target in the fixture: 409 for the administrator (T-7168)"
+  - route: GET /organization/backups/data/versions
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7168)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "no target in the fixture: 409 for the administrator (T-7168)"
+  - route: GET /organization/backups/data/versions/{version}
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7168)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the archive stays age-encrypted; no target in the fixture: 409 for the administrator (T-7168)"
+  - route: DELETE /organization/backups/data/archive
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7168)"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "a soft delete (delete marker); no target in the fixture: 409 for the administrator (T-7168)"
+  - route: POST /organization/backups/data/versions/{version}/restore
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7171)"
+    body: {"identity": "AGE-SECRET-KEY-1", "request": false}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "the identity is used for this request only; no target in the fixture: 409 for the administrator (T-7171)"
+  - route: GET /organization/backups/data/restores
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7171)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the restore requests and their dry runs; no database in the fixture: an empty list (T-7171)"
+  - route: POST /organization/backups/data/restores/{id}/approve
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7171)"
+    body: {"identity": "AGE-SECRET-KEY-1"}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "a second administrator approves; never the person who asked (403); no target in the fixture: 409 (T-7171)"
+  - route: POST /organization/backups/data/restores/{id}/decline
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7171)"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "no database in the fixture: 409 for the administrator (T-7171)"
   - route: GET /organization/brokers
     rule: "org-admin (approve and delete on RoleBinding, PF-03)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]

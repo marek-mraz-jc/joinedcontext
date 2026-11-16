@@ -13453,7 +13453,9 @@
         "run": "Sicherung",
         "delete": "Löschen",
         "plan": "Wiederherstellungsprüfung",
-        "restore": "Wiederherstellung"
+        "restore": "Wiederherstellung",
+        "restore-request": "Wiederherstellung angefragt",
+        "restore-decline": "Wiederherstellung abgelehnt"
       }
     },
     "versions": {
@@ -13512,7 +13514,9 @@
       "saving": "Bucket wird geprüft…",
       "saved": "Gespeichert. Der Bucket hat mit eingeschalteter Versionierung geantwortet.",
       "failed": "Der Bucket wurde nicht gespeichert. Prüfen Sie die Felder oben und speichern Sie erneut.",
-      "invalid": "Nicht gespeichert: {field} muss korrigiert werden, siehe die Zeile darunter."
+      "invalid": "Nicht gespeichert: {field} muss korrigiert werden, siehe die Zeile darunter.",
+      "workingRecipient": "Arbeitsschlüssel (öffentlicher age-Schlüssel)",
+      "recoveryRecipient": "Wiederherstellungsschlüssel (öffentlicher age-Schlüssel)"
     },
     "hint": {
       "endpoint": "Die https-Adresse des S3-Dienstes, zum Beispiel https://s3.eu-central-1.amazonaws.com",
@@ -13523,7 +13527,53 @@
       "secretAccessKey": "Wird versiegelt gespeichert und nie wieder angezeigt. Leer lassen, um den gespeicherten zu behalten.",
       "everyHours": "1 bis 672 Stunden, zum Beispiel 24 für einmal täglich",
       "keepDays": "1 bis 3650 Tage, zum Beispiel 90",
-      "enabled": "Aus behält den Bucket und jede Version; Jetzt ausführen funktioniert weiter."
+      "enabled": "Aus behält den Bucket und jede Version; Jetzt ausführen funktioniert weiter.",
+      "workingRecipient": "Der öffentliche Schlüssel der Identität Ihrer Administratoren, aus age-keygen, z. B. age1ql3z7hjy54pw3hyw…",
+      "recoveryRecipient": "Ein zweiter öffentlicher Schlüssel, den eine andere Person offline aufbewahrt, z. B. age1syrvza6xvtvsr9f0…. Jeder der beiden öffnet jedes Archiv."
+    },
+    "section": {
+      "jump": "Zu einer Sicherung springen",
+      "configuration": "Sicherung der Einstellungen",
+      "data": "Datensicherung"
+    },
+    "data": {
+      "lead": "Eine Kopie der eigenen Datenbankeinträge dieser Organisation in Ihrem S3-Bucket: Aktivität, Kommentare, Pipeline-Protokolle, Änderungen, Warnungen und die anderen Einträge ihrer Projekte. Nichts einer anderen Organisation. Das Archiv ist für zwei Schlüssel verschlüsselt, die Sie halten: ohne einen davon kann es niemand lesen, auch dieses Portal nicht.",
+      "versionsLead": "Jedes Datenarchiv, das der Bucket aufbewahrt, das neueste zuerst. Ein Download bleibt verschlüsselt: Öffnen Sie ihn mit dem Arbeits- oder dem Wiederherstellungsschlüssel.",
+      "workingFingerprint": "Fingerabdruck des Arbeitsschlüssels",
+      "recoveryFingerprint": "Fingerabdruck des Wiederherstellungsschlüssels",
+      "identity": "Identität, die das Archiv öffnet",
+      "identityHint": "Fügen Sie die Arbeits- oder die Wiederherstellungsidentität ein, eine Zeile, z. B. AGE-SECRET-KEY-1… (die Zeile aus Ihrer Schlüsseldatei). Sie gilt nur für diese Anfrage und wird nie gespeichert.",
+      "identityFirst": "Fügen Sie zuerst die Identität ein",
+      "restoreLead": "Zuerst prüfen: Das Archiv wird mit Ihrem Schlüssel geöffnet und mit dem heutigen Stand der Organisation verglichen. Nichts wird geschrieben, bis ein zweiter Administrator zustimmt.",
+      "check": "Diese Version prüfen",
+      "request": "Einen zweiten Administrator um Zustimmung bitten",
+      "requested": "Angefragt. Ein anderer Administrator stimmt unten mit dem Schlüssel zu, erst dann werden Einträge geschrieben.",
+      "planSame": "Nichts wiederherzustellen: Jeder Eintrag ist wie in dieser Version.",
+      "planSummary": "{writes} Einträge zu schreiben, {refused} abgelehnt",
+      "planCaption": "Einträge je Tabelle, die die Wiederherstellung schreiben würde",
+      "table": "Tabelle",
+      "create": "Neu",
+      "update": "Ändern",
+      "unchanged": "Unverändert",
+      "refused": "Abgelehnt",
+      "notInArchive": "Module, die dieses Archiv nicht enthält ({count})",
+      "notRestored": "Tabellen, die eine Wiederherstellung nie schreibt ({count})",
+      "requestsTitle": "Wiederherstellungen",
+      "requestsLead": "Eine Wiederherstellung wartet hier auf einen zweiten Administrator. Sie schreibt die Einträge ihrer Version zurück, behält alles seither Hinzugefügte und wendet die Löschungen erneut an.",
+      "requestsEmpty": "Keine Wiederherstellung angefragt",
+      "requestsEmptyHint": "Wählen Sie oben eine Version und drücken Sie Diese Version wiederherstellen, um sie zuerst zu prüfen.",
+      "requestLine": "Angefragt {at} von {by}: {rows} Einträge zu schreiben",
+      "decidedLine": "Entschieden von {by}, {at}.",
+      "waitsForOther": "Wartet auf die Zustimmung eines anderen Administrators dieser Organisation.",
+      "approve": "Zustimmen und wiederherstellen",
+      "decline": "Ablehnen",
+      "withdraw": "Meine Anfrage zurückziehen",
+      "state": {
+        "pending": "Wartet auf Zustimmung",
+        "applied": "Wiederhergestellt",
+        "declined": "Abgelehnt",
+        "failed": "Nicht wiederhergestellt: der Grund steht darunter"
+      }
     }
   }
 }

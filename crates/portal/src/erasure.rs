@@ -587,6 +587,22 @@ pub async fn list(pool: &PgPool, project: &str, space: &str) -> Result<Vec<Erasu
     .map(|rows| rows.into_iter().map(from_row).collect())
 }
 
+/// The approved erasures of `projects`, oldest first, for a data restore to apply again (T-7171).
+pub async fn approved_in(
+    conn: &mut sqlx::PgConnection,
+    projects: &[String],
+) -> Result<Vec<Erasure>, sqlx::Error> {
+    sqlx::query_as::<_, Row>(concat!(
+        "SELECT ",
+        columns!(),
+        " FROM erasures WHERE project = ANY($1) AND approval = 'approved' ORDER BY requested_at"
+    ))
+    .bind(projects)
+    .fetch_all(conn)
+    .await
+    .map(|rows| rows.into_iter().map(from_row).collect())
+}
+
 /// Approves a proposal as `approver` with the Entities found now, in one statement, so two
 /// approvals never both run it: `None` when it is no longer an approvable proposal of someone
 /// else (decided, expired, or the approver's own).
@@ -685,7 +701,12 @@ pub async fn attempt(state: &AppState, pool: &PgPool, erasure: &Erasure, words: 
         }
         let outcome = match name.as_str() {
             "broker" => broker(state, erasure).await,
-            "portal" => portal(pool, erasure).await.map(|n| (n, None)),
+            "portal" => match pool.acquire().await {
+                Ok(mut conn) => erase_portal_copies(&mut conn, erasure)
+                    .await
+                    .map(|n| (n, None)),
+                Err(err) => Err(format!("the Portal's copies were not reached: {err}")),
+            },
             "conversations" => conversations(state, erasure, words)
                 .await
                 .map(|n| (n, None)),
@@ -724,7 +745,12 @@ async fn broker(state: &AppState, erasure: &Erasure) -> Result<(u64, Option<u64>
 }
 
 /// The Portal's own copies of the Entities: the trash and the comments.
-async fn portal(pool: &PgPool, erasure: &Erasure) -> Result<u64, String> {
+/// The Portal's copies of the erasure's Entities (the trash, the comments), removed; also run
+/// again after a data restore (T-7171), so a restored row of an erased person goes again.
+pub async fn erase_portal_copies(
+    conn: &mut sqlx::PgConnection,
+    erasure: &Erasure,
+) -> Result<u64, String> {
     let urns = erasure.urns();
     let mut gone = 0;
     for sql in [
@@ -735,7 +761,7 @@ async fn portal(pool: &PgPool, erasure: &Erasure) -> Result<u64, String> {
             .bind(&erasure.project)
             .bind(&erasure.space)
             .bind(&urns)
-            .execute(pool)
+            .execute(&mut *conn)
             .await
             .map_err(|err| format!("the Portal's copies were not reached: {err}"))?
             .rows_affected();
