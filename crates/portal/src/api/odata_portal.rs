@@ -1425,6 +1425,14 @@ pub static DOORS: [Door; 165] = [
         Who::ProjectReader,
     ),
     door(
+        "portal_grafana_builder_saved_charts",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder/saved-charts",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
         "portal_grafana_builder_versions",
         Project,
         Method::GET,

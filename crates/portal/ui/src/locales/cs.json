@@ -7407,6 +7407,22 @@
       "previewEmpty": "Vyberte Endpoint, typ a atribut a uvidíte řádky, které vizualizace zobrazí.",
       "noEndpointsTitle": "Není z čeho kreslit",
       "noEndpoints": "V tomto projektu zatím nesmíte číst žádný Endpoint. Požádejte vlastníka projektu o přístup nebo nejprve vytvořte Endpoint."
+    },
+    "move": {
+      "title": "Přesunout do nástěnky",
+      "lead": "Vloží každý zde uložený graf jako panel do jedné nástěnky, Saved charts, navržené jako změna. Po schválení to spusťte znovu a grafy, které obsahuje, se zde odeberou. Graf, který neobsahuje, zůstane zde.",
+      "check": "Zkontrolovat přesun",
+      "willPropose": "{before, plural, one {# uložený graf} few {# uložené grafy} other {# uložených grafů}}: nástěnka Saved charts dostane {panels, plural, one {# panel} few {# panely} other {# panelů}}. Do schválení se nic neodebere.",
+      "willRemove": "Schválená nástěnka Saved charts obsahuje {count, plural, one {# z těchto grafů} few {# z těchto grafů} other {# z těchto grafů}}; jejich odebráním zde se nic neztratí.",
+      "stay": "{count, plural, one {# graf zůstává uložen zde} few {# grafy zůstávají uloženy zde} other {# grafů zůstává uloženo zde}}:",
+      "propose": "Navrhnout nástěnku Saved charts",
+      "remove": "Odebrat {count, plural, one {# přesunutý graf} few {# přesunuté grafy} other {# přesunutých grafů}}",
+      "proposedTitle": "Nástěnka Saved charts čeká na schválení",
+      "openChange": "Otevřít změnu",
+      "removed": "{count, plural, one {Odebrán # přesunutý graf} few {Odebrány # přesunuté grafy} other {Odebráno # přesunutých grafů}}",
+      "removedLead": "Jsou to nyní panely nástěnky Saved charts.",
+      "running": "Přesun běží; počkejte na odpověď.",
+      "refusedTitle": "Přesun neproběhl; nic se nezměnilo"
     }
   },
   "activity": {

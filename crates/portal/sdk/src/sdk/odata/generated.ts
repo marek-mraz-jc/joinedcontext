@@ -1271,6 +1271,7 @@ export interface Actions {
   portal_grafana_builder_create: { body?: unknown };
   portal_grafana_builder_preview: { body?: unknown };
   portal_grafana_builder_restore: { uid: string; sha: string };
+  portal_grafana_builder_saved_charts: { body?: unknown };
   portal_grafana_builder_update: { uid: string; body?: unknown };
   portal_grafana_remove: { id: string };
   portal_grafana_save: { body?: unknown };
@@ -1403,6 +1404,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_grafana_builder_create: ["Project"],
   portal_grafana_builder_preview: ["Project"],
   portal_grafana_builder_restore: ["Project"],
+  portal_grafana_builder_saved_charts: ["Project"],
   portal_grafana_builder_update: ["Project"],
   portal_grafana_remove: ["Project"],
   portal_grafana_save: ["Project"],

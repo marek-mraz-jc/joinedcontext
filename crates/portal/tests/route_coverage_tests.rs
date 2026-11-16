@@ -348,6 +348,7 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("GET", "/projects/{project}/grafana/builder/{uid}", "a builder dashboard's file read back into choices for its next edit (dashboard builder)"),
 ("PUT", "/projects/{project}/grafana/builder/{uid}", "a person proposes an edit of a builder dashboard (dashboard builder)"),
 ("DELETE", "/projects/{project}/grafana/builder/{uid}", "a person proposes removing a builder dashboard (dashboard builder)"),
+("POST", "/projects/{project}/grafana/builder/saved-charts", "a person moves the project's saved single charts into one Saved charts dashboard: dry run, propose, then remove what the merged file draws (T-7161)"),
 ("GET", "/projects/{project}/grafana/builder/{uid}/versions", "a builder dashboard's versions, each approved Change of its file (dashboard history)"),
 ("GET", "/projects/{project}/grafana/builder/{uid}/versions/{sha}", "one version of a builder dashboard read back into choices, to compare (dashboard history)"),
 ("POST", "/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore", "a person proposes an earlier version as the newest; a Change like every edit (dashboard history)"),
