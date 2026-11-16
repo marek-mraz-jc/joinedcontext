@@ -34,8 +34,9 @@ pub enum Bound {
 pub enum Who {
     /// Any person.
     Person,
-    /// Any person, on any Organization they reach: their own notifications and preferences,
-    /// and alerts, which belong to no Organization.
+    /// Any person, on any Organization they reach: what belongs to no Organization, their own
+    /// notifications, preferences and alerts, and the installation's App and chart templates
+    /// (T-7130).
     Own,
     /// A holder of `Person` with this verb at the Organization (a people administrator).
     People(jc_core::kinds::Verb),
@@ -111,7 +112,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 149] = [
+pub static DOORS: [Door; 151] = [
     door(
         "portal_people_remove",
         Org,
@@ -244,7 +245,7 @@ pub static DOORS: [Door; 149] = [
             ("color", Place::Query("Edm.String")),
             ("facet", Place::Query("Edm.String")),
         ],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_opendata_pages",
@@ -312,6 +313,24 @@ pub static DOORS: [Door; 149] = [
         Method::GET,
         "/projects/org/changes/{id}/manifests",
         &[CHANGE],
+        Who::Person,
+    ),
+    // The `org` namespace's own Changes decided where a page names them (T-7122): the project's
+    // are the `changes` set's `approve` and `reject` actions. The handler checks the right.
+    door(
+        "portal_organization_change_approve",
+        Org,
+        Method::POST,
+        "/projects/org/changes/{id}/approve",
+        &[CHANGE, BODY],
+        Who::Person,
+    ),
+    door(
+        "portal_organization_change_reject",
+        Org,
+        Method::POST,
+        "/projects/org/changes/{id}/reject",
+        &[CHANGE, BODY],
         Who::Person,
     ),
     door(
@@ -867,7 +886,7 @@ pub static DOORS: [Door; 149] = [
         Method::GET,
         "/app-templates",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_access_request_incoming",

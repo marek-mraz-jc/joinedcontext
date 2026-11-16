@@ -85,10 +85,14 @@ export interface Bundle {
 }
 
 export interface Change {
+  apiVersion?: unknown | null;
   author?: unknown | null;
+  ci?: unknown | null;
   createdAt?: unknown | null;
   decision?: unknown | null;
+  fileCount?: unknown | null;
   files?: unknown | null;
+  kind?: unknown | null;
   lane?: string | null;
   mergeRequest?: string | null;
   metadata?: unknown | null;
@@ -102,6 +106,7 @@ export interface Change {
   title?: string | null;
   url?: string | null;
   waitsOn?: unknown | null;
+  workspace?: unknown | null;
   "@odata.etag"?: string;
 }
 
@@ -1237,6 +1242,8 @@ export interface Actions {
   portal_opendata_page_preview: { body?: unknown };
   portal_opendata_page_revert: { page: string; lang: string };
   portal_opendata_page_set: { page: string; lang: string; body?: unknown };
+  portal_organization_change_approve: { id: string; body?: unknown };
+  portal_organization_change_reject: { id: string; body?: unknown };
   portal_people_name_by_id: { dryRun?: boolean };
   portal_people_remove: { body?: unknown };
   portal_person_consent_revoke: { person: string; client: string };
@@ -1360,6 +1367,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_opendata_page_preview: ["Organization"],
   portal_opendata_page_revert: ["Organization"],
   portal_opendata_page_set: ["Organization"],
+  portal_organization_change_approve: ["Organization"],
+  portal_organization_change_reject: ["Organization"],
   portal_people_name_by_id: ["Organization"],
   portal_people_remove: ["Organization"],
   portal_person_consent_revoke: ["Organization"],

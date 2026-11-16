@@ -576,6 +576,71 @@ export async function readWorkspace(project: string, name: string): Promise<Work
   )) as WorkspaceView;
 }
 
+type ChangeProposal = components["schemas"]["ChangeProposal"];
+
+/** Every member of the REST door's `GET …/changes/{id}`: each the detail of the Change's row. */
+const CHANGE_MEMBERS = [
+  "apiVersion",
+  "kind",
+  "metadata",
+  "status",
+  "summary",
+  "author",
+  "createdAt",
+  "ci",
+  "fileCount",
+  "files",
+  "planFields",
+  "waitsOn",
+  "workspace",
+  "decision",
+] as const;
+
+/**
+ * Change `id` of `project`, open or decided, as the REST door's `GET …/changes/{id}` answers it:
+ * the `changes` row by its key with `$select` of its detail (T-7122); the `org` namespace's own
+ * Changes, which the set leaves out, through their Portal door.
+ */
+export async function readChange(project: string, id: string): Promise<ChangeProposal> {
+  if (project === ORG_NAMESPACE)
+    return (await door("portal_organization_change_get", { id })) as ChangeProposal;
+  return (await refusedAs(
+    client.get("changes", { project, name: id }, CHANGE_MEMBERS),
+  )) as unknown as ChangeProposal;
+}
+
+/**
+ * Approves Change `id` of `project`, with `confirm` the name typed back for a red-lane removal
+ * (CC-39): the Change's `approve` action, or the `org` namespace's Portal door. `If-Match: *`
+ * decides it as the REST door did; the handler refuses a Change no longer waiting.
+ */
+export async function approveChange(
+  project: string,
+  id: string,
+  confirm?: string,
+): Promise<RestAnswer<"approve_change">> {
+  const params = confirm === undefined ? {} : { confirm };
+  return (await (project === ORG_NAMESPACE
+    ? doorAction("portal_organization_change_approve", { id, body: params })
+    : act("approve", changeBound(project, id), params, "*"))) as RestAnswer<"approve_change">;
+}
+
+/** Rejects Change `id` of `project` with `reason`, which its proposer reads: as {@link approveChange}. */
+export async function rejectChange(
+  project: string,
+  id: string,
+  reason: string,
+): Promise<RestAnswer<"reject_change">> {
+  return (await (project === ORG_NAMESPACE
+    ? doorAction("portal_organization_change_reject", { id, body: { reason } })
+    : act("reject", changeBound(project, id), { reason }, "*"))) as RestAnswer<"reject_change">;
+}
+
+/** The address of Change `id` of `project`, the entity `approve` and `reject` are bound to. */
+function changeBound(project: string, id: string): string {
+  return `changes(project=${quoted(project)},name=${quoted(id)})`;
+}
+
 /** The address of manifest `name` of `plural` in `project`, the entity its write actions are bound to. */
 export function manifestBound(project: string, plural: ManifestSet, name: string): string {
   if (project !== ORG_NAMESPACE && !inProject(plural)) throw notFound(name);

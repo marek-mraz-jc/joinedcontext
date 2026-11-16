@@ -791,11 +791,19 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
     .await;
     assert_eq!(odata.status, rest.status, "{} / {}", odata.text, rest.text);
     // A person of another Organization (ba) reads their own notifications and preferences on
-    // the Organization they reach, as the shell asks on every page (T-6812, viewer smoke 404).
+    // the Organization they reach, as the shell asks on every page (T-6812, viewer smoke 404),
+    // and the installation's App and chart templates every signed-in person reads (T-7130,
+    // viewer smoke 404 on the Apps page).
     let metadata = get(&state, Mode::Shared, "ba-only", "/api/v1/$metadata").await;
-    for (name, rest_uri) in [
-        ("portal_notification_list", "/api/v1/notifications"),
-        ("portal_preferences_get", "/api/v1/preferences"),
+    for (name, call, rest_uri) in [
+        ("portal_notification_list", "()", "/api/v1/notifications"),
+        ("portal_preferences_get", "()", "/api/v1/preferences"),
+        ("portal_app_templates", "()", "/api/v1/app-templates"),
+        (
+            "portal_visualization_template",
+            "(template='bar',x='day',y='pm10')",
+            "/api/v1/visualization-templates/bar?x=day&y=pm10",
+        ),
     ] {
         assert!(
             metadata
@@ -809,7 +817,7 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
             &state,
             Mode::Shared,
             "ba-only",
-            &format!("/api/v1/Organization/JoinedContext.Portal.{name}()"),
+            &format!("/api/v1/Organization/JoinedContext.Portal.{name}{call}"),
         )
         .await;
         assert_ne!(
@@ -1624,22 +1632,23 @@ async fn a_manifests_spec_status_and_metadata_answer_as_the_rest_door() {
     assert_eq!(foreign.status, unknown.status);
 }
 
-/// T-7097: a Change's detail answers when `$select` names it, member for member what the REST
-/// door's `GET …/changes/{id}` answers; the list stays thin without it.
-#[tokio::test]
-async fn a_changes_detail_answers_as_the_rest_door() {
+/// The forge of one Change, Pull Request 1 proposing ContextSpace `mobility` of helsinki: open,
+/// or merged and so no longer in the open list.
+async fn one_change(merged: bool) -> (MockServer, AppState) {
     let shako = MockServer::start().await;
     let repo = common::REPO;
     let branch = "portal/create-contextspace-mobility-11111111";
     let pull = json!({
-        "Number": 1, "HtmlUrl": "https://shako.example/pulls/1", "State": "open",
+        "Number": 1, "HtmlUrl": "https://shako.example/pulls/1",
+        "State": if merged { "closed" } else { "open" },
         "Title": "create ContextSpace mobility", "Head": branch, "Base": "main",
         "CreatedAt": "2026-09-06T09:14:22Z", "Author": "jana", "AuthorName": "Jana",
-        "AuthorEmail": "jana@hel.fi", "Mergeable": true, "Merged": false
+        "AuthorEmail": "jana@hel.fi", "Mergeable": true, "Merged": merged
     });
+    let open = if merged { json!([]) } else { json!([pull]) };
     Mock::given(method("GET"))
         .and(path(format!("{repo}/PullRequests")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [pull] })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": open })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
@@ -1675,6 +1684,55 @@ async fn a_changes_detail_answers_as_the_rest_door() {
     )
     .expect("client");
     let state = state().with_shako(Arc::new(client));
+    (shako, state)
+}
+
+/// Every member the REST door's `GET …/changes/{id}` answers for `id`, and the Change row read by
+/// its key with `$select` of each: member for member alike (T-7097, T-7122).
+async fn change_alike(state: &AppState, id: &str) -> Value {
+    let mode = Mode::Host("hel");
+    let rest = get(
+        state,
+        mode,
+        "hel-only",
+        &format!("/api/v1/projects/helsinki/changes/{id}"),
+    )
+    .await;
+    assert_eq!(rest.status, StatusCode::OK, "{}", rest.text);
+    let rest = rest.json();
+    let members: Vec<&str> = rest
+        .as_object()
+        .expect("a Change")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert!(
+        members.contains(&"summary") && members.contains(&"files"),
+        "{rest}"
+    );
+    let detail = get(
+        state,
+        mode,
+        "hel-only",
+        &format!(
+            "/api/v1/changes(project='helsinki',name='{id}')?$select=name,{}",
+            members.join(",")
+        ),
+    )
+    .await;
+    assert_eq!(detail.status, StatusCode::OK, "{}", detail.text);
+    let odata = detail.json();
+    for member in members {
+        assert_eq!(odata[member], rest[member], "{member}");
+    }
+    odata
+}
+
+/// T-7097: a Change's detail answers when `$select` names it, member for member what the REST
+/// door's `GET …/changes/{id}` answers; the list stays thin without it.
+#[tokio::test]
+async fn a_changes_detail_answers_as_the_rest_door() {
+    let (_shako, state) = one_change(false).await;
     let mode = Mode::Host("hel");
     let rest = get(
         &state,
@@ -1701,48 +1759,7 @@ async fn a_changes_detail_answers_as_the_rest_door() {
         "{}",
         thin.text
     );
-    let members = [
-        "metadata",
-        "status",
-        "summary",
-        "author",
-        "createdAt",
-        "planFields",
-        "files",
-        "waitsOn",
-        "decision",
-    ];
-    let detail = get(
-        &state,
-        mode,
-        "hel-only",
-        &format!(
-            "/api/v1/changes(project='helsinki',name='{id}')?$select=name,{}",
-            members.join(",")
-        ),
-    )
-    .await;
-    assert_eq!(detail.status, StatusCode::OK, "{}", detail.text);
-    let rest = get(
-        &state,
-        mode,
-        "hel-only",
-        &format!("/api/v1/projects/helsinki/changes/{id}"),
-    )
-    .await;
-    assert_eq!(rest.status, StatusCode::OK, "{}", rest.text);
-    let (odata, rest) = (detail.json(), rest.json());
-    assert!(
-        rest["summary"].is_object() && rest["files"].is_array(),
-        "{rest}"
-    );
-    for member in members {
-        assert_eq!(
-            odata[member],
-            rest.get(member).cloned().unwrap_or(Value::Null),
-            "{member}"
-        );
-    }
+    change_alike(&state, &id).await;
     // Who reads no project of helsinki reads none of it.
     let foreign = get(
         &state,
@@ -1752,6 +1769,37 @@ async fn a_changes_detail_answers_as_the_rest_door() {
     )
     .await;
     assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+}
+
+/// T-7122: a page follows its Change through the decision (the Apps pages' publication, an
+/// Endpoint's new Change): a merged Change, which the open list no longer holds, still answers
+/// by its key as the REST door answers it.
+#[tokio::test]
+async fn a_decided_change_answers_by_its_key() {
+    let (_shako, state) = one_change(false).await;
+    let open = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-only",
+        "/api/v1/projects/helsinki/changes",
+    )
+    .await;
+    let id = open.json()["items"][0]["metadata"]["name"]
+        .as_str()
+        .expect("one change")
+        .to_owned();
+    let (_shako, state) = one_change(true).await;
+    let listed = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-only",
+        "/api/v1/projects('helsinki')/changes",
+    )
+    .await;
+    assert_eq!(listed.json()["value"], json!([]), "{}", listed.text);
+    let merged = change_alike(&state, &id).await;
+    assert_eq!(merged["status"]["phase"], "Merged", "{merged}");
+    assert_eq!(merged["name"], id, "{merged}");
 }
 
 /// T-7097: a refusal naming fields keeps them over OData, as the REST door's `errors[]`: each a

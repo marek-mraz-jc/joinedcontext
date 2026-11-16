@@ -1,4 +1,4 @@
-import { readManifest } from "../api/odata";
+import { readChange, readManifest } from "../api/odata";
 import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -7,7 +7,7 @@ import { useDecision } from "../api/decision";
 import { Link } from "@tanstack/react-router";
 import { approvalStanding, changedKind, expectedNameOf, isOwn, rejectWords } from "../api/approval";
 import { usePermissions } from "../api/permissions";
-import { api, queryKeys, unwrap } from "../api/client";
+import { queryKeys } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { ConfirmName } from "../components/ChangeNotice";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
@@ -102,12 +102,7 @@ export function ApprovalDetailPage({
 
   const detailQuery = useQuery({
     queryKey: queryKeys.change(project, id),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/{id}", {
-          params: { path: { project, id } },
-        }),
-      ),
+    queryFn: () => readChange(project, id),
     // Deploying is the one phase the reconciler moves on without the user acting.
     refetchInterval: (query) =>
       query.state.data?.status.phase === "Deploying" ? 5_000 : false,

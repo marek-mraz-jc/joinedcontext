@@ -1,4 +1,4 @@
-import { listManifests } from "../../api/odata";
+import { listManifests, readChange } from "../../api/odata";
 import { useEffect, useId, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -129,8 +129,7 @@ export function NewEndpointPanel({
     queryKey: queryKeys.change(project, changeId),
     enabled: waiting,
     refetchInterval: (query) => (query.state.data?.status.phase === "Rejected" ? false : LIVE_POLL_MS),
-    queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/changes/{id}", { params: { path: { project, id: changeId } } })),
+    queryFn: () => readChange(project, changeId),
   });
   const phase = followed.data?.status.phase ?? change?.status.phase;
   const holds = (answer: { items?: Parameters<typeof asManifests>[0] } | undefined) =>

@@ -3,7 +3,7 @@ import { configure } from "@testing-library/react";
 import { File as NodeFile } from "node:buffer";
 import { beforeEach, vi } from "vitest";
 import { EXACT_PROJECTS } from "./exactProjects";
-import { answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "./odata";
+import { actsOnEntity, answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "./odata";
 import { settlePrefill } from "../src/assistant/state";
 
 // A hand-off the assistant leaves lives until the person leaves the page it was left on
@@ -118,8 +118,9 @@ function listingThePage(stubbed: typeof fetch): typeof fetch {
       // A manifest read of the OData service reaches the file's REST stub as the REST read whose
       // handler answers it (tests/odata.ts manifestAsRest, T-7103).
       const [input] = args;
-      // A propose_* action reaches it as the REST write the service runs for it (proposalAsRest).
-      if (input instanceof Request && input.method === "POST" && input.url.includes("JoinedContext.Portal.propose_")) {
+      // A propose_* action, or a Change's approve or reject, reaches it as the REST write the service
+      // runs for it (proposalAsRest).
+      if (input instanceof Request && input.method === "POST" && actsOnEntity(input.url)) {
         // The service answers the door's success as it is and its refusal as an OData error.
         return proposalAsRest(input).then(async (rest) => {
           const answer = (await Reflect.apply(target, self, rest ? [rest] : args)) as Response;
