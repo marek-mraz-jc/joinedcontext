@@ -11,6 +11,8 @@ import { readsOf } from "../mqttbrokers/connections";
 interface Probe {
   records?: number;
   bytes?: number;
+  /** The pages a paged source's read walked; absent for an unpaged one. */
+  pages?: number;
   sample?: unknown;
   skipped?: string;
 }
@@ -59,11 +61,16 @@ export function ConnectionTest({ project, name }: { project: string; name: strin
         </Button>
       </div>
       <div role="status" aria-live="polite">
-        {failure ? <p className="text-body text-danger-fg">{failure}</p> : null}
+        {failure ? <p className="text-body text-danger">{failure}</p> : null}
         {probe?.skipped ? (
-          <p className="text-body text-danger-fg">{t("datasources.test.failed", { reason: probe.skipped })}</p>
+          <p className="text-body text-danger">{t("datasources.test.failed", { reason: probe.skipped })}</p>
         ) : probe ? (
           <>
+            {probe.pages !== undefined ? (
+              <p className="text-body font-medium" data-testid="datasource-test-pages">
+                {t("datasources.test.pages", { pages: probe.pages })}
+              </p>
+            ) : null}
             <p className="text-body">{t("datasources.test.read", { records: probe.records ?? 0, bytes: probe.bytes ?? 0 })}</p>
             {probe.sample !== undefined ? (
               <RecordView value={probe.sample} label={t("codeBlock.sample")} className="mt-2 max-h-60 rounded-md bg-surface-subtle p-2" />

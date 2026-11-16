@@ -2531,7 +2531,8 @@
       "button": "Verbindung testen",
       "running": "Wird getestet…",
       "read": "Verbunden: {records, plural, one {# Datensatz} other {# Datensätze}} gelesen ({bytes} Bytes). Der erste:",
-      "failed": "Nichts gelesen: {reason}. Prüfen Sie Adresse und Zugangsdaten und testen Sie erneut."
+      "failed": "Nichts gelesen: {reason}. Prüfen Sie Adresse und Zugangsdaten und testen Sie erneut.",
+      "pages": "{pages, plural, one {# Seite} other {# Seiten}} gelesen."
     },
     "usedBy": {
       "title": "Verwendet von",
@@ -2541,6 +2542,79 @@
       "title": "Fertige Einrichtungen",
       "lead": "Eine Einrichtung schreibt die Quelle, ihre Pipeline und ihren Zeitplan in einer Änderung aus wenigen Antworten. Beispiel: ein GBFS-Feed für Leihräder, jede Minute abgefragt.",
       "back": "Zurück zu den Datenquellen"
+    },
+    "preset": {
+      "title": "Open-Data-API-Vorlage",
+      "hint": "Für einen CKAN-, ArcGIS-, OData-, WFS-, OGC-API-Features- oder SensorThings-Dienst: Die Plattform blättert selbst und findet die Datensätze. Lassen Sie Blättern und Datensätze liegen in leer, wenn Sie eine wählen.",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (Datensätze oder Datastore-Zeilen)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Datensätze pro Seite",
+      "organization": "Organisation",
+      "resourceId": "Ressourcen-ID",
+      "objectIdField": "Objekt-ID-Feld",
+      "outFields": "Gelesene Felder",
+      "typeNames": "Objektart",
+      "srsName": "Koordinatensystem",
+      "expand": "Verknüpfte Entitäten"
+    },
+    "paging": {
+      "title": "Blättern",
+      "hint": "Für eine blätternde API ohne Vorlage: wie die nächste Seite angefragt wird. Der Verbindungstest liest jede Seite und sagt, wie viele.",
+      "mode": "Nächste Seite per",
+      "modes": {
+        "page": "Seitennummer",
+        "offset": "Offset und Limit",
+        "cursor": "Cursor in der Antwort",
+        "link": "Link-Header (rel=next)",
+        "nextUrl": "Nächste URL in der Antwort"
+      },
+      "param": "Seitenparameter",
+      "start": "Erste Seite oder Offset",
+      "sizeParam": "Seitengrößenparameter",
+      "size": "Seitengröße",
+      "offsetParam": "Offset-Parameter",
+      "limitParam": "Limit-Parameter",
+      "limit": "Limit",
+      "cursor": "Cursor-Pfad",
+      "cursorParam": "Cursor-Parameter",
+      "cursorHeader": "Cursor-Header",
+      "next": "Pfad der nächsten URL",
+      "total": "Pfad der Gesamtzahl",
+      "more": "Pfad für weitere Seiten",
+      "maxPages": "Höchstens Seiten",
+      "maxRecords": "Höchstens Datensätze",
+      "delay": "Pause zwischen Seiten"
+    },
+    "discover": {
+      "title": "Im Dienst suchen",
+      "hint": "Liest die eigene Liste des Dienstes einmal auf dem Runner des Projekts, nur öffentliche Dienste, und bietet an, was diese Vorlage lesen kann.",
+      "needs": "Wählen Sie unter Open-Data-API-Vorlage eine API und geben Sie die URL des Dienstes ein, um zu sehen, was er anbietet.",
+      "button": "Suchen",
+      "running": "Dienst wird gelesen…",
+      "pick": "{count, plural, one {# Eintrag} other {# Einträge}} gefunden",
+      "pickHint": "Wählen Sie einen; Übernehmen schreibt ihn ins Formular, wo Sie ihn noch ändern können.",
+      "use": "Übernehmen",
+      "useNeeds": "Wählen Sie zuerst einen Eintrag aus der Liste.",
+      "truncated": "Der Dienst listet mehr, als das Portal liest; fehlt Ihrer, geben Sie eine engere URL ein.",
+      "none": "Der Dienst listet nichts, was diese Vorlage lesen kann. Prüfen Sie URL und API-Art.",
+      "failed": "Nichts gelistet: {reason}. Prüfen Sie URL und API-Art und versuchen Sie es erneut.",
+      "used": "Ins Formular geschrieben: {value}.",
+      "fields": {
+        "organization": "Organisation",
+        "layer": "Ebene",
+        "entitySet": "Entitätsmenge",
+        "typeNames": "Objektart",
+        "collection": "Sammlung",
+        "thing": "Thing"
+      },
+      "refused": "Bitten Sie eine Projektverwaltung um eine Rolle, die Datenquellen vorschlägt."
     }
   },
   "pipelines": {
@@ -2855,7 +2929,17 @@
       "lastSamples": "Letzte Nachrichten durch diesen Schritt",
       "lastSamplesNone": "Durch diesen Schritt ist noch nichts gelaufen.",
       "lastSamplesUnavailable": "Die letzten Nachrichten sind nicht verfügbar.",
-      "lastSamplesWithheld": "Zurückgehalten: Der Ziel-Endpunkt verbirgt Attribute, und vor der Zuordnung tragen sie noch die Namen der Quelle. Wählen Sie die Ausgabe, um zu sehen, was geschrieben wurde."
+      "lastSamplesWithheld": "Zurückgehalten: Der Ziel-Endpunkt verbirgt Attribute, und vor der Zuordnung tragen sie noch die Namen der Quelle. Wählen Sie die Ausgabe, um zu sehen, was geschrieben wurde.",
+      "tier": {
+        "forms": "Mit einem Formular einrichten",
+        "advanced": "Erweitert: ändern den Nachrichtenfluss",
+        "bloblang": "In Bloblang geschrieben"
+      },
+      "tierHint": {
+        "forms": "Ohne Code: jeder öffnet ein Formular mit Hinweis je Feld, zum Beispiel verwirft dedupe einen Datensatz der letzten Stunde.",
+        "advanced": "Auch diese haben Formulare, aber sie verzweigen, wiederholen oder versuchen ihre Schritte erneut: eine falsche Einstellung kann Datensätze verwerfen oder doppeln. Führen Sie nach jeder Änderung den Pipeline-Test aus.",
+        "bloblang": "Ein Textfeld mit Hinweisen: für Abbildungen, die der Mapper nicht abdeckt, zum Beispiel root.name = this.name.uppercase()."
+      }
     },
     "emptyHint": "Fügen Sie mit der Schaltfläche eine Datenquelle und eine Pipeline hinzu, oder lassen Sie den Assistenten eine aus dem bauen, was Sie schon haben.",
     "expiryRemoves": "Entitäten, die {window} lang nicht aktualisiert wurden, werden entfernt",
@@ -3089,13 +3173,34 @@
         "title": "Lebensdauer",
         "hint": "Wann die Entitäten oder einige ihrer Felder den Raum verlassen. Gespeichert als Lebensdauer der Pipeline, nie als Mapping-Code.",
         "pickType": "Wählen Sie zuerst das Ziel und den Typ, den das Mapping schreibt: Die Lebensdauer gilt je Typ."
+      },
+      "schedule": {
+        "title": "Wann sie läuft",
+        "hint": "Wählen Sie in Worten, wie oft; die nächsten fünf Starts erscheinen in Ihrer Zeit.",
+        "field": "Zeitplan",
+        "resident": "Diese Pipeline läuft ständig und schreibt jeden Datensatz bei Ankunft; setzen Sie unter Basisdaten die Klasse scheduled für einen Zeitplan.",
+        "byPeriod": "Die Pipeline liest ihre Quelle alle {period}, wie ihre Periode sagt. Fügen Sie einen Zeitplan hinzu, um sie zu festen Zeiten laufen zu lassen.",
+        "add": "Nach Zeitplan ausführen",
+        "remove": "Zeitplan entfernen",
+        "floor": "Dieses Projekt erlaubt einer Pipeline höchstens {floor} zu laufen.",
+        "belowFloor": "Dieser Zeitplan läuft {gap}, öfter, als das Projekt erlaubt ({floor}). Wählen Sie einen langsameren Zeitplan oder bitten Sie einen Admin, das Minimum des Projekts zu senken.",
+        "afterApply": "Der erste Lauf startet zur ersten oben genannten Zeit, sobald die Änderung genehmigt und angewendet ist.",
+        "hints": {
+          "field": "Wie oft die Pipeline ihre Quelle liest, zum Beispiel täglich um 03:00. Zeiten sind UTC, wie der Runner sie liest.",
+          "none": "Kein Zeitplan: die Pipeline läuft, wenn die Quelle Datensätze sendet, zum Beispiel ein MQTT-Thema. Fügen Sie einen Zeitplan für eine zeitgesteuert gelesene Quelle hinzu, etwa eine CSV-Datei."
+        },
+        "clock": {
+          "hours": "{count, plural, one {einmal pro Stunde} other {alle # Stunden}}",
+          "minutes": "{count, plural, one {jede Minute} other {alle # Minuten}}",
+          "seconds": "{count, plural, one {jede Sekunde} other {alle # Sekunden}}"
+        }
       }
     },
     "mapper": {
       "mode": "Wie aus jedem Datensatz eine Entität wird",
       "modeMap": "Felder zuordnen",
       "modeCode": "Bloblang schreiben",
-      "modeMapHint": "Wählen Sie für jedes Attribut ein Feld des Datensatzes, einen Ausdruck, einen festen Wert oder einen Punkt.",
+      "modeMapHint": "Wählen Sie je Attribut ein Feld des Datensatzes, mit Schritten wie Leerzeichen entfernen oder Werte übersetzen, einen Verweis auf eine andere Entität, ein Feld je Sprache, eine Geometrie, verbundene Felder, einen Ausdruck oder einen festen Wert.",
       "modeCodeHint": "Schreiben Sie den Bloblang-Schritt selbst.",
       "type": "Entitätstyp",
       "typeHint": "Ein Typ aus dem Datenmodell des Zielraums; seine Attribute stehen unten.",
@@ -3133,12 +3238,104 @@
         "notBoolean": "{field} enthält „{value}“, weder true noch false; {name} erwartet true oder false. Wählen Sie ein anderes Feld oder ändern Sie die Stichprobe.",
         "notValue": "{field} enthält „{value}“; {name} erwartet einen der Werte {values}. Wählen Sie ein anderes Feld oder ändern Sie die Stichprobe.",
         "noId": "Wählen Sie das Feld, aus dem die Id jeder Entität entsteht.",
-        "notTime": "{field} enthält {value}, das ist keine Zeit: RFC-3339-Text wie 2026-10-20T14:30:00Z oder Unix-Sekunden verwenden."
+        "notTime": "{field} enthält {value}, das ist keine Zeit: RFC-3339-Text wie 2026-10-20T14:30:00Z oder Unix-Sekunden verwenden.",
+        "notShaped": "{field} enthält „{value}“, was das Datumsformat von {name} nicht lesen kann. Wählen Sie das Format der Quelle."
       },
       "expiry": {
         "migrated": "Die Endzeit, die dieser Schritt schrieb, ist jetzt die Lebensdauer der Pipeline im Schritt Lebensdauer. Sie wird mit Ihrem nächsten Vorschlag gespeichert.",
         "migrateField": "Dieser Schritt schreibt expiresAt aus dem Datensatzfeld {field}, und kein Datum-Zeit-Attribut wird aus diesem Feld gemappt. Mappen Sie es auf ein solches Attribut, wählen Sie ein Ende im Schritt Lebensdauer oder verwerfen Sie die eigenen Zeilen des Schritts.",
         "drop": "Eigenes expiresAt des Schritts verwerfen"
+      },
+      "geojson": "Geometrie aus einem GeoJSON-Feld…",
+      "wkt": "Geometrie aus einem WKT-Feld…",
+      "ref": "Verweis auf {target} über ein Schlüsselfeld…",
+      "languagesChoice": "Ein Feld je Sprache…",
+      "concatChoice": "Mehrere Felder verbunden…",
+      "refField": "Schlüsselfeld von {target}",
+      "languages": "Text je Sprache",
+      "language": "Sprache",
+      "languageField": "Feld für {tag}",
+      "languageRemove": "Sprache {tag} entfernen",
+      "languageAdd": "Sprache hinzufügen",
+      "remove": "Entfernen",
+      "wktField": "WKT-Feld",
+      "geojsonField": "GeoJSON-Feld",
+      "crs": "Koordinatensystem der Quelle",
+      "crsName": {
+        "EPSG_4326": "EPSG:4326 · WGS 84, Grad (GPS)",
+        "EPSG_4258": "EPSG:4258 · ETRS89, Grad",
+        "EPSG_3857": "EPSG:3857 · Web Mercator, Meter",
+        "EPSG_25829": "EPSG:25829 · ETRS89 / UTM 29N (Portugal, Galicien)",
+        "EPSG_25830": "EPSG:25830 · ETRS89 / UTM 30N (Zentralspanien)",
+        "EPSG_25831": "EPSG:25831 · ETRS89 / UTM 31N (Barcelona, Katalonien)",
+        "EPSG_25832": "EPSG:25832 · ETRS89 / UTM 32N (Westdeutschland)",
+        "EPSG_25833": "EPSG:25833 · ETRS89 / UTM 33N (Ostdeutschland)",
+        "EPSG_25834": "EPSG:25834 · ETRS89 / UTM 34N (Ostpolen, Ostslowakei)",
+        "EPSG_3879": "EPSG:3879 · ETRS89 / GK25 (Helsinki, Finnland)",
+        "EPSG_3067": "EPSG:3067 · ETRS89 / TM35FIN (Finnland)",
+        "EPSG_5514": "EPSG:5514 · S-JTSK / Krovak (Slowakei, Tschechien)",
+        "EPSG_2056": "EPSG:2056 · CH1903+ / LV95 (Schweiz)",
+        "EPSG_27700": "EPSG:27700 · British National Grid (Großbritannien)"
+      },
+      "concat": "Zu verbindende Felder",
+      "concatPart": "Feld {number}",
+      "concatRemove": "Feld {field} aus der Verbindung entfernen",
+      "concatAdd": "Feld hinzufügen",
+      "separator": "Zwischen den Feldern",
+      "separatorNone": "nichts",
+      "separatorSpace": "ein Leerzeichen",
+      "transforms": "Umwandlungen von {name}",
+      "transform": {
+        "trim": "Leerzeichen entfernen",
+        "lower": "Kleinbuchstaben",
+        "upper": "Großbuchstaben",
+        "decimalComma": "Zahl mit Dezimalkomma",
+        "date": "Datum in einem Format",
+        "lookup": "Werte in die des Modells übersetzen",
+        "default": "Wert, wenn leer"
+      },
+      "transformHint": {
+        "trim": "Entfernt Leerzeichen um den Text: „ Bo “ wird „Bo“.",
+        "lower": "Schreibt den Text klein: „Bo“ wird „bo“.",
+        "upper": "Schreibt den Text groß: „bo“ wird „BO“.",
+        "decimalComma": "Liest Text wie 1.234,5 als Zahl 1234.5: Punkte und Leerzeichen trennen Tausender, das Komma ist das Dezimalzeichen.",
+        "lookup": "Jeder Wert der Stichprobe, den das Modell nicht kennt, erhält einen Wert des Modells; andere bleiben, wie sie sind."
+      },
+      "transformRemove": "Schritt {what} entfernen",
+      "transformAdd": "Wert umwandeln",
+      "transformPick": "— Schritt hinzufügen —",
+      "dateFormat": "Datumsformat des Feldes",
+      "dateFormats": {
+        "0": "Tag.Monat.Jahr, 20.10.2025",
+        "1": "Tag/Monat/Jahr, 20/10/2025",
+        "2": "Monat/Tag/Jahr, 10/20/2025",
+        "3": "Jahr-Monat-Tag, 2025-10-20",
+        "4": "Tag.Monat.Jahr Stunde:Minute, 20.10.2025 14:30",
+        "5": "Tag/Monat/Jahr Stunde:Minute, 20/10/2025 14:30",
+        "6": "Jahr-Monat-Tag Stunde:Minute:Sekunde, 2025-10-20 14:30:00"
+      },
+      "defaultValue": "Wert bei leerem Feld",
+      "lookupEmpty": "Jeder Wert der Stichprobe ist bereits einer des Modells; lesen Sie eine andere Stichprobe, um weitere zu übersetzen.",
+      "lookupHint": "Wert der Quelle → Wert des Modells",
+      "lookupRow": "„{from}“ wird",
+      "lookupKeep": "— unverändert lassen —",
+      "observedAt": "Beobachtet um, für {name}",
+      "hint": {
+        "concat": "Die Felder werden in dieser Reihenfolge verbunden, leere übersprungen; zum Beispiel ergeben Straße und Hausnummer C/ Major 1.",
+        "concatPart": "Ein Feld der Stichprobe, zum Beispiel ADRECA.",
+        "crs": "Das System der Koordinaten der Quelle; der Runner schreibt WGS 84. Zum Beispiel nutzen Barcelonas offene Daten ETRS89 / UTM 31N.",
+        "dateFormat": "Wie die Quelle ein Datum schreibt; das Attribut erhält ISO 8601, zum Beispiel wird 20/10/2025 zu 2025-10-20.",
+        "defaultValue": "Wird geschrieben, wenn ein Datensatz das Feld leer lässt, zum Beispiel 0 oder unknown.",
+        "geojsonField": "Ein Feld mit einer GeoJSON-Geometrie als Text oder Objekt, zum Beispiel ein Point mit den Koordinaten [2.17, 41.38].",
+        "languageField": "Das Feld mit dem Text in {tag}, zum Beispiel NAME_{tag}.",
+        "language": "Ein Sprachkürzel, zum Beispiel en oder ca.",
+        "languages": "Wählen Sie ein Feld für jede Sprache der Quelle, zum Beispiel NOM_CA für ca und NOM_ES für es. Ein leeres Feld entfällt.",
+        "lookupRow": "Einer der Werte des Modells, zum Beispiel {example}.",
+        "observedAt": "Optional: ein Feld mit der Messzeit des Werts als RFC-3339-Text wie 2026-10-20T14:30:00Z oder Unix-Sekunden; es wird das observedAt des Attributs.",
+        "refField": "Das Feld mit der eigenen Id von {target} in diesem Raum, zum Beispiel ein Bezirkscode wie 01.",
+        "separator": "Was zwischen zwei verbundenen Feldern steht, zum Beispiel Komma und Leerzeichen.",
+        "transformAdd": "Optionale Schritte, der Reihe nach auf das Feld angewandt, zum Beispiel Leerzeichen entfernen und dann Werte übersetzen.",
+        "wktField": "Ein Feld mit Well-Known Text, zum Beispiel POINT (2.17 41.38)."
       }
     },
     "debug": {

@@ -2531,7 +2531,8 @@
       "button": "Otestovať pripojenie",
       "running": "Testuje sa…",
       "read": "Pripojené: {records, plural, one {načítaný # záznam} few {načítané # záznamy} other {načítaných # záznamov}} ({bytes} bajtov). Prvý z nich:",
-      "failed": "Nič sa nenačítalo: {reason}. Skontrolujte adresu a prihlasovacie údaje a otestujte znova."
+      "failed": "Nič sa nenačítalo: {reason}. Skontrolujte adresu a prihlasovacie údaje a otestujte znova.",
+      "pages": "Prečítané {pages, plural, one {# stránka} few {# stránky} other {# stránok}}."
     },
     "usedBy": {
       "title": "Používajú ho",
@@ -2541,6 +2542,79 @@
       "title": "Pripravené nastavenia",
       "lead": "Nastavenie zapíše zdroj, jeho pipeline aj plán v jednej zmene z niekoľkých odpovedí. Príklad: kanál GBFS mestských bicyklov načítaný každú minútu.",
       "back": "Späť na zdroje údajov"
+    },
+    "preset": {
+      "title": "Predvoľba otvoreného API",
+      "hint": "Pre službu CKAN, ArcGIS, OData, WFS, OGC API Features alebo SensorThings: platforma ju sama stránkuje a nájde záznamy. Pri voľbe predvoľby nechajte Stránkovanie a Záznamy sú v prázdne.",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (dátové sady alebo riadky datastore)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Záznamov na stránku",
+      "organization": "Organizácia",
+      "resourceId": "ID zdroja",
+      "objectIdField": "Pole ID objektu",
+      "outFields": "Čítané polia",
+      "typeNames": "Typ prvku",
+      "srsName": "Súradnicový systém",
+      "expand": "Súvisiace entity"
+    },
+    "paging": {
+      "title": "Stránkovanie",
+      "hint": "Pre stránkované API bez predvoľby: ako sa žiada o ďalšiu stránku. Test pripojenia prejde všetky stránky a povie, koľko ich prečítal.",
+      "mode": "Ďalšia stránka podľa",
+      "modes": {
+        "page": "Číslo stránky",
+        "offset": "Posun a limit",
+        "cursor": "Kurzor v odpovedi",
+        "link": "Hlavička Link (rel=next)",
+        "nextUrl": "Ďalšia URL v odpovedi"
+      },
+      "param": "Parameter stránky",
+      "start": "Prvá stránka alebo posun",
+      "sizeParam": "Parameter veľkosti stránky",
+      "size": "Veľkosť stránky",
+      "offsetParam": "Parameter posunu",
+      "limitParam": "Parameter limitu",
+      "limit": "Limit",
+      "cursor": "Cesta ku kurzoru",
+      "cursorParam": "Parameter kurzora",
+      "cursorHeader": "Hlavička kurzora",
+      "next": "Cesta k ďalšej URL",
+      "total": "Cesta k celkovému počtu",
+      "more": "Cesta k ďalším stránkam",
+      "maxPages": "Najviac stránok",
+      "maxRecords": "Najviac záznamov",
+      "delay": "Pauza medzi stránkami"
+    },
+    "discover": {
+      "title": "Nájsť v službe",
+      "hint": "Prečíta vlastný zoznam služby raz na runneri projektu, len verejné služby, a ponúkne, čo táto predvoľba vie čítať.",
+      "needs": "Zvoľte API v Predvoľbe otvoreného API a napíšte URL služby, aby ste videli, čo ponúka.",
+      "button": "Nájsť",
+      "running": "Čítam službu…",
+      "pick": "Nájdené {count, plural, one {# položka} few {# položky} other {# položiek}}",
+      "pickHint": "Vyberte jednu; Použiť ju zapíše do formulára, kde ju ešte môžete zmeniť.",
+      "use": "Použiť",
+      "useNeeds": "Najprv vyberte položku zo zoznamu.",
+      "truncated": "Služba vypisuje viac, než Portál číta; ak chýba vaša položka, zadajte užšiu URL.",
+      "none": "Služba nevypisuje nič, čo by táto predvoľba čítala. Skontrolujte URL a druh API.",
+      "failed": "Nič sa nevypísalo: {reason}. Skontrolujte URL a druh API a skúste to znova.",
+      "used": "Zapísané do formulára: {value}.",
+      "fields": {
+        "organization": "Organizácia",
+        "layer": "Vrstva",
+        "entitySet": "Sada entít",
+        "typeNames": "Typ prvku",
+        "collection": "Kolekcia",
+        "thing": "Thing"
+      },
+      "refused": "Požiadajte správcu projektu o rolu, ktorá navrhuje zdroje údajov."
     }
   },
   "pipelines": {
@@ -2855,7 +2929,17 @@
       "lastSamples": "Posledné správy týmto krokom",
       "lastSamplesNone": "Týmto krokom zatiaľ nič neprešlo.",
       "lastSamplesUnavailable": "Posledné správy nie sú k dispozícii.",
-      "lastSamplesWithheld": "Skryté: cieľový endpoint skrýva atribúty a pred mapovaním nesú ešte názvy zo zdroja. Vyberte výstup a uvidíte, čo sa zapísalo."
+      "lastSamplesWithheld": "Skryté: cieľový endpoint skrýva atribúty a pred mapovaním nesú ešte názvy zo zdroja. Vyberte výstup a uvidíte, čo sa zapísalo.",
+      "tier": {
+        "forms": "Nastavenie formulárom",
+        "advanced": "Pokročilé: menia tok správ",
+        "bloblang": "Písané v Bloblangu"
+      },
+      "tierHint": {
+        "forms": "Bez kódu: každý otvorí formulár s nápovedou pri každom poli, napríklad dedupe zahodí záznam videný za poslednú hodinu.",
+        "advanced": "Aj tieto majú formuláre, ale vetvia, opakujú alebo skúšajú znova kroky v sebe: zlé nastavenie môže záznamy zahodiť alebo zopakovať. Po každej zmene spustite test pipeline.",
+        "bloblang": "Textové pole s nápovedou: pre mapovania, ktoré mapovač nepokrýva, napríklad root.name = this.name.uppercase()."
+      }
     },
     "emptyHint": "Pridajte zdroj údajov a pipeline tlačidlom, alebo požiadajte asistenta, aby ju postavil z toho, čo už máte.",
     "expiryRemoves": "Entity, ktoré sa neaktualizovali {window}, sa odstraňujú",
@@ -3089,13 +3173,34 @@
         "title": "Životnosť",
         "hint": "Kedy entity alebo niektoré ich polia opustia priestor. Uloží sa ako životnosť pipeline, nikdy ako kód mapovania.",
         "pickType": "Najprv vyberte cieľ a typ, ktorý mapovanie zapisuje: životnosť sa nastavuje pre každý typ."
+      },
+      "schedule": {
+        "title": "Kedy beží",
+        "hint": "Vyberte slovami, ako často; ďalších päť spustení sa ukáže vo vašom čase.",
+        "field": "Rozvrh",
+        "resident": "Táto pipeline beží stále a zapisuje každý záznam, keď príde; na rozvrh nastavte v Základných údajoch triedu scheduled.",
+        "byPeriod": "Pipeline číta zdroj každých {period}, ako hovorí jej perióda. Pridajte rozvrh, ak má bežať v určených časoch.",
+        "add": "Spúšťať podľa rozvrhu",
+        "remove": "Odstrániť rozvrh",
+        "floor": "Tento projekt dovoľuje pipeline bežať najviac {floor}.",
+        "belowFloor": "Tento rozvrh beží {gap}, častejšie, ako projekt dovoľuje ({floor}). Vyberte pomalší rozvrh alebo požiadajte správcu o zníženie minima projektu.",
+        "afterApply": "Prvý beh sa spustí v prvom čase vyššie, keď je zmena schválená a nasadená.",
+        "hints": {
+          "field": "Ako často pipeline číta svoj zdroj, napríklad každý deň o 03:00. Časy sú v UTC, ako ich číta runner.",
+          "none": "Bez rozvrhu: pipeline beží, keď zdroj pošle záznamy, napríklad téma MQTT. Pridajte rozvrh pre zdroj čítaný podľa času, napríklad súbor CSV."
+        },
+        "clock": {
+          "hours": "{count, plural, one {raz za hodinu} few {každé # hodiny} other {každých # hodín}}",
+          "minutes": "{count, plural, one {každú minútu} few {každé # minúty} other {každých # minút}}",
+          "seconds": "{count, plural, one {každú sekundu} few {každé # sekundy} other {každých # sekúnd}}"
+        }
       }
     },
     "mapper": {
       "mode": "Ako sa z každého záznamu stane entita",
       "modeMap": "Priradiť polia",
       "modeCode": "Napísať Bloblang",
-      "modeMapHint": "Pre každý atribút vyberte pole záznamu, výraz, pevnú hodnotu alebo bod.",
+      "modeMapHint": "Pre každý atribút vyberte pole záznamu, s krokmi ako orezanie alebo preklad hodnôt, odkaz na inú entitu, pole pre každý jazyk, geometriu, spojené polia, výraz alebo pevnú hodnotu.",
       "modeCodeHint": "Krok v Bloblangu napíšte sami.",
       "type": "Typ entity",
       "typeHint": "Typ z dátového modelu cieľového priestoru; jeho atribúty sú nižšie.",
@@ -3133,12 +3238,104 @@
         "notBoolean": "{field} obsahuje „{value}“, čo nie je true ani false; {name} očakáva true alebo false. Vyberte iné pole alebo zmeňte vzorku.",
         "notValue": "{field} obsahuje „{value}“; {name} očakáva jednu z hodnôt {values}. Vyberte iné pole alebo zmeňte vzorku.",
         "noId": "Vyberte pole, z ktorého vznikne id každej entity.",
-        "notTime": "{field} obsahuje {value}, čo nie je čas: použite text RFC 3339, napríklad 2026-10-20T14:30:00Z, alebo Unix sekundy."
+        "notTime": "{field} obsahuje {value}, čo nie je čas: použite text RFC 3339, napríklad 2026-10-20T14:30:00Z, alebo Unix sekundy.",
+        "notShaped": "{field} obsahuje „{value}“, čo tvar dátumu pre {name} neprečíta. Vyberte tvar, aký zdroj píše."
       },
       "expiry": {
         "migrated": "Čas konca, ktorý tento krok zapisoval, je teraz životnosťou pipeline v kroku Životnosť. Uloží sa s vaším ďalším návrhom.",
         "migrateField": "Tento krok zapisuje expiresAt z poľa záznamu {field} a z neho sa nemapuje žiadny atribút s dátumom a časom. Namapujte ho na taký atribút, vyberte koniec v kroku Životnosť alebo zahoďte vlastné riadky kroku.",
         "drop": "Zahodiť vlastné expiresAt kroku"
+      },
+      "geojson": "Geometria z poľa GeoJSON…",
+      "wkt": "Geometria z poľa WKT…",
+      "ref": "Odkaz na {target} podľa kľúčového poľa…",
+      "languagesChoice": "Jedno pole na každý jazyk…",
+      "concatChoice": "Viac polí spojených…",
+      "refField": "Kľúčové pole entity {target}",
+      "languages": "Text pre každý jazyk",
+      "language": "Jazyk",
+      "languageField": "Pole pre {tag}",
+      "languageRemove": "Odstrániť jazyk {tag}",
+      "languageAdd": "Pridať jazyk",
+      "remove": "Odstrániť",
+      "wktField": "Pole WKT",
+      "geojsonField": "Pole GeoJSON",
+      "crs": "Súradnicový systém zdroja",
+      "crsName": {
+        "EPSG_4326": "EPSG:4326 · WGS 84, stupne (GPS)",
+        "EPSG_4258": "EPSG:4258 · ETRS89, stupne",
+        "EPSG_3857": "EPSG:3857 · Web Mercator, metre",
+        "EPSG_25829": "EPSG:25829 · ETRS89 / UTM 29N (Portugalsko, Galícia)",
+        "EPSG_25830": "EPSG:25830 · ETRS89 / UTM 30N (stredné Španielsko)",
+        "EPSG_25831": "EPSG:25831 · ETRS89 / UTM 31N (Barcelona, Katalánsko)",
+        "EPSG_25832": "EPSG:25832 · ETRS89 / UTM 32N (západné Nemecko)",
+        "EPSG_25833": "EPSG:25833 · ETRS89 / UTM 33N (východné Nemecko)",
+        "EPSG_25834": "EPSG:25834 · ETRS89 / UTM 34N (východné Poľsko, východné Slovensko)",
+        "EPSG_3879": "EPSG:3879 · ETRS89 / GK25 (Helsinki, Fínsko)",
+        "EPSG_3067": "EPSG:3067 · ETRS89 / TM35FIN (Fínsko)",
+        "EPSG_5514": "EPSG:5514 · S-JTSK / Křovák (Slovensko, Česko)",
+        "EPSG_2056": "EPSG:2056 · CH1903+ / LV95 (Švajčiarsko)",
+        "EPSG_27700": "EPSG:27700 · British National Grid (Veľká Británia)"
+      },
+      "concat": "Polia na spojenie",
+      "concatPart": "Pole {number}",
+      "concatRemove": "Odstrániť pole {field} zo spojenia",
+      "concatAdd": "Pridať pole",
+      "separator": "Medzi poľami",
+      "separatorNone": "nič",
+      "separatorSpace": "medzera",
+      "transforms": "Úpravy hodnoty {name}",
+      "transform": {
+        "trim": "Orezať medzery",
+        "lower": "Malé písmená",
+        "upper": "Veľké písmená",
+        "decimalComma": "Číslo s desatinnou čiarkou",
+        "date": "Dátum v tvare",
+        "lookup": "Preložiť hodnoty na hodnoty modelu",
+        "default": "Hodnota, keď je prázdne"
+      },
+      "transformHint": {
+        "trim": "Odstráni medzery okolo textu: „ Bo “ bude „Bo“.",
+        "lower": "Zapíše text malými písmenami: „Bo“ bude „bo“.",
+        "upper": "Zapíše text veľkými písmenami: „bo“ bude „BO“.",
+        "decimalComma": "Prečíta text ako 1.234,5 ako číslo 1234.5: bodky a medzery oddeľujú tisíce, čiarka je desatinná.",
+        "lookup": "Každá hodnota vzorky, ktorú model nemá, dostane jednu z hodnôt modelu; ostatné ostanú, ako sú."
+      },
+      "transformRemove": "Odstrániť krok {what}",
+      "transformAdd": "Upraviť hodnotu",
+      "transformPick": "— pridať krok —",
+      "dateFormat": "Tvar dátumu v poli",
+      "dateFormats": {
+        "0": "deň.mesiac.rok, 20.10.2025",
+        "1": "deň/mesiac/rok, 20/10/2025",
+        "2": "mesiac/deň/rok, 10/20/2025",
+        "3": "rok-mesiac-deň, 2025-10-20",
+        "4": "deň.mesiac.rok hodina:minúta, 20.10.2025 14:30",
+        "5": "deň/mesiac/rok hodina:minúta, 20/10/2025 14:30",
+        "6": "rok-mesiac-deň hodina:minúta:sekunda, 2025-10-20 14:30:00"
+      },
+      "defaultValue": "Hodnota pri prázdnom poli",
+      "lookupEmpty": "Každá hodnota vzorky už je hodnotou modelu; načítajte inú vzorku, ak chcete prekladať ďalšie.",
+      "lookupHint": "Hodnota zdroja → hodnota modelu",
+      "lookupRow": "„{from}“ bude",
+      "lookupKeep": "— ponechať —",
+      "observedAt": "Čas pozorovania pre {name}",
+      "hint": {
+        "concat": "Polia sa spoja v tomto poradí, prázdne sa vynechajú; napríklad ulica a číslo domu dajú C/ Major 1.",
+        "concatPart": "Pole vzorky, napríklad ADRECA.",
+        "crs": "Systém, v ktorom sú súradnice zdroja; runner zapisuje WGS 84. Napríklad otvorené dáta Barcelony používajú ETRS89 / UTM 31N.",
+        "dateFormat": "Ako zdroj zapisuje dátum; atribút dostane ISO 8601, napríklad 20/10/2025 bude 2025-10-20.",
+        "defaultValue": "Zapíše sa, keď záznam nechá pole prázdne, napríklad 0 alebo unknown.",
+        "geojsonField": "Pole s geometriou GeoJSON ako text alebo objekt, napríklad Point so súradnicami [2.17, 41.38].",
+        "languageField": "Pole s textom v jazyku {tag}, napríklad NAME_{tag}.",
+        "language": "Jazykový kód, napríklad en alebo ca.",
+        "languages": "Vyberte pole pre každý jazyk zdroja, napríklad NOM_CA pre ca a NOM_ES pre es. Prázdne pole sa vynechá.",
+        "lookupRow": "Jedna z hodnôt modelu, napríklad {example}.",
+        "observedAt": "Voliteľné: pole s časom merania hodnoty ako text RFC 3339, napríklad 2026-10-20T14:30:00Z, alebo Unix sekundy; stane sa observedAt atribútu.",
+        "refField": "Pole s vlastným id entity {target} v tomto priestore, napríklad kód mestskej časti ako 01.",
+        "separator": "Čo stojí medzi dvoma spojenými poľami, napríklad čiarka a medzera.",
+        "transformAdd": "Voliteľné kroky použité na pole v poradí, napríklad orezať medzery a potom preložiť hodnoty na hodnoty modelu.",
+        "wktField": "Pole s textom WKT, napríklad POINT (2.17 41.38)."
       }
     },
     "debug": {

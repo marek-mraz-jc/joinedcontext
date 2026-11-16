@@ -1003,6 +1003,26 @@ async fn authorize_get(
         .clone()
         .filter(|_| !force_reauth && !needs_step_up && kc_action.is_none())
     {
+        // Consent records hold the resolved scope (the login machine stores it), so the SSO
+        // check asks consent for each requested scope the resolution keeps (an `organization:`
+        // alias in its canonical case).
+        let (active, granted_scope) = resolve_scopes_for_client(
+            &state.store,
+            &realm,
+            &client,
+            params.get("scope").map(String::as_str),
+        )
+        .await?;
+        let requested = params.get("scope").map_or("", String::as_str);
+        let asked = granted_scope
+            .split_whitespace()
+            .filter(|g| {
+                requested
+                    .split_whitespace()
+                    .any(|t| t.eq_ignore_ascii_case(g))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
         let has_consent = if client.consent_required || prompt.as_deref() == Some("consent") {
             if prompt.as_deref() == Some("consent") {
                 false
@@ -1012,24 +1032,12 @@ async fn authorize_get(
                     .list_consents(&realm.id, &sso.user_id)
                     .await?
                     .iter()
-                    .any(|c| {
-                        c.covers(
-                            &client.client_id,
-                            params.get("scope").map_or("", String::as_str),
-                        )
-                    })
+                    .any(|c| c.covers(&client.client_id, &asked))
             }
         } else {
             true
         };
         if has_consent {
-            let (active, granted_scope) = resolve_scopes_for_client(
-                &state.store,
-                &realm,
-                &client,
-                params.get("scope").map(String::as_str),
-            )
-            .await?;
             let raw_code = random_handle_256();
             let code_rec = AuthorizationCodeRecord {
                 code_hash: sha256_hex(&raw_code),

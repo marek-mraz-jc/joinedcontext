@@ -934,6 +934,7 @@ export interface Actions {
   jc_change_revert_plan: { id: string; workspace?: string };
   jc_data_write: { action: string; endpoint: string; entities?: unknown; ids?: unknown; reason?: string };
   jc_datasource_check: { draft?: unknown; manifest?: unknown };
+  jc_datasource_discover: { kind: string; url: string };
   jc_draft_drop: { kind: string; name: string; workspace?: string };
   jc_draft_put: { expectedVersion?: number; kind: string; manifest: unknown; name: string; workspace?: string };
   jc_endpoint_propose: { allowedProjects?: unknown; audience?: string; contextSpace?: string; draft?: unknown; entityTypes?: unknown; hiddenAttributes?: unknown; manifest?: unknown; name?: string; rateLimits?: unknown; representations?: unknown; title?: string };
@@ -985,6 +986,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_change_revert_plan: ["Project"],
   jc_data_write: ["Project"],
   jc_datasource_check: ["Project"],
+  jc_datasource_discover: ["Project"],
   jc_draft_drop: ["Project"],
   jc_draft_put: ["Project"],
   jc_endpoint_propose: ["Project"],
