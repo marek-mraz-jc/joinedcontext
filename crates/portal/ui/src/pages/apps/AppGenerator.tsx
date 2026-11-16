@@ -1,4 +1,4 @@
-import { listManifests } from "../../api/odata";
+import { act, listManifests, projectBound } from "../../api/odata";
 import { useId, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -407,20 +407,15 @@ export function AppGenerator({
       setError(null);
       setViolations([]);
       setConflictApp(null);
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/agent-runs", {
-          params: { path: { project } },
-          body: {
-            appName: chosen,
-            appClass: kind,
-            ...endpointFields(endpointName, extraEndpoints.map((candidate) => candidate.metadata.name)),
-            prompt,
-            // The confirmed list, derived from the endpoint: the run is refused if it names
-            // anything the endpoint does not publish, so the two cannot drift (AP-44).
-            dataNeeds: needs,
-          },
-        }),
-      );
+      return act("jc_run_create", projectBound(project), {
+        appName: chosen,
+        appClass: kind,
+        ...endpointFields(endpointName, extraEndpoints.map((candidate) => candidate.metadata.name)),
+        prompt,
+        // The confirmed list, derived from the endpoint: the run is refused if it names
+        // anything the endpoint does not publish, so the two cannot drift (AP-44).
+        dataNeeds: needs,
+      });
     },
     onSuccess: (result) => {
       const created = result as unknown as { id?: string; appName?: string };

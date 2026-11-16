@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { inputOf } from "./QuestionData";
 import type { QuestionInput } from "./QuestionData";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, unwrap } from "../../api/client";
-import { act, doorAction, projectBound } from "../../api/odata";
+import { act, doorAction, projectBound, readRun } from "../../api/odata";
 import type { components } from "../../api/schema";
 
 /** The states of Architecture/19 §5, in the order a run walks them (AG-43). */
@@ -237,12 +236,7 @@ export function useAgentRun(project: string, runId: string | null) {
   const run = useQuery({
     queryKey: key,
     enabled: runId !== null,
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/agent-runs/{id}", {
-          params: { path: { project, id: runId ?? "" } },
-        }),
-      ) as unknown as AgentRun,
+    queryFn: async () => readRun<AgentRun>(project, runId ?? ""),
   });
 
   useEffect(() => {

@@ -2,7 +2,9 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap, reasonOf } from "../api/client";
+import { reasonOf } from "../api/client";
+import { listRuns } from "../api/odata";
+import { useIdentity } from "../auth/AuthProvider";
 import { Button, Input } from "../components/ui";
 import { ListFailed } from "../components/forms/widgets/ListFailed";
 
@@ -32,14 +34,12 @@ export function ConversationList({
   const { t, i18n } = useTranslation();
   const [words, setWords] = useState("");
   const [shown, setShown] = useState(CONVERSATIONS_PER_PAGE);
+  // Only the person's own conversations, an approver's too: the REST list's `mine`.
+  const me = useIdentity()?.username;
   const conversations = useQuery({
-    queryKey: ["projects", project, "agent-runs", { kind: "conversation", mine: true }],
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/agent-runs", {
-          params: { path: { project }, query: { limit: 100, kind: "conversation", mine: true } },
-        }),
-      ),
+    queryKey: ["projects", project, "agent-runs", { kind: "conversation", mine: me }],
+    enabled: me !== undefined,
+    queryFn: async () => listRuns(project, { kind: "conversation", createdBy: me }),
   });
   const wanted = words.trim().toLocaleLowerCase(i18n.language);
   const all = (conversations.data?.items ?? []) as Conversation[];

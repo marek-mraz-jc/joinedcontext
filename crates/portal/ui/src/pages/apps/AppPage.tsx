@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { listRuns } from "../../api/odata";
 import { Button, PageHeader, PageLoading } from "../../components/ui";
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { AgentRunPage } from "./AgentRunPage";
@@ -44,11 +44,7 @@ export function AppPage({ project, name }: { project: string; name: string }): J
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ["projects", project, "agent-runs", name],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/agent-runs", {
-          params: { path: { project }, query: { app: name } },
-        }),
-      ),
+      listRuns(project, { app: name }),
   });
 
   const back = () => {

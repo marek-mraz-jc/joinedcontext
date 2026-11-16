@@ -460,6 +460,10 @@ pub(crate) fn flat(row: Value) -> Value {
         return row;
     };
     for nested in ["metadata", "status"] {
+        // A scalar of that name is the row's own member: a run's `status` is its state.
+        if !matches!(top.get(nested), Some(Value::Object(_))) {
+            continue;
+        }
         if let Some(Value::Object(inner)) = top.remove(nested) {
             for (member, value) in inner {
                 top.entry(member).or_insert(value);

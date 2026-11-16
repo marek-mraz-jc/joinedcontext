@@ -576,6 +576,100 @@ export async function readWorkspace(project: string, name: string): Promise<Work
   )) as WorkspaceView;
 }
 
+/**
+ * A run's members, as the REST door's `GET …/agent-runs/{id}` answers them: the `runs` row's
+ * scalar fields and the detail the service answers when `$select` names it (T-7134).
+ */
+const RUN_MEMBERS = [
+  "id",
+  "project",
+  "appName",
+  "kind",
+  "status",
+  "createdBy",
+  "createdAt",
+  "previewUrl",
+  "title",
+  "endpointName",
+  "endpointSlug",
+  "endpoints",
+  "profile",
+  "unattended",
+  "continues",
+  "appClass",
+  "visibility",
+  "prompt",
+  "promptDigest",
+  "dataNeeds",
+  "allowsWrite",
+  "branch",
+  "pathPrefix",
+  "workspace",
+  "mergeRequest",
+  "changeId",
+  "sourceUrl",
+  "mirrorUrl",
+  "firstFrameMs",
+  "firstVersionMs",
+  "steps",
+  "tokensUsed",
+  "origin",
+  "startedAt",
+  "finishedAt",
+  "expiresAt",
+  "error",
+] as const;
+
+/** What {@link listRuns} narrows to, each the REST list's query parameter of that name. */
+export interface RunFilter {
+  app?: string;
+  kind?: string;
+  /** Only the caller's own runs: `me` is the caller's username, as `/me` answers it. */
+  createdBy?: string;
+  top?: number;
+}
+
+/**
+ * The runs of `project` the caller sees, newest first, as the REST door's `GET …/agent-runs`
+ * lists them: the `runs` set with `$filter` of `filter` (T-7134). The set holds the newest 100,
+ * the REST list's own ceiling.
+ */
+export async function listRuns<R = unknown>(project: string, filter: RunFilter = {}): Promise<{ items: R[] }> {
+  const where = (
+    [
+      ["appName", filter.app],
+      ["kind", filter.kind],
+      ["createdBy", filter.createdBy],
+    ] as const
+  )
+    .filter(([, value]) => value !== undefined && value !== "")
+    .map(([member, value]) => `${member} eq '${String(value).replace(/'/g, "''")}'`);
+  // `$select` names the detail members the generated row type leaves out.
+  let query: {
+    select(...members: string[]): typeof query;
+    filter(expression: string): typeof query;
+    top(n: number): typeof query;
+    orderBy(member: string, direction: "asc" | "desc"): typeof query;
+    all(): AsyncIterable<unknown>;
+  } = client.under(project, "runs");
+  query = query.select(...RUN_MEMBERS).orderBy("createdAt", "desc");
+  if (where.length > 0) query = query.filter(where.join(" and "));
+  if (filter.top !== undefined) query = query.top(filter.top);
+  const items: R[] = [];
+  const rows = query.all();
+  await refusedAs(
+    (async () => {
+      for await (const row of rows) items.push(row as R);
+    })(),
+  );
+  return { items };
+}
+
+/** Run `id` of `project`, one of the caller's, as the REST door's `GET …/agent-runs/{id}` answers it. */
+export async function readRun<R = unknown>(project: string, id: string): Promise<R> {
+  return (await refusedAs(client.get("runs", { project, id }, RUN_MEMBERS))) as R;
+}
+
 type ChangeProposal = components["schemas"]["ChangeProposal"];
 
 /** Every member of the REST door's `GET …/changes/{id}`: each the detail of the Change's row. */
