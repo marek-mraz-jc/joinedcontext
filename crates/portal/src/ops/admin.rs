@@ -35,7 +35,14 @@ pub struct ExportInput {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ImportInput {
     /// The bundle itself: the document an export answered.
-    pub bundle: String,
+    #[serde(default)]
+    pub bundle: Option<String>,
+    /// The manifests themselves, as the import door's JSON body carries them (T-7143).
+    #[serde(default)]
+    pub manifests: Option<Vec<Value>>,
+    /// Spaces the bundle names that are not copied, each landing on the project's `to` (MF-26).
+    #[serde(default)]
+    pub space_mapping: Vec<crate::api::import::SpaceMapping>,
     #[serde(default)]
     pub org_domain: Option<String>,
     #[serde(default)]
@@ -160,6 +167,23 @@ fn import_input_schema() -> Value {
                 "The bundle document an export answered",
                 crate::api::import::MAX_UPLOAD_BYTES as u64
             ),
+            "manifests": {
+                "type": "array",
+                "description": "Instead of a bundle",
+                "items": { "type": "object", "maxProperties": super::bounds::MANIFEST_MEMBERS },
+                "maxItems": IMPORT_MANIFESTS
+            },
+            "spaceMapping": {
+                "type": "array",
+                "description": "Space `from` lands on the project's `to`",
+                "items": {
+                    "type": "object",
+                    "properties": { "from": { "type": "string", "maxLength": NAME }, "to": { "type": "string", "maxLength": NAME } },
+                    "required": ["from", "to"],
+                    "additionalProperties": false
+                },
+                "maxItems": IMPORT_MANIFESTS
+            },
             "orgDomain": text("Organisation ids are rewritten to; this one when absent", NAME),
             "conflictPolicy": {
                 "type": "string",
@@ -168,9 +192,25 @@ fn import_input_schema() -> Value {
             },
             "dryRun": { "type": "boolean", "description": "Answer the plan and write nothing" }
         },
-        "required": ["bundle"],
-        "additionalProperties": false
+                "additionalProperties": false
     })
+}
+
+/// The most manifests (and space mappings) one JSON import carries; a larger one is a bundle file.
+const IMPORT_MANIFESTS: u64 = 1000;
+
+/// The bytes an import reads: the bundle, or the manifests as the import door's JSON body
+/// serialises them, so a check through either door is the same check (PF-57).
+fn import_bytes(input: &ImportInput) -> Result<Vec<u8>, OpError> {
+    match (&input.bundle, &input.manifests) {
+        (Some(bundle), None) => Ok(bundle.clone().into_bytes()),
+        (None, Some(manifests)) => serde_json::to_vec(manifests)
+            .map_err(|err| OpError::Api(ApiError::Internal(err.to_string()))),
+        _ => Err(OpError::InvalidInput {
+            path: "/bundle".into(),
+            message: "send either bundle or manifests, one of them".into(),
+        }),
+    }
 }
 
 fn import_output_schema() -> Value {
@@ -350,10 +390,11 @@ pub fn operations() -> Vec<Operation> {
             kind: "*",
             verb: None,
             lane: Lane::Yellow,
-            validate: |val| parse_input::<ImportInput>(val.clone()).map(|_| ()),
+            validate: |val| import_bytes(&parse_input::<ImportInput>(val.clone())?).map(|_| ()),
             run: |caller, state, project, val| {
                 Box::pin(async move {
                     let input: ImportInput = parse_input(val)?;
+                    let bytes = import_bytes(&input)?;
                     let conflict_policy = match input.conflict_policy.as_deref() {
                         None => crate::api::import::ConflictPolicy::default(),
                         Some("fail") => crate::api::import::ConflictPolicy::Fail,
@@ -377,13 +418,13 @@ pub fn operations() -> Vec<Operation> {
                         dry_run: input.dry_run,
                         url: None,
                         manifests: None,
-                        space_mapping: Vec::new(),
+                        space_mapping: input.space_mapping,
                     };
                     let (_, body) = crate::api::import::import_bundle(
                         state,
                         &caller.identity,
                         project,
-                        input.bundle.as_bytes(),
+                        &bytes,
                         options,
                     )
                     .await?;

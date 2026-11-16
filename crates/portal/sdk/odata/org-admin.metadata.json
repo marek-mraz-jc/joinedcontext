@@ -1969,8 +1969,7 @@
         "$Type": "Edm.Untyped"
       },
       "origin": {
-        "$Nullable": true,
-        "$Type": "Edm.Untyped"
+        "$Nullable": true
       },
       "pathPrefix": {
         "$Nullable": true,
@@ -4526,7 +4525,7 @@
           },
           {
             "$Name": "bundle",
-            "$Nullable": false,
+            "$Nullable": true,
             "$Type": "Edm.String"
           },
           {
@@ -4540,9 +4539,19 @@
             "$Type": "Edm.Boolean"
           },
           {
+            "$Name": "manifests",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
             "$Name": "orgDomain",
             "$Nullable": true,
             "$Type": "Edm.String"
+          },
+          {
+            "$Name": "spaceMapping",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
           }
         ],
         "$ReturnType": {
@@ -5935,6 +5944,22 @@
       }
     ],
     "portal_app_templates": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_blueprint_list": [
       {
         "$IsBound": true,
         "$Kind": "Function",
