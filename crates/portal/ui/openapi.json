@@ -14570,6 +14570,290 @@
         }
       }
     },
+    "/api/v1/projects/{project}/grafana/builder/{uid}/versions": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "List A Dashboard's Versions",
+        "description": "The versions of a builder dashboard, newest first: each approved Change of its file on the project's default branch, with who wrote it and when (at most 50). Needs read on the project. Changes no data.",
+        "operationId": "builder_versions",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The versions, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardVersions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, or no builder dashboard of that uid in it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Read A Dashboard Version",
+        "description": "One version of a builder dashboard read back into choices, to compare with another. Only a version the dashboard's own history lists is read. Needs read on the project and on every Endpoint the version names. Changes no data.",
+        "operationId": "builder_version",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sha",
+            "in": "path",
+            "description": "The version's commit, from the versions list",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The version's choices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardVersionBoard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The version names an Endpoint the caller may not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, dashboard or version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The version's file does not read back into choices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore": {
+      "post": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Propose Restoring A Dashboard Version",
+        "description": "Proposes a Change that writes an earlier version of a builder dashboard back as its newest: the version's choices compiled again, checked as an edit is. Waits for approval like every edit. Needs propose on Dashboard and read on every Endpoint the version names.",
+        "operationId": "builder_restore",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sha",
+            "in": "path",
+            "description": "The version's commit, from the versions list",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Proposed; waits for approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuilderSaved"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards, or may not read an Endpoint the version names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, dashboard or version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The dashboard is that version already, or a Change of it is open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The version no longer fits: a source, type or attribute it names is gone; the errors name it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge or the dashboards service did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/grafana/dashboards": {
       "get": {
         "tags": [
@@ -52175,6 +52459,65 @@
           },
           "uid": {
             "type": "string"
+          }
+        }
+      },
+      "DashboardVersion": {
+        "type": "object",
+        "description": "One version of a builder dashboard: a commit of its file on the default branch, so one\napproved Change (T-7150). History starts at the file's first commit.",
+        "required": [
+          "sha",
+          "author",
+          "date",
+          "message"
+        ],
+        "properties": {
+          "author": {
+            "type": "string",
+            "description": "Who wrote it, as the commit names them; never their e-mail address."
+          },
+          "date": {
+            "type": "string",
+            "description": "When, as the forge dates the commit (RFC 3339)."
+          },
+          "message": {
+            "type": "string",
+            "description": "The first line of its message, e.g. `change dashboard Bike stations`."
+          },
+          "sha": {
+            "type": "string",
+            "description": "The commit, the `{sha}` of the version's own routes."
+          }
+        }
+      },
+      "DashboardVersionBoard": {
+        "type": "object",
+        "description": "One version read back into choices, to compare with another.",
+        "required": [
+          "sha",
+          "board"
+        ],
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/Board"
+          },
+          "sha": {
+            "type": "string"
+          }
+        }
+      },
+      "DashboardVersions": {
+        "type": "object",
+        "description": "A builder dashboard's versions, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardVersion"
+            }
           }
         }
       },
