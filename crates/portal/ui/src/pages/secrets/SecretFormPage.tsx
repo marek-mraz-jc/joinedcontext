@@ -125,6 +125,19 @@ export function SecretFormPage({
       current.map((row, i) => (i === index ? { ...row, ...patch } : row)),
     );
 
+  // What the server refused about a key's value (`values.apiKey: 1 to 16384 bytes`), at its field.
+  const valueProblems = (key: string): string[] | undefined => {
+    const prefix = `values.${key.trim()}`;
+    const lines = problems
+      .filter(
+        (line) =>
+          key.trim() !== "" &&
+          (line === prefix || line.startsWith(`${prefix}: `)),
+      )
+      .map((line) => line.slice(prefix.length + 2) || line);
+    return lines.length ? lines : undefined;
+  };
+
   return (
     <div className="mx-auto max-w-2xl space-y-4">
       {header}
@@ -199,6 +212,7 @@ export function SecretFormPage({
                 label={t("secrets.value")}
                 required
                 help={t("secrets.hint.value")}
+                errors={valueProblems(row.key)}
               >
                 <Input
                   id={`secret-value-${index}`}
