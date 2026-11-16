@@ -2122,6 +2122,82 @@ fn app_client() -> Value {
     })
 }
 
+/// T-6972, workload_clients.rs `add_imported_audiences` against kaisatsu itself: a realm file
+/// imports two pipeline clients, one marked `audiences-managed-by: joinedcontext` (rehearsal.py
+/// `mark_pipeline_audiences`). portal-api (view-clients) adds the write door's audience to the
+/// marked one, whose own token then names the old Endpoint and the door; the unmarked one stays
+/// nobody's to write (train smoke 3330f6ef: 404 on the POST).
+#[tokio::test]
+async fn the_portal_adds_a_door_audience_to_an_imported_pipeline_client_the_realm_marked() {
+    const DOOR: &str = "doordoordoordoordoordoor12";
+    const SECRET: &str = "helsinki-pipelines-secret-0123456789";
+    let realm = realm().await;
+    let app = &realm.app;
+    let client = |id: &str, mark: bool| {
+        let mut attributes = serde_json::Map::new();
+        if mark {
+            attributes.insert("audiences-managed-by".into(), json!("joinedcontext"));
+        }
+        json!({
+            "clientId": id, "enabled": true, "protocol": "openid-connect", "publicClient": false,
+            "clientAuthenticatorType": "client-secret", "secret": "$(env:PIPELINES_SECRET)",
+            "serviceAccountsEnabled": true, "standardFlowEnabled": false,
+            "defaultClientScopes": ["basic"], "attributes": attributes,
+            "protocolMappers": [{
+                "name": "audience-old", "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper", "consentRequired": false,
+                "config": {"included.custom.audience": SLUG, "access.token.claim": "true"},
+            }],
+        })
+    };
+    let store: Arc<dyn Store> = realm.store.clone();
+    apply_realm_files(
+        &store,
+        &[(
+            "30-export.json".into(),
+            json!({"realm": "jc", "clients": [client("helsinki-pipelines", true), client("zilina-pipelines", false)]}),
+        )],
+        &ApplyOptions {
+            mode: ApplyMode::NoDelete,
+            dry_run: false,
+            allow_literal_secrets: false,
+            secrets_dir: None,
+            outbound_private_hosts: Vec::new(),
+            env_vars: BTreeMap::from([("PIPELINES_SECRET".into(), SECRET.into())]),
+        },
+    )
+    .await
+    .expect("the export's pipeline clients apply");
+    let token = portal_api(app).await;
+    let door = json!({
+        "name": format!("audience-{DOOR}"), "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper",
+        "config": {
+            "included.custom.audience": DOOR, "access.token.claim": "true",
+            "id.token.claim": "false", "introspection.token.claim": "true",
+        },
+    });
+    for (id, want) in [
+        ("zilina-pipelines", StatusCode::NOT_FOUND),
+        ("helsinki-pipelines", StatusCode::CREATED),
+    ] {
+        let held = find_client(app, &token, id).await.expect("imported client");
+        let path = format!("/clients/{}/protocol-mappers/models", id_of(&held));
+        let listed = admin(app, &token, Method::GET, &path, None).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+        let made = admin(app, &token, Method::POST, &path, Some(door.clone())).await;
+        assert_eq!(made.status, want, "{id}: {}", made.text);
+    }
+    let claims = payload(&service_token(app, "helsinki-pipelines", SECRET).await);
+    let aud = auds(&claims);
+    assert!(
+        aud.contains(&SLUG.to_owned()) && aud.contains(&DOOR.to_owned()),
+        "{claims}"
+    );
+    let claims = payload(&service_token(app, "zilina-pipelines", SECRET).await);
+    assert!(!auds(&claims).contains(&DOOR.to_owned()), "{claims}");
+}
+
 /// app_clients.rs:251 `audience_mapper`, :270 `groups_mapper`, :291 `organization_mappers`.
 fn app_mappers(audiences: &[&str]) -> Vec<Value> {
     let mut mappers: Vec<Value> = audiences

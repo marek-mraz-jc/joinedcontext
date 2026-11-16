@@ -45,6 +45,10 @@ use crate::store::{ListOptions, Mirror};
 /// `{project}/{name}`.
 pub const ACCOUNT_ATTRIBUTE: &str = "joinedcontext.serviceaccount";
 
+/// The client attribute by which a deployment's realm file lets the Portal add Endpoint audiences
+/// to an imported pipeline client it did not create (kaisatsu admits that one write, T-6972).
+pub const AUDIENCES_MANAGED_BY: &str = "audiences-managed-by";
+
 /// The one client scope an account's token carries (T-6051): `basic`, which writes `sub`. The
 /// realm's defaults would add `acr`, `email`, `profile`, `roles` (the `account` audience and the
 /// realm's default roles), `web-origins`, and `service_account` (`client_id`, `clientHost`,
@@ -1237,6 +1241,11 @@ impl WorkloadClientSync {
                 return;
             }
         };
+        let marked = client
+            .get("attributes")
+            .and_then(|a| a.get(AUDIENCES_MANAGED_BY))
+            .and_then(Value::as_str)
+            == Some(MANAGED_VALUE);
         for slug in slugs {
             let want = audience_mapper(slug);
             let present = held.iter().any(|m| {
@@ -1246,6 +1255,19 @@ impl WorkloadClientSync {
             });
             if present {
                 continue;
+            }
+            if !marked {
+                let id = client
+                    .get("clientId")
+                    .and_then(Value::as_str)
+                    .unwrap_or(uuid);
+                outcome.error = Some(format!(
+                    "the imported client {id} puts no audience {slug} in its tokens, which its \
+                     Pipeline writes to, and the realm lets the Portal add none: give the client \
+                     the attribute {AUDIENCES_MANAGED_BY}: {MANAGED_VALUE} in the deployment's \
+                     realm file (deploy/rehearsal/rehearsal.py realms writes it) and apply it again"
+                ));
+                return;
             }
             if let Err(err) = self
                 .admin

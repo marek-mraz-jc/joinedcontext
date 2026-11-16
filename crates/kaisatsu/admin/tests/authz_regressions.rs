@@ -1161,6 +1161,136 @@ async fn view_clients_neither_adopts_unmarked_clients_nor_reads_their_secret() {
 }
 
 #[tokio::test]
+async fn view_clients_adds_only_an_audience_to_an_imported_client_marked_for_it() {
+    let f = Fixture::new().await;
+    let import = ProtocolMapperRepresentation {
+        id: "m-import".into(),
+        realm_id: "dev".into(),
+        name: "aud-old".into(),
+        protocol: "openid-connect".into(),
+        protocol_mapper: "oidc-audience-mapper".into(),
+        config: std::collections::BTreeMap::from([(
+            "included.custom.audience".to_owned(),
+            "old-endpoint".to_owned(),
+        )]),
+        ..Default::default()
+    };
+    for (id, mark) in [("uuid-bare", None), ("uuid-pl", Some("joinedcontext"))] {
+        f.store
+            .upsert_client(ClientRepresentation {
+                id: id.into(),
+                realm_id: "dev".into(),
+                client_id: id.trim_start_matches("uuid-").into(),
+                managed_by: Some("apply".into()),
+                attributes: mark
+                    .map(|m| {
+                        std::collections::BTreeMap::from([(
+                            "audiences-managed-by".to_owned(),
+                            m.to_owned(),
+                        )])
+                    })
+                    .unwrap_or_default(),
+                protocol_mappers: vec![import.clone()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    let t = f
+        .token(
+            "dev",
+            "portal-svc",
+            json!({ "resource_access": { "realm-management": { "roles": ["view-clients"] } } }),
+        )
+        .await;
+    let audience = |name: &str, audience: &str| {
+        json!({
+            "name": name,
+            "protocol": "openid-connect",
+            "protocolMapper": "oidc-audience-mapper",
+            "consentRequired": false,
+            "config": {
+                "included.custom.audience": audience,
+                "access.token.claim": "true",
+                "id.token.claim": "false",
+                "introspection.token.claim": "true",
+            },
+        })
+    };
+    let models = |uuid: &str| format!("/admin/realms/dev/clients/{uuid}/protocol-mappers/models");
+    // An unmarked imported client stays nobody's to write.
+    let st = f
+        .send(
+            Method::POST,
+            &models("uuid-bare"),
+            &t,
+            Some(audience("aud-door", "door")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // Another mapper kind, a client audience or a replaced import mapper: refused on the mark.
+    let roles = json!({
+        "name": "roles",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-hardcoded-claim-mapper",
+        "consentRequired": false,
+        "config": { "claim.name": "jc_org", "claim.value": "helsinki" },
+    });
+    let mut client_audience = audience("aud-client", "door");
+    client_audience["config"]["included.client.audience"] = json!("realm-management");
+    for body in [roles, client_audience] {
+        let st = f
+            .send(Method::POST, &models("uuid-pl"), &t, Some(body))
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+    let st = f
+        .send(
+            Method::POST,
+            &models("uuid-pl"),
+            &t,
+            Some(audience("aud-old", "door")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let st = f
+        .send(
+            Method::PUT,
+            &format!("{}/m-import", models("uuid-pl")),
+            &t,
+            Some(audience("aud-old", "door")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // The one write the mark allows: a new audience, the import's mappers kept.
+    let st = f
+        .send(
+            Method::POST,
+            &models("uuid-pl"),
+            &t,
+            Some(audience("aud-door", "door")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let held = f
+        .store
+        .get_client_by_uuid("dev", None, "uuid-pl")
+        .await
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = held
+        .protocol_mappers
+        .iter()
+        .map(|m| m.name.as_str())
+        .collect();
+    assert_eq!(names, ["aud-old", "aud-door"]);
+    assert_eq!(
+        held.protocol_mappers[0].config["included.custom.audience"],
+        "old-endpoint"
+    );
+}
+
+#[tokio::test]
 async fn k3_view_clients_cannot_write_roles_or_client_scopes_on_compat_routes() {
     let f = Fixture::new().await;
     // A platform client portal-api does not own (T-2725: not `managed-by: joinedcontext`).
