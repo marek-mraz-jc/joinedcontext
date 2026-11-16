@@ -1,3 +1,4 @@
+import { listManifests, readManifest } from "../../api/odata";
 /**
  * The second half of a file's way into a Context Space, the Upload page's and Complete this
  * space's (DM-81, T-6445): follows the proposed Change, checks every row against the model, and
@@ -53,14 +54,14 @@ export function useLoadTarget(project: string, space: string, proposed: Change |
     queryKey: queryKeys.resource(project, "policies", grantName),
     enabled: merged,
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path: { project, plural: "policies", name: grantName } } })),
+    queryFn: async () => (await readManifest(project, "policies", grantName)),
     refetchInterval: (query) => (query.state.data?.status?.phase === "Live" ? false : 3_000),
   });
   // Writes go through an Endpoint of the space and its Policy: the op drafts one when there is none.
   const endpoints = useQuery({
     queryKey: [...queryKeys.resource(project, "spaces", space), "endpoints"],
     enabled: merged || change === null,
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "endpoints" } } })),
+    queryFn: async () => (await listManifests(project, "endpoints")),
     refetchInterval: (query) => (endpointOf(query.state.data?.items, space) ? false : 3_000),
   });
   const endpoint = endpointOf(endpoints.data?.items, space);
@@ -68,7 +69,7 @@ export function useLoadTarget(project: string, space: string, proposed: Change |
   // The ids carry the space's segment, which is not its name (PF-84).
   const held = useQuery({
     queryKey: queryKeys.resource(project, "spaces", space),
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path: { project, plural: "spaces", name: space } } })),
+    queryFn: async () => (await readManifest(project, "spaces", space)),
     enabled: live,
     retry: false,
   });

@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import metadata from "../../sdk/odata/org-admin.metadata.json" with { type: "json" };
 // The Organization's OData service as a page test meets it (T-6812): which bound function or
 // action a request calls, with what, and the answer the service wraps an operation's value in.
 
@@ -83,9 +84,19 @@ export function odataError(
  * a problem document as the OData error object carrying its members.
  */
 export async function asOData(rest: Response): Promise<Response> {
+  const answer = await asODataBody(rest);
+  // The edge's reference of the answer, which a failure page shows (T-2747).
+  const id = rest.headers.get("x-request-id");
+  if (id) answer.headers.set("x-request-id", id);
+  return answer;
+}
+
+async function asODataBody(rest: Response): Promise<Response> {
   const body: unknown = await rest.json().catch(() => null);
   // A `204` of the REST door is the service's `200` with `null` (API/13 §2b).
   if (rest.ok) return odataValue(body, rest.status === 204 ? 200 : rest.status);
+  // A bare failure stays bare: the service passes on a door's answer that said nothing.
+  if (body === null) return new Response(null, { status: rest.status });
   const problem = (body ?? {}) as {
     type?: string;
     detail?: string;
@@ -172,8 +183,61 @@ export function readingAsRest(url: string | URL): URL | undefined {
   return rest;
 }
 
-/** Each Portal door's REST door (API/13 §2b, T-7100; crates/portal/src/api/odata_portal.rs). */
-const DOORS: Record<string, [string, string]> = {
+/**
+ * Each Portal door's REST door (API/13 §2b, T-7100; crates/portal/src/api/odata_portal.rs), and
+ * each registry operation the UI calls whose handler is a REST door's (crates/portal/src/ops):
+ * method, path, and the parameters that go in the JSON body (`body` is the whole body).
+ */
+type Door = [string, string, string[]?];
+
+/**
+ * The registry operations every page test reaches as their REST doors (tests/setup.ts): the UI
+ * calls them since T-7073, and the files that stub their REST doors keep their stubs.
+ */
+const OPERATIONS: Record<string, Door> = {
+  jc_syncsource_status: ["GET", "/projects/{project}/syncsources/{name}/status"],
+  jc_syncsource_sync: ["POST", "/projects/{project}/syncsources/{name}/sync"],
+  jc_syncsource_pause: ["POST", "/projects/{project}/syncsources/{name}/pause", ["paused"]],
+  jc_ckan_status: ["GET", "/projects/{project}/ckan/status"],
+  jc_datasource_discover: ["POST", "/projects/{project}/datasource-discovery", ["kind", "url"]],
+
+  // The Portal doors of a space's person records, its drift and a person's alerts (T-7105).
+  portal_space_quality: ["GET", "/projects/{project}/spaces/{space}/quality"],
+  portal_space_quality_checks: ["GET", "/projects/{project}/spaces/{space}/quality/checks"],
+  portal_space_temporal_audit: ["GET", "/projects/{project}/spaces/{space}/temporal-audit"],
+  portal_space_retention_deleted: ["GET", "/projects/{project}/spaces/{space}/retention/deleted"],
+  portal_space_retention_preview: ["POST", "/projects/{project}/spaces/{space}/retention/preview"],
+  portal_space_subject_export: ["POST", "/projects/{project}/spaces/{space}/subjects/export"],
+  portal_erasure_list: ["GET", "/projects/{project}/spaces/{space}/erasures"],
+  portal_erasure_file: ["POST", "/projects/{project}/spaces/{space}/erasures"],
+  portal_erasure_get: ["GET", "/projects/{project}/spaces/{space}/erasures/{id}"],
+  portal_erasure_approve: ["POST", "/projects/{project}/spaces/{space}/erasures/{id}/approve"],
+  portal_erasure_decline: ["POST", "/projects/{project}/spaces/{space}/erasures/{id}/decline"],
+  portal_comment_list: ["GET", "/projects/{project}/spaces/{space}/comments"],
+  portal_comment_add: ["POST", "/projects/{project}/spaces/{space}/comments"],
+  portal_comment_remove: ["DELETE", "/projects/{project}/spaces/{space}/comments/{id}"],
+  portal_trash_list: ["GET", "/projects/{project}/spaces/{space}/trash"],
+  portal_trash_keep: ["POST", "/projects/{project}/spaces/{space}/trash"],
+  portal_trash_forget: ["DELETE", "/projects/{project}/spaces/{space}/trash/{id}"],
+  portal_drift_list: ["GET", "/projects/{project}/drift"],
+  portal_drift_revert: ["POST", "/projects/{project}/drift/{space}/{id}/revert"],
+  portal_drift_adopt: ["POST", "/projects/{project}/drift/{space}/{id}/adopt"],
+  portal_alert_list: ["GET", "/alerts"],
+  portal_alert_subscribe: ["PUT", "/alerts"],
+  portal_alert_unsubscribe: ["DELETE", "/alerts/{id}"],
+  portal_alert_mute: ["POST", "/alerts/{id}/mute"],
+  portal_alert_notice_list: ["GET", "/alerts/notices"],
+  portal_alert_notice_read: ["POST", "/alerts/notices/{id}/read"],
+};
+
+/** Whether `request` calls one of {@link OPERATIONS}. */
+export function callsOperation(request: Request): boolean {
+  const name = DOOR.exec(decodeURIComponent(new URL(request.url).pathname))?.[2];
+  return name !== undefined && Object.hasOwn(OPERATIONS, name);
+}
+
+const DOORS: Record<string, Door> = {
+  ...OPERATIONS,
   // The Organization-bound people actions whose registry operation is their REST route
   // (route_coverage_tests names each), answered the same way (T-7101).
   jc_person_disable: ["POST", "/organization/people/{id}/disable"],
@@ -246,7 +310,7 @@ const DOORS: Record<string, [string, string]> = {
 };
 
 const DOOR =
-  /^\/api\/v1\/(?:Organization|projects\('((?:[^']|'')*)'\))\/JoinedContext\.Portal\.(portal_\w+|jc_person_(?:disable|enable|sign_out))(?:\(([^)]*)\))?$/;
+  /^\/api\/v1\/(?:Organization|projects\('((?:[^']|'')*)'\))\/JoinedContext\.Portal\.(\w+)(?:\(([^)]*)\))?$/;
 
 /**
  * The REST request whose handler answers the Portal door `request` calls, or nothing for any other
@@ -279,12 +343,15 @@ export async function doorAsRest(
   let path = door[1].replace("{project}", encodeURIComponent(project));
   const rest = new URL("/api/v1", at.origin);
   let body: string | undefined;
+  const members: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(params)) {
     if (path.includes(`{${name}}`))
       path = path.replace(`{${name}}`, encodeURIComponent(String(value)));
     else if (name === "body") body = JSON.stringify(value);
+    else if (door[2]?.includes(name)) members[name] = value;
     else rest.searchParams.set(name, String(value));
   }
+  if (Object.keys(members).length) body = JSON.stringify(members);
   rest.pathname = `/api/v1${path}`;
   return new Request(rest, {
     method: door[0],
@@ -347,6 +414,7 @@ function manifestRow(
     "@odata.etag": `W/"${metadata.name ?? ""}"`,
     name: metadata.name,
     kind: manifest.kind,
+    apiVersion: manifest.apiVersion ?? null,
     metadata: manifest.metadata,
     spec: manifest.spec ?? null,
     status: manifest.status ?? null,
@@ -399,4 +467,65 @@ export function doorsAsRest(): void {
       return door ? asOData(await inner(door)) : inner(input, init);
     },
   );
+}
+
+type Container = Record<string, { $Collection?: boolean; $Type?: string }>;
+const SETS = (metadata as unknown as Record<string, { Service: Container }>)[
+  "JoinedContext.Portal"
+].Service;
+
+/** The REST plural of `kind`: its set in `$metadata` (the `org` namespace's Roles are `roles`). */
+function pluralOfKind(kind: unknown): string | undefined {
+  const set = Object.entries(SETS).find(
+    ([, s]) => s.$Collection && s.$Type === `JoinedContext.Portal.${String(kind)}`,
+  )?.[0];
+  return set === "organizationRoles" ? "roles" : set;
+}
+
+const PROPOSE =
+  /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)|(\w+)\((?:project='((?:[^']|'')*)',name='((?:[^']|'')*)'|'((?:[^']|'')*)')\))\/JoinedContext\.Portal\.(propose_create|propose_update|propose_delete)$/;
+
+/**
+ * The REST write whose handler answers a `propose_*` action (api/odata.ts `proposeManifest`,
+ * `proposeDelete`): `POST`, `PUT`, `PATCH` or `DELETE` of the manifest door with `?dryRun=All` for
+ * a check and the action's `If-Match`, or nothing for any other request. The service runs that
+ * door and answers its response as it is (odata_org.rs `act_inner`).
+ */
+export async function proposalAsRest(request: Request): Promise<Request | undefined> {
+  if (request.method !== "POST") return undefined;
+  const at = new URL(request.url);
+  const found = PROPOSE.exec(decodeURIComponent(at.pathname));
+  if (!found) return undefined;
+  const unquote = (text: string) => text.replaceAll("''", "'");
+  const params = (await request
+    .clone()
+    .json()
+    .catch(() => ({}))) as { manifest?: { kind?: unknown }; patch?: unknown; dryRun?: boolean };
+  const action = found[6];
+  const [project, plural, name] =
+    found[1] !== undefined
+      ? [unquote(found[1]), pluralOfKind(params.manifest?.kind), undefined]
+      : found[3] !== undefined
+        ? [unquote(found[3]), pluralOfKind(SETS[found[2]]?.$Type?.split(".").pop()), unquote(found[4])]
+        : ["org", pluralOfKind(SETS[found[2]]?.$Type?.split(".").pop()), unquote(found[5])];
+  const tail = name === undefined ? "" : `/${encodeURIComponent(name)}`;
+  const rest = new URL(
+    `/api/v1/projects/${encodeURIComponent(project)}/${plural ?? "unknown"}${tail}`,
+    at.origin,
+  );
+  if (params.dryRun) rest.searchParams.set("dryRun", "All");
+  if (typeof (params as { confirm?: unknown }).confirm === "string")
+    rest.searchParams.set("confirm", (params as { confirm: string }).confirm);
+  // The session's headers as sent (the CSRF token, If-Match); the service's own are not the door's.
+  const headers = new Headers(request.headers);
+  headers.delete("OData-Version");
+  headers.delete("Content-Type");
+  if (action === "propose_delete") return new Request(rest, { method: "DELETE", headers });
+  const patch = action === "propose_update" && params.patch !== undefined;
+  headers.set("Content-Type", patch ? "application/merge-patch+json" : "application/json");
+  return new Request(rest, {
+    method: action === "propose_create" ? "POST" : patch ? "PATCH" : "PUT",
+    headers,
+    body: JSON.stringify(patch ? params.patch : params.manifest),
+  });
 }

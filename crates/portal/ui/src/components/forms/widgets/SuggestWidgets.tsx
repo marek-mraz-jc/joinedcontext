@@ -1,10 +1,11 @@
+import { listManifests } from "../../../api/odata";
 import { useContext, useId } from "react";
 import type { ChangeEvent, FocusEvent, JSX } from "react";
 import { ariaDescribedByIds } from "@rjsf/utils";
 import type { WidgetProps } from "@rjsf/utils";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../../api/client";
+import { queryKeys } from "../../../api/client";
 import { asManifests, ORG_NAMESPACE } from "../../../api/manifest";
 import { readsOnceKnown, usePermissions } from "../../../api/permissions";
 import type { Manifest } from "../../../api/manifest";
@@ -86,7 +87,7 @@ function GranteeSuggest({ kind, ...props }: WidgetProps & { kind: string }): JSX
       return {
         queryKey: queryKeys.list(owner, list?.plural ?? ""),
         queryFn: async () =>
-          unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project: owner, plural: list?.plural ?? "" } } })),
+          (await listManifests(owner, list?.plural ?? "")),
         enabled: Boolean(owner && list) && readsOnceKnown(reads[scope], list?.kind ?? "") === true,
         retry: false,
       };
@@ -129,7 +130,7 @@ export function AttributeSuggest(props: WidgetProps): JSX.Element {
   ];
   const models = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "datamodels" } } })),
+    queryFn: async () => (await listManifests(project, "datamodels")),
     enabled: Boolean(project) && types.length > 0,
   });
   const choices = [

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "./client";
-import { isChange } from "./manifest";
+import { isChange, ORG_NAMESPACE } from "./manifest";
+import { isManifestSet, proposeManifest } from "./odata";
 import type { Change, ResourceProposal } from "./manifest";
 import type { components } from "./schema";
 
@@ -26,19 +27,26 @@ export async function proposeChecked(
   /** The ETag the manifest was read with: an update the server holds a newer one of is a 412. */
   ifMatch?: string,
 ): Promise<unknown> {
-  const send = (dryRun: boolean) => {
+  const send = async (dryRun: boolean): Promise<unknown> => {
+    if (isManifestSet(plural) && !(create && project === ORG_NAMESPACE)) {
+      return proposeManifest(project, plural, body, { create, dryRun, ifMatch });
+    }
+    // ponytail: the service has no propose_create on the Organization's own repository and no
+    // set of `organizations` yet (T-7073's split); those two stay on the REST door.
     const query = dryRun ? { dryRun: "All" } : undefined;
-    return create
-      ? api.POST("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural }, query },
-          body,
-        })
-      : api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural, name: body.metadata.name }, query, header: ifMatch ? { "If-Match": ifMatch } : undefined },
-          body,
-        });
+    return unwrap(
+      create
+        ? await api.POST("/api/v1/projects/{project}/{plural}", {
+            params: { path: { project, plural }, query },
+            body,
+          })
+        : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
+            params: { path: { project, plural, name: body.metadata.name }, query, header: ifMatch ? { "If-Match": ifMatch } : undefined },
+            body,
+          }),
+    );
   };
-  const check = (await unwrap(await send(true))) as CheckAnswer;
+  const check = (await send(true)) as CheckAnswer;
   if (check.valid === false || check.verdict?.ok === false) {
     const found = (check.verdict?.findings ?? [])
       .map((finding) => finding.message)
@@ -54,7 +62,7 @@ export async function proposeChecked(
         .map((finding) => `${finding.path}: ${finding.message}`),
     });
   }
-  return unwrap(await send(false));
+  return send(false);
 }
 
 /**

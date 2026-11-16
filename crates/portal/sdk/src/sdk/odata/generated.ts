@@ -3,6 +3,7 @@
 // fails on any difference (T-6816).
 
 export interface AgentProfile {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -18,6 +19,7 @@ export interface AgentProfile {
 }
 
 export interface App {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -34,6 +36,7 @@ export interface App {
 }
 
 export interface AssistantDeployment {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -50,6 +53,7 @@ export interface AssistantDeployment {
 }
 
 export interface Blueprint {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -65,6 +69,7 @@ export interface Blueprint {
 }
 
 export interface Bundle {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -101,6 +106,7 @@ export interface Change {
 }
 
 export interface CkanInstance {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -117,6 +123,7 @@ export interface CkanInstance {
 }
 
 export interface ContextBroker {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -132,6 +139,7 @@ export interface ContextBroker {
 }
 
 export interface ContextSourceRegistration {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -148,6 +156,7 @@ export interface ContextSourceRegistration {
 }
 
 export interface ContextSpace {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -164,6 +173,7 @@ export interface ContextSpace {
 }
 
 export interface Dashboard {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -180,6 +190,7 @@ export interface Dashboard {
 }
 
 export interface DataAgreement {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -196,6 +207,7 @@ export interface DataAgreement {
 }
 
 export interface DataModel {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -212,6 +224,7 @@ export interface DataModel {
 }
 
 export interface DataOffer {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -228,6 +241,7 @@ export interface DataOffer {
 }
 
 export interface DataSource {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -244,6 +258,7 @@ export interface DataSource {
 }
 
 export interface DataSpaceParticipant {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -259,6 +274,7 @@ export interface DataSpaceParticipant {
 }
 
 export interface DelegationPolicy {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -274,6 +290,7 @@ export interface DelegationPolicy {
 }
 
 export interface Endpoint {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -310,6 +327,7 @@ export interface EndpointRow {
 }
 
 export interface Entity {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -326,6 +344,7 @@ export interface Entity {
 }
 
 export interface Environment {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -341,6 +360,7 @@ export interface Environment {
 }
 
 export interface Group {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -356,6 +376,7 @@ export interface Group {
 }
 
 export interface KnowledgeSource {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -372,6 +393,7 @@ export interface KnowledgeSource {
 }
 
 export interface Layer {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -388,6 +410,7 @@ export interface Layer {
 }
 
 export interface Mapping {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -404,6 +427,7 @@ export interface Mapping {
 }
 
 export interface McpServer {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -429,6 +453,7 @@ export interface Member {
 }
 
 export interface ModelProjection {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -445,6 +470,7 @@ export interface ModelProjection {
 }
 
 export interface MqttBroker {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -470,6 +496,7 @@ export interface Organization {
 }
 
 export interface OrganizationRole {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -493,6 +520,7 @@ export interface Person {
 }
 
 export interface Pipeline {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -509,6 +537,7 @@ export interface Pipeline {
 }
 
 export interface Policy {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -525,6 +554,7 @@ export interface Policy {
 }
 
 export interface Portal {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -573,6 +603,7 @@ export interface Revision {
 }
 
 export interface Role {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -589,6 +620,7 @@ export interface Role {
 }
 
 export interface RoleBinding {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -617,6 +649,7 @@ export interface Run {
 }
 
 export interface ScopeDefinition {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -633,6 +666,7 @@ export interface ScopeDefinition {
 }
 
 export interface Script {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -649,6 +683,7 @@ export interface Script {
 }
 
 export interface ServiceAccount {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -665,6 +700,7 @@ export interface ServiceAccount {
 }
 
 export interface SharedSpaceReference {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -681,6 +717,7 @@ export interface SharedSpaceReference {
 }
 
 export interface Subscription {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -697,6 +734,7 @@ export interface Subscription {
 }
 
 export interface SyncSource {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -713,6 +751,7 @@ export interface SyncSource {
 }
 
 export interface UiSchema {
+  apiVersion?: unknown | null;
   kind?: string | null;
   metadata?: unknown | null;
   name: string;
@@ -898,8 +937,14 @@ export interface Functions {
   jc_workspace_compare: { name: string };
   jc_workspace_preview_get: { name: string };
   portal_access_request_list: { endpoint: string };
+  portal_alert_list: Record<string, never>;
+  portal_alert_notice_list: Record<string, never>;
+  portal_comment_list: { space: string; urn?: string };
   portal_connector_list: Record<string, never>;
+  portal_drift_list: Record<string, never>;
   portal_endpoint_quality: { endpoint: string };
+  portal_erasure_get: { space: string; id: string };
+  portal_erasure_list: { space: string };
   portal_notification_list: Record<string, never>;
   portal_opendata_pages: Record<string, never>;
   portal_organization_change_get: { id: string };
@@ -909,6 +954,11 @@ export interface Functions {
   portal_person_names: { ids?: string };
   portal_preferences_get: Record<string, never>;
   portal_secret_list: Record<string, never>;
+  portal_space_quality: { space: string };
+  portal_space_quality_checks: { space: string };
+  portal_space_retention_deleted: { space: string };
+  portal_space_temporal_audit: { space: string; pipeline?: string };
+  portal_trash_list: { space: string };
   portal_visualization_template: { template: string; x?: string; y?: string; color?: string; facet?: string };
 }
 
@@ -961,8 +1011,14 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_workspace_compare: ["Project"],
   jc_workspace_preview_get: ["Project"],
   portal_access_request_list: ["Project"],
+  portal_alert_list: ["Organization"],
+  portal_alert_notice_list: ["Organization"],
+  portal_comment_list: ["Project"],
   portal_connector_list: ["Organization"],
+  portal_drift_list: ["Project"],
   portal_endpoint_quality: ["Project"],
+  portal_erasure_get: ["Project"],
+  portal_erasure_list: ["Project"],
   portal_notification_list: ["Organization"],
   portal_opendata_pages: ["Organization"],
   portal_organization_change_get: ["Organization"],
@@ -972,6 +1028,11 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_person_names: ["Organization"],
   portal_preferences_get: ["Organization"],
   portal_secret_list: ["Project"],
+  portal_space_quality: ["Project"],
+  portal_space_quality_checks: ["Project"],
+  portal_space_retention_deleted: ["Project"],
+  portal_space_temporal_audit: ["Project"],
+  portal_trash_list: ["Project"],
   portal_visualization_template: ["Organization"],
 };
 
@@ -1023,7 +1084,18 @@ export interface Actions {
   jc_workspace_propose: { name: string };
   jc_workspace_update_from_main: { name: string; resolutions?: unknown };
   portal_access_request_file: { endpoint: string; body?: unknown };
+  portal_alert_mute: { id: string; body?: unknown };
+  portal_alert_notice_read: { id: string };
+  portal_alert_subscribe: { body?: unknown };
+  portal_alert_unsubscribe: { id: string };
+  portal_comment_add: { space: string; body?: unknown };
+  portal_comment_remove: { space: string; id: string };
   portal_connector_revoke: { connector: string };
+  portal_drift_adopt: { space: string; id: string };
+  portal_drift_revert: { space: string; id: string };
+  portal_erasure_approve: { space: string; id: string; body?: unknown };
+  portal_erasure_decline: { space: string; id: string; body?: unknown };
+  portal_erasure_file: { space: string; dryRun?: string; body?: unknown };
   portal_notification_read: { notification: string };
   portal_opendata_page_preview: { body?: unknown };
   portal_opendata_page_revert: { page: string; lang: string };
@@ -1040,9 +1112,13 @@ export interface Actions {
   portal_secret_set: { body?: unknown };
   portal_serviceaccount_revoke: { account: string; body?: unknown };
   portal_serviceaccount_secret_issue: { account: string };
-  propose_create: { manifest?: unknown; dryRun?: boolean };
-  propose_delete: { dryRun?: boolean };
-  propose_update: { manifest?: unknown; patch?: unknown; dryRun?: boolean };
+  portal_space_retention_preview: { space: string; body?: unknown };
+  portal_space_subject_export: { space: string; body?: unknown };
+  portal_trash_forget: { space: string; id: string };
+  portal_trash_keep: { space: string; body?: unknown };
+  propose_create: { manifest?: unknown; dryRun?: boolean; confirm?: string };
+  propose_delete: { dryRun?: boolean; confirm?: string };
+  propose_update: { manifest?: unknown; patch?: unknown; dryRun?: boolean; confirm?: string };
   reject: { reason?: string };
 }
 
@@ -1094,7 +1170,18 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_workspace_propose: ["Project"],
   jc_workspace_update_from_main: ["Project"],
   portal_access_request_file: ["Project"],
+  portal_alert_mute: ["Organization"],
+  portal_alert_notice_read: ["Organization"],
+  portal_alert_subscribe: ["Organization"],
+  portal_alert_unsubscribe: ["Organization"],
+  portal_comment_add: ["Project"],
+  portal_comment_remove: ["Project"],
   portal_connector_revoke: ["Organization"],
+  portal_drift_adopt: ["Project"],
+  portal_drift_revert: ["Project"],
+  portal_erasure_approve: ["Project"],
+  portal_erasure_decline: ["Project"],
+  portal_erasure_file: ["Project"],
   portal_notification_read: ["Organization"],
   portal_opendata_page_preview: ["Organization"],
   portal_opendata_page_revert: ["Organization"],
@@ -1111,6 +1198,10 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_secret_set: ["Project"],
   portal_serviceaccount_revoke: ["Project"],
   portal_serviceaccount_secret_issue: ["Project"],
+  portal_space_retention_preview: ["Project"],
+  portal_space_subject_export: ["Project"],
+  portal_trash_forget: ["Project"],
+  portal_trash_keep: ["Project"],
   propose_create: ["Project"],
   propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","Script","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
   propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","Script","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],

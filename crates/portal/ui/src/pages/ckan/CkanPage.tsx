@@ -1,4 +1,5 @@
 import { RowActions } from "../../components/ui/RowActions";
+import { call } from "../../api/odata";
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -74,12 +75,7 @@ export function CkanPage({ project }: { project: string }): JSX.Element {
 
   const status = useQuery({
     queryKey: ckanStatusKey(project),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/ckan/status", {
-          params: { path: { project } },
-        }),
-      ),
+    queryFn: () => call("jc_ckan_status", project, {}),
   });
 
   const create = useMutation({

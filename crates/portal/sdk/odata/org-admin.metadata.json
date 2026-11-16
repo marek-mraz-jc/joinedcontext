@@ -7,6 +7,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -48,6 +52,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -90,6 +98,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -131,6 +143,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -171,6 +187,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -275,6 +295,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -316,6 +340,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -357,6 +385,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -399,6 +431,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -441,6 +477,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -483,6 +523,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -525,6 +569,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -567,6 +615,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -609,6 +661,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -650,6 +706,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -690,6 +750,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -731,6 +795,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -819,6 +887,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -860,6 +932,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -900,6 +976,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -941,6 +1021,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -983,6 +1067,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1025,6 +1113,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1067,6 +1159,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1128,6 +1224,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1170,6 +1270,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1233,6 +1337,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1290,6 +1398,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1332,6 +1444,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1373,6 +1489,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1659,6 +1779,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1700,6 +1824,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1773,6 +1901,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -1815,6 +1947,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2089,6 +2225,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2131,6 +2271,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2173,6 +2317,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2215,6 +2363,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -2256,6 +2408,10 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "apiVersion": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "kind": {
         "$Nullable": true
       },
@@ -5213,6 +5369,205 @@
         }
       }
     ],
+    "portal_alert_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_alert_mute": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_alert_notice_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_alert_notice_read": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_alert_subscribe": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_alert_unsubscribe": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_comment_add": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_comment_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "urn",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_comment_remove": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_connector_list": [
       {
         "$IsBound": true,
@@ -5250,6 +5605,74 @@
         }
       }
     ],
+    "portal_drift_adopt": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_drift_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_drift_revert": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_endpoint_quality": [
       {
         "$IsBound": true,
@@ -5262,6 +5685,146 @@
           },
           {
             "$Name": "endpoint",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_erasure_approve": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_erasure_decline": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_erasure_file": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_erasure_get": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_erasure_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
             "$Nullable": false,
             "$Type": "Edm.String"
           }
@@ -5806,6 +6369,220 @@
         }
       }
     ],
+    "portal_space_quality": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_space_quality_checks": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_space_retention_deleted": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_space_retention_preview": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_space_subject_export": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_space_temporal_audit": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "pipeline",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_trash_forget": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_trash_keep": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_trash_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_visualization_template": [
       {
         "$IsBound": true,
@@ -5866,6 +6643,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -5887,6 +6669,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -5906,6 +6693,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -5925,6 +6717,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -5944,6 +6741,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -5963,6 +6765,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -5982,6 +6789,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6001,6 +6813,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6020,6 +6837,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6039,6 +6861,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6058,6 +6885,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6077,6 +6909,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6096,6 +6933,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6115,6 +6957,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6134,6 +6981,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6153,6 +7005,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6172,6 +7029,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6191,6 +7053,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6210,6 +7077,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6229,6 +7101,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6248,6 +7125,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6267,6 +7149,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6286,6 +7173,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6305,6 +7197,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6324,6 +7221,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6343,6 +7245,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6362,6 +7269,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6381,6 +7293,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6400,6 +7317,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6419,6 +7341,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6438,6 +7365,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6457,6 +7389,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6476,6 +7413,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6495,6 +7437,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6514,6 +7461,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6533,6 +7485,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6552,6 +7509,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6571,6 +7533,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6590,6 +7557,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6609,6 +7581,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6628,6 +7605,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6659,6 +7641,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6688,6 +7675,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6717,6 +7709,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6746,6 +7743,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6775,6 +7777,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6804,6 +7811,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6833,6 +7845,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6862,6 +7879,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6891,6 +7913,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6920,6 +7947,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6949,6 +7981,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -6978,6 +8015,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7007,6 +8049,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7036,6 +8083,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7065,6 +8117,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7094,6 +8151,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7123,6 +8185,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7152,6 +8219,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7181,6 +8253,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7210,6 +8287,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7239,6 +8321,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7268,6 +8355,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7297,6 +8389,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7326,6 +8423,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7355,6 +8457,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7384,6 +8491,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7413,6 +8525,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7442,6 +8559,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7471,6 +8593,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7500,6 +8627,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7529,6 +8661,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7558,6 +8695,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7587,6 +8729,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7616,6 +8763,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7645,6 +8797,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7674,6 +8831,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7703,6 +8865,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7732,6 +8899,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7761,6 +8933,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {
@@ -7790,6 +8967,11 @@
             "$Name": "dryRun",
             "$Nullable": true,
             "$Type": "Edm.Boolean"
+          },
+          {
+            "$Name": "confirm",
+            "$Nullable": true,
+            "$Type": "Edm.String"
           }
         ],
         "$ReturnType": {

@@ -1350,7 +1350,6 @@
       "lead": "Jedes Attribut, das eine Pipeline in diesen Raum schreibt, wie der Raum es aufzeichnet und woher die Zeit jeder Zeile kommt. Ein anderes Urteil als OK nennt, was zu ändern ist.",
       "summary": "Zeilen je Urteil",
       "count": "{verdict}: {n}",
-      "failed": "Die Prüfung konnte nicht gelesen werden: {detail}. Laden Sie die Seite neu.",
       "empty": "Keine Pipeline, die Sie lesen dürfen, schreibt in diesen Raum",
       "emptyHint": "Eine Pipeline, deren Ziel-Endpoint zu diesem Raum gehört, erscheint hier mit jedem Attribut, das sie abbildet.",
       "unread": "Die Abbildung von {pipelines} konnte nicht aus dem Repository gelesen werden, ihre Zeilen fehlen. Laden Sie die Seite neu.",

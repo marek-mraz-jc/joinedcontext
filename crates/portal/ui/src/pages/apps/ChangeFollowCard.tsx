@@ -1,3 +1,4 @@
+import { readManifest } from "../../api/odata";
 import type { JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -130,11 +131,7 @@ function EndpointTest({ project, name, onOpenLink }: { project: string; name: st
   const endpoint = useQuery({
     queryKey: ["projects", project, "endpoints", name],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "endpoints", name } },
-        }),
-      ),
+      (await readManifest(project, "endpoints", name)),
   });
   const spec = isRecord(endpoint.data) && isRecord(endpoint.data.spec) ? endpoint.data.spec : {};
   const slug = typeof spec.slug === "string" ? spec.slug : null;

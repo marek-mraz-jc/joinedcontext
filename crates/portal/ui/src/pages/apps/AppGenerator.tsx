@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { useId, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -254,11 +255,7 @@ export function useAppNeeds(
   const endpoints = useQuery({
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   });
 
   const choices = asManifests(endpoints.data?.items ?? []);

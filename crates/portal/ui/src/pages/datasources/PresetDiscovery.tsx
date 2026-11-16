@@ -1,8 +1,9 @@
 import { useState } from "react";
+import { act, projectBound } from "../../api/odata";
 import type { JSX } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
 import { Button, Field, Select } from "../../components/ui";
 import { PRESET_KINDS } from "../../schemas/kinds";
 import type { PresetKind } from "../../schemas/kinds";
@@ -78,12 +79,7 @@ export function PresetDiscovery({
   const [used, setUsed] = useState<string | null>(null);
   const find = useMutation({
     mutationFn: async (asked: { kind: PresetKind; url: string }) =>
-      (await unwrap(
-        await api.POST("/api/v1/projects/{project}/datasource-discovery", {
-          params: { path: { project } },
-          body: asked,
-        }),
-      )) as Discovery,
+      (await act("jc_datasource_discover", projectBound(project), asked)) as Discovery,
     onSuccess: (answer) => {
       setPicked(answer.choices[0]?.value ?? "");
       setUsed(null);

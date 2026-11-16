@@ -1,3 +1,4 @@
+import { listManifests } from "./odata";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError, queryKeys, unwrap } from "./client";
@@ -305,11 +306,7 @@ export function useReadableList(project: string, plural: string, kind: string, e
     queryKey: queryKeys.list(project, plural),
     enabled: enabled && reads === true,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural } },
-        }),
-      ),
+      (await listManifests(project, plural)),
   });
   // A list that is never asked for is not pending: a disabled query stays `isPending` for good,
   // which kept a page that waits on it at "Loading" (T-4027).

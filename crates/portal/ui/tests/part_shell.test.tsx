@@ -45,6 +45,15 @@ const BRANDING = {
 let branding: Record<string, unknown>;
 
 /** The shell of one project, up once its sidebar is; `answers` fills in what a page needs. */
+// A space whose manifest holds no spec, what the detail page cannot draw and throws on (the
+// service answers the read itself, so a list where an object belongs no longer reaches it).
+const SPACE_READ = "/api/v1/projects/banskabystrica/spaces/air-quality";
+const NO_SPEC = {
+  apiVersion: "joinedcontext.com/v1alpha1",
+  kind: "ContextSpace",
+  metadata: { name: "air-quality", namespace: "banskabystrica" },
+};
+
 async function shell(
   path = "/projects/banskabystrica/spaces",
   answers: Record<string, unknown> = {},
@@ -175,10 +184,9 @@ describe("the shell against the UI contract", () => {
     // The router renders the shell and the page as one component, so before T-2426 an error in
     // any page replaced the whole application with the router's own "Something went wrong!" —
     // no sidebar, no project switcher, nothing but the browser's Back button.
-    const { user } = await shell("/projects/banskabystrica/spaces/air-quality");
+    const { user } = await shell("/projects/banskabystrica/spaces/air-quality", { [SPACE_READ]: NO_SPEC });
 
-    // The page below the chrome is a detail page with no resource behind it, which is what
-    // throws: the shell's stub answers a list where an object was expected.
+    // The page below the chrome is a detail page whose space holds no spec, which is what throws.
     const panel = await screen.findByRole("alert");
     expect(within(panel).getByText(i18n.t("app.error.crashTitle"))).toBeInTheDocument();
     expect(within(panel).getByTestId("error-reference").textContent).toMatch(/^[0-9a-z-]{4,}$/);
@@ -214,7 +222,7 @@ describe("the shell against the UI contract", () => {
   it("says the same thing in Slovak, where the page that failed is read in Slovak", async () => {
     window.localStorage.setItem("jc-lang", "sk");
     await i18n.changeLanguage("sk");
-    const { user } = await shell("/projects/banskabystrica/spaces/air-quality");
+    const { user } = await shell("/projects/banskabystrica/spaces/air-quality", { [SPACE_READ]: NO_SPEC });
 
     const panel = await screen.findByRole("alert");
     expect(within(panel).getByText(i18n.t("app.error.crashTitle"))).toBeInTheDocument();

@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -37,11 +38,7 @@ export function ConnectionTest({ project, name, type }: { project: string; name:
   const pipelines = useQuery({
     queryKey: queryKeys.list(project, "pipelines"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "pipelines" } },
-        }),
-      ),
+      (await listManifests(project, "pipelines")),
   });
   const readers = asManifests(pipelines.data?.items ?? []).filter((pipeline) =>
     readsOf((pipeline.spec ?? {}) as Record<string, unknown>).includes(name),

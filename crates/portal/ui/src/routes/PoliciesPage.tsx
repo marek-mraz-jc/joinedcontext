@@ -1,3 +1,4 @@
+import { listManifests } from "../api/odata";
 import { useCreateFormFromDraft } from "../components/forms/FormRoute";
 import { RecordLink } from "../components/RecordLink";
 import { useState } from "react";
@@ -8,7 +9,7 @@ import { GranteeInWords, OperationsInWords } from "../components/AccessWords";
 import { policySentence } from "../pages/policies/policySentence";
 import { PolicySummary } from "../pages/policies/PolicySummary";
 import { TryAPerson } from "../pages/policies/TryAPerson";
-import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
+import { problemOf, queryKeys, whilePending } from "../api/client";
 import { proposeChecked } from "../api/proposal";
 import { asManifests, isChange, localized, storedMetadata } from "../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../api/manifest";
@@ -21,16 +22,7 @@ import { AdminGrid } from "../components/grid/AdminGrid";
 import type { DataColumn } from "../components/grid/AdminGrid";
 import { ResourceRowActions } from "../components/ResourceRowActions";
 import { hasPolicyRules, POLICY_RULE_MEMBERS, policySchema, policyUiSchema } from "../schemas/kinds";
-import {
-  Badge,
-  Button,
-  EmptyState,
-  Field,
-  Icon,
-  Input,
-  PageHeader,
-  Term,
-} from "../components/ui";
+import { Badge, Button, EmptyState, Field, Icon, Input, PageHeader, Term } from "../components/ui";
 import { policyRules } from "../components/endpoints/policyBinding";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
 import { SPACE_LABEL } from "../schemas/modelprojection";
@@ -136,7 +128,6 @@ export function fromPolicyEnvelope(manifest: unknown): PolicyForm {
   } as PolicyForm;
 }
 
-
 /**
  * The policies of one project: what each one grants, to whom, and on which space (R5…R9, UI-01).
  *
@@ -161,21 +152,13 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
     queryKey: queryKeys.list(project, "policies"),
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "policies" } },
-        }),
-      ),
+      (await listManifests(project, "policies")),
   });
 
   const spaces = useQuery({
     queryKey: queryKeys.list(project, "spaces"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "spaces" } },
-        }),
-      ),
+      (await listManifests(project, "spaces")),
   });
   const spaceNames = asManifests(spaces.data?.items ?? []).map((space) => space.metadata.name);
 

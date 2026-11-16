@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 /**
  * A project's home page (T-3233, T-3235): the first-run checklist while the person has not put it
  * away, and the cards of what their role can do next. Every step and every card reads the
@@ -39,7 +40,7 @@ function useList(project: string, plural: string, enabled: boolean) {
     enabled,
     retry: false,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural } } })) as Listed,
+      (await listManifests(project, plural)) as Listed,
   });
 }
 

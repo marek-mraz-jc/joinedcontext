@@ -1,9 +1,10 @@
+import { listManifests } from "../../api/odata";
 import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueries } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 import { asManifests, refName } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { Button, Icon, safeHref } from "../ui";
@@ -176,11 +177,7 @@ export function useCatalogueLinks(
       queryKey: queryKeys.list(project, "ckaninstances"),
       retry: false,
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: "ckaninstances" } },
-          }),
-        ),
+        (await listManifests(project, "ckaninstances")),
     })),
   });
   const sites = new Map<string, string>();

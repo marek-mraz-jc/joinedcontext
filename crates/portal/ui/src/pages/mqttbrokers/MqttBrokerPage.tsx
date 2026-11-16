@@ -1,3 +1,4 @@
+import { readManifest } from "../../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -78,11 +79,7 @@ export function MqttBrokerPage({
     queryKey: queryKeys.resource(project, "mqttbrokers", name),
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "mqttbrokers", name } },
-        }),
-      ),
+      (await readManifest(project, "mqttbrokers", name)),
   });
   const measured = useMeasured(project, name);
   const refusals = useRefusalsToday(project, name);

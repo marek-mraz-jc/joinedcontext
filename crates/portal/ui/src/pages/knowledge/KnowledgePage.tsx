@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { RowActions } from "../../components/ui/RowActions";
 import { useState } from "react";
 import type { JSX } from "react";
@@ -5,21 +6,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ManifestGrid } from "../../components/grid/ManifestGrid";
-import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { queryKeys, reasonOf } from "../../api/client";
 import { startJob } from "../../jobs";
 import { RecordLink } from "../../components/RecordLink";
 import { usePermissions } from "../../api/permissions";
-import {
-  Alert,
-  Badge,
-  Button,
-  buttonClass,
-  Dialog,
-  EmptyState,
-  PageFailed,
-  PageHeader,
-  PermissionGuard,
-} from "../../components/ui";
+import { Alert, Badge, Button, buttonClass, Dialog, EmptyState, PageFailed, PageHeader, PermissionGuard } from "../../components/ui";
 import { AdminGrid } from "../../components/grid/AdminGrid";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import type { BadgeTone } from "../../components/ui";
@@ -340,7 +331,7 @@ function Assistants({ project }: { project: string }): JSX.Element {
   const list = useQuery({
     queryKey: queryKeys.list(project, "assistantdeployments"),
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "assistantdeployments" } } })),
+      (await listManifests(project, "assistantdeployments")),
   });
   const items = (list.data?.items ?? []) as unknown as DeploymentItem[];
   // A copy with a new name and publicId, kept as a draft and opened in the create form (T-4281).

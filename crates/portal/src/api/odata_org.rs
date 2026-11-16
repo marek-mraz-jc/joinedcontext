@@ -683,12 +683,24 @@ fn organization(state: &AppState, user: &CurrentUser, rel: &str) -> Option<Strin
         .or_else(|| crate::permissions::installation_organization(mirror))
 }
 
-/// The project a service path starts with, `projects('x')…` or `projects/x…`.
+/// The project a service path starts with, `projects('x')…` or `projects/x…`, or the project of
+/// the entity it starts with, `spaces(project='x',name='y')…`: a manifest's read and its bound
+/// writes (T-7073).
 fn addressed_project(rel: &str) -> Option<&str> {
-    let rest = rel.strip_prefix("projects")?;
-    let name = match rest.strip_prefix("('") {
-        Some(quoted) => quoted.split_once("')")?.0,
-        None => rest.strip_prefix('/')?.split(['/', '?']).next()?,
+    let name = if let Some(rest) = rel.strip_prefix("projects") {
+        match rest.strip_prefix("('") {
+            Some(quoted) => quoted.split_once("')")?.0,
+            None => rest.strip_prefix('/')?.split(['/', '?']).next()?,
+        }
+    } else {
+        let (set, key) = rel.split_once('(')?;
+        if set.contains('/') {
+            return None;
+        }
+        let key = key.split_once(')')?.0;
+        key.split(',')
+            .find_map(|pair| pair.strip_prefix("project='"))?
+            .strip_suffix('\'')?
     };
     is_dns1123(name).then_some(name)
 }
@@ -785,6 +797,10 @@ const ETAG: &str = "@odata.etag";
 /// `GET …/{plural}/{name}` answers it (API/13 §2a, T-7097).
 const MANIFEST_DETAIL: [&str; 3] = ["spec", "status", "metadata"];
 
+/// A manifest kind's [`MANIFEST_DETAIL`] and its `apiVersion`: a Pipeline is `v1alpha1` or
+/// `v1alpha2` (jc-core conversions), and a page writes back the version it read (T-7074).
+const MANIFEST_SET_DETAIL: [&str; 4] = ["spec", "status", "metadata", "apiVersion"];
+
 /// A Change's detail, as `jc_change_get` answers it: what the inbox and an approval read.
 const CHANGE_DETAIL: [&str; 9] = [
     "metadata",
@@ -810,7 +826,7 @@ fn detail(set: &str) -> &'static [&'static str] {
     }
     match kind(set).or_else(|| org_set(set)) {
         Some(list) if list.set == CHANGES => &CHANGE_DETAIL,
-        Some(list) if manifest_kind(list) => &MANIFEST_DETAIL,
+        Some(list) if manifest_kind(list) => &MANIFEST_SET_DETAIL,
         _ => &[],
     }
 }
@@ -2078,18 +2094,22 @@ fn bound_actions(rights: &Rights, visible: &BTreeSet<String>) -> Vec<BoundAction
     for type_name in org_types {
         let ty = format!("{NAMESPACE}.{type_name}");
         out.push(("propose_update", ty.clone(), &UPDATE_PARAMETERS[..]));
-        out.push(("propose_delete", ty, &[("dryRun", "Edm.Boolean")][..]));
+        out.push(("propose_delete", ty, &DELETE_PARAMETERS[..]));
     }
     if rights.propose {
         out.push((
             "propose_create",
             format!("{NAMESPACE}.Project"),
-            &[("manifest", "Edm.Untyped"), ("dryRun", "Edm.Boolean")][..],
+            &[
+                ("manifest", "Edm.Untyped"),
+                ("dryRun", "Edm.Boolean"),
+                ("confirm", "Edm.String"),
+            ][..],
         ));
         for set in kinds().filter(|set| manifest_kind(set) && visible.contains(&set.set)) {
             let ty = format!("{NAMESPACE}.{}", set.type_name);
             out.push(("propose_update", ty.clone(), &UPDATE_PARAMETERS[..]));
-            out.push(("propose_delete", ty, &[("dryRun", "Edm.Boolean")][..]));
+            out.push(("propose_delete", ty, &DELETE_PARAMETERS[..]));
         }
     }
     if rights.approve {
@@ -2102,11 +2122,14 @@ fn bound_actions(rights: &Rights, visible: &BTreeSet<String>) -> Vec<BoundAction
     out
 }
 
-const UPDATE_PARAMETERS: [(&str, &str); 3] = [
+const UPDATE_PARAMETERS: [(&str, &str); 4] = [
     ("manifest", "Edm.Untyped"),
     ("patch", "Edm.Untyped"),
     ("dryRun", "Edm.Boolean"),
+    ("confirm", "Edm.String"),
 ];
+
+const DELETE_PARAMETERS: [(&str, &str); 2] = [("dryRun", "Edm.Boolean"), ("confirm", "Edm.String")];
 
 fn manifest_kind(set: &ListSet) -> bool {
     !set.endpoint_list && crate::resource::by_kind(&set.type_name).is_some()
@@ -2507,8 +2530,20 @@ fn dry_run(params: &Map<String, Value>) -> Result<DryRunQuery, Refused> {
         Some(Value::Bool(true)) => true,
         Some(_) => return Err(no(bad("dryRun is true or false"))),
     };
+    // The name typed back: an administrator's own red-lane Change is approved as it is
+    // proposed only with it, as the REST door's `?confirm=` (PF-58, CC-39).
+    let confirm = match params.get("confirm") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(name)) => Some(name.clone()),
+        Some(_) => {
+            return Err(no(bad(
+                "confirm is the resource's name typed back, e.g. \"air\"",
+            )))
+        }
+    };
     Ok(DryRunQuery {
         dry_run: dry.then(|| "All".to_owned()),
+        confirm,
         ..DryRunQuery::default()
     })
 }
@@ -2643,7 +2678,7 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
                 "a project has no action {name}; it has propose_create"
             ))));
         }
-        let params = parameters(&body, &["manifest", "dryRun"])?;
+        let params = parameters(&body, &["manifest", "dryRun", "confirm"])?;
         let manifest = params
             .get("manifest")
             .filter(|m| m.is_object())
@@ -2704,7 +2739,7 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
                 forwarded.insert(header::IF_MATCH, tag.clone());
             }
             if name == "propose_delete" {
-                let params = parameters(&body, &["dryRun"])?;
+                let params = parameters(&body, &["dryRun", "confirm"])?;
                 return Ok(door(
                     crate::api::delete::delete_resource(
                         user,
@@ -2717,7 +2752,7 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
                     .await,
                 ));
             }
-            let params = parameters(&body, &["manifest", "patch", "dryRun"])?;
+            let params = parameters(&body, &["manifest", "patch", "dryRun", "confirm"])?;
             let query = dry_run(&params)?;
             match (params.get("manifest"), params.get("patch")) {
                 (Some(manifest), None) if manifest.is_object() => {

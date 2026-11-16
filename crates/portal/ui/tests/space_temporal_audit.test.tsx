@@ -125,4 +125,17 @@ describe("the temporal audit of a space (T-4844)", () => {
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("context space 'helsinki' not found");
   });
+
+  it("offers a retry when the audit fails on the server, and shows the audit once it answers (T-7107)", async () => {
+    let calls = 0;
+    renderAudit(() => {
+      calls += 1;
+      return calls === 1
+        ? json({ type: "about:blank", title: "Bad Gateway", status: 502, detail: "git forge is not configured" }, 502)
+        : json(AUDIT);
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("git forge is not configured");
+    await userEvent.click(screen.getByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByRole("table", { name: en.spaces.temporal.caption })).toBeInTheDocument();
+  });
 });

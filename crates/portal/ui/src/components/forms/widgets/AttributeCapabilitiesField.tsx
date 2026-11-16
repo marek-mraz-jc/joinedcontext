@@ -1,36 +1,16 @@
+import { listManifests } from "../../../api/odata";
 import { useContext, useId } from "react";
 import type { JSX } from "react";
 import type { FieldProps } from "@rjsf/utils";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../../api/client";
+import { queryKeys } from "../../../api/client";
 import { asManifests } from "../../../api/manifest";
 import { filterSlotsOf } from "../../entities/filters";
-import {
-  Button,
-  Checkbox,
-  Select,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableRowHeaderCell,
-} from "../../ui";
+import { Button, Checkbox, Select, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow, TableRowHeaderCell } from "../../ui";
 import { FormDataContext } from "./EntitySelectorField";
 import { FormProjectContext } from "./ModelWidgets";
-import {
-  columnBlocked,
-  grantLimits,
-  matrixRows,
-  METADATA_MEMBERS,
-  toggled,
-  valueBlocked,
-  VERSIONS_CAPABILITIES,
-  withCapability,
-  WRITE_CAPABILITIES,
-} from "./attributeCapabilities";
+import { columnBlocked, grantLimits, matrixRows, METADATA_MEMBERS, toggled, valueBlocked, VERSIONS_CAPABILITIES, withCapability, WRITE_CAPABILITIES } from "./attributeCapabilities";
 import type { AttributeCapabilities, Capabilities, CapabilityField, GrantLimits } from "./attributeCapabilities";
 
 type Root = ({ information?: Entry[] } & Parameters<typeof grantLimits>[0]) | undefined;
@@ -58,7 +38,7 @@ function useEntryMatrix(path: readonly (string | number)[], formData: unknown) {
   const models = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "datamodels" } } })),
+      (await listManifests(project, "datamodels")),
     enabled: Boolean(project) && types.length > 0 && listed.length === 0,
   });
   const declared = asManifests(models.data?.items ?? []).flatMap((model) =>

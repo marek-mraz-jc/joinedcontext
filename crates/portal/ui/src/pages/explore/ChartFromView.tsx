@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 /**
  * A chart from the explorer (UI-93, T-3257): pick an attribute of the type, take the chart its type
  * suggests (its history, bars by value, a histogram), see it, and save it as a widget to a
@@ -8,7 +9,7 @@ import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { asManifests } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -99,7 +100,7 @@ export function ChartFromView({
     queryKey: queryKeys.list(project, "dashboards"),
     enabled: open,
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "dashboards" } } })),
+    queryFn: async () => (await listManifests(project, "dashboards")),
     select: (list) => asManifests(list.items ?? []),
   });
 

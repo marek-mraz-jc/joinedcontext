@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { proposeManifest } from "../../api/odata";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -7,7 +8,7 @@ import type { ErrorSchema } from "@rjsf/utils";
 import validator from "./validator";
 import { errorMessageKey } from "./errorMessages";
 import { namesOfRefs } from "../../schemas/pickers";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
 import type { ResourceProposal } from "../../api/manifest";
 import type { Verdict } from "../../api/drafts";
 import { atPath, controlOf, extractName, fieldPath, findingSentence, manifestOf, titleAt } from "./resourceForm";
@@ -150,15 +151,7 @@ function useOwnCheck<T>(
       const proposed = manifestOf(form, options.source) as ResourceProposal;
       const body: ResourceProposal =
         options.draftKind && name ? { ...proposed, draft: { kind: options.draftKind, name } } : proposed;
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/{plural}", {
-          params: {
-            path: { project: options.project ?? "", plural: options.plural ?? "" },
-            query: { dryRun: "All" },
-          },
-          body: body,
-        }),
-      );
+      return proposeManifest(options.project ?? "", options.plural ?? "", body, { create: true, dryRun: true });
     },
     onSuccess: (result) => {
       const answer = result as { verdict?: Verdict; restartsStream?: boolean; bindsEndpoints?: unknown };

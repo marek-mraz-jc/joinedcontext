@@ -8,8 +8,7 @@ import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
-import { door, doorAction } from "../../api/odata";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { Alert, Button, Icon, Textarea } from "../../components/ui";
 import { sameOriginPath } from "../../components/ui/safeHref";
@@ -75,20 +74,15 @@ export function CommentsPanel({ project, space, urn }: { project: string; space:
     queryKey: key,
     retry: false,
     queryFn: async () =>
-      (await unwrap(
-        await api.GET("/api/v1/projects/{project}/spaces/{space}/comments", {
-          params: { path: { project, space }, query: { urn } },
-        }),
-      )) as CommentView[],
+      (await door("portal_comment_list", { space, urn }, project)) as CommentView[],
   });
 
   const post = useMutation({
     mutationFn: async (body: string) =>
-      (await unwrap(
-        await api.POST("/api/v1/projects/{project}/spaces/{space}/comments", {
-          params: { path: { project, space } },
-          body: { urn, text: body },
-        }),
+      (await doorAction(
+        "portal_comment_add",
+        { space, body: { urn, text: body } },
+        project,
       )) as Commented,
     onSuccess: async (made) => {
       setText("");
@@ -99,11 +93,7 @@ export function CommentsPanel({ project, space, urn }: { project: string; space:
 
   const remove = useMutation({
     mutationFn: async (comment: number) => {
-      await unwrap(
-        await api.DELETE("/api/v1/projects/{project}/spaces/{space}/comments/{id}", {
-          params: { path: { project, space, id: comment } },
-        }),
-      );
+      await doorAction("portal_comment_remove", { space, id: String(comment) }, project);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: key });
@@ -224,11 +214,12 @@ export function NotificationsMenu({ project, waiting = 0 }: { project: string; w
     queryKey: ALERT_NOTICES_KEY,
     retry: false,
     refetchInterval: 60_000,
-    queryFn: async () => unwrap(await api.GET("/api/v1/alerts/notices", {})),
+    queryFn: async () =>
+      (await door("portal_alert_notice_list", {})) as RestAnswer<"list_notices">,
   });
   const readAlert = useMutation({
     mutationFn: async (id: number) => {
-      await unwrap(await api.POST("/api/v1/alerts/notices/{id}/read", { params: { path: { id } } }));
+      await doorAction("portal_alert_notice_read", { id: String(id) });
     },
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: ALERT_NOTICES_KEY });
@@ -236,7 +227,7 @@ export function NotificationsMenu({ project, waiting = 0 }: { project: string; w
   });
   const muteAlert = useMutation({
     mutationFn: async (subscription: number) => {
-      await unwrap(await api.POST("/api/v1/alerts/{id}/mute", { params: { path: { id: subscription } }, body: { for: "1d" } }));
+      await doorAction("portal_alert_mute", { id: String(subscription), body: { for: "1d" } });
     },
   });
   const notices = alerts.data?.items ?? [];

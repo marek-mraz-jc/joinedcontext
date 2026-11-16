@@ -2,14 +2,14 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { door } from "../../api/odata";
 import type { components } from "../../api/schema";
 import {
   Alert,
   Badge,
   EmptyState,
   Field,
-  InlineError,
+  PageFailed,
   Select,
   Table,
   TableBody,
@@ -48,11 +48,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
     queryKey: ["projects", project, "spaces", space, "temporal-audit"],
     retry: false,
     queryFn: async (): Promise<Audit> =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/spaces/{space}/temporal-audit", {
-          params: { path: { project, space } },
-        }),
-      ),
+      (await door("portal_space_temporal_audit", { space }, project)) as Audit,
   });
 
   // A skeleton is a <tbody>: it goes inside a Table, never straight into the section.
@@ -64,9 +60,14 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
     );
   }
   if (audit.isError) {
-    const error = audit.error;
-    const detail = error instanceof ApiError ? (error.problem?.detail ?? error.message) : String(error);
-    return <InlineError>{t("spaces.temporal.failed", { detail })}</InlineError>;
+    return (
+      <PageFailed
+        error={audit.error}
+        onRetry={() => {
+          void audit.refetch();
+        }}
+      />
+    );
   }
   // An answer without a field reads as nothing of it, never as a crash of the whole tab.
   const rows = audit.data.rows ?? [];
@@ -132,7 +133,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
       {shown.length === 0 ? (
         <EmptyState bare title={t("spaces.temporal.noMatch")} description={t("spaces.temporal.noMatchHint")} />
       ) : (
-        <Table caption={t("spaces.temporal.caption")}>
+        <Table stack caption={t("spaces.temporal.caption")}>
           <TableHead>
             <TableHeaderCell>{t("spaces.temporal.attribute")}</TableHeaderCell>
             <TableHeaderCell>{t("spaces.temporal.verdictColumn")}</TableHeaderCell>
@@ -150,7 +151,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
                     </span>
                   </span>
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("spaces.temporal.verdictColumn")}>
                   <span className="flex flex-col items-start gap-1">
                     <Badge tone={TONE[row.verdict]}>{t(`spaces.temporal.verdict.${row.verdict}`)}</Badge>
                     {row.verdict !== "ok" && (
@@ -162,7 +163,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
                     )}
                   </span>
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("spaces.temporal.rows")}>
                   <span className="flex flex-col">
                     <span>{t(`spaces.temporal.recordMode.${row.record}`, { defaultValue: row.record })}</span>
                     <span className="text-caption text-fg-muted">
@@ -174,7 +175,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
                     </span>
                   </span>
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("spaces.temporal.kept")}>
                   <span className="flex flex-col">
                     <span>{t("spaces.temporal.history", { history: duration(row.history) })}</span>
                     <span className="text-caption text-fg-muted">

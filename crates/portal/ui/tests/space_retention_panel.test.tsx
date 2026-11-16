@@ -51,6 +51,10 @@ describe("the Retention section (DM-82, DM-85)", () => {
     const vehicle = within(table).getByRole("row", { name: /Vehicle/ });
     expect(within(vehicle).getByText("5 minutes")).toBeInTheDocument();
     expect(within(vehicle).getByText("8 hours")).toBeInTheDocument();
+    // T-7107 UI judge: below 640 px each row reads as a card, every value beside its column's name.
+    expect(table.closest("table")).toHaveClass("table-stack");
+    for (const r of within(table).getAllByRole("row").slice(1))
+      for (const c of within(r).getAllByRole("cell").slice(1)) expect(c).toHaveAttribute("data-label");
     // T-4822: each cell names the layer that set it.
     expect(within(vehicle).getAllByText(en.spaces.retention.layer.type)).toHaveLength(2);
     expect(await within(vehicle).findByText("0 values, 42 history records")).toBeInTheDocument();

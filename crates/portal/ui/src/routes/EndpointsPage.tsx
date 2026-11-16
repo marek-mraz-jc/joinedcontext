@@ -1,3 +1,4 @@
+import { listManifests, proposeManifest } from "../api/odata";
 import { FormHeading, useFormRoute } from "../components/forms/FormRoute";
 import { CopyUrlButton } from "../components/endpoints/links";
 import { ConnectAssistant } from "../components/endpoints/ConnectAssistant";
@@ -6,7 +7,7 @@ import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
+import { problemOf, queryKeys, whilePending } from "../api/client";
 import { importManifests, proposeChecked } from "../api/proposal";
 import { asManifests, isChange, localized, overlay, plainTitle, refName } from "../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../api/manifest";
@@ -34,27 +35,10 @@ import { SaveAsResourceAction } from "../components/SaveAsDialog";
 import { WorkOnCopyAction } from "../components/WorkOnCopyDialog";
 import { ExportButton } from "../components/export/ExportButton";
 import { SchemaProjectionPanel } from "../pages/endpoints/SchemaProjectionPanel";
-import {
-  endpointUrl,
-  alwaysServed,
-  RepresentationSummary,
-  servedRepresentations,
-} from "../components/endpoints/links";
+import { endpointUrl, alwaysServed, RepresentationSummary, servedRepresentations } from "../components/endpoints/links";
 import { useBranding } from "../branding";
-import {
-  admits,
-  referenceManifest,
-  SharedWithBadge,
-  SPACE_LABEL,
-  spaceOf,
-} from "../components/endpoints/sharing";
-import {
-  ALWAYS_ON_REPRESENTATIONS,
-  endpointSchema,
-  endpointUiSchema,
-  generateSlug,
-  REPRESENTATIONS,
-} from "../schemas/kinds";
+import { admits, referenceManifest, SharedWithBadge, SPACE_LABEL, spaceOf } from "../components/endpoints/sharing";
+import { ALWAYS_ON_REPRESENTATIONS, endpointSchema, endpointUiSchema, generateSlug, REPRESENTATIONS } from "../schemas/kinds";
 import { disabledRepresentations, surfaceFitQuery, surfaceGaps } from "../api/surfaceFit";
 import type { JsonSchema } from "../components/forms/types";
 import { ModelPicker } from "../pages/endpoints/ModelPicker";
@@ -68,18 +52,7 @@ import { isAnyClass, parseModel } from "../pages/models/linkml";
 import type { ModelPickerState } from "../pages/endpoints/ModelPicker";
 import { EndpointDataView } from "../components/entities/EndpointDataView";
 import { EndpointRefused, useEndpointAdmission } from "../components/endpoints/EndpointAdmission";
-import { CodeBlock,
-  buttonClass,
-  Alert,
-  Badge,
-  Button,
-  Dialog,
-  EmptyState,
-  Icon,
-  Input,
-  PageHeader,
-  safeHref,
-} from "../components/ui";
+import { CodeBlock, buttonClass, Alert, Badge, Button, Dialog, EmptyState, Icon, Input, PageHeader, safeHref } from "../components/ui";
 
 interface EndpointForm {
   name: string;
@@ -734,11 +707,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     // A change on its way polls until it lands (T-1392).
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   });
 
   // An endpoint the assistant opened by name edits that endpoint: a PUT to its name with its own
@@ -789,21 +758,13 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   const projectionsQuery = useQuery({
     queryKey: queryKeys.list(project, "projections"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "projections" } },
-        }),
-      ),
+      (await listManifests(project, "projections")),
   });
 
   const spacesQuery = useQuery({
     queryKey: queryKeys.list(project, "spaces"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "spaces" } },
-        }),
-      ),
+      (await listManifests(project, "spaces")),
   });
 
   const formRoute = useFormRoute();
@@ -816,11 +777,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   const policiesQuery = useQuery({
     queryKey: queryKeys.list(project, "policies"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "policies" } },
-        }),
-      ),
+      (await listManifests(project, "policies")),
     enabled: formOpen,
   });
   const orgDomain = useOrgDomain(project);
@@ -836,11 +793,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     queryKey: queryKeys.list(project, "pipelines"),
     enabled: formOpen,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "pipelines" } },
-        }),
-      ),
+      (await listManifests(project, "pipelines")),
   });
 
   // The catalogues this project may publish to (EP-62). A project with none leaves the open-data
@@ -849,22 +802,14 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     queryKey: queryKeys.list(project, "ckaninstances"),
     enabled: formOpen,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "ckaninstances" } },
-        }),
-      ),
+      (await listManifests(project, "ckaninstances")),
   });
 
   const modelsQuery = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
     enabled: formOpen,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "datamodels" } },
-        }),
-      ),
+      (await listManifests(project, "datamodels")),
   });
 
   // The other projects of the repository: what the allowed-project picker offers, and whose
@@ -875,21 +820,13 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     queries: others.map((other) => ({
       queryKey: queryKeys.list(other, "endpoints"),
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project: other, plural: "endpoints" } },
-          }),
-        ),
+        (await listManifests(other, "endpoints")),
     })),
   });
   const referencesQuery = useQuery({
     queryKey: queryKeys.list(project, "shared"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "shared" } },
-        }),
-      ),
+      (await listManifests(project, "shared")),
   });
 
   const [verdict, setVerdict] = useState<Verdict | null>(null);
@@ -1105,12 +1042,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
         ...(draftRef ? { draft: draftRef } : {}),
         ...(bundle.length > 0 ? { bundle } : {}),
       };
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" }, query: { dryRun: "All" } },
-          body,
-        }),
-      );
+      return proposeManifest(project, "endpoints", body, { create: true, dryRun: true });
     },
     onSuccess: (result) => {
       const answer = result as { verdict?: Verdict };
@@ -1151,16 +1083,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
       }
       const envelope = endpointOf(form);
       const body = (draftRef ? { ...envelope, draft: draftRef } : envelope);
-      const result = create
-        ? await api.POST("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: "endpoints" } },
-            body,
-          })
-        : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
-            params: { path: { project, plural: "endpoints", name: form.name } },
-            body,
-          });
-      return unwrap(result);
+      return proposeManifest(project, "endpoints", body, { create, name: form.name });
     },
     onSuccess: (result) => {
       if (isChange(result)) {

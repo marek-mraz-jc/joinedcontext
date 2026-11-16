@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
@@ -5,7 +6,7 @@ import { ListFailed } from "../../components/forms/widgets/ListFailed";
 import { useTranslation } from "react-i18next";
 import { parseGridConfig } from "@joinedcontext/sdk";
 import type { ResolvedGridConfig, RichRow } from "@joinedcontext/sdk";
-import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { queryKeys, reasonOf } from "../../api/client";
 import { spaceUsageQuery } from "../../api/spaceUsage";
 import { asManifests, localized, refName } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
@@ -43,11 +44,7 @@ function useProjectList(project: string, plural: string) {
     // list as the API answers it, whichever page asked first; the manifests are read off it
     // here (T-0625).
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural } },
-        }),
-      ),
+      (await listManifests(project, plural)),
     select: (list) => asManifests(list.items ?? []),
   });
 }

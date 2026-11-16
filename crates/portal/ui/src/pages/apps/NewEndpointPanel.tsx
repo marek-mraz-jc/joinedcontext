@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { useEffect, useId, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -140,11 +141,7 @@ export function NewEndpointPanel({
     enabled: waiting && !rejected,
     refetchInterval: (query) => (holds(query.state.data) ? false : LIVE_POLL_MS),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   });
   const served = waiting && holds(endpoints.data);
   const handedOver = useRef(false);
