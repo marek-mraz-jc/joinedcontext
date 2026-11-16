@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
 import {
@@ -92,21 +93,12 @@ export function PipelineSourceReport({
     enabled: snapshot,
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/source-deletes", {
-          params: { path: { project, name } },
-        }),
-      ),
+      (await door("portal_pipeline_source_deletes", { pipeline: name }, project)) as RestAnswer<"get_source_deletes">,
   });
   const decide = useMutation({
     mutationFn: async (decision: "delete" | "keep") => {
       setRefused(null);
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/pipelines/{name}/source-deletes", {
-          params: { path: { project, name } },
-          body: { decision },
-        }),
-      );
+      return (await doorAction("portal_pipeline_source_decide", { pipeline: name, body: { decision } }, project)) as RestAnswer<"post_source_deletes">;
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: key }),
     onError: (err) => setRefused(err instanceof ApiError ? (err.problem?.detail ?? err.message) : t("app.error.generic")),
@@ -227,11 +219,7 @@ export function SourceRemovalsPanel({ project, space }: { project: string; space
     queryKey: ["projects", project, "spaces", space, "source-removals"],
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/spaces/{space}/source-removals", {
-          params: { path: { project, space } },
-        }),
-      ),
+      (await door("portal_space_source_removals", { space }, project)) as RestAnswer<"get_source_removals">,
   });
   // An answer of another shape is no list: the panel stays away rather than break the page.
   if (!Array.isArray(removals.data) || removals.data.length === 0) return null;

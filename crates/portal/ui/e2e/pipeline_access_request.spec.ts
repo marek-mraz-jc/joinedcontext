@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pipeline pages read through their Portal doors (T-7109): each REST stub below answers its door.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5369, PL-90: a record check that finds the pipeline holds no grant on another space's
 // Endpoint names it "No access to <space>: Request access", and the button opens the access

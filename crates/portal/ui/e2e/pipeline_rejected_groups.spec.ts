@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pipeline pages read through their Portal doors (T-7109): each REST stub below answers its door.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // A pipeline's rejected records grouped by rule and path (G-21, T-7069) as a steward meets them:
 // the largest group first with where its fix belongs, an enum's allowed values, and the CSV

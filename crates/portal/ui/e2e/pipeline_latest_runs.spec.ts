@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pipeline pages read through their Portal doors (T-7109): each REST stub below answers its door.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The pipelines list's Last run column (T-5818): one request reads every row's newest run,
 // however many rows there are, and a failed read says so in each row. `vite preview` has no

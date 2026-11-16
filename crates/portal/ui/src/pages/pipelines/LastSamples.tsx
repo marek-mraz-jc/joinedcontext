@@ -1,7 +1,8 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { liveLabelOf } from "./PipelineFlow";
 import type { FlowNodeId } from "./PipelineFlow";
 import { RecordView } from "../../components/ui";
@@ -30,11 +31,7 @@ export function LastSamples({
     retry: false,
     refetchInterval: 15_000,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/samples", {
-          params: { path: { project, name: pipeline } },
-        }),
-      ),
+      (await door("portal_pipeline_samples", { pipeline }, project)) as RestAnswer<"get_samples">,
   });
   const label = liveLabelOf(node);
   const shown = (samples.data?.nodes?.[label] ?? []).slice(0, SHOWN);

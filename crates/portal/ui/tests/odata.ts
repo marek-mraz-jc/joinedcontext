@@ -228,6 +228,34 @@ const OPERATIONS: Record<string, Door> = {
   portal_alert_mute: ["POST", "/alerts/{id}/mute"],
   portal_alert_notice_list: ["GET", "/alerts/notices"],
   portal_alert_notice_read: ["POST", "/alerts/notices/{id}/read"],
+
+  // The Portal doors of a pipeline's runs, rejected records, source deletes, source check and
+  // access requests (T-7109).
+  portal_pipeline_run_list: ["GET", "/projects/{project}/pipelines/{pipeline}/runs"],
+  portal_pipeline_run_start: ["POST", "/projects/{project}/pipelines/{pipeline}/runs"],
+  portal_pipeline_run_log: ["GET", "/projects/{project}/pipelines/{pipeline}/runs/{run}/log"],
+  portal_pipeline_latest_runs: ["GET", "/projects/{project}/pipeline-runs"],
+  portal_pipeline_health: ["GET", "/projects/{project}/pipeline-health"],
+  portal_pipeline_metrics: ["GET", "/projects/{project}/pipelines/{pipeline}/metrics"],
+  portal_pipeline_samples: ["GET", "/projects/{project}/pipelines/{pipeline}/samples"],
+  portal_pipeline_stats: ["GET", "/projects/{project}/pipelines/{pipeline}/stats"],
+  portal_pipeline_rejected: ["GET", "/projects/{project}/pipelines/{pipeline}/rejected"],
+  portal_pipeline_rejected_groups: ["GET", "/projects/{project}/pipelines/{pipeline}/rejected/groups"],
+  portal_pipeline_rejected_retry: ["POST", "/projects/{project}/pipelines/{pipeline}/rejected/retry"],
+  portal_pipeline_source_deletes: ["GET", "/projects/{project}/pipelines/{pipeline}/source-deletes"],
+  portal_pipeline_source_decide: ["POST", "/projects/{project}/pipelines/{pipeline}/source-deletes"],
+  portal_space_source_removals: ["GET", "/projects/{project}/spaces/{space}/source-removals"],
+  portal_pipeline_source_check: ["POST", "/projects/{project}/pipelines/{pipeline}/source-check"],
+  portal_pipeline_access_request_list: ["GET", "/projects/{project}/pipelines/{pipeline}/access-requests"],
+  portal_pipeline_access_request_file: ["POST", "/projects/{project}/pipelines/{pipeline}/access-requests"],
+  portal_pipeline_access_request_endpoints: [
+    "GET",
+    "/projects/{project}/pipelines/{pipeline}/access-requests/endpoints",
+  ],
+  portal_access_request_incoming: ["GET", "/projects/{project}/access-requests"],
+  portal_access_request_approve: ["POST", "/projects/{project}/access-requests/{id}/approve"],
+  portal_access_request_decline: ["POST", "/projects/{project}/access-requests/{id}/decline"],
+  portal_access_request_revoke: ["POST", "/projects/{project}/access-requests/{id}/revoke"],
 };
 
 /** Whether `request` calls one of {@link OPERATIONS}. */

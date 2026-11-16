@@ -2,7 +2,7 @@ import { PageFailed } from "../../components/ui/PageState";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import type { BadgeTone } from "../../components/ui/Badge";
 import {
@@ -109,11 +109,7 @@ export function PipelineHealthView({
   const health = useQuery({
     queryKey: ["projects", project, "pipeline-health"],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/pipeline-health", {
-          params: { path: { project } },
-        }),
-      ),
+      (await door("portal_pipeline_health", {}, project)) as RestAnswer<"get_pipeline_health">,
     refetchInterval: 60_000,
   });
   const when = (at: string | null | undefined) => (at == null ? t("pipelines.health.never") : time.format(new Date(at)));

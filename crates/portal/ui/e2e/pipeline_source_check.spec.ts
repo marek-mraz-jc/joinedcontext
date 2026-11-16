@@ -4,6 +4,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pipeline pages read through their Portal doors (T-7109): each REST stub below answers its door.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The workbench's whole-source check (G-21, T-7085) as an author meets it in the pipeline editor:
 // every page of the saved pipeline's source, counted by rule, the first rejected records, a

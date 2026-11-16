@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent, JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import type { Change } from "../../api/manifest";
 import { isChange } from "../../api/manifest";
 import type { components } from "../../api/schema";
@@ -75,11 +76,7 @@ export function useRequestable(project: string, name: string | undefined, enable
     enabled: enabled && Boolean(name),
     retry: false,
     queryFn: async () => {
-      const body: unknown = await unwrap(
-        await api.GET("/api/v1/projects/{project}/pipelines/{name}/access-requests/endpoints", {
-          params: { path: { project, name: name ?? "" } },
-        }),
-      );
+      const body: unknown = await door("portal_pipeline_access_request_endpoints", { pipeline: name ?? "" }, project);
       return body as { items: RequestableEndpoint[] };
     },
   });
@@ -216,21 +213,12 @@ export function PipelineAccessRequests({
     retry: false,
     queryFn: async () =>
       listed(
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/pipelines/{name}/access-requests", {
-            params: { path: { project, name } },
-          }),
-        ),
+        door("portal_pipeline_access_request_list", { pipeline: name }, project),
       ),
   });
   const file = useMutation({
     mutationFn: async (body: NewRequest) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/pipelines/{name}/access-requests", {
-          params: { path: { project, name } },
-          body,
-        }),
-      ),
+      doorAction("portal_pipeline_access_request_file", { pipeline: name, body }, project),
     onSuccess: () => {
       setOpen(false);
       setRows([{ type: "", attrs: [] }]);
@@ -506,16 +494,14 @@ export function AccessRequestInbox({ project, space }: { project: string; space?
     queryKey: [KEY, "in", project],
     retry: false,
     queryFn: async () =>
-      listed(unwrap(await api.GET("/api/v1/projects/{project}/access-requests", { params: { path: { project } } }))),
+      listed(door("portal_access_request_incoming", {}, project)),
   });
   const act = useMutation({
     mutationFn: async ({ id, verb }: { id: string; verb: "approve" | "decline" | "revoke" }) => {
-      const path = { params: { path: { project, id } } };
-      const reason = { reason: reasons[id] ?? "" };
-      if (verb === "approve") return unwrap(await api.POST("/api/v1/projects/{project}/access-requests/{id}/approve", path));
-      if (verb === "decline")
-        return unwrap(await api.POST("/api/v1/projects/{project}/access-requests/{id}/decline", { ...path, body: reason }));
-      return unwrap(await api.POST("/api/v1/projects/{project}/access-requests/{id}/revoke", { ...path, body: reason }));
+      const body = { reason: reasons[id] ?? "" };
+      if (verb === "approve") return doorAction("portal_access_request_approve", { id }, project);
+      if (verb === "decline") return doorAction("portal_access_request_decline", { id, body }, project);
+      return doorAction("portal_access_request_revoke", { id, body }, project);
     },
     onSuccess: (result) => {
       if (isChange(result)) setChange(result);

@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { doorAction } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { FormHeading } from "../../components/forms/FormRoute";
 import { Alert, Badge, Button, Card } from "../../components/ui";
@@ -22,11 +22,7 @@ export function SourceCheck({ project, pipeline }: { project: string; pipeline?:
   const { t } = useTranslation();
   const check = useMutation({
     mutationFn: async (name: string): Promise<Checked> =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/pipelines/{name}/source-check", {
-          params: { path: { project, name } },
-        }),
-      ),
+      (await doorAction("portal_pipeline_source_check", { pipeline: name }, project)) as Checked,
   });
   const answer = check.data;
   return (

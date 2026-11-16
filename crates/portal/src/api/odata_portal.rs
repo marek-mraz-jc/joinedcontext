@@ -77,6 +77,7 @@ const PAGE: (&str, Place) = ("page", Place::Path);
 const LANG: (&str, Place) = ("lang", Place::Path);
 const CHANGE: (&str, Place) = ("id", Place::Path);
 const SPACE: (&str, Place) = ("space", Place::Path);
+const PIPELINE: (&str, Place) = ("pipeline", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -100,7 +101,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 57] = [
+pub static DOORS: [Door; 79] = [
     door(
         "portal_people_remove",
         Org,
@@ -566,6 +567,191 @@ pub static DOORS: [Door; 57] = [
         "/alerts/notices/{id}/read",
         &[CHANGE],
         Who::Own,
+    ),
+    door(
+        "portal_pipeline_run_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/runs",
+        &[PIPELINE, ("limit", Place::Query("Edm.Int32"))],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_run_start",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/runs",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_run_log",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/runs/{run}/log",
+        &[
+            PIPELINE,
+            ("run", Place::Path),
+            ("limit", Place::Query("Edm.Int32")),
+            ("before", Place::Query("Edm.Int64")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_latest_runs",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipeline-runs",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_health",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipeline-health",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_metrics",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/metrics",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_samples",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/samples",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_stats",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/stats",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_rejected",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/rejected",
+        &[
+            PIPELINE,
+            ("limit", Place::Query("Edm.Int32")),
+            ("before", Place::Query("Edm.Int64")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_rejected_groups",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/rejected/groups",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_rejected_retry",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/rejected/retry",
+        &[PIPELINE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_source_deletes",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/source-deletes",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_source_decide",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/source-deletes",
+        &[PIPELINE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_source_removals",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/source-removals",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_source_check",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/source-check",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_access_request_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/access-requests",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_access_request_file",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/{pipeline}/access-requests",
+        &[PIPELINE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_access_request_endpoints",
+        Project,
+        Method::GET,
+        "/projects/{project}/pipelines/{pipeline}/access-requests/endpoints",
+        &[PIPELINE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_access_request_incoming",
+        Project,
+        Method::GET,
+        "/projects/{project}/access-requests",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_access_request_approve",
+        Project,
+        Method::POST,
+        "/projects/{project}/access-requests/{id}/approve",
+        &[CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_access_request_decline",
+        Project,
+        Method::POST,
+        "/projects/{project}/access-requests/{id}/decline",
+        &[CHANGE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_access_request_revoke",
+        Project,
+        Method::POST,
+        "/projects/{project}/access-requests/{id}/revoke",
+        &[CHANGE, BODY],
+        Who::ProjectReader,
     ),
 ];
 

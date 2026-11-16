@@ -936,6 +936,7 @@ export interface Functions {
   jc_syncsource_status: { name: string };
   jc_workspace_compare: { name: string };
   jc_workspace_preview_get: { name: string };
+  portal_access_request_incoming: Record<string, never>;
   portal_access_request_list: { endpoint: string };
   portal_alert_list: Record<string, never>;
   portal_alert_notice_list: Record<string, never>;
@@ -952,11 +953,24 @@ export interface Functions {
   portal_organization_change_list: Record<string, never>;
   portal_organization_change_manifests: { id: string };
   portal_person_names: { ids?: string };
+  portal_pipeline_access_request_endpoints: { pipeline: string };
+  portal_pipeline_access_request_list: { pipeline: string };
+  portal_pipeline_health: Record<string, never>;
+  portal_pipeline_latest_runs: Record<string, never>;
+  portal_pipeline_metrics: { pipeline: string };
+  portal_pipeline_rejected: { pipeline: string; limit?: number; before?: number };
+  portal_pipeline_rejected_groups: { pipeline: string };
+  portal_pipeline_run_list: { pipeline: string; limit?: number };
+  portal_pipeline_run_log: { pipeline: string; run: string; limit?: number; before?: number };
+  portal_pipeline_samples: { pipeline: string };
+  portal_pipeline_source_deletes: { pipeline: string };
+  portal_pipeline_stats: { pipeline: string };
   portal_preferences_get: Record<string, never>;
   portal_secret_list: Record<string, never>;
   portal_space_quality: { space: string };
   portal_space_quality_checks: { space: string };
   portal_space_retention_deleted: { space: string };
+  portal_space_source_removals: { space: string };
   portal_space_temporal_audit: { space: string; pipeline?: string };
   portal_trash_list: { space: string };
   portal_visualization_template: { template: string; x?: string; y?: string; color?: string; facet?: string };
@@ -1010,6 +1024,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_syncsource_status: ["Project"],
   jc_workspace_compare: ["Project"],
   jc_workspace_preview_get: ["Project"],
+  portal_access_request_incoming: ["Project"],
   portal_access_request_list: ["Project"],
   portal_alert_list: ["Organization"],
   portal_alert_notice_list: ["Organization"],
@@ -1026,11 +1041,24 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_organization_change_list: ["Organization"],
   portal_organization_change_manifests: ["Organization"],
   portal_person_names: ["Organization"],
+  portal_pipeline_access_request_endpoints: ["Project"],
+  portal_pipeline_access_request_list: ["Project"],
+  portal_pipeline_health: ["Project"],
+  portal_pipeline_latest_runs: ["Project"],
+  portal_pipeline_metrics: ["Project"],
+  portal_pipeline_rejected: ["Project"],
+  portal_pipeline_rejected_groups: ["Project"],
+  portal_pipeline_run_list: ["Project"],
+  portal_pipeline_run_log: ["Project"],
+  portal_pipeline_samples: ["Project"],
+  portal_pipeline_source_deletes: ["Project"],
+  portal_pipeline_stats: ["Project"],
   portal_preferences_get: ["Organization"],
   portal_secret_list: ["Project"],
   portal_space_quality: ["Project"],
   portal_space_quality_checks: ["Project"],
   portal_space_retention_deleted: ["Project"],
+  portal_space_source_removals: ["Project"],
   portal_space_temporal_audit: ["Project"],
   portal_trash_list: ["Project"],
   portal_visualization_template: ["Organization"],
@@ -1083,7 +1111,10 @@ export interface Actions {
   jc_workspace_preview_stop: { name: string };
   jc_workspace_propose: { name: string };
   jc_workspace_update_from_main: { name: string; resolutions?: unknown };
+  portal_access_request_approve: { id: string };
+  portal_access_request_decline: { id: string; body?: unknown };
   portal_access_request_file: { endpoint: string; body?: unknown };
+  portal_access_request_revoke: { id: string; body?: unknown };
   portal_alert_mute: { id: string; body?: unknown };
   portal_alert_notice_read: { id: string };
   portal_alert_subscribe: { body?: unknown };
@@ -1107,6 +1138,11 @@ export interface Actions {
   portal_person_remove_second_factor: { person: string };
   portal_person_resend_invitation: { person: string };
   portal_person_reset_password: { person: string };
+  portal_pipeline_access_request_file: { pipeline: string; body?: unknown };
+  portal_pipeline_rejected_retry: { pipeline: string; body?: unknown };
+  portal_pipeline_run_start: { pipeline: string };
+  portal_pipeline_source_check: { pipeline: string };
+  portal_pipeline_source_decide: { pipeline: string; body?: unknown };
   portal_preferences_recent: { body?: unknown };
   portal_preferences_set: { body?: unknown };
   portal_secret_set: { body?: unknown };
@@ -1169,7 +1205,10 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_workspace_preview_stop: ["Project"],
   jc_workspace_propose: ["Project"],
   jc_workspace_update_from_main: ["Project"],
+  portal_access_request_approve: ["Project"],
+  portal_access_request_decline: ["Project"],
   portal_access_request_file: ["Project"],
+  portal_access_request_revoke: ["Project"],
   portal_alert_mute: ["Organization"],
   portal_alert_notice_read: ["Organization"],
   portal_alert_subscribe: ["Organization"],
@@ -1193,6 +1232,11 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_person_remove_second_factor: ["Organization"],
   portal_person_resend_invitation: ["Organization"],
   portal_person_reset_password: ["Organization"],
+  portal_pipeline_access_request_file: ["Project"],
+  portal_pipeline_rejected_retry: ["Project"],
+  portal_pipeline_run_start: ["Project"],
+  portal_pipeline_source_check: ["Project"],
+  portal_pipeline_source_decide: ["Project"],
   portal_preferences_recent: ["Organization"],
   portal_preferences_set: ["Organization"],
   portal_secret_set: ["Project"],

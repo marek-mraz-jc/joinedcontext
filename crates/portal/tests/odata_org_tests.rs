@@ -2138,6 +2138,8 @@ fn door_sample(member: &str) -> Value {
         "endpoint" => json!("air"),
         "notification" => json!("1"),
         "template" => json!("bar"),
+        "limit" => json!(5),
+        "before" => json!(1),
         other => json!(format!("{other}-1")),
     }
 }

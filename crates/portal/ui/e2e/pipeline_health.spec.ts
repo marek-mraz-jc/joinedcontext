@@ -3,6 +3,10 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pipeline pages read through their Portal doors (T-7109): each REST stub below answers its door.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The pipelines page's Source health tab (T-5048) as a steward meets it: every source with its
 // state, worst first, and a red source's last error; then the runs of that source. `vite preview`
