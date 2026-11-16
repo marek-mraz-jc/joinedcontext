@@ -207,6 +207,8 @@
       gap: 0.5rem;
       align-items: baseline;
       justify-items: start;
+      /* A right-aligned number cell would push its label away from the label column. */
+      text-align: start;
       overflow-wrap: anywhere;
     }
     & td[data-label]::before {
@@ -251,6 +253,8 @@
       gap: 0.5rem;
       align-items: baseline;
       justify-items: start;
+      /* A right-aligned number cell would push its label away from the label column. */
+      text-align: start;
       overflow-wrap: anywhere;
     }
     & td[data-label]::before {
