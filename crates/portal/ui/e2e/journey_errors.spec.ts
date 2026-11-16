@@ -70,7 +70,10 @@ for (const width of [1440, 400]) {
     await page.getByRole("textbox", { name: /^First name/ }).fill("Petra");
     await page.getByRole("textbox", { name: /^Last name/ }).fill("Kráľ");
     await page.getByRole("button", { name: "Create person" }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "already belongs to a person of the realm" })).toBeVisible();
+    // The reason sits on the E-mail field, with where to find the person instead.
+    const email = page.getByRole("textbox", { name: /^E-mail/ });
+    await expect(email).toHaveAccessibleDescription(/already belongs to a person of the realm\. Find this person in the People list/);
+    await expect(email).toHaveAttribute("aria-invalid", "true");
     await expect(page.getByRole("button", { name: "Create person" })).toBeVisible();
     expect(await axeViolations(page)).toEqual([]);
     await shot(page, `journey-error-taken-${width}`);

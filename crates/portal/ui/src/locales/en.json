@@ -8265,6 +8265,7 @@
         "localeHelp": "The language of the sign-in pages and the realm’s e-mails for this person.",
         "localeRealm": "The realm’s default",
         "emailInvalid": "Type an e-mail address such as jana.novakova@example.org.",
+        "emailTakenNext": "Find this person in the People list and give them a role from their page.",
         "required": "Required."
       },
       "language": {

@@ -8265,6 +8265,7 @@
         "localeHelp": "Die Sprache der Anmeldeseiten und der E-Mails der Domäne für diese Person.",
         "localeRealm": "Standard der Domäne",
         "emailInvalid": "Geben Sie eine E-Mail-Adresse ein, etwa jana.novakova@example.org.",
+        "emailTakenNext": "Suchen Sie diese Person in der Liste Personen und geben Sie ihr auf ihrer Seite eine Rolle.",
         "required": "Pflichtfeld."
       },
       "language": {

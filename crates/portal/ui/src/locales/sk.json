@@ -8265,6 +8265,7 @@
         "localeHelp": "Jazyk prihlasovacích stránok a e-mailov domény pre túto osobu.",
         "localeRealm": "Predvolený jazyk domény",
         "emailInvalid": "Zadajte e-mailovú adresu, napríklad jana.novakova@example.org.",
+        "emailTakenNext": "Nájdite túto osobu v zozname Ľudia a pridajte jej rolu na jej stránke.",
         "required": "Povinné."
       },
       "language": {

@@ -87,7 +87,8 @@ for (const width of [1440, 400]) {
     await reject(page);
     await expect(page.getByText("Rejected", { exact: true }).first()).toBeVisible();
     expect(rejects.map((body) => JSON.parse(body))).toEqual([{ reason: REASON }]);
-    // The author reads who rejected it, why, and what to do next on the change itself.
+    // The author, opening the change later, reads who rejected it, why, and what to do next.
+    await page.reload();
     const decided = page.getByRole("note", { name: "Rejected" });
     await expect(decided).toContainText("jana@banskabystrica.sk");
     await expect(decided).toContainText(REASON);
