@@ -11948,7 +11948,7 @@ export interface components {
             kind: string;
             smartDataModels: components["schemas"]["CatalogueEntry"][];
         };
-        /** @description One Organization a caller sees (PF-124): its name, the `?org=` value, and its title. */
+        /** @description The Organization of the Portal host: its name and its title. */
         OrganizationSummary: {
             name: string;
             title?: components["schemas"]["Text"];
@@ -12876,9 +12876,9 @@ export interface components {
             items: components["schemas"]["ProjectSummary"][];
             kind: string;
             /**
-             * @description The Organizations that own a listed project, by name, when the installation holds more
-             *     than one (PF-124, ADR-N-058 section 2.7): what the organization switcher offers. Empty
-             *     with one Organization, so a person who sees one gets no switcher.
+             * @description The Organization whose own Portal host the request reached, its one entry; empty on
+             *     every other address. No Portal lists Organizations (T-7151): each runs on its own host,
+             *     and an operator finds them under `GET /organization/addresses`.
              */
             organizations: components["schemas"]["OrganizationSummary"][];
         };

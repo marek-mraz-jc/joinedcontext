@@ -46,8 +46,10 @@ async function shot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(dir, `${name}.png`), fullPage: false });
 }
 
-/** No control anywhere that names, switches or lists Organizations. */
+/** No control anywhere that names, switches or lists Organizations, once the page has drawn. */
 async function expectNoOrganizationMenu(page: Page): Promise<void> {
+  await expect(page.getByRole("banner")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Projects" }).first()).toBeAttached();
   await expect(page.getByRole("button", { name: /organi[sz]ation/i })).toHaveCount(0);
   await expect(page.getByText(/Choose an organization|for example Mesto/i)).toHaveCount(0);
 }

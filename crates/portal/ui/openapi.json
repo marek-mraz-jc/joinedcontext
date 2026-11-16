@@ -57075,7 +57075,7 @@
       },
       "OrganizationSummary": {
         "type": "object",
-        "description": "One Organization a caller sees (PF-124): its name, the `?org=` value, and its title.",
+        "description": "The Organization of the Portal host: its name and its title.",
         "required": [
           "name"
         ],
@@ -59501,7 +59501,7 @@
             "items": {
               "$ref": "#/components/schemas/OrganizationSummary"
             },
-            "description": "The Organizations that own a listed project, by name, when the installation holds more\nthan one (PF-124, ADR-N-058 section 2.7): what the organization switcher offers. Empty\nwith one Organization, so a person who sees one gets no switcher."
+            "description": "The Organization whose own Portal host the request reached, its one entry; empty on\nevery other address. No Portal lists Organizations (T-7151): each runs on its own host,\nand an operator finds them under `GET /organization/addresses`."
           }
         }
       },
