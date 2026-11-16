@@ -69,17 +69,21 @@ async function stubApi(page: Page, given: Partial<Stub> = {}): Promise<Stub> {
       const verbs = state.who === APPROVER ? ["approve"] : ["propose"];
       return json({ project: "helsinki", bootstrap: false, grants: [{ role: "pipeline-editor", binding: "editors", rule: { kinds: state.kinds, verbs } }] });
     }
-    if (path.endsWith("/scripts/test")) {
+    if (path.endsWith("JoinedContext.Portal.jc_script_test")) {
       if (state.runner === "refuses") {
-        return json({ title: "Service Unavailable", status: 503, detail: "No runner is set up for project helsinki yet. Ask your administrator to configure the pipeline runner." }, 503);
+        const message = "No runner is set up for project helsinki yet. Ask your administrator to configure the pipeline runner.";
+        return json({ error: { code: "runner-unavailable", message, type: "https://joinedcontext.com/errors/runner-unavailable", title: "Service Unavailable", status: 503 } }, 503);
       }
       const asked = JSON.parse(body) as { code: string; tests: { name: string; input: { e: number; id?: string } }[] };
       const shift = asked.code.includes("r.e + 1") ? 1 : 0;
       return json({
-        results: asked.tests.map((t, i) => {
-          const output = { ...t.input, x: t.input.e + shift };
-          return { name: t.name, ok: JSON.stringify(output) === JSON.stringify(TESTS[i]?.expected), output, millis: 2 + i };
-        }),
+        "@odata.context": "/api/v1/$metadata#Edm.Untyped",
+        value: {
+          results: asked.tests.map((t, i) => {
+            const output = { ...t.input, x: t.input.e + shift };
+            return { name: t.name, ok: JSON.stringify(output) === JSON.stringify(TESTS[i]?.expected), output, millis: 2 + i };
+          }),
+        },
       });
     }
     if (path.endsWith("/import")) {

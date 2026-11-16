@@ -17,8 +17,14 @@
 //! ekiben deviations: `file` and `global_folders` are refused (code is inline, nothing is
 //! `require`d), and the two limits are ekiben fields. jc-core refuses `javascript` as an author
 //! step; it reaches the runner only through a reviewed Script (T-7061 G-25).
-//! ponytail: the organization's `max_cpu_time_ms_per_run` is not charged; the per-message deadline
-//! bounds the time instead. Upgrade path: a CPU accounting API in ekiben-core.
+//!
+//! Script time counts against the organization's `max_cpu_time_ms_per_run`: the runner charges
+//! the batch's time to the run (`StreamMetrics::charge_processing`), and inside a batch no script
+//! runs past what the run has left, so the messages after the budget is spent are flagged unrun.
+//! ponytail: workers running batches in parallel each see the budget left when their batch
+//! started, so a run overshoots by at most one budget per worker. At most a quarter of the
+//! process's cores run scripts at once ([`script_slots`]); a batch waiting for a slot is charged
+//! for the wait as for any time inside a processor.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -347,11 +353,33 @@ fn run_one(rt: &Runtime, code: &str, part: Part, limits: Limits) -> (Run, Result
     (run, outcome)
 }
 
+fn budget_spent(budget: Duration) -> String {
+    format!(
+        "javascript: the run's processing time budget (max_cpu_time_ms_per_run) is spent; {} ms \
+         were left for this batch",
+        budget.as_millis()
+    )
+}
+
+/// Scripts that may run at once in this process: a quarter of the cores, at least one. A
+/// stream's workers run its batches in parallel, so without this one stream spinning every
+/// script to its deadline holds a core per worker; js_isolation measured the other streams' p99
+/// going from 1.2 ms to 9-13 ms with eight spinning on eight workers (T-7082).
+fn script_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+        tokio::sync::Semaphore::new((cores / 4).max(1))
+    })
+}
+
 /// The batch after the script ran on each message: the flags to set and the lines to log.
 type Outcome = (Batch, Vec<(usize, String)>, Vec<(String, String)>);
 
-fn run_batch(code: &str, limits: Limits, mut batch: Batch) -> Outcome {
-    let deadline = Rc::new(Cell::new(Instant::now()));
+/// Runs `code` over each message of `batch`, spending at most `budget` in total.
+fn run_batch(code: &str, limits: Limits, budget: Duration, mut batch: Batch) -> Outcome {
+    let started = Instant::now();
+    let deadline = Rc::new(Cell::new(started));
     let mut errors = Vec::new();
     let mut logs = Vec::new();
     let mut rt = None;
@@ -368,11 +396,19 @@ fn run_batch(code: &str, limits: Limits, mut batch: Batch) -> Outcome {
         let Some(runtime) = rt.as_ref() else {
             continue;
         };
-        deadline.set(Instant::now() + limits.timeout);
+        let left = budget.saturating_sub(started.elapsed());
+        if left.is_zero() {
+            errors.push((i, budget_spent(budget)));
+            continue;
+        }
+        deadline.set(Instant::now() + limits.timeout.min(left));
         let (run, outcome) = run_one(runtime, code, std::mem::take(slot), limits);
         *slot = run.part;
         logs.extend(run.logs);
-        if let Err(e) = outcome {
+        if let Err(mut e) = outcome {
+            if e.contains("ran past") && left < limits.timeout && started.elapsed() >= budget {
+                e = budget_spent(budget);
+            }
             // A runtime that ran out of memory is not trusted with the next message.
             if e.contains("MiB") {
                 rt = None;
@@ -399,8 +435,18 @@ impl Processor for JavascriptProcessor {
         batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
         let (code, limits) = (self.code.clone(), self.limits);
+        let limit_ns = ctx
+            .org
+            .get_quotas()
+            .max_cpu_time_ms_per_run
+            .saturating_mul(1_000_000);
+        let budget = Duration::from_nanos(limit_ns.saturating_sub(ctx.metrics.processing_ns()));
+        let _slot = script_slots()
+            .acquire()
+            .await
+            .map_err(|e| CoreError::other(format!("javascript: {e}")))?;
         let (mut batch, errors, logs) =
-            tokio::task::spawn_blocking(move || run_batch(&code, limits, batch))
+            tokio::task::spawn_blocking(move || run_batch(&code, limits, budget, batch))
                 .await
                 .map_err(|e| {
                     CoreError::other(format!("javascript: the script task failed: {e}"))
@@ -418,6 +464,23 @@ impl Processor for JavascriptProcessor {
             }
         }
         Ok(vec![batch])
+    }
+}
+
+/// The sandbox without a stream, for the fuzz targets in `fuzz/`.
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing {
+    use super::*;
+
+    /// Runs `code` over two copies of `message` in one runtime (the second sees what the first
+    /// left in it), with the default limits; returns each message's flag.
+    pub fn run(code: &str, message: &[u8]) -> Vec<(usize, String)> {
+        let limits = Limits {
+            timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+            memory_bytes: usize::try_from(DEFAULT_MEMORY_MB << 20).unwrap_or(usize::MAX),
+        };
+        let batch = vec![Part::new(message.to_vec()), Part::new(message.to_vec())];
+        run_batch(code, limits, Duration::from_secs(1), batch).1
     }
 }
 

@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 import { alsoSecret } from "./also-secret.mjs";
+import { withEkibenFields } from "./ekiben-fields.mjs";
 import { helpText } from "./help-text.mjs";
 
 const GROUPS = {
@@ -57,7 +58,7 @@ const catalog = listing.inputs
     name: input.name,
     group: groupOf.get(input.name) ?? "utility",
     summary: helpText(input.summary),
-    fields: fields(input.config),
+    fields: withEkibenFields(input.name, fields(input.config)),
   }))
   .sort((a, b) => a.name.localeCompare(b.name));
 const missing = catalog.filter((input) => !groupOf.has(input.name)).map((input) => input.name);

@@ -247,6 +247,7 @@ pub async fn run(
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         };
         let started = Instant::now();
         let trace =

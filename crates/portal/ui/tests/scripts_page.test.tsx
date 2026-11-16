@@ -17,6 +17,7 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { digest } from "../src/pages/scripts/scriptDraft";
+import { odataError, odataValue } from "./odata";
 
 // Monaco needs a canvas and a worker jsdom has neither of: a text area takes its place, with
 // the props the editor hands it, so ScriptCodeMonaco itself still runs.
@@ -103,11 +104,11 @@ function renderPage({ kinds = ["Script", "Pipeline"], runner = "answers", fails 
       if (path.endsWith("/permissions/me")) {
         return json({ project: PROJECT, bootstrap: false, grants: [{ role: "pipeline-editor", binding: "editors", rule: { kinds, verbs: ["propose"] } }] });
       }
-      if (path.endsWith("/scripts/test")) {
-        if (runner === "silent") return json({ title: "Service Unavailable", status: 503, detail: "no runner is configured for this project" }, 503);
+      if (path.endsWith("JoinedContext.Portal.jc_script_test")) {
+        if (runner === "silent") return odataError(503, "runner-unavailable", "no runner is configured for this project");
         const asked = JSON.parse(text) as { code: string };
         const output = asked.code === NEW ? { e: 1, x: 2 } : { e: 1, x: 1 };
-        return json({ results: [{ name: "shifts-east", ok: asked.code !== NEW || !fails, output, millis: 3 }] });
+        return odataValue({ results: [{ name: "shifts-east", ok: asked.code !== NEW || !fails, output, millis: 3 }] });
       }
       if (path.endsWith("/import")) {
         return url.searchParams.get("dryRun") === "All"
@@ -160,7 +161,7 @@ describe("the script workbench", () => {
     const sent = renderPage();
     await editAndRun(user);
     expect(await screen.findByText("Changed")).toBeInTheDocument();
-    expect(sent.filter((s) => s.path.endsWith("/scripts/test")).map((s) => s.body.code)).toEqual([NEW, OLD]);
+    expect(sent.filter((s) => s.path.endsWith("JoinedContext.Portal.jc_script_test")).map((s) => s.body.code)).toEqual([NEW, OLD]);
     expect(screen.getByRole("textbox", { name: "Version" })).toHaveValue("1.2.0");
 
     await user.click(screen.getByRole("button", { name: "Propose version 1.2.0" }));

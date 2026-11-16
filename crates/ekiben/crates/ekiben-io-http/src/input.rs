@@ -20,7 +20,8 @@ pub fn register(registry: &Registry) {
 pub struct HttpClientInput {
     client: Arc<HttpClient>,
     drop_empty_bodies: bool,
-    stream_lines: bool,
+    /// `stream.enabled`: the body is split by `stream.scanner` (`lines` by default).
+    stream: Option<ekiben_io_file::inputs::Scanner>,
     prev_response: Batch,
     queued_stream_parts: Vec<Part>,
     connected: bool,
@@ -39,12 +40,12 @@ impl HttpClientInput {
             .get("drop_empty_bodies")
             .and_then(JsonValue::as_bool)
             .unwrap_or(true);
-        let stream_lines = conf
-            .config
-            .get("stream")
-            .and_then(|s| s.get("enabled"))
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false);
+        let stream = match conf.config.get("stream").and_then(JsonValue::as_object) {
+            Some(s) if s.get("enabled").and_then(JsonValue::as_bool) == Some(true) => {
+                Some(ekiben_io_file::inputs::Scanner::lines_by_default(s)?)
+            }
+            _ => None,
+        };
 
         let paginate = conf
             .config
@@ -52,7 +53,7 @@ impl HttpClientInput {
             .filter(|v| !v.is_null())
             .map(|v| PaginateConf::from_json(v, &ctx.blobl_env))
             .transpose()?;
-        if paginate.is_some() && stream_lines {
+        if paginate.is_some() && stream.is_some() {
             return Err(CoreError::config(
                 "http_client.paginate cannot be combined with stream.enabled",
             ));
@@ -61,7 +62,7 @@ impl HttpClientInput {
         Ok(Self {
             client,
             drop_empty_bodies,
-            stream_lines,
+            stream,
             prev_response: Vec::new(),
             queued_stream_parts: Vec::new(),
             connected: false,
@@ -135,16 +136,21 @@ impl Input for HttpClientInput {
             return Err(CoreError::Timeout);
         }
 
-        if self.stream_lines {
-            let mut first = res_batch.into_iter().next().unwrap();
-            let bytes = first.as_bytes();
-            for line in bytes.split(|&b| b == b'\n') {
-                if self.drop_empty_bodies && line.is_empty() {
+        if let Some(scanner) = &self.stream {
+            let Some(response) = res_batch.into_iter().next() else {
+                return Err(CoreError::Timeout);
+            };
+            for mut part in scanner.scan(&response.as_bytes_ref(), "")? {
+                if self.drop_empty_bodies && part.as_bytes_ref().is_empty() {
                     continue;
                 }
-                let mut lp = first.shallow_copy();
-                lp.set_bytes(bytes::Bytes::copy_from_slice(line));
-                self.queued_stream_parts.push(lp);
+                // Each message keeps the response's metadata (status code, headers).
+                for (k, v) in response.meta_all() {
+                    if part.meta_get(k).is_none() {
+                        part.meta_set(k.clone(), v.clone());
+                    }
+                }
+                self.queued_stream_parts.push(part);
             }
             if self.queued_stream_parts.is_empty() {
                 return Err(CoreError::EndOfInput);

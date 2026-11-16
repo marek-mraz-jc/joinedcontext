@@ -867,7 +867,7 @@ export interface Functions {
   jc_model_sdm_search: { q: string; subject?: string };
   jc_model_source_get: { name: string };
   jc_mqtt_captured: { limit?: number; name: string; topic?: string };
-  jc_organization_read: { aspect: string; cursor?: string; endpoint?: string; group?: string; limit?: number; month?: string; organization?: string; person?: string };
+  jc_organization_read: { aspect: string; cursor?: string; endpoint?: string; group?: string; inProject?: string; limit?: number; month?: string; organization?: string; person?: string; profile?: string; run?: string; since?: string; space?: string; until?: string; verdict?: string };
   jc_person_get: { id: string };
   jc_person_list: { first?: number; max?: number; search?: string };
   jc_pipeline_inspect: { cursor?: number; limit?: number; name: string; view: string };
@@ -1012,6 +1012,7 @@ export interface Actions {
   portal_people_name_by_id: { dryRun?: boolean };
   portal_people_remove: { body?: unknown };
   portal_person_consent_revoke: { person: string; client: string };
+  portal_person_delete: { person: string };
   portal_person_remove_second_factor: { person: string };
   portal_person_resend_invitation: { person: string };
   portal_person_reset_password: { person: string };
@@ -1079,6 +1080,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_people_name_by_id: ["Organization"],
   portal_people_remove: ["Organization"],
   portal_person_consent_revoke: ["Organization"],
+  portal_person_delete: ["Organization"],
   portal_person_remove_second_factor: ["Organization"],
   portal_person_resend_invitation: ["Organization"],
   portal_person_reset_password: ["Organization"],

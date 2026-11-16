@@ -2,7 +2,8 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, queryKeys } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { act, projectBound } from "../../api/odata";
 import { asManifests, isChange } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { allows, usePermissions, useReadableList } from "../../api/permissions";
@@ -49,13 +50,15 @@ async function runTests(
   limits: { timeoutMs?: number; memoryMb?: number },
   silent: string,
 ): Promise<TestResult[]> {
-  const { data, error } = await api.POST("/api/v1/projects/{project}/scripts/test", {
-    params: { path: { project } },
-    body: { code, limits, tests },
-  });
-  if (data) return (data as unknown as { results: TestResult[] }).results;
-  const detail = (error as { detail?: unknown } | undefined)?.detail;
-  throw new Error(typeof detail === "string" ? detail : silent);
+  try {
+    const answer = (await act("jc_script_test", projectBound(project), { code, limits, tests })) as {
+      results: TestResult[];
+    };
+    return answer.results;
+  } catch (error) {
+    const detail = error instanceof ApiError ? error.problem?.detail : undefined;
+    throw new Error(typeof detail === "string" && detail !== "" ? detail : silent);
+  }
 }
 
 function parseTests(text: string): ScriptTest[] | null {

@@ -12458,6 +12458,11 @@ export interface components {
         PipelineTestSample: {
             /** @description How the sample is split into messages. */
             format?: components["schemas"]["PipelineTestSampleFormat"];
+            /**
+             * @description The sheet of an `xlsx` sample by its tab name, such as `Stations 2026`; absent, the
+             *     first sheet.
+             */
+            sheet?: string | null;
             /** @description The sample inline, at most five mebibytes. */
             text?: string | null;
             /** @description An http(s) URL the runner fetches the sample from instead. */
@@ -12467,7 +12472,7 @@ export interface components {
          * @description How a sample is split: one message, a CSV row each, or a JSON array's elements.
          * @enum {string}
          */
-        PipelineTestSampleFormat: "text" | "csv" | "json";
+        PipelineTestSampleFormat: "text" | "csv" | "json" | "xlsx" | "shapefile";
         /** @description A page of the Portal a person went to or starred: where it is and what it was called. */
         Place: {
             /** @description A path inside the Portal, with its query: `/projects/helsinki/pipelines/air?tab=runs`. */
@@ -33430,14 +33435,31 @@ export interface operations {
                     endpoint?: string;
                     /** @description dataAccess: one group's column */
                     group?: string;
+                    /** @description agentActivity: one project's runs */
+                    inProject?: string;
                     /** @description agentActivity: page size, default 20 */
                     limit?: number;
                     /** @description costs: e.g. 2026-09, default last month */
                     month?: string;
                     /** @description widgetOptions: the Organization, by name */
                     organization?: string;
-                    /** @description personReadable: the Keycloak user id */
+                    /** @description personReadable: the Keycloak user id; agentActivity: runs this person started */
                     person?: string;
+                    /** @description agentActivity: one agent profile's runs */
+                    profile?: string;
+                    /** @description agentActivity: one run */
+                    run?: string;
+                    /** @description agentActivity: runs started at or after, e.g. 2026-11-01T00:00:00Z */
+                    since?: string;
+                    /** @description agentActivity: runs that read this Context Space */
+                    space?: string;
+                    /** @description agentActivity: runs started before */
+                    until?: string;
+                    /**
+                     * @description agentActivity: refused, runs with a refused step
+                     * @enum {string}
+                     */
+                    verdict?: "ok" | "refused";
                 };
             };
         };

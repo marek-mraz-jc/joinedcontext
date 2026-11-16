@@ -1,12 +1,13 @@
 /**
  * Data source templates (T-3249): the public sources a city starts from, each asking only what it
- * needs and turned into the DataSource form of an existing type. No new kind: a CSV file, a REST
- * API, a CKAN resource and a WFS layer are all `http`, a GTFS Realtime feed is `gtfs-rt`.
+ * needs and turned into the DataSource form of an existing type. No new kind: a CSV file, a
+ * spreadsheet, a zipped shapefile, a REST API, a CKAN resource and a WFS layer are all `http`, a GTFS
+ * Realtime feed is `gtfs-rt`.
  */
-import { PRESET_KINDS, RECORDS_PATH } from "../../schemas/kinds";
+import { PRESET_KINDS, RECORDS_PATH, SHEET_NAME } from "../../schemas/kinds";
 import type { PresetKind, TypedDataSourceType } from "../../schemas/kinds";
 
-export type TemplateId = "csv" | "json" | "ckan" | "wfs" | "gtfs-rt" | `api-${PresetKind}`;
+export type TemplateId = "csv" | "xlsx" | "shapefile" | "json" | "ckan" | "wfs" | "gtfs-rt" | `api-${PresetKind}`;
 
 export interface Template {
   id: TemplateId;
@@ -19,11 +20,15 @@ export interface Template {
   asksLayer: boolean;
   /** The JSON template may name the array its records sit in (T-6572). */
   asksRecords?: boolean;
+  /** The spreadsheet template may name the sheet to read (T-7086). */
+  asksSheet?: boolean;
 }
 
 export const TEMPLATES: Template[] = [
   ...PRESET_KINDS.map((kind): Template => ({ id: `api-${kind}`, type: "http", group: "api", preset: kind, asksLayer: false })),
   { id: "csv", type: "http", group: "file", asksLayer: false },
+  { id: "xlsx", type: "http", group: "file", asksLayer: false, asksSheet: true },
+  { id: "shapefile", type: "http", group: "file", asksLayer: false },
   { id: "json", type: "http", group: "file", asksLayer: false, asksRecords: true },
   { id: "ckan", type: "http", group: "file", asksLayer: false },
   { id: "wfs", type: "http", group: "file", asksLayer: true },
@@ -53,6 +58,7 @@ export interface TemplateValues {
   url: string;
   layer?: string;
   records?: string;
+  sheet?: string;
   /** A CSV file split into one record per row (`spec.http.format: csv`, PL-114). */
   rows?: boolean;
   /** The walk the wizard's paging guess found, for a JSON API (`spec.http.paging`). */
@@ -64,13 +70,13 @@ export interface TemplateValues {
 }
 
 /** Why an address does not fit the template, as a key under `datasources.template.problem`. */
-export type TemplateProblem = "name" | "url" | "ckanDataset" | "layer" | "records" | "secretKey";
+export type TemplateProblem = "name" | "url" | "ckanDataset" | "layer" | "records" | "sheet" | "secretKey";
 
 const DNS1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 
 /** The address checked for the template; a CKAN dataset page is not a file the runner can read. */
 export function problemOf(template: Template, values: TemplateValues): TemplateProblem | undefined {
-  if (!DNS1123.test(values.name.trim()) || values.name.trim().length > 63) return "name";
+  // The address first: a name taken from a bad address is wrong only because the address is.
   let url: URL;
   try {
     url = new URL(values.url.trim());
@@ -78,10 +84,13 @@ export function problemOf(template: Template, values: TemplateValues): TemplateP
     return "url";
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return "url";
+  if (!DNS1123.test(values.name.trim()) || values.name.trim().length > 63) return "name";
   if (template.id === "ckan" && /\/dataset\/[^/]+\/?$/.test(url.pathname)) return "ckanDataset";
   if (template.asksLayer && !isGetFeature(url) && !(values.layer ?? "").trim()) return "layer";
   const records = (values.records ?? "").trim();
   if (template.asksRecords && records !== "" && !new RegExp(RECORDS_PATH).test(records)) return "records";
+  const sheet = values.sheet ?? "";
+  if (template.asksSheet && sheet.trim() !== "" && !new RegExp(SHEET_NAME, "u").test(sheet.trim())) return "sheet";
   if (values.secret && !values.secret.key.trim()) return "secretKey";
   return undefined;
 }
@@ -144,6 +153,15 @@ export function fromTemplate(template: Template, values: TemplateValues): { type
     return { type: "http", form: { name, http: { ...http, verb: "GET", ...authorization } } };
   }
   const url = template.asksLayer ? wfsUrl(values.url, values.layer ?? "") : values.url.trim();
+  if (template.asksSheet) {
+    // The runner splits the workbook into one record per row of the sheet (T-7086).
+    const sheet = (values.sheet ?? "").trim();
+    return { type: "http", form: { name, http: { url, verb: "GET", format: "xlsx", ...(sheet ? { sheet } : {}), ...authorization } } };
+  }
+  if (template.id === "shapefile") {
+    // The runner reads the zipped layer as one WGS 84 GeoJSON feature per record (T-7089).
+    return { type: "http", form: { name, http: { url, verb: "GET", format: "shapefile", ...authorization } } };
+  }
   const records = template.asksRecords ? (values.records ?? "").trim() : "";
   const paging = template.asksRecords && values.paging ? { paging: values.paging } : {};
   const rows = template.id === "csv" && values.rows ? { format: "csv" } : {};

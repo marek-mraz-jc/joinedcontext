@@ -1,0 +1,266 @@
+{
+ "inputs": [
+  {
+   "name": "ftp",
+   "group": "files",
+   "summary": "Reads the files of one directory of an FTP server whose names match a glob, one message per file, once per run (FTPS unless the operator allows plain FTP).",
+   "fields": [
+    {
+     "path": "address",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": null,
+     "description": "The FTP server as host or host:port, for example files.example.org:21; port 21 when left out."
+    },
+    {
+     "path": "tls",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": "explicit",
+     "description": "How the connection is protected, for example explicit. explicit (the default) speaks FTPS: AUTH TLS, with the data channel protected too. none is plain FTP, which sends the password in the clear: the runner refuses it unless the operator has turned on your organization's allow_plain_ftp quota.",
+     "options": [
+      "explicit",
+      "none"
+     ]
+    },
+    {
+     "path": "root_cas",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": true,
+     "optional": true,
+     "default": null,
+     "description": "PEM certificates to trust besides the system ones, for a server signed by a private CA, for example -----BEGIN CERTIFICATE----- … -----END CERTIFICATE-----."
+    },
+    {
+     "path": "username",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": "anonymous",
+     "description": "The login name, for example exports; anonymous when left empty."
+    },
+    {
+     "path": "password",
+     "type": "string",
+     "kind": "scalar",
+     "secret": true,
+     "advanced": false,
+     "optional": true,
+     "default": null,
+     "description": "The password, picked from the project's secrets, for example FTP_PASSWORD; the platform refuses a password typed in. Leave empty for an anonymous login."
+    },
+    {
+     "path": "path",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": null,
+     "description": "The directory and a file-name glob, for example /exports/*.csv: every file in /exports whose name ends in .csv is read."
+    },
+    {
+     "path": "delete_on_finish",
+     "type": "bool",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": false,
+     "description": "Delete each file from the server once the pipeline has handled it, for example for a drop folder. Not together with processed suffix."
+    },
+    {
+     "path": "processed_suffix",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": true,
+     "default": null,
+     "description": "Rename each handled file by adding this ending, for example .done; later runs skip the renamed files. Not together with delete on finish."
+    },
+    {
+     "path": "max_file_bytes",
+     "type": "int",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": true,
+     "optional": false,
+     "default": 33554432,
+     "description": "The largest file read, in bytes, from 1 to 268435456 (256 MiB), for example 33554432 for 32 MiB; a larger file fails the run."
+    },
+    {
+     "path": "max_files",
+     "type": "int",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": true,
+     "optional": false,
+     "default": 100,
+     "description": "The most files read in one run, from 1 to 10000, for example 100; the rest wait for the next run."
+    },
+    {
+     "path": "timeout",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": true,
+     "optional": false,
+     "default": "30s",
+     "description": "How long one server operation may take, up to 5m, for example 30s."
+    }
+   ]
+  },
+  {
+   "name": "imap",
+   "group": "files",
+   "summary": "Reads the attachments of unread mails in one mailbox over IMAPS, one message per attachment, once per run; a mail is marked read or moved only after the pipeline handled it.",
+   "fields": [
+    {
+     "path": "address",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": null,
+     "description": "The mail server as host or host:port, for example imap.example.org:993; port 993 when left out. IMAPS only, never plain IMAP."
+    },
+    {
+     "path": "root_cas",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": true,
+     "optional": true,
+     "default": null,
+     "description": "PEM certificates to trust besides the system ones, for a server signed by a private CA, for example -----BEGIN CERTIFICATE----- … -----END CERTIFICATE-----."
+    },
+    {
+     "path": "username",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": null,
+     "description": "The mailbox login, for example exports@city.example.org."
+    },
+    {
+     "path": "password",
+     "type": "string",
+     "kind": "scalar",
+     "secret": true,
+     "advanced": false,
+     "optional": false,
+     "default": null,
+     "description": "The password, picked from the project's secrets, for example IMAP_PASSWORD; the platform refuses a password typed in."
+    },
+    {
+     "path": "mailbox",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": "INBOX",
+     "description": "The folder to read, for example INBOX or INBOX/Exports; INBOX when left empty."
+    },
+    {
+     "path": "from",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": true,
+     "default": null,
+     "description": "Only mails from this one sender address, for example exports@stat.example.org; any sender when left empty."
+    },
+    {
+     "path": "subject",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": true,
+     "default": null,
+     "description": "Only mails whose subject matches this regular expression, for example ^Daily traffic export; any subject when left empty."
+    },
+    {
+     "path": "attachment",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": "*",
+     "description": "Only attachments whose file name matches this glob, for example *.xlsx; every attachment when left empty."
+    },
+    {
+     "path": "after_ack",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": "seen",
+     "description": "What happens to a mail once the pipeline handled every attachment it gave, for example seen: seen marks it read, move moves it to the folder in move to.",
+     "options": [
+      "seen",
+      "move"
+     ]
+    },
+    {
+     "path": "move_to",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": true,
+     "default": null,
+     "description": "With after ack move: the folder to move handled mails to, for example INBOX/Processed."
+    },
+    {
+     "path": "max_attachment_bytes",
+     "type": "int",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": true,
+     "optional": false,
+     "default": 26214400,
+     "description": "The largest attachment read, in bytes, from 1 to 268435456 (256 MiB), for example 26214400 for 25 MiB; a larger one is skipped."
+    },
+    {
+     "path": "max_messages",
+     "type": "int",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": true,
+     "optional": false,
+     "default": 50,
+     "description": "The most mails read in one run, from 1 to 1000, for example 50; the rest wait for the next run."
+    },
+    {
+     "path": "timeout",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": true,
+     "optional": false,
+     "default": "30s",
+     "description": "How long one server operation may take, up to 5m, for example 30s."
+    }
+   ]
+  }
+ ]
+}

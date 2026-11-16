@@ -439,6 +439,11 @@ export function generateSlug(): string {
 // and the first type is the one a new form opens on (T-3211).
 /** A `records` path of an http DataSource: 1 to 8 dot-separated names (jc-core records_mapping). */
 export const RECORDS_PATH = "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,7}$";
+/**
+ * A sheet name a workbook can hold, as jc-core's `sheet_name_gap` checks it (T-7086): 1 to 31
+ * characters, none of `: \\ / ? * [ ]` or a control character, no `'` or space at either end.
+ */
+export const SHEET_NAME = "^(?![' ])(?!.*[' ]$)[^:\\\\/?*\\[\\]\\p{Cc}]{1,31}$";
 
 // A webhook last: the one type a sender pushes to, rendered on the runner's ingest listener (PL-122).
 export const DATA_SOURCE_TYPES = ["http", "mqtt", "websocket", "gtfs-rt", "webhook"] as const;
@@ -636,6 +641,14 @@ export function dataSourceSchema(
           title: t("datasources.field.records"),
           pattern: RECORDS_PATH,
         },
+        // T-7086: how the body becomes records; a spreadsheet is read one row per record, a
+        // zipped shapefile one GeoJSON feature per record (T-7089).
+        format: {
+          type: "string",
+          title: t("datasources.field.format"),
+          oneOf: (["csv", "xlsx", "shapefile"] as const).map((format) => ({ const: format, title: t(`choice.httpBodyFormat.${format}`) })),
+        },
+        sheet: { type: "string", title: t("datasources.sheet.label"), pattern: SHEET_NAME },
         preset: presetSchema(t),
         paging: pagingSchema(t),
         authorization: {
@@ -1013,6 +1026,8 @@ export interface CatalogField {
   optional?: boolean;
   default: unknown;
   description: string;
+  /** The only values the runner takes, offered as a dropdown (ekiben-inputs.json, T-7092). */
+  options?: string[];
 }
 
 /** Bento runner input catalog item (PL-50). */
@@ -1160,6 +1175,7 @@ export function runnerInputSchema(input: CatalogInput): { schema: JsonSchema; ui
       propSchema.items = { type: scalarType };
     } else if (f.kind === "scalar" && scalarType) {
       propSchema.type = scalarType;
+      if (f.options) propSchema.enum = f.options;
     } else {
       propSchema.type = "string";
       propUi["ui:widget"] = "textarea";

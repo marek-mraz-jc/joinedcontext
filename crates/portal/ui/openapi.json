@@ -27331,6 +27331,11 @@
                     "maxLength": 253,
                     "type": "string"
                   },
+                  "inProject": {
+                    "description": "agentActivity: one project's runs",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
                   "limit": {
                     "description": "agentActivity: page size, default 20",
                     "maximum": 50,
@@ -27348,8 +27353,41 @@
                     "type": "string"
                   },
                   "person": {
-                    "description": "personReadable: the Keycloak user id",
+                    "description": "personReadable: the Keycloak user id; agentActivity: runs this person started",
                     "maxLength": 512,
+                    "type": "string"
+                  },
+                  "profile": {
+                    "description": "agentActivity: one agent profile's runs",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "run": {
+                    "description": "agentActivity: one run",
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "since": {
+                    "description": "agentActivity: runs started at or after, e.g. 2026-11-01T00:00:00Z",
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "space": {
+                    "description": "agentActivity: runs that read this Context Space",
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "until": {
+                    "description": "agentActivity: runs started before",
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "verdict": {
+                    "description": "agentActivity: refused, runs with a refused step",
+                    "enum": [
+                      "ok",
+                      "refused"
+                    ],
                     "type": "string"
                   }
                 },
@@ -58413,6 +58451,13 @@
             "$ref": "#/components/schemas/PipelineTestSampleFormat",
             "description": "How the sample is split into messages."
           },
+          "sheet": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sheet of an `xlsx` sample by its tab name, such as `Stations 2026`; absent, the\nfirst sheet."
+          },
           "text": {
             "type": [
               "string",
@@ -58436,7 +58481,9 @@
         "enum": [
           "text",
           "csv",
-          "json"
+          "json",
+          "xlsx",
+          "shapefile"
         ]
       },
       "Place": {

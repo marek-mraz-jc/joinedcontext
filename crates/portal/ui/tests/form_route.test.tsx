@@ -53,7 +53,7 @@ function answer(path: string, request: Request): Response | undefined {
   return undefined;
 }
 
-const open = (path: string) => renderRoute({ path, answer });
+const open = (path: string) => renderRoute({ path, answer, doorsAsRest: true });
 
 /** The back control of the open form page. */
 const back = (page: HTMLElement) => within(page).getByRole("button", { name: en.form.cancel });
@@ -215,6 +215,7 @@ describe("a kind's forms at their own addresses", () => {
     let held = false;
     const rendered = await renderRoute({
       path: `${LIST}/no-such-policy/edit`,
+      doorsAsRest: true,
       answer: (path, request) => {
         if (held && path.endsWith("/policies")) {
           return new Promise<Response>((resolve) => {
@@ -248,6 +249,7 @@ describe("a kind's forms at their own addresses", () => {
     const refused = () => new Response(JSON.stringify({ status: 404, title: "not found" }), { status: 404, headers: { "Content-Type": "application/problem+json" } });
     const rendered = await renderRoute({
       path: `${LIST}/no-such-policy/edit`,
+      doorsAsRest: true,
       answer: (path, request) => {
         if (path.endsWith("/spaces")) {
           return held ? new Promise<Response>((resolve) => (release = () => resolve(refused()))) : refused();

@@ -6,7 +6,7 @@ import { shippedForms } from "../../schemas/forms";
 import { portalThemeWidgets } from "./theme";
 import { arrange, index, mergeUi, paths, prefilled } from "./uischema";
 import { PORTAL_WIDGET_NAMES } from "./widgetNames";
-import { savePreferences } from "../../navigation/places";
+import { readPreferences, savePreferences } from "../../navigation/places";
 import type { JsonSchema, UiSchema } from "./types";
 
 export interface FormArrangementOptions {
@@ -53,7 +53,7 @@ export function useFormArrangement(options: FormArrangementOptions): FormArrange
     queryKey: queryKeys.preferences(),
     enabled: open && kind !== undefined,
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/preferences", {})),
+    queryFn: readPreferences,
   });
   const [advancedChoice, setAdvancedChoice] = useState<boolean | null>(null);
   const advanced = advancedChoice ?? preferences.data?.advancedMode === true;

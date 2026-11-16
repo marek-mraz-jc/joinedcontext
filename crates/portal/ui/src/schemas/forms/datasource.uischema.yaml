@@ -151,6 +151,18 @@ spec:
         sk: Pre JSON odpoveď so záznamami v poli cesta k nemu, napríklad data.stations; každá položka je jeden záznam.
         cs: U odpovědi JSON se záznamy v poli cesta k němu, například data.stations; každá položka je jeden záznam.
         de: Bei einer JSON-Antwort mit Datensätzen in einem Array der Pfad dorthin, etwa data.stations; jedes Element wird ein Datensatz.
+    http.format:
+      help:
+        en: "How the answer becomes records: CSV or a spreadsheet gives one record per row, with the header row's names as keys; a zipped shapefile (.shp, .dbf, .prj) one GeoJSON feature per record in WGS 84. Leave empty to read the whole answer as one record."
+        sk: "Ako sa z odpovede stanú záznamy: CSV alebo tabuľka dáva jeden záznam na riadok s názvami z hlavičky ako kľúčmi; shapefile v zipe (.shp, .dbf, .prj) jeden prvok GeoJSON na záznam vo WGS 84. Prázdne pole číta celú odpoveď ako jeden záznam."
+        cs: "Jak se z odpovědi stanou záznamy: CSV nebo tabulka dává jeden záznam na řádek s názvy z hlavičky jako klíči; shapefile v zipu (.shp, .dbf, .prj) jeden prvek GeoJSON na záznam ve WGS 84. Prázdné pole čte celou odpověď jako jeden záznam."
+        de: "Wie aus der Antwort Datensätze werden: CSV oder eine Tabelle ergibt einen Datensatz je Zeile, mit den Namen der Kopfzeile als Schlüsseln; ein gezipptes Shapefile (.shp, .dbf, .prj) ein GeoJSON-Feature je Datensatz in WGS 84. Leer gelassen wird die ganze Antwort ein Datensatz."
+    http.sheet:
+      help:
+        en: "Only for a spreadsheet: the sheet to read by its tab name, for example Stations 2026. Leave empty for the first sheet."
+        sk: "Len pre tabuľku: hárok na čítanie podľa názvu záložky, napríklad Stanice 2026. Prázdne pole číta prvý hárok."
+        cs: "Jen pro tabulku: list ke čtení podle názvu záložky, například Stanice 2026. Prázdné pole čte první list."
+        de: "Nur für eine Tabelle: das zu lesende Blatt nach seinem Reiternamen, zum Beispiel Stationen 2026. Leer gelassen das erste Blatt."
     http.preset.kind:
       help:
         en: "The kind of service the URL names, for example ArcGIS Feature Service for …/FeatureServer/0/query."
