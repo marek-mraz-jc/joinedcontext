@@ -56,7 +56,7 @@ async function shot(page: Page, name: string): Promise<void> {
   if (!dir) return;
   mkdirSync(dir, { recursive: true });
   await page.getByRole("region", { name: "History" }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: join(dir, `${name}.png`), fullPage: false });
+  await page.screenshot({ path: join(dir, `${name}.png`), fullPage: false, animations: "disabled" });
 }
 
 test.describe("a dashboard's history", () => {

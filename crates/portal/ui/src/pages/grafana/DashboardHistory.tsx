@@ -72,6 +72,7 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
       (await doorAction("portal_grafana_builder_restore", { uid, sha }, project)) as RestAnswer<"builder_restore">,
     onSuccess: async () => {
       setAsked(undefined);
+      setCompared(undefined);
       await queryClient.invalidateQueries({ queryKey: ["projects", project, "grafana", "builder"] });
     },
   });
@@ -111,14 +112,6 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
           }
         />
       ) : null}
-      {restore.isSuccess ? (
-        <Alert tone="success" title={t("dashboardHistory.restoredTitle")}>
-          {t("dashboardHistory.restored")}{" "}
-          <Link to="/projects/$project/approvals/$id" params={{ project, id: restore.data.change.metadata.name }} className="underline">
-            {t("dashboardHistory.openChange")}
-          </Link>
-        </Alert>
-      ) : null}
       {restore.isError ? <Alert tone="danger" title={t("dashboardHistory.restoreFailed")}>{reasonOf(restore.error)}</Alert> : null}
       {items.length > 0 ? (
         <ol className="flex flex-col divide-y divide-border" aria-label={t("dashboardHistory.title")}>
@@ -148,7 +141,7 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
                   <Button
                     size="sm"
                     variant="ghost"
-                    disabled={!mayEdit || restore.isPending}
+                    disabled={!mayEdit || restore.isPending || (restore.isSuccess && restore.variables === version.sha)}
                     title={t(mayEdit ? "dashboardHistory.restoreHint" : "dashboardHistory.readerHint")}
                     aria-describedby={mayEdit ? undefined : "dashboard-history-reader"}
                     onClick={() => {
@@ -160,6 +153,14 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
                     {t("dashboardHistory.restore")}
                   </Button>
                 </div>
+              ) : null}
+              {restore.isSuccess && restore.variables === version.sha ? (
+                <Alert className="basis-full" tone="success" title={t("dashboardHistory.restoredTitle")}>
+                  {t("dashboardHistory.restored")}{" "}
+                  <Link to="/projects/$project/approvals/$id" params={{ project, id: restore.data.change.metadata.name }} className="underline">
+                    {t("dashboardHistory.openChange")}
+                  </Link>
+                </Alert>
               ) : null}
               {asked?.sha === version.sha ? (
                 <Alert
