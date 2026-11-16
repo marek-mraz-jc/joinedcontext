@@ -2540,7 +2540,8 @@
         "url": "Zadejte celou adresu začínající na https:// nebo http://.",
         "ckanDataset": "Tohle je stránka datasetu, ne soubor. Otevřete na ní zdroj CSV nebo JSON a zkopírujte jeho adresu ke stažení.",
         "layer": "Zadejte vrstvu ke čtení, nebo adresu souboru GeoJSON.",
-        "records": "Zadejte cestu jako názvy spojené tečkami, např. data.stations."
+        "records": "Zadejte cestu jako názvy spojené tečkami, např. data.stations.",
+        "secretKey": "Uveďte položku v tajemství, která drží přístupový údaj."
       }
     },
     "test": {
@@ -2633,6 +2634,64 @@
         "thing": "Thing"
       },
       "refused": "Požádejte správce projektu o roli, která navrhuje datové zdroje."
+    },
+    "wizard": {
+      "step": "{n}. {label}",
+      "kind": "Co připojujete",
+      "address": "Adresa a přístupový údaj",
+      "discover": "Výběr ze služby",
+      "pagingTitle": "Stránky",
+      "format": "Formát",
+      "check": "Název a první řádky",
+      "groups": {
+        "api": "API otevřených dat, čtené po stránkách",
+        "file": "Soubor nebo kanál na adrese",
+        "other": "Něco jiného: proud, souborový server, fronta, databáze nebo webhook"
+      },
+      "otherHelp": "Otevře níže celý formulář toho připojení: MQTT, SFTP, Kafka, databáze a další.",
+      "otherNone": "Vyberte připojení…",
+      "api": {
+        "ckan": "Všechny datové sady jedné organizace na portálu CKAN.",
+        "arcgisFeature": "Prvky jedné vrstvy služby ArcGIS Feature Service.",
+        "odata": "Řádky jedné množiny entit služby OData v4.",
+        "wfs": "Všechny prvky jednoho typu WFS 2.0 jako GeoJSON.",
+        "ogcFeatures": "Položky jedné kolekce OGC API Features.",
+        "sensorThings": "Věci nebo datové proudy služby SensorThings."
+      },
+      "apiUrl": "Adresa služby",
+      "apiUrlHelp": {
+        "ckan": "Adresa portálu, například https://opendata-ajuntament.barcelona.cat/data.",
+        "arcgisFeature": "Adresa FeatureServer, například https://services.example/arcgis/rest/services/Trees/FeatureServer.",
+        "odata": "Kořen služby končící na .svc, například https://services.odata.org/V4/Northwind/Northwind.svc.",
+        "wfs": "Adresa WFS před otazníkem, například https://kartta.hel.fi/ws/geoserver/avoindata/wfs.",
+        "ogcFeatures": "Adresa API, například https://demo.pygeoapi.io/master.",
+        "sensorThings": "Adresa s verzí, například https://iot.hamburg.de/v1.1."
+      },
+      "secret": "Přístupový údaj",
+      "secretPublic": "Žádný: veřejný zdroj",
+      "secretHelp": "Vyberte tajemství s klíčem nebo tokenem; heslo se sem nikdy nepíše.",
+      "secretNone": "Zdroje dat tohoto projektu zatím nepoužívají žádné tajemství; veřejný zdroj ho nepotřebuje. Zdroj s klíčem dostane tajemství ve formuláři níže.",
+      "secretKeyHelp": "Položka v tajemství, která drží přístupový údaj, například token.",
+      "secretProbe": "Zdroj s přístupovým údajem kontrola nenačte; po uložení ho načte Otestovat připojení.",
+      "pagingHint": "Jednou přečte první odpověď na běžci projektu a řekne, kolik stránek běh přečte.",
+      "pagingButton": "Zjistit stránkování",
+      "pagingRunning": "Čtu první odpověď…",
+      "paging": {
+        "pages": "Přečte {pages} stránek po {onPage} ({total} záznamů).",
+        "more": "Čte stránky po {onPage}, dokud služba neřekne, že další nejsou.",
+        "walk": "Jde na další stránku, kterou služba uvede, na první je {onPage} záznamů.",
+        "totalOnly": "První odpověď uvádí {total} záznamů celkem, {onPage} na této stránce, ale neuvádí další stránku; nastavte stránkování ve formuláři níže.",
+        "once": "Jedna odpověď obsahuje vše: adresa se při běhu přečte jednou.",
+        "skipped": "Nelze zjistit: {reason}. Zkuste to znovu nebo nastavte stránkování ve formuláři níže."
+      },
+      "allPages": "Číst všechny stránky",
+      "allPagesHint": "Zapíše stránkování do formuláře; bez něj se přečte jen první stránka.",
+      "presetPages": "Druh API stránkuje zdroj sám, s velikostí stránky, kterou služba dovolí, pokud ji nenastavíte ve formuláři níže.",
+      "oneRead": "Soubor nebo kanál se při každém běhu přečte celý: stránky nemá.",
+      "rows": "Jeden záznam na řádek",
+      "rowsHint": "Každý řádek CSV přijde do pipeline jako jeden záznam s názvy sloupců z hlavičky.",
+      "handoff": "Spustit pipeline nad {name}",
+      "picked": "Vybráno: {value}. Vyplnit formulář a zkontrolovat ho zapíše do formuláře níže."
     }
   },
   "pipelines": {

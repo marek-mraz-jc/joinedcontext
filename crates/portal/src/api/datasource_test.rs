@@ -20,6 +20,7 @@ use crate::auth::session::Identity;
 use crate::auth::CurrentUser;
 use crate::error::{ApiError, ProblemDetails};
 use crate::ops::datasource_discover::{self, DiscoverRequest, Discovery};
+use crate::ops::datasource_paging::{self, PagingGuess, PagingRequest};
 use crate::resource::is_dns1123;
 use crate::state::AppState;
 
@@ -332,6 +333,55 @@ pub async fn discovery(
     Ok(datasource_discover::discovery_of(request.kind, &url, trace))
 }
 
+/// `POST /api/v1/projects/{project}/datasource-paging` (T-7094, G-22).
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project}/datasource-paging",
+    summary = "Data Source Paging",
+    description = "Reads the first answer of an address once on the project's runner and answers \
+                   how the source pages: the walk for `spec.http.paging` (a Link header, a next \
+                   link, ArcGIS, WFS or CKAN), where the records sit, the records on the first \
+                   page, the announced total and the pages a walk reads. Nothing is written.",
+    tag = "datasources",
+    params(("project" = String, Path, description = "Project slug")),
+    request_body = PagingRequest,
+    responses(
+        (status = 200, description = "The guess, or `skipped` with the reason in plain words", body = PagingGuess),
+        (status = 400, description = "The URL does not parse, carries a credential, or names an address the runner may not reach", body = ProblemDetails),
+        (status = 401, description = "Unauthorized", body = ProblemDetails),
+        (status = 403, description = "No grant proposes a DataSource in this project", body = ProblemDetails),
+        (status = 409, description = "A test of this project is already running", body = ProblemDetails),
+        (status = 422, description = "The address is not on the public internet", body = ProblemDetails),
+        (status = 503, description = "No pipeline runner is configured, or it did not answer", body = ProblemDetails)
+    )
+)]
+pub async fn guess_datasource_paging(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    Json(request): Json<PagingRequest>,
+) -> Result<Json<PagingGuess>, ApiError> {
+    if !is_dns1123(&project) {
+        return Err(ApiError::NotFound(format!("project '{project}' not found")));
+    }
+    // The first page is read to write a source: the caller who may propose one reads it.
+    crate::permissions::for_request(&state, &user.0.identity, &project).check(
+        "DataSource",
+        Verb::Propose,
+        None,
+    )?;
+    let url = datasource_paging::page_url(&request.url)
+        .map_err(|why| ApiError::BadRequest(format!("url: {why}")))?;
+    crate::ops::pipeline_steps::sample_address(url.as_str(), "/url")
+        .await
+        .map_err(crate::ops::OpError::into_api_error)?;
+    let trace = run_stream(&state, &project, |capture| {
+        datasource_paging::page_read(&url, capture)
+    })
+    .await?;
+    Ok(Json(datasource_paging::guess_of(&url, trace)))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route(
@@ -341,6 +391,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/projects/{project}/datasource-discovery",
             post(discover_datasource),
+        )
+        .route(
+            "/projects/{project}/datasource-paging",
+            post(guess_datasource_paging),
         )
 }
 
@@ -622,5 +676,40 @@ mod tests {
             json!({ "kind": "shapefile", "url": "https://x.example" })
         )
         .is_err());
+
+        // Paging: the same order, a reader and a stranger before any read, a URL with a key in
+        // it named at the field, an address inside the network refused, a good one at the runner.
+        let paging = |email: &str, url: &str| {
+            guess_datasource_paging(
+                CurrentUser(session(email)),
+                State(state.clone()),
+                Path("oulu".to_owned()),
+                Json(
+                    serde_json::from_value::<PagingRequest>(json!({ "url": url }))
+                        .expect("request"),
+                ),
+            )
+        };
+        for email in ["reader@hel.fi", "stranger@hel.fi"] {
+            assert!(
+                matches!(
+                    paging(email, "https://feeds.example/items").await,
+                    Err(ApiError::Denied(_) | ApiError::Forbidden)
+                ),
+                "{email}"
+            );
+        }
+        assert!(matches!(
+            paging("dev@hel.fi", "https://feeds.example/items?apikey=abc123").await,
+            Err(ApiError::BadRequest(why)) if why.starts_with("url:") && !why.contains("abc123")
+        ));
+        assert!(matches!(
+            paging("dev@hel.fi", "http://10.0.0.8/items").await,
+            Err(ApiError::Unprocessable { .. })
+        ));
+        assert!(matches!(
+            paging("dev@hel.fi", "https://feeds.example/items").await,
+            Err(ApiError::Unavailable(_))
+        ));
     }
 }

@@ -2540,7 +2540,8 @@
         "url": "Geben Sie eine vollständige Adresse an, die mit https:// oder http:// beginnt.",
         "ckanDataset": "Das ist die Datensatzseite, keine Datei. Öffnen Sie dort die CSV- oder JSON-Ressource und kopieren Sie ihre Download-Adresse.",
         "layer": "Nennen Sie den zu lesenden Layer oder geben Sie die Adresse einer GeoJSON-Datei an.",
-        "records": "Geben Sie den Pfad als durch Punkte verbundene Namen an, zum Beispiel data.stations."
+        "records": "Geben Sie den Pfad als durch Punkte verbundene Namen an, zum Beispiel data.stations.",
+        "secretKey": "Geben Sie den Eintrag im Secret an, der die Zugangsdaten hält."
       }
     },
     "test": {
@@ -2633,6 +2634,64 @@
         "thing": "Thing"
       },
       "refused": "Bitten Sie eine Projektverwaltung um eine Rolle, die Datenquellen vorschlägt."
+    },
+    "wizard": {
+      "step": "{n}. {label}",
+      "kind": "Was Sie anbinden",
+      "address": "Adresse und Zugangsdaten",
+      "discover": "Aus dem Dienst wählen",
+      "pagingTitle": "Seiten",
+      "format": "Format",
+      "check": "Name und erste Zeilen",
+      "groups": {
+        "api": "Open-Data-API, Seite für Seite gelesen",
+        "file": "Eine Datei oder ein Feed unter einer Adresse",
+        "other": "Etwas anderes: ein Stream, ein Dateiserver, eine Queue, eine Datenbank oder ein Webhook"
+      },
+      "otherHelp": "Öffnet unten das vollständige Formular dieser Verbindung: MQTT, SFTP, Kafka, eine Datenbank und die anderen.",
+      "otherNone": "Verbindung wählen…",
+      "api": {
+        "ckan": "Alle Datensätze einer Organisation in einem CKAN-Portal.",
+        "arcgisFeature": "Die Objekte einer Ebene eines ArcGIS Feature Service.",
+        "odata": "Die Zeilen einer Entitätsmenge eines OData-v4-Dienstes.",
+        "wfs": "Alle Objekte eines WFS-2.0-Objekttyps als GeoJSON.",
+        "ogcFeatures": "Die Einträge einer OGC-API-Features-Sammlung.",
+        "sensorThings": "Die Things oder Datastreams eines SensorThings-Dienstes."
+      },
+      "apiUrl": "Adresse des Dienstes",
+      "apiUrlHelp": {
+        "ckan": "Die Adresse des Portals, zum Beispiel https://opendata-ajuntament.barcelona.cat/data.",
+        "arcgisFeature": "Die FeatureServer-Adresse, zum Beispiel https://services.example/arcgis/rest/services/Trees/FeatureServer.",
+        "odata": "Die Dienstwurzel mit .svc am Ende, zum Beispiel https://services.odata.org/V4/Northwind/Northwind.svc.",
+        "wfs": "Die WFS-Adresse vor dem Fragezeichen, zum Beispiel https://kartta.hel.fi/ws/geoserver/avoindata/wfs.",
+        "ogcFeatures": "Die Adresse der API, zum Beispiel https://demo.pygeoapi.io/master.",
+        "sensorThings": "Die Adresse mit Version, zum Beispiel https://iot.hamburg.de/v1.1."
+      },
+      "secret": "Zugangsdaten",
+      "secretPublic": "Keine: eine öffentliche Quelle",
+      "secretHelp": "Wählen Sie das Secret mit dem Schlüssel oder Token; ein Passwort wird hier nie eingegeben.",
+      "secretNone": "Die Datenquellen dieses Projekts nutzen noch kein Secret; eine öffentliche Quelle braucht keines. Eine Quelle mit Schlüssel bekommt ihr Secret im Formular unten.",
+      "secretKeyHelp": "Der Eintrag im Secret, der die Zugangsdaten hält, zum Beispiel token.",
+      "secretProbe": "Eine Quelle mit Zugangsdaten liest die Prüfung nicht; nach dem Speichern liest sie Verbindung testen.",
+      "pagingHint": "Liest die erste Antwort einmal auf dem Runner des Projekts und sagt, wie viele Seiten ein Lauf liest.",
+      "pagingButton": "Seitenaufteilung ermitteln",
+      "pagingRunning": "Lese die erste Antwort…",
+      "paging": {
+        "pages": "Liest {pages} Seiten zu {onPage} ({total} Datensätze).",
+        "more": "Liest Seiten zu {onPage}, bis der Dienst meldet, dass keine weiteren folgen.",
+        "walk": "Folgt der nächsten Seite, die der Dienst nennt, {onPage} Datensätze auf der ersten.",
+        "totalOnly": "Die erste Antwort nennt {total} Datensätze insgesamt, {onPage} auf dieser Seite, aber keine nächste Seite; legen Sie die Seitenaufteilung im Formular unten fest.",
+        "once": "Eine Antwort enthält alles: die Adresse wird pro Lauf einmal gelesen.",
+        "skipped": "Nicht zu ermitteln: {reason}. Versuchen Sie es erneut oder legen Sie die Seitenaufteilung im Formular unten fest."
+      },
+      "allPages": "Alle Seiten lesen",
+      "allPagesHint": "Schreibt die Seitenaufteilung ins Formular; ohne Haken wird nur die erste Seite gelesen.",
+      "presetPages": "Die API-Art teilt die Quelle selbst in Seiten, mit der Seitengröße, die der Dienst erlaubt, wenn Sie im Formular unten keine festlegen.",
+      "oneRead": "Eine Datei oder ein Feed wird bei jedem Lauf ganz gelesen: es gibt keine Seiten.",
+      "rows": "Ein Datensatz pro Zeile",
+      "rowsHint": "Jede CSV-Zeile erreicht die Pipeline als ein Datensatz mit den Spaltennamen der Kopfzeile.",
+      "handoff": "Pipeline auf {name} starten",
+      "picked": "Gewählt: {value}. Formular ausfüllen und prüfen schreibt es ins Formular unten."
     }
   },
   "pipelines": {

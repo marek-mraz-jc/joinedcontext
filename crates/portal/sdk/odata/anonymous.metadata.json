@@ -1,6 +1,7 @@
 {
   "error": {
     "code": "unauthorized",
+    "hint": "Sign in again, or send a valid bearer token for this audience.",
     "message": "Unauthorized",
     "status": 401,
     "title": "Unauthorized",

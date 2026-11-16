@@ -53,9 +53,13 @@ impl Default for Written<'_> {
 
 /// A directory of this test's own; the operating system removes it, not a `Drop` nobody sees.
 fn tempdir() -> std::path::PathBuf {
+    // Tests run on parallel threads of one process, where two clock readings can be equal: the
+    // counter keeps each test's repository its own.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "jc-serving-{}-{:?}",
+        "jc-serving-{}-{}-{:?}",
         std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("a clock after 1970")

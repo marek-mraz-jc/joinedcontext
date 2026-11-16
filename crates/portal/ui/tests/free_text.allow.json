@@ -85,10 +85,6 @@
       "class": "FREE",
       "reason": "typing the picked endpoint's name back is the red-lane confirmation for a public publication (EP-142)"
     },
-    "src/pages/datasources/TemplateGallery.tsx :: datasources.template.${picked.id}.url": {
-      "class": "FREE",
-      "reason": "the address of an outside feed"
-    },
     "src/pages/endpoints/EndpointPage.tsx :: endpoints.area.${corner}": {
       "class": "FREE",
       "reason": "a coordinate of the bounding box"
