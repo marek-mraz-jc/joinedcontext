@@ -1969,8 +1969,7 @@
         "$Type": "Edm.Untyped"
       },
       "origin": {
-        "$Nullable": true,
-        "$Type": "Edm.Untyped"
+        "$Nullable": true
       },
       "pathPrefix": {
         "$Nullable": true,

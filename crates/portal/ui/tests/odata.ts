@@ -564,7 +564,7 @@ const WORKSPACES =
 const RUNS =
   /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)\/runs|runs\(project='((?:[^']|'')*)',id='((?:[^']|'')*)'\))$/;
 /** The REST list's query parameter of each member a runs `$filter` narrows by (api/odata.ts listRuns). */
-const RUN_FILTERS: Record<string, string> = { appName: "app", kind: "kind", createdBy: "mine" };
+const RUN_FILTERS: Record<string, string> = { appName: "app", kind: "kind", createdBy: "mine", origin: "origin" };
 const KEYED =
   /^\/api\/v1\/(\w+)\((?:project='((?:[^']|'')*)',name='((?:[^']|'')*)'|'((?:[^']|'')*)')\)$/;
 
@@ -608,9 +608,13 @@ export function manifestAsRest(
     if (runs[3] !== undefined)
       return { rest: new URL(`/api/v1/projects/${project}/agent-runs/${encodeURIComponent(unquote(runs[3]))}`, at.origin), one: true, row: true };
     const rest = new URL(`/api/v1/projects/${project}/agent-runs`, at.origin);
+    // The set holds every origin (T-7145): no `origin` in `$filter` is the REST list's `origin=all`,
+    // `origin eq 'person'` its default.
+    rest.searchParams.set("origin", "all");
     for (const [, member, value] of (at.searchParams.get("$filter") ?? "").matchAll(/(\w+) eq '((?:[^']|'')*)'/g)) {
       const name = RUN_FILTERS[member];
-      if (name) rest.searchParams.set(name, name === "mine" ? "true" : unquote(value));
+      if (name === "origin" && unquote(value) === "person") rest.searchParams.delete("origin");
+      else if (name) rest.searchParams.set(name, name === "mine" ? "true" : unquote(value));
     }
     const top = at.searchParams.get("$top");
     if (top !== null) rest.searchParams.set("limit", top);

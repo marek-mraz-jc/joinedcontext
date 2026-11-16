@@ -61,6 +61,9 @@ pub struct RunListInput {
     /// Only the caller's own runs.
     #[serde(default)]
     pub mine: Option<bool>,
+    /// `person` (the default), `journey` or `all` (AG-93).
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -209,7 +212,8 @@ fn run_list_input_schema() -> Value {
                     "awaiting_approval", "published", "failed", "cancelled", "expired"
                 ]
             },
-            "mine": { "type": "boolean", "description": "Only the runs this caller started" }
+            "mine": { "type": "boolean", "description": "Only the runs this caller started" },
+            "origin": { "enum": ["person", "journey", "all"] }
         },
         "additionalProperties": false
     })
@@ -226,6 +230,7 @@ fn run_output_schema() -> Value {
             "status": { "type": "string" },
             "createdBy": { "type": "string" },
             "createdAt": { "type": "string", "format": "date-time" },
+            "origin": { "type": "string", "description": "person, or journey for a live journey's test run" },
             "url": { "type": "string", "description": "The Portal page following this run" },
             "previewUrl": { "type": "string", "description": "The preview once a version is built" }
         },
@@ -562,7 +567,7 @@ pub fn operations() -> Vec<Operation> {
                             kind: input.kind,
                             status: input.status,
                             mine: input.mine,
-                            origin: None,
+                            origin: input.origin,
                         }),
                     )
                     .await?;

@@ -558,6 +558,7 @@
         <Property Name="createdBy" Type="Edm.String"/>
         <Property Name="id" Type="Edm.String" Nullable="false"/>
         <Property Name="kind" Type="Edm.String"/>
+        <Property Name="origin" Type="Edm.String"/>
         <Property Name="previewUrl" Type="Edm.String"/>
         <Property Name="project" Type="Edm.String"/>
         <Property Name="status" Type="Edm.String"/>

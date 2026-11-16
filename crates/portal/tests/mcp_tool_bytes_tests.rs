@@ -85,8 +85,10 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// version's tests on the runner before an agent proposes it, the only door to that route, its
 /// schema the route's bounds; 89,460 once `jc_project_import` took `manifests` and
 /// `spaceMapping` beside `bundle` (T-7143, 396 bytes): the Portal's JSON imports go through the
-/// action as through the REST door, and a bundle file is no longer the only way an agent imports.
-const RATCHET: usize = 89_461;
+/// action as through the REST door, and a bundle file is no longer the only way an agent imports;
+/// 89,505 once `jc_run_list` took `origin` (T-7145, 45 bytes): the runs set holds a live journey's
+/// test runs beside people's, as the REST list's `origin=all` did for the Assistant page (AG-93).
+const RATCHET: usize = 89_506;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

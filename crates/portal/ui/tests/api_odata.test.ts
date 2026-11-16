@@ -327,8 +327,23 @@ describe("the Portal's OData client (T-6812)", () => {
         "&$select=id,prompt",
       "http://localhost",
     );
-    expect(Object.fromEntries(manifestAsRest(odata)?.rest.searchParams ?? [])).toEqual({ app: "o'neil" });
+    expect(Object.fromEntries(manifestAsRest(odata)?.rest.searchParams ?? [])).toEqual({ origin: "all", app: "o'neil" });
     vi.restoreAllMocks();
+  });
+
+  it("lists people's runs unless the journeys' test runs are asked for, by the run's origin (T-7145)", async () => {
+    // The set holds every origin: people's runs only are `origin eq 'person'` in its `$filter`,
+    // the REST list's default; none there is its `origin=all` (tests/odata.ts manifestAsRest).
+    const sent = serve(() => Response.json({ items: [] }));
+    await listRuns("air", { kind: "application" });
+    await listRuns("air", { kind: "application", origin: "all" });
+    expect(sent.map((request) => Object.fromEntries(new URL(request.url).searchParams))).toEqual([
+      { kind: "application" },
+      { origin: "all", kind: "application" },
+    ]);
+    const journeys = new URL("/api/v1/projects('air')/runs?$filter=" + encodeURIComponent("origin eq 'journey'"), "http://localhost");
+    expect(Object.fromEntries(manifestAsRest(journeys)?.rest.searchParams ?? [])).toEqual({ origin: "journey" });
+    vi.unstubAllGlobals();
   });
 
   it("asks no project for an Organization set: a project holds none of its manifests (T-7118)", async () => {

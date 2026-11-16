@@ -37662,6 +37662,8 @@ export interface operations {
                         createdBy?: string;
                         id: string;
                         kind?: string;
+                        /** @description person, or journey for a live journey's test run */
+                        origin?: string;
                         /** @description The preview once a version is built */
                         previewUrl?: string;
                         project?: string;
@@ -37743,6 +37745,8 @@ export interface operations {
                     limit?: number;
                     /** @description Only the runs this caller started */
                     mine?: boolean;
+                    /** @enum {unknown} */
+                    origin?: "person" | "journey" | "all";
                     /**
                      * @description Only runs in this state
                      * @enum {string}
@@ -37766,6 +37770,8 @@ export interface operations {
                             createdBy?: string;
                             id: string;
                             kind?: string;
+                            /** @description person, or journey for a live journey's test run */
+                            origin?: string;
                             /** @description The preview once a version is built */
                             previewUrl?: string;
                             project?: string;

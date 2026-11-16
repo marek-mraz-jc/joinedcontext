@@ -662,7 +662,7 @@ export interface Run {
   kind?: string | null;
   mergeRequest?: unknown | null;
   mirrorUrl?: unknown | null;
-  origin?: unknown | null;
+  origin?: string | null;
   pathPrefix?: unknown | null;
   previewUrl?: string | null;
   profile?: unknown | null;

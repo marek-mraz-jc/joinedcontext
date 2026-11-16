@@ -34676,6 +34676,10 @@
                     "kind": {
                       "type": "string"
                     },
+                    "origin": {
+                      "description": "person, or journey for a live journey's test run",
+                      "type": "string"
+                    },
                     "previewUrl": {
                       "description": "The preview once a version is built",
                       "type": "string"
@@ -34809,6 +34813,13 @@
                     "description": "Only the runs this caller started",
                     "type": "boolean"
                   },
+                  "origin": {
+                    "enum": [
+                      "person",
+                      "journey",
+                      "all"
+                    ]
+                  },
                   "status": {
                     "description": "Only runs in this state",
                     "enum": [
@@ -34856,6 +34867,10 @@
                             "type": "string"
                           },
                           "kind": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "description": "person, or journey for a live journey's test run",
                             "type": "string"
                           },
                           "previewUrl": {

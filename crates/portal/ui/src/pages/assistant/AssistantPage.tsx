@@ -21,6 +21,8 @@ import {
 } from "../../components/ui";
 import { ListFailed } from "../../components/forms/widgets/ListFailed";
 import { usePermissions } from "../../api/permissions";
+import { listRuns } from "../../api/odata";
+import { useIdentity } from "../../auth/AuthProvider";
 import { appDisplayName, useEndpointTitles } from "../apps/appTitle";
 import { TERMINAL_STATES } from "../apps/useAgentRun";
 import { AgentAccess } from "./AgentAccess";
@@ -108,21 +110,18 @@ export function AssistantPage({ project }: { project: string }): JSX.Element {
 
   const runsKey = ["projects", project, "agent-runs", { kind: kindFilter, mine: mineFilter, testRuns }];
 
+  // "Only mine" is the person's own runs, an approver's too: the REST list's `mine`.
+  const me = useIdentity()?.username;
   const runsQuery = useQuery({
     queryKey: runsKey,
+    enabled: !mineFilter || me !== undefined,
     queryFn: async () => {
-      const result = await api.GET("/api/v1/projects/{project}/agent-runs", {
-        params: {
-          path: { project },
-          query: {
-            limit: 100,
-            kind: kindFilter || undefined,
-            mine: mineFilter || undefined,
-            origin: testRuns ? "all" : undefined,
-          },
-        },
+      return listRuns<RunRecord>(project, {
+        top: 100,
+        kind: kindFilter || undefined,
+        createdBy: mineFilter ? me : undefined,
+        origin: testRuns ? "all" : undefined,
       });
-      return unwrap(result);
     },
     refetchInterval: (query) => {
       const items = (query.state.data?.items ?? []) as RunRecord[];
