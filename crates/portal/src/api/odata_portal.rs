@@ -91,6 +91,9 @@ const NAME: (&str, Place) = ("name", Place::Path);
 const RUN: (&str, Place) = ("id", Place::Path);
 const QUESTION: (&str, Place) = ("id", Place::Path);
 const PROJECT_NAME: (&str, Place) = ("projectName", Place::Path);
+const SPACE_FILTER: (&str, Place) = ("space", Place::Query("Edm.String"));
+const VIEW: (&str, Place) = ("id", Place::Path);
+const DAYS: (&str, Place) = ("days", Place::Query("Edm.Int32"));
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -114,7 +117,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 177] = [
+pub static DOORS: [Door; 189] = [
     door(
         "portal_people_remove",
         Org,
@@ -587,6 +590,120 @@ pub static DOORS: [Door; 177] = [
         Method::GET,
         "/projects/{project}/spaces/{space}/quality/checks",
         &[SPACE],
+        Who::ProjectReader,
+    ),
+    // A space's and an Endpoint's own readings on their pages: what the model serves, the saved
+    // views, the usage, the admission, the access matrix and a refused attribute's Policy, and the
+    // project's activity feed; each handler keeps its own check (T-7172).
+    door(
+        "portal_space_surface_fit",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/surface-fit",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_usage_recalculate",
+        Project,
+        Method::POST,
+        "/projects/{project}/spaces/{space}/usage/recalculate",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_view_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/views",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_view_create",
+        Project,
+        Method::POST,
+        "/projects/{project}/spaces/{space}/views",
+        &[SPACE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_view_replace",
+        Project,
+        Method::PUT,
+        "/projects/{project}/spaces/{space}/views/{id}",
+        &[SPACE, VIEW, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_view_delete",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/spaces/{space}/views/{id}",
+        &[SPACE, VIEW],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_endpoint_admission",
+        Project,
+        Method::GET,
+        "/projects/{project}/endpoints/{endpoint}/admission",
+        &[ENDPOINT],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_endpoint_access_matrix",
+        Project,
+        Method::GET,
+        "/projects/{project}/endpoints/{endpoint}/access/matrix",
+        &[ENDPOINT, ("kind", Place::Query("Edm.String"))],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_endpoint_access_attribute",
+        Project,
+        Method::GET,
+        "/projects/{project}/endpoints/{endpoint}/access/attributes",
+        &[
+            ENDPOINT,
+            ("type", Place::Query("Edm.String")),
+            ("attribute", Place::Query("Edm.String")),
+            ("action", Place::Query("Edm.String")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_endpoint_usage",
+        Project,
+        Method::GET,
+        "/projects/{project}/endpoints/{endpoint}/usage",
+        &[ENDPOINT, DAYS],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_project_usage",
+        Project,
+        Method::GET,
+        "/projects/{project}/usage/endpoints",
+        &[DAYS],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_activity_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/activity",
+        &[
+            SPACE_FILTER,
+            ("kind", Place::Query("Edm.String")),
+            ("source", Place::Query("Edm.String")),
+            ("severity", Place::Query("Edm.String")),
+            ("since", Place::Query("Edm.String")),
+            ("object", Place::Query("Edm.String")),
+            ("connector", Place::Query("Edm.String")),
+            ("limit", Place::Query("Edm.Int32")),
+            ("cursor", Place::Query("Edm.String")),
+        ],
         Who::ProjectReader,
     ),
     door(

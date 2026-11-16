@@ -13,7 +13,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { localized } from "../../api/manifest";
 import { Badge } from "../../components/ui";
@@ -54,11 +54,7 @@ export function ModelFields({ project, model, space }: { project: string; model:
     queryKey: ["projects", project, "spaces", space, "quality"],
     enabled: space !== undefined,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/spaces/{space}/quality", {
-          params: { path: { project, space: space ?? "" } },
-        }),
-      ) as unknown,
+      (await door("portal_space_quality", { space: space ?? "" }, project)) as unknown,
   });
   const report = isReport(quality.data) ? quality.data : undefined;
   const percent = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 });

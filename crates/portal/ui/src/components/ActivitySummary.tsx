@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../api/client";
+import { door, type RestAnswer } from "../api/odata";
 import { activitySearch } from "../api/activity";
 import type { ActivityEvent } from "../api/activity";
 import { Card } from "./ui";
@@ -50,11 +50,7 @@ export function ActivitySummary({ project }: { project: string }): JSX.Element |
   const page = useQuery({
     queryKey: ["projects", project, "activity", "summary", since],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/activity", {
-          params: { path: { project }, query: activitySearch(query) },
-        }),
-      ),
+      (await door("portal_activity_list", activitySearch(query), project)) as RestAnswer<"list_activity">,
   });
 
   const totals = useMemo(

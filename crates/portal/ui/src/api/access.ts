@@ -6,7 +6,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { endpointSource, originTransport, SourceError } from "@joinedcontext/sdk";
 import type { EntityGridProps, EntitySource } from "@joinedcontext/sdk";
-import { ApiError, api, unwrap } from "./client";
+import { ApiError } from "./client";
+import { door, type RestAnswer } from "./odata";
 
 // Read off the SDK's exported shapes: each name the SDK exports costs the app builder's prompt.
 /** One attribute's decisions: `{name, read, write, delete, reason}`. */
@@ -139,10 +140,10 @@ export async function explainAttribute(
   attribute: string,
   action: AccessAction,
 ): Promise<AccessExplanation> {
-  const answer = await unwrap(
-    await api.GET("/api/v1/projects/{project}/endpoints/{name}/access/attributes", {
-      params: { path: { project, name: endpoint }, query: { type, attribute, action } },
-    }),
-  );
+  const answer = (await door(
+    "portal_endpoint_access_attribute",
+    { endpoint, type, attribute, action },
+    project,
+  )) as RestAnswer<"explain_attribute">;
   return { policy: answer.policy ?? null, policyTitle: answer.policyTitle ?? null, policyHidden: answer.policyHidden };
 }

@@ -151,7 +151,7 @@ describe("accessMatrixQuery", () => {
   it("refuses an answer that is no matrix instead of drawing it", async () => {
     stub({ status: 200, body: { items: [] } });
     const query = accessMatrixQuery("helsinki", "bikes-ops", "group");
-    await expect(query.queryFn({ signal: new AbortController().signal })).rejects.toThrow("no access matrix");
+    await expect(query.queryFn()).rejects.toThrow("no access matrix");
   });
 });
 

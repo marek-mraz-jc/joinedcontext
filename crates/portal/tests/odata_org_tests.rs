@@ -2278,6 +2278,7 @@ fn door_sample(member: &str) -> Value {
         "slow" => json!(true),
         "since" => json!("2026-11-16T00:00:00Z"),
         "minCostUsd" => json!(0.02),
+        "days" => json!(7),
         other => json!(format!("{other}-1")),
     }
 }

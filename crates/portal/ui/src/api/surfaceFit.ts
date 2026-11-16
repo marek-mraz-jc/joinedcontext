@@ -1,4 +1,4 @@
-import { api, unwrap } from "./client";
+import { door, type RestAnswer } from "./odata";
 import type { components } from "./schema";
 
 /**
@@ -13,11 +13,7 @@ export function surfaceFitQuery(project: string, space: string) {
     enabled: space.length > 0,
     retry: false,
     queryFn: async (): Promise<SurfaceFit> =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/spaces/{space}/surface-fit", {
-          params: { path: { project, space } },
-        }),
-      ),
+      (await door("portal_space_surface_fit", { space }, project)) as RestAnswer<"surface_fit">,
   };
 }
 

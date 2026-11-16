@@ -973,6 +973,7 @@ export interface Functions {
   jc_workspace_preview_get: { name: string };
   portal_access_request_incoming: Record<string, never>;
   portal_access_request_list: { endpoint: string };
+  portal_activity_list: { space?: string; kind?: string; source?: string; severity?: string; since?: string; object?: string; connector?: string; limit?: number; cursor?: string };
   portal_alert_list: Record<string, never>;
   portal_alert_notice_list: Record<string, never>;
   portal_app_audience: { name: string };
@@ -988,7 +989,11 @@ export interface Functions {
   portal_connector_list: Record<string, never>;
   portal_datasource_webhook: { name: string };
   portal_drift_list: Record<string, never>;
+  portal_endpoint_access_attribute: { endpoint: string; type?: string; attribute?: string; action?: string };
+  portal_endpoint_access_matrix: { endpoint: string; kind?: string };
+  portal_endpoint_admission: { endpoint: string };
   portal_endpoint_quality: { endpoint: string };
+  portal_endpoint_usage: { endpoint: string; days?: number };
   portal_erasure_get: { space: string; id: string };
   portal_erasure_list: { space: string };
   portal_flow_map: { space?: string };
@@ -1055,12 +1060,15 @@ export interface Functions {
   portal_preferences_get: Record<string, never>;
   portal_project_get: Record<string, never>;
   portal_project_registry: Record<string, never>;
+  portal_project_usage: { days?: number };
   portal_secret_list: Record<string, never>;
   portal_space_quality: { space: string };
   portal_space_quality_checks: { space: string };
   portal_space_retention_deleted: { space: string };
   portal_space_source_removals: { space: string };
+  portal_space_surface_fit: { space: string };
   portal_space_temporal_audit: { space: string; pipeline?: string };
+  portal_space_view_list: { space: string };
   portal_trash_list: { space: string };
   portal_type_attributes: { space: string; type: string };
   portal_visualization_template: { template: string; x?: string; y?: string; color?: string; facet?: string };
@@ -1117,6 +1125,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_workspace_preview_get: ["Project"],
   portal_access_request_incoming: ["Project"],
   portal_access_request_list: ["Project"],
+  portal_activity_list: ["Project"],
   portal_alert_list: ["Organization"],
   portal_alert_notice_list: ["Organization"],
   portal_app_audience: ["Project"],
@@ -1132,7 +1141,11 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_connector_list: ["Organization"],
   portal_datasource_webhook: ["Project"],
   portal_drift_list: ["Project"],
+  portal_endpoint_access_attribute: ["Project"],
+  portal_endpoint_access_matrix: ["Project"],
+  portal_endpoint_admission: ["Project"],
   portal_endpoint_quality: ["Project"],
+  portal_endpoint_usage: ["Project"],
   portal_erasure_get: ["Project"],
   portal_erasure_list: ["Project"],
   portal_flow_map: ["Project"],
@@ -1199,12 +1212,15 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_preferences_get: ["Organization"],
   portal_project_get: ["Project"],
   portal_project_registry: ["Project"],
+  portal_project_usage: ["Project"],
   portal_secret_list: ["Project"],
   portal_space_quality: ["Project"],
   portal_space_quality_checks: ["Project"],
   portal_space_retention_deleted: ["Project"],
   portal_space_source_removals: ["Project"],
+  portal_space_surface_fit: ["Project"],
   portal_space_temporal_audit: ["Project"],
+  portal_space_view_list: ["Project"],
   portal_trash_list: ["Project"],
   portal_type_attributes: ["Project"],
   portal_visualization_template: ["Organization"],
@@ -1339,6 +1355,10 @@ export interface Actions {
   portal_serviceaccount_secret_issue: { account: string };
   portal_space_retention_preview: { space: string; body?: unknown };
   portal_space_subject_export: { space: string; body?: unknown };
+  portal_space_usage_recalculate: { space: string };
+  portal_space_view_create: { space: string; body?: unknown };
+  portal_space_view_delete: { space: string; id: string };
+  portal_space_view_replace: { space: string; id: string; body?: unknown };
   portal_trash_forget: { space: string; id: string };
   portal_trash_keep: { space: string; body?: unknown };
   propose_create: { manifest?: unknown; dryRun?: boolean; confirm?: string };
@@ -1475,6 +1495,10 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_serviceaccount_secret_issue: ["Project"],
   portal_space_retention_preview: ["Project"],
   portal_space_subject_export: ["Project"],
+  portal_space_usage_recalculate: ["Project"],
+  portal_space_view_create: ["Project"],
+  portal_space_view_delete: ["Project"],
+  portal_space_view_replace: ["Project"],
   portal_trash_forget: ["Project"],
   portal_trash_keep: ["Project"],
   propose_create: ["Project"],
