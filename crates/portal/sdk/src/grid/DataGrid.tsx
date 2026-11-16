@@ -8,7 +8,7 @@
  * server-side list passes `query`, `onQueryChange` and `total`, and the grid shows its rows as given.
  * The grid only narrows what the server returned: it never decides who may read a row.
  */
-import React, { useId, useMemo, useState } from "react";
+import React, { useId, useMemo, useState, useSyncExternalStore } from "react";
 import { AutoFilter } from "./AutoFilter";
 import { ArrangePanel } from "./ArrangePanel";
 import type { ArrangeItem } from "./ArrangePanel";
@@ -118,6 +118,25 @@ function writeLayout(key: string | undefined, layout: DataLayout): void {
 /** The fields a stacked phone card shows under its title before its More details. */
 export const CARD_FIELDS = 3;
 
+/** grid.css's phone width, where a stacked list draws cards. */
+const PHONE = "(width <= 640px)";
+
+function phoneQuery(): MediaQueryList | null {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(PHONE) : null;
+}
+
+function onPhoneChange(changed: () => void): () => void {
+  const query = phoneQuery();
+  query?.addEventListener("change", changed);
+  return () => query?.removeEventListener("change", changed);
+}
+
+// A table row keeps every column under its header: the card's More details exists only on a phone, so
+// a wide table gains no header-less cell and no focus stop hidden by CSS.
+function useIsPhone(): boolean {
+  return useSyncExternalStore(onPhoneChange, () => phoneQuery()?.matches ?? false, () => false);
+}
+
 export function DataGrid<T>({
   caption,
   rows,
@@ -151,6 +170,7 @@ export function DataGrid<T>({
   const [menu, setMenu] = useState<string | null>(null);
   // The phone cards a person opened to all their fields.
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
+  const phone = useIsPhone();
   const [filtering, setFiltering] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
 
@@ -312,7 +332,7 @@ export function DataGrid<T>({
       const key = rowKey(row);
       const open = opened.has(key);
       const fields = visible.filter((col, at) => at > 0 && !col.actions);
-      const more = stack && fields.length > CARD_FIELDS;
+      const more = stack && phone && fields.length > CARD_FIELDS;
       return (
         <tr key={key} {...rowProps?.(row)} data-open={more && open ? "" : undefined}>
           {visible.map((col, at) => {
@@ -330,7 +350,6 @@ export function DataGrid<T>({
             );
           })}
           {more ? (
-            // Drawn only on a phone card (grid.css): a table row keeps every column.
             <td className="jc-data-grid-more-toggle">
               <button
                 type="button"
