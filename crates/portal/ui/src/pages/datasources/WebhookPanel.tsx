@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { door, doorAction } from "../../api/odata";
 import type { RestAnswer } from "../../api/odata";
 import type { JSX } from "react";
@@ -28,8 +28,14 @@ function Address({ pipeline, url }: { pipeline: string; url: string }): JSX.Elem
     <li className="flex min-w-0 flex-col gap-1">
       <span className="text-caption font-medium text-fg">{pipeline}</span>
       <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row">
-        <CodeBlock ref={block} label={pipeline} className="w-full min-w-0 flex-1 whitespace-pre-wrap break-all rounded border border-border bg-surface-subtle px-2 py-1 font-mono text-caption">
-          {url}
+        <CodeBlock ref={block} label={pipeline} className="w-full min-w-0 flex-1 whitespace-pre-wrap break-normal rounded border border-border bg-surface-subtle px-2 py-1 font-mono text-caption [overflow-wrap:anywhere]">
+          {/* A phone breaks the address after a slash, never inside a name (T-7117 judge). */}
+          {url.split(/(?<=\/)/).map((part, at) => (
+            <Fragment key={at}>
+              {at > 0 ? <wbr /> : null}
+              {part}
+            </Fragment>
+          ))}
         </CodeBlock>
         <Button type="button" variant="secondary" size="sm" onClick={() => void copy()}>
           {copied ? t("datasources.webhook.copied") : t("datasources.webhook.copy")}
