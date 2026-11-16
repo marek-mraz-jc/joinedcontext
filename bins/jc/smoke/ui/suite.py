@@ -75,8 +75,9 @@ def expected_4xx(who: str, status: int, method: str, url: str) -> bool:
     if status == 401 and who == "anonymous":
         return True
     # A project the outsider holds nothing in is hidden from them: its reads answer 404, through
-    # the REST door or the OData service's key (`/api/v1/projects('p')/...`, T-6812).
-    if status == 404 and who == "outsider" and re.search(r"/api/v1/projects(/|\(')", path):
+    # the REST door or the OData service's key (`/api/v1/projects('p')/...`, T-6812), a Change of it
+    # by its key too (`/api/v1/changes(project='p',name='x')`, T-7122).
+    if status == 404 and who == "outsider" and re.search(r"/api/v1/(projects(/|\(')|changes\(project=')", path):
         return True
     if status == 404 and re.search(r"/cs/[^/]+/ngsi-ld/v1/entities\?", url):
         return True
